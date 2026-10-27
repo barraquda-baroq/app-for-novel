@@ -116,3 +116,14 @@ export function attempt<R>(fn: () => R): R | undefined {
     return undefined
   }
 }
+
+// ---------- アプリ（PWA）の更新 ----------
+
+interface UpdateState {
+  /** 新しいバージョンが用意できた */
+  ready: boolean
+  /** 保存してから新しいバージョンに切り替える */
+  apply: (() => Promise<void>) | null
+}
+
+export const useAppUpdate = create<UpdateState>(() => ({ ready: false, apply: null }))

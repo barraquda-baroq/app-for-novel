@@ -9,7 +9,8 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 執筆中に勝手に再読み込みしないよう、更新はユーザーが「更新する」を押した時に適用する
+      registerType: 'prompt',
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Novel Studio — 小説執筆アプリ',

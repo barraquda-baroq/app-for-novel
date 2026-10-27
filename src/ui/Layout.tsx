@@ -2,7 +2,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { reloadFromDisk, useApp } from '../store/appStore'
-import { usePrefs, useToasts } from '../store/uiStore'
+import { notify, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost } from './dialogs'
 import { GearIcon, XIcon } from './icons'
 
@@ -31,8 +31,11 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
 }
 
 function SaveStatus() {
-  const status = useApp((s) => s.saveStatus)
+  const saveStatus = useApp((s) => s.saveStatus)
+  const draftsDirty = useApp((s) => s.draftsDirty)
   const error = useApp((s) => s.saveError)
+  // 入力欄にまだ反映していない文字があるうちは「保存済み」と表示しない
+  const status = saveStatus === 'saved' && draftsDirty ? 'pending' : saveStatus
   const label = { saved: '保存済み', pending: '編集中…', saving: '保存中…', error: '保存できませんでした' }[status]
   return (
     <span className={`save-status ${status}`} title={error ?? undefined} role="status" aria-live="polite">
@@ -96,6 +99,29 @@ function ExternalChangeBanner() {
   )
 }
 
+function UpdateBanner() {
+  const ready = useAppUpdate((s) => s.ready)
+  const apply = useAppUpdate((s) => s.apply)
+  if (!ready || !apply) return null
+  return (
+    <div className="banner banner-info" role="status">
+      <span className="grow">新しいバージョンのアプリがあります。書いた内容を保存してから更新します。</span>
+      <button type="button" className="btn btn-sm" onClick={() => void apply()}>
+        更新する
+      </button>
+    </div>
+  )
+}
+
+/** 前回の終了時に保存しきれなかった変更を復元したら知らせる */
+function RecoveryNotice() {
+  const count = useApp((s) => s.recoveredCount)
+  useEffect(() => {
+    if (count > 0) notify(`前回の終了時に保存しきれなかった変更（${count}件）を復元しました`)
+  }, [count])
+  return null
+}
+
 /** テーマ・エディタフォントを <html> に反映する */
 function PrefsEffect() {
   const theme = usePrefs((s) => s.theme)
@@ -125,6 +151,8 @@ export function AppFrame({ children }: { children: ReactNode }) {
     <div className="app">
       <ScrollToTopOnNavigate />
       <PrefsEffect />
+      <RecoveryNotice />
+      <UpdateBanner />
       <ExternalChangeBanner />
       {children}
       <Toasts />

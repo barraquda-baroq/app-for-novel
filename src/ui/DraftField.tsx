@@ -10,8 +10,11 @@ import {
   type InputHTMLAttributes,
   type TextareaHTMLAttributes,
 } from 'react'
+import { markDraftClean, markDraftDirty } from '../store/draftRegistry'
 
 const DEFAULT_DELAY = 500
+/** 打ち続けていても、最初の未反映の入力からこの時間以内にはストアへ反映する */
+const MAX_WAIT = 1500
 
 /**
  * value（保存済みの値）と onCommit（保存処理）を受け取り、編集中の下書きを管理するフック。
@@ -23,6 +26,8 @@ export function useDraft(value: string, onCommit: (v: string) => void, delay = D
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latest = useRef({ draft: value, onCommit, pendingCommit: onCommit })
   latest.current.onCommit = onCommit
+  const registryKey = useRef(Symbol('draft'))
+  const dirtySince = useRef(0)
 
   // 外部で値が変わった（別の操作で更新された）ときは、未保存の編集がなければ追従する
   useEffect(() => {
@@ -39,6 +44,7 @@ export function useDraft(value: string, onCommit: (v: string) => void, delay = D
     }
     if (dirty.current) {
       dirty.current = false
+      markDraftClean(registryKey.current)
       // 編集を始めた時点の保存先に書く（途中で props が変わっても別レコードに書き込まない）
       latest.current.pendingCommit(latest.current.draft)
     }
@@ -48,25 +54,22 @@ export function useDraft(value: string, onCommit: (v: string) => void, delay = D
     (v: string) => {
       setDraft(v)
       latest.current.draft = v
-      if (!dirty.current) latest.current.pendingCommit = latest.current.onCommit
+      if (!dirty.current) {
+        latest.current.pendingCommit = latest.current.onCommit
+        dirtySince.current = Date.now()
+        // 画面を閉じる時などにまとめて反映できるよう登録する（src/store/lifecycle.ts）
+        markDraftDirty(registryKey.current, flush)
+      }
       dirty.current = true
       if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(flush, delay)
+      const wait = Math.max(0, Math.min(delay, dirtySince.current + MAX_WAIT - Date.now()))
+      timer.current = setTimeout(flush, wait)
     },
     [delay, flush],
   )
 
-  // アンマウント時・ページを離れる時に保存漏れを防ぐ
-  useEffect(() => {
-    const onHide = () => flush()
-    window.addEventListener('pagehide', onHide)
-    document.addEventListener('visibilitychange', onHide)
-    return () => {
-      window.removeEventListener('pagehide', onHide)
-      document.removeEventListener('visibilitychange', onHide)
-      flush()
-    }
-  }, [flush])
+  // アンマウント時に保存漏れを防ぐ（画面を閉じる時は lifecycle.ts がまとめて反映する）
+  useEffect(() => flush, [flush])
 
   return { draft, change, flush }
 }
