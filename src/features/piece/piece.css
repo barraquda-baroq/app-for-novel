@@ -1,0 +1,914 @@
+/* ===== 原稿画面（pw = piece workspace） =====
+   styles.css はこのファイルより後に読み込まれるため、共通クラス（.btn / .input など）を
+   上書きするルールはすべて .pw-root を前に付けて詳細度を上げている。 */
+
+/* 全面レイアウト: ページ自体はスクロールさせず、エディタの中だけをスクロールさせる */
+.app:has(> .pw-root) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pw-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@supports not selector(:has(*)) {
+  .pw-root {
+    height: 100dvh;
+    flex: none;
+  }
+}
+
+/* ---------- 上部バー ---------- */
+.pw-root .pw-bar {
+  position: relative;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.pw-root .pw-nav {
+  min-height: 34px;
+  padding: 4px 12px 4px 8px;
+  font-size: 13px;
+  gap: 4px;
+  flex: none;
+}
+
+.pw-root .pw-next {
+  padding: 4px 8px 4px 12px;
+}
+
+.pw-root .pw-nav .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.pw-root .pw-ident {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.pw-root .pw-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 34px;
+  padding: 0 10px 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text);
+  font-family: var(--font-mincho);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.pw-root .pw-lock {
+  width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+}
+
+.pw-root .pw-label-special {
+  padding: 0 4px 0 8px;
+  background: var(--special-soft);
+  flex: 0 1 260px;
+  min-width: 120px;
+  letter-spacing: 0;
+}
+
+.pw-root .pw-label-special .badge {
+  background: var(--surface);
+  flex: none;
+}
+
+.pw-root .pw-label-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  min-height: 30px;
+  font-family: var(--font-mincho);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--special);
+}
+
+.pw-root .pw-label-input::placeholder {
+  color: color-mix(in srgb, var(--special) 55%, transparent);
+  font-weight: 600;
+}
+
+.pw-root .pw-subtitle {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 10px;
+  font-family: var(--font-mincho);
+  font-size: 16px;
+}
+
+.pw-root .pw-view {
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.pw-root .pw-ratio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.pw-root .pw-ratio input[type='range'] {
+  width: 140px;
+  height: 34px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  background: transparent;
+}
+
+.pw-root .pw-ratio-value {
+  min-width: 3.4em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.pw-root .pw-switch {
+  min-height: 34px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  gap: 8px;
+}
+
+.pw-root .pw-switch .track {
+  width: 34px;
+  height: 20px;
+}
+
+.pw-root .pw-switch .track::after {
+  width: 14px;
+  height: 14px;
+}
+
+.pw-root .pw-switch input:checked + .track::after {
+  transform: translateX(14px);
+}
+
+.pw-root .pw-switch input:checked ~ span:last-child {
+  color: var(--text);
+}
+
+.pw-root .pw-switch.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pw-root .pw-view-toggle {
+  display: none;
+}
+
+.pw-root .pw-view-toggle[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pw-root .pw-view-more {
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
+
+/* ---------- ペイン共通 ---------- */
+.pw-root .pw-split {
+  background: var(--bg);
+}
+
+.pw-root .pw-pane {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  container-type: inline-size;
+  container-name: pw-pane;
+}
+
+.pw-root .pw-pane-versions,
+.pw-root .pw-pane-compare {
+  background: var(--surface-2);
+}
+
+/* ヘッダー: 1行目に名前と操作、2行目に文字数など（.pw-break で改行） */
+.pw-root .pw-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 50px;
+  padding: 7px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  flex: none;
+}
+
+.pw-root .pw-pane-active .pw-head {
+  box-shadow: inset 0 3px 0 var(--active);
+  background: color-mix(in srgb, var(--active-soft) 40%, var(--surface));
+}
+
+.pw-root .pw-pane-active.is-empty .pw-head {
+  box-shadow: inset 0 3px 0 var(--warn);
+  background: color-mix(in srgb, var(--warn-soft) 40%, var(--surface));
+}
+
+.pw-root .pw-pane-compare .pw-head {
+  box-shadow: inset 0 3px 0 var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface));
+}
+
+.pw-root .pw-pane-compare.is-active-selected .pw-head {
+  box-shadow: inset 0 3px 0 var(--active);
+}
+
+.pw-root .pw-break {
+  flex-basis: 100%;
+  height: 0;
+}
+
+.pw-root .pw-break-b {
+  display: none;
+}
+
+.pw-root .pw-head-badge {
+  flex: none;
+}
+
+.pw-root .pw-head-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pw-root .pw-vname {
+  flex: 1 1 120px;
+  min-width: 60px;
+  margin: 0;
+  min-height: 30px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pw-root .pw-vname-static {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0;
+}
+
+.pw-root .pw-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 10px;
+  min-height: 22px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pw-root .pw-ahead .pw-meta {
+  min-height: 30px;
+}
+
+.pw-root .pw-chead .pw-meta {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.pw-root .pw-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.pw-root .pw-tbtn {
+  min-height: 34px;
+  padding: 4px 10px;
+  font-size: 13px;
+  gap: 5px;
+}
+
+.pw-root .pw-tbtn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.pw-root .pw-back {
+  padding: 4px 8px 4px 4px;
+  flex: none;
+}
+
+.pw-root .pw-body {
+  position: relative;
+  flex: 1;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pw-root .pw-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.pw-root .pw-body > .manuscript {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-inline: max(20px, calc((100% - 44em) / 2));
+}
+
+.pw-root .pw-pane-compare .pw-body > .manuscript {
+  background: var(--surface);
+}
+
+.pw-root .pw-body > .manuscript::placeholder {
+  color: var(--text-faint);
+}
+
+.pw-root .pw-body > textarea.manuscript[readonly] {
+  color: var(--text-muted);
+}
+
+/* ---------- 採用原稿が無いとき ---------- */
+.pw-root .pw-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 440px;
+  margin: auto;
+  padding: 28px 20px;
+  text-align: center;
+}
+
+.pw-root .pw-empty-title {
+  margin: 0 0 4px;
+  font-family: var(--font-mincho);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pw-root .pw-empty-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  word-break: auto-phrase;
+  text-wrap: balance;
+}
+
+.pw-root .pw-empty .btn {
+  margin-top: 12px;
+}
+
+/* ---------- 一覧 ---------- */
+.pw-root .pw-hint {
+  margin: 12px 14px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.pw-root .pw-list-empty {
+  margin: 16px;
+}
+
+.pw-root .pw-vlist {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pw-root .pw-vrow {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+
+.pw-root .pw-vrow:hover {
+  border-color: var(--border-strong);
+}
+
+.pw-root .pw-vrow.is-active {
+  border-color: color-mix(in srgb, var(--active) 45%, var(--border));
+  background: color-mix(in srgb, var(--active-soft) 55%, var(--surface));
+}
+
+.pw-root .pw-vrow-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pw-root .pw-vrow-main:hover {
+  background: color-mix(in srgb, var(--surface-3) 55%, transparent);
+}
+
+.pw-root .pw-vrow-main:focus-visible {
+  outline-offset: -2px;
+}
+
+.pw-root .pw-vrow-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pw-root .pw-vrow-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.pw-root .pw-vrow-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pw-root .pw-vrow-meta .pw-delta {
+  margin-left: 6px;
+}
+
+.pw-root .pw-delta {
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pw-root .pw-delta.plus {
+  color: var(--diff-add-text);
+}
+
+.pw-root .pw-delta.minus {
+  color: var(--diff-del-text);
+}
+
+.pw-root .pw-vrow-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.pw-root .pw-vrow-note .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.pw-root .pw-vrow-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 0;
+  flex: none;
+}
+
+.pw-root .pw-row-adopt {
+  color: var(--active);
+  border-color: color-mix(in srgb, var(--active) 45%, var(--border));
+  background: var(--surface);
+}
+
+.pw-root .pw-row-adopt:hover:not(:disabled) {
+  background: var(--active-soft);
+}
+
+.pw-root .pw-vrow-chev {
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+/* ---------- 比較 ---------- */
+.pw-root .pw-vselect {
+  flex: 1 1 150px;
+  min-width: 0;
+  width: auto;
+  min-height: 34px;
+  padding: 4px 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pw-root .pw-adopt {
+  font-weight: 700;
+  flex: none;
+  /* ダークテーマの明るい緑でも読めるように */
+  color: var(--on-accent);
+}
+
+.pw-root .pw-adopt:disabled {
+  opacity: 1;
+  background: var(--active-soft);
+  border-color: transparent;
+  color: var(--active);
+}
+
+.pw-root .pw-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--active);
+  background: var(--active-soft);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.pw-root .pw-notice-diff {
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.pw-root .pw-legend {
+  padding: 0 6px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+.pw-root .pw-legend.add {
+  background: var(--diff-add);
+  color: var(--diff-add-text);
+}
+
+.pw-root .pw-legend.del {
+  background: var(--diff-del);
+  color: var(--diff-del-text);
+}
+
+.pw-root .pw-diff {
+  overflow: auto;
+  outline: none;
+}
+
+.pw-root .pw-diff:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.pw-root .pw-diff del.diff-del {
+  text-decoration-thickness: 1px;
+}
+
+/* 推敲メモ */
+.pw-root .pw-note {
+  flex: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.pw-root .pw-note summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.pw-root .pw-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.pw-root .pw-note summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 1.6px solid currentColor;
+  border-bottom: 1.6px solid currentColor;
+  transform: translateY(2px) rotate(-135deg);
+  flex: none;
+}
+
+.pw-root .pw-note[open] summary::after {
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.pw-root .pw-note summary:hover {
+  color: var(--text);
+}
+
+.pw-root .pw-note summary .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.pw-root .pw-note-label {
+  flex: none;
+}
+
+.pw-root .pw-note-preview {
+  min-width: 0;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.pw-root .pw-note-input {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 0 12px 10px;
+  height: 104px;
+  min-height: 56px;
+  max-height: 30vh;
+  font-size: 14px;
+  resize: vertical;
+}
+
+/* ---------- ペインが狭いとき（比率を小さくした時・スマホ） ---------- */
+@container pw-pane (max-width: 560px) {
+  .pw-root .pw-tools .pw-tlabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .pw-root .pw-tools .pw-tbtn {
+    min-width: 36px;
+    padding: 4px 8px;
+  }
+
+  .pw-root .pw-head {
+    padding: 6px 10px 5px;
+  }
+
+  .pw-root .pw-notice {
+    padding-inline: 10px;
+  }
+
+  .pw-root .pw-meta-hint {
+    display: none;
+  }
+
+  /* 比較ヘッダー: 1行目 = 一覧・選択・採用する / 2行目 = 名前・操作 / 3行目 = 文字数 */
+  .pw-root .pw-chead > .pw-back {
+    order: 1;
+  }
+
+  .pw-root .pw-chead > .pw-vselect {
+    order: 2;
+  }
+
+  .pw-root .pw-chead > .pw-adopt {
+    order: 3;
+  }
+
+  .pw-root .pw-chead > .pw-break-a {
+    order: 4;
+  }
+
+  .pw-root .pw-chead > .pw-vname {
+    order: 5;
+  }
+
+  .pw-root .pw-chead > .pw-tools {
+    order: 6;
+  }
+
+  .pw-root .pw-chead > .pw-break-b {
+    display: block;
+    order: 7;
+  }
+
+  .pw-root .pw-chead > .pw-meta {
+    order: 8;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+}
+
+@container pw-pane (max-width: 300px) {
+  .pw-root .pw-vrow-side {
+    padding-right: 6px;
+  }
+
+  .pw-root .pw-vrow-chev {
+    display: none;
+  }
+
+  .pw-root .pw-back > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* ---------- スマホ ---------- */
+@media (max-width: 720px) {
+  .pw-root .pw-bar {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      'ident ident ident'
+      'prev next view';
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  .pw-root .pw-ident {
+    grid-area: ident;
+    gap: 8px;
+  }
+
+  .pw-root .pw-prev {
+    grid-area: prev;
+  }
+
+  .pw-root .pw-next {
+    grid-area: next;
+  }
+
+  .pw-root .pw-nav {
+    width: 40px;
+    padding: 0;
+  }
+
+  .pw-root .pw-nav-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .pw-root .pw-label {
+    font-size: 16px;
+    padding: 0 8px 0 10px;
+  }
+
+  .pw-root .pw-label-special {
+    flex: 0 1 48%;
+    min-width: 0;
+  }
+
+  .pw-root .pw-label-input {
+    font-size: 16px;
+  }
+
+  .pw-root .pw-view {
+    grid-area: view;
+    flex-wrap: nowrap;
+    gap: 10px;
+    margin-left: 4px;
+    min-width: 0;
+    justify-content: flex-end;
+  }
+
+  .pw-root .pw-ratio {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .pw-root .pw-ratio-label,
+  .pw-root .pw-ratio-value {
+    display: none;
+  }
+
+  .pw-root .pw-ratio input[type='range'] {
+    width: 100%;
+    min-width: 60px;
+  }
+
+  .pw-root .pw-view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+  }
+
+  .pw-root .pw-view-more {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 10px;
+    z-index: 30;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    width: min(300px, calc(100vw - 20px));
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .pw-root .pw-view.is-open .pw-view-more {
+    display: flex;
+  }
+
+  .pw-root .pw-view-more .segmented {
+    display: flex;
+  }
+
+  .pw-root .pw-view-more .segmented button {
+    flex: 1;
+    min-height: 34px;
+  }
+
+  .pw-root .pw-head {
+    min-height: 46px;
+  }
+
+  .pw-root .pw-body > .manuscript {
+    padding: 14px 16px 40vh;
+  }
+
+  .pw-root .pw-vselect,
+  .pw-root .pw-note-input {
+    font-size: 16px;
+  }
+
+  .pw-root .pw-note-input {
+    height: 64px;
+    max-height: 20dvh;
+  }
+}
