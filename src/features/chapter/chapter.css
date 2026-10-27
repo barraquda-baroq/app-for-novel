@@ -1,0 +1,110 @@
+/* ===== 章ページ（chpage-） ===== */
+
+.chpage-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.chpage-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+}
+
+.chpage-kicker .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.input-bare.chpage-name {
+  font-family: var(--font-mincho);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.3;
+  padding: 2px 6px;
+}
+
+.chpage-note .textarea {
+  font-size: 15px;
+}
+
+.chpage-blocked {
+  margin: 0;
+}
+
+.chpage-danger {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-strong);
+}
+
+.chpage-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.chpage-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.chpage-nav-link:hover {
+  border-color: var(--accent);
+}
+
+.chpage-nav-link > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chpage-nav-link.is-next {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.chpage-nav-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chpage-nav-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chpage-off-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+}
+
+@media (max-width: 720px) {
+  .input-bare.chpage-name {
+    font-size: 22px;
+  }
+}
