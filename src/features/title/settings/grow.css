@@ -1,0 +1,6 @@
+/* 内容に合わせて伸びるテキストエリア（GrowTextarea） */
+.textarea.st-grow {
+  resize: none;
+  overflow-y: hidden;
+  min-height: 38px;
+}
