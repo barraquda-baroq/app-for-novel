@@ -1,0 +1,155 @@
+/* ===== タイトル画面（tpage-） ===== */
+
+.tpage-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* グローバルの .input-bare / .tabs / .textarea より後に読み込まれないことがあるので、クラスを重ねて詳細度を上げる */
+.input-bare.tpage-name {
+  font-family: var(--font-mincho);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  padding: 4px 6px;
+  min-width: 0;
+}
+
+.tpage-name::placeholder {
+  color: var(--text-faint);
+}
+
+/* 集計チップ */
+.tpage-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tpage-chip {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.tpage-chip-sub {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.tpage-chip.is-warn {
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  color: var(--warn);
+}
+
+.tpage-chip.is-accent {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent);
+}
+
+/* あらすじ */
+.tpage-synopsis {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.tpage-synopsis-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 12px 6px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.tpage-synopsis-toggle:hover {
+  background: var(--surface-3);
+}
+
+.tpage-synopsis-chevron {
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.tpage-synopsis.is-open .tpage-synopsis-chevron {
+  transform: rotate(90deg);
+}
+
+.tpage-synopsis-label {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.tpage-synopsis-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.tpage-synopsis-preview.is-empty {
+  color: var(--text-faint);
+}
+
+.textarea.tpage-synopsis-input {
+  margin: 0 10px 10px;
+  width: calc(100% - 20px);
+  font-size: 15px;
+}
+
+.tabs.tpage-tabs {
+  margin-bottom: 16px;
+}
+
+.tpage-tabs [role='tab'] {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+
+@media (max-width: 720px) {
+  .btn-sm.tpage-header-btn {
+    min-height: 34px;
+  }
+
+  .input-bare.tpage-name {
+    font-size: 22px;
+  }
+
+  .tpage-tabs [role='tab'] {
+    flex: 1;
+    padding-inline: 8px;
+  }
+}
