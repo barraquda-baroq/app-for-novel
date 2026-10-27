@@ -1,6 +1,6 @@
 // アプリの外枠: ヘッダー（パンくず・保存状態・設定）、トースト、ダイアログ
 import { useEffect, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { reloadFromDisk, useApp } from '../store/appStore'
 import { usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost } from './dialogs'
@@ -111,9 +111,19 @@ function PrefsEffect() {
   return null
 }
 
+/** 画面（パス）が変わったら先頭から表示する。?tab= などのクエリだけの変更ではスクロールしない */
+function ScrollToTopOnNavigate() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname])
+  return null
+}
+
 export function AppFrame({ children }: { children: ReactNode }) {
   return (
     <div className="app">
+      <ScrollToTopOnNavigate />
       <PrefsEffect />
       <ExternalChangeBanner />
       {children}

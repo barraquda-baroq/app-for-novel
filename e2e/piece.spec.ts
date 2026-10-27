@@ -113,7 +113,7 @@ test.describe('原稿画面', () => {
     await expect(page.getByTestId('version-select')).toHaveValue(firstVersionId)
     await expect(page.getByTestId('compare-editor')).toHaveValue(BODY1)
     await expect(page).toHaveURL(new RegExp(`\\?v=${firstVersionId}`))
-    expect(await activeBodyOf(page, pid)).toBe(revised)
+    await expect.poll(() => activeBodyOf(page, pid)).toBe(revised)
 
     // 一覧に戻ると2件、新しい順で第2稿が採用中
     await page.getByTestId('back-to-list').click()
@@ -138,12 +138,12 @@ test.describe('原稿画面', () => {
       const { a, b } = await boxes(page)
       return horizontal ? a.width / (a.width + b.width) : a.height / (a.height + b.height)
     }
-    expect(await share()).toBeCloseTo(0.5, 1)
+    await expect.poll(() => share()).toBeCloseTo(0.5, 1)
 
     const slider = page.getByTestId('ratio-slider')
     await slider.fill('30')
     await expect.poll(share).toBeLessThan(0.33)
-    expect(await share()).toBeGreaterThan(0.27)
+    await expect.poll(() => share()).toBeGreaterThan(0.27)
 
     await slider.fill('80')
     await expect.poll(share).toBeGreaterThan(0.77)
@@ -161,7 +161,7 @@ test.describe('原稿画面', () => {
     else await page.mouse.move(startX, split.y + split.height * 0.4, { steps: 8 })
     await page.mouse.up()
     await expect.poll(share).toBeLessThan(0.45)
-    expect(await share()).toBeGreaterThan(0.35)
+    await expect.poll(() => share()).toBeGreaterThan(0.35)
     await expect(slider).toHaveValue(/^(3[5-9]|4[0-5])$/)
 
     // 分割の向きを切り替える（スマホでは「表示の設定」から）
@@ -197,7 +197,7 @@ test.describe('原稿画面', () => {
 
     await expect(page.getByTestId('no-active')).toContainText('採用原稿がありません。')
     await expect(page.getByTestId('active-editor')).toHaveCount(0)
-    expect(await activeBodyOf(page, pid)).toBeNull()
+    await expect.poll(() => activeBodyOf(page, pid)).toBeNull()
     await expect(page.getByTestId('duplicate-active-list')).toBeDisabled()
 
     // バージョン自体は残っていて、一覧から採用し直せる
@@ -205,7 +205,7 @@ test.describe('原稿画面', () => {
     await expect(row).not.toContainText('採用中')
     await row.getByTestId('row-adopt-button').click()
     await expect(page.getByTestId('active-editor')).toHaveValue(BODY1)
-    expect(await activeBodyOf(page, pid)).toBe(BODY1)
+    await expect.poll(() => activeBodyOf(page, pid)).toBe(BODY1)
 
     // 解除してから「白紙の稿を作って採用」
     await page.getByTestId('unadopt-button').click()
@@ -370,7 +370,7 @@ test.describe('原稿画面', () => {
     await page.keyboard.type('追記。')
     await page.keyboard.press('ControlOrMeta+s')
     await expect(page.getByText('保存しました').first()).toBeVisible()
-    expect(await activeBodyOf(page, pieceIds[0])).toContain('追記。')
+    await expect.poll(() => activeBodyOf(page, pieceIds[0])).toContain('追記。')
 
     // 話の題を入力中（自動保存の待ち時間内）でもすぐに保存される
     await page.getByTestId('subtitle-input').click()

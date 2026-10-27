@@ -90,7 +90,7 @@ test.describe('タイトル画面・本編', () => {
     await addEpisodeViaDialog(page, '第2話')
     await addEpisodeViaDialog(page, '第3話', '旅立ち')
 
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
     await expect(rows(page).nth(0)).toContainText('はじまり')
     await expect(rows(page).nth(2)).toContainText('旅立ち')
     await expect(rows(page).nth(0)).toContainText('採用: 第1稿・0字')
@@ -135,7 +135,7 @@ test.describe('タイトル画面・本編', () => {
     await expect(page).toHaveURL(/#\/t\/[^/]+\/p\//)
     await page.goBack()
 
-    expect(await labelsIn(storyList(page))).toEqual(['プロローグ', '第1話', '第2話', '第3話'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['プロローグ', '第1話', '第2話', '第3話'])
     await expect(rows(page).nth(0)).toHaveAttribute('data-kind', 'special')
     await expect(rows(page).nth(0).locator('.badge-special')).toHaveText('特殊')
 
@@ -147,11 +147,11 @@ test.describe('タイトル画面・本編', () => {
     await expect(page.getByTestId('special-position').locator('option:checked')).toContainText('末尾')
     await page.getByTestId('add-submit').click()
     await page.goBack()
-    expect(await labelsIn(storyList(page))).toEqual(['プロローグ', '第1話', '第2話', '第3話', 'エピローグ'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['プロローグ', '第1話', '第2話', '第3話', 'エピローグ'])
 
     // その後の話数追加は最新話（第3話）の直後に入る
     await addEpisodeViaDialog(page, '第4話')
-    expect(await labelsIn(storyList(page))).toEqual(['プロローグ', '第1話', '第2話', '第3話', '第4話', 'エピローグ'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['プロローグ', '第1話', '第2話', '第3話', '第4話', 'エピローグ'])
     await expect(page.getByTestId('stat-episodes')).toContainText('全4話')
     await expect(page.getByTestId('stat-episodes')).toContainText('特殊 2')
   })
@@ -204,7 +204,7 @@ test.describe('タイトル画面・本編', () => {
     await last.click()
     await expect(dialog(page)).toContainText('第4話')
     await confirmIn(page, '削除')
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
     // 新しい最後の話が削除できるようになる
     await expect(rows(page).nth(2).getByTestId('piece-delete')).toBeEnabled()
   })
@@ -226,8 +226,8 @@ test.describe('タイトル画面・本編', () => {
     await expect(rows(page).nth(2).getByTestId('piece-down')).toBeDisabled()
 
     await rows(page).nth(2).getByTestId('piece-up').click()
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
-    expect(await subtitlesIn(storyList(page))).toEqual(['出会い', '再会', '別れ'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
+    await expect.poll(() => subtitlesIn(storyList(page))).toEqual(['出会い', '再会', '別れ'])
 
     // 位置を選んで移動
     await rows(page).nth(0).getByTestId('piece-move').click()
@@ -238,8 +238,8 @@ test.describe('タイトル画面・本編', () => {
     await select.selectOption(lastValue!)
     await expect(page.getByTestId('move-dialog')).toContainText('「第3話」になります')
     await page.getByTestId('move-submit').click()
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
-    expect(await subtitlesIn(storyList(page))).toEqual(['再会', '別れ', '出会い'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
+    await expect.poll(() => subtitlesIn(storyList(page))).toEqual(['再会', '別れ', '出会い'])
   })
 
   test('採用原稿がない話にはバッジが表示される', async ({ page }) => {
@@ -277,7 +277,7 @@ test.describe('タイトル画面・本編', () => {
     const blocks = page.getByTestId('chapter-block')
     await expect(blocks).toHaveCount(1)
     await expect(blocks.nth(0).getByTestId('chapter-name')).toHaveText('第1章')
-    expect(await labelsIn(blocks.nth(0))).toEqual(['第1話', '第2話'])
+    await expect.poll(() => labelsIn(blocks.nth(0))).toEqual(['第1話', '第2話'])
 
     // 折りたたみ
     await blocks.nth(0).getByTestId('chapter-collapse').click()
@@ -298,7 +298,7 @@ test.describe('タイトル画面・本編', () => {
     await page.getByTestId('add-submit').click()
     await expect(page).toHaveURL(/#\/t\/[^/]+\/p\//)
     await page.goBack()
-    expect(await labelsIn(blocks.nth(1))).toEqual(['第3話'])
+    await expect.poll(() => labelsIn(blocks.nth(1))).toEqual(['第3話'])
 
     // 通し番号では、最新話より前の章（第1章）には話数追加できない
     await expect(blocks.nth(0).getByTestId('chapter-add-episode')).toHaveAttribute('aria-disabled', 'true')
@@ -308,15 +308,15 @@ test.describe('タイトル画面・本編', () => {
     await expect(dialog(page)).toContainText('振り直されます')
     await confirmIn(page, '振り直す')
     await expect(page.getByTestId('numbering-perChapter')).toHaveAttribute('aria-pressed', 'true')
-    expect(await labelsIn(blocks.nth(0))).toEqual(['第1話', '第2話'])
-    expect(await labelsIn(blocks.nth(1))).toEqual(['第1話'])
+    await expect.poll(() => labelsIn(blocks.nth(0))).toEqual(['第1話', '第2話'])
+    await expect.poll(() => labelsIn(blocks.nth(1))).toEqual(['第1話'])
     await expect(blocks.nth(0).getByTestId('chapter-add-episode')).toHaveAttribute('aria-disabled', 'false')
 
     // 章ページ
     await blocks.nth(1).getByTestId('chapter-name').click()
     await expect(page).toHaveURL(/#\/t\/[^/]+\/c\/[^/?]+/)
     await expect(page.getByTestId('chapter-name-input')).toHaveValue('第2章')
-    expect(await labelsIn(storyList(page))).toEqual(['第1話'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話'])
     await expect(page.getByTestId('chapter-read-link')).toHaveAttribute('href', /read\?chapter=/)
     await expect(page.getByTestId('chapter-prev')).toContainText('第1章')
     await page.goBack()
@@ -335,7 +335,7 @@ test.describe('タイトル画面・本編', () => {
     await confirmIn(page, '章を解除')
     await expect(blocks).toHaveCount(1)
     await expect(rows(page)).toHaveCount(3)
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第1話'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第1話'])
     await expect(blocks.nth(0).getByTestId('chapter-name')).toHaveText('第2章　旅路')
   })
 
@@ -356,7 +356,7 @@ test.describe('タイトル画面・本編', () => {
     await expect(dialog(page)).toContainText('保存され')
     await confirmIn(page, '章をオフにする')
     await expect(page.getByTestId('chapter-block')).toHaveCount(0)
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話'])
 
     // キャンセルすると変わらない
     await page.getByTestId('chapters-switch').click()
@@ -393,16 +393,16 @@ test.describe('タイトル画面・本編', () => {
     await page.getByTestId('add-submit').click()
     await expect(page).toHaveURL(/#\/t\/[^/]+\/p\//)
     await page.goBack()
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '幕間'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '幕間'])
 
     await page.getByTestId('chapter-page-add-episode').click()
     await expect(page.getByTestId('episode-preview')).toContainText('第2話が作成されます')
     await page.getByTestId('add-submit').click()
     await page.goBack()
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話', '幕間'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '幕間'])
 
     await flushAndReload(page)
-    expect(await labelsIn(storyList(page))).toEqual(['第1話', '第2話', '幕間'])
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '幕間'])
     await expect(page.getByTestId('chapter-note')).toHaveValue('この章では主人公が旅に出る')
   })
 

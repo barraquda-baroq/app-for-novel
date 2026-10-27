@@ -79,7 +79,7 @@ test.describe('ホーム', () => {
 
     await showIdeas(page)
     await expect(page.getByTestId('idea-area').getByTestId('idea-section')).toHaveCount(1)
-    expect(await sectionNames(page)).toEqual([UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual([UNASSIGNED])
     await expect(section(page, 'none').getByTestId('idea-section-empty')).toBeVisible()
     await expect(page.getByTestId('quick-capture')).toBeVisible()
     await noHorizontalScroll(page)
@@ -97,9 +97,9 @@ test.describe('ホーム', () => {
       await goHome(page)
     }
     await showTitles(page)
-    expect(await titleCardNames(page)).toEqual(['星の海', '風の街'])
+    await expect.poll(() => titleCardNames(page)).toEqual(['星の海', '風の街'])
     await showIdeas(page)
-    expect(await sectionNames(page)).toEqual(['星の海', '風の街', UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual(['星の海', '風の街', UNASSIGNED])
 
     // タイトルの並びを変えると仕切りの並びも変わる
     await showTitles(page)
@@ -108,9 +108,9 @@ test.describe('ホーム', () => {
     await expect(cards.nth(0).getByTestId('title-up')).toBeDisabled()
     await expect(cards.nth(1).getByTestId('title-down')).toBeDisabled()
     await cards.nth(1).getByTestId('title-up').click()
-    expect(await titleCardNames(page)).toEqual(['風の街', '星の海'])
+    await expect.poll(() => titleCardNames(page)).toEqual(['風の街', '星の海'])
     await showIdeas(page)
-    expect(await sectionNames(page)).toEqual(['風の街', '星の海', UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual(['風の街', '星の海', UNASSIGNED])
 
     // 名前の変更も仕切りに反映される
     await showTitles(page)
@@ -119,13 +119,13 @@ test.describe('ホーム', () => {
     await clickInDialog(page, '変更')
     await expect(cards.nth(0).getByTestId('title-card-name')).toHaveText('風の街の物語')
     await showIdeas(page)
-    expect(await sectionNames(page)).toEqual(['風の街の物語', '星の海', UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual(['風の街の物語', '星の海', UNASSIGNED])
 
     // 再読み込みしても残っている
     await page.evaluate(() => window.__ns.flushNow())
     await page.reload()
     await showIdeas(page)
-    expect(await sectionNames(page)).toEqual(['風の街の物語', '星の海', UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual(['風の街の物語', '星の海', UNASSIGNED])
   })
 
   test('アイデアを追加・編集し、別のタイトルの仕切りへ移動し、並べ替えて削除できる', async ({ page }) => {
@@ -278,7 +278,7 @@ test.describe('ホーム', () => {
 
     await goHome(page)
     await showIdeas(page)
-    expect(await sectionNames(page)).toEqual(['灯台守の手紙', UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual(['灯台守の手紙', UNASSIGNED])
     await expect(cardsIn(section(page, titleId))).toHaveCount(1)
     await expect(cardsIn(section(page, 'none'))).toHaveCount(0)
   })
@@ -309,10 +309,10 @@ test.describe('ホーム', () => {
     await expect(dialog(page)).toContainText('アイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります')
     await clickInDialog(page, '削除')
     await expect(page.getByTestId('title-card')).toHaveCount(1)
-    expect(await titleCardNames(page)).toEqual(['残る物語'])
+    await expect.poll(() => titleCardNames(page)).toEqual(['残る物語'])
 
     await showIdeas(page)
-    expect(await sectionNames(page)).toEqual(['残る物語', UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual(['残る物語', UNASSIGNED])
     const none = section(page, 'none')
     await expect(cardsIn(none)).toHaveCount(3)
     await expect(cardsIn(none).nth(0)).toContainText('最初からどこにも属さない案')
@@ -612,9 +612,9 @@ test.describe('アプリの設定', () => {
     await expect(page.getByTestId('data-counts')).toContainText('タイトル1')
     await goHome(page)
     await showTitles(page)
-    expect(await titleCardNames(page)).toEqual(['復元された物語'])
+    await expect.poll(() => titleCardNames(page)).toEqual(['復元された物語'])
     await showIdeas(page)
-    expect(await sectionNames(page)).toEqual(['復元された物語', UNASSIGNED])
+    await expect.poll(() => sectionNames(page)).toEqual(['復元された物語', UNASSIGNED])
     await expect(cardsIn(section(page, 't1'))).toHaveCount(1)
     await expect(cardsIn(section(page, 'none'))).toHaveCount(1)
   })

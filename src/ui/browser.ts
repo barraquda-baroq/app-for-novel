@@ -46,6 +46,8 @@ export function pickTextFile(accept = '.json,application/json'): Promise<string 
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = accept
+    // ファイル選択をキャンセルした時も結果を返す
+    input.addEventListener('cancel', () => resolve(null))
     input.onchange = () => {
       const file = input.files?.[0]
       if (!file) return resolve(null)
