@@ -1,0 +1,315 @@
+/* ===== ホーム（home-）: タイトル群とアイデア領域 ===== */
+
+.page.home-page {
+  max-width: 1360px;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.home-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.home-pane[hidden] {
+  display: none;
+}
+
+.home-pane-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.home-pane-head h2 {
+  font-size: 18px;
+  letter-spacing: 0.02em;
+}
+
+.home-pane-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
+.home-pane-icon.is-idea {
+  color: var(--memo);
+}
+
+.home-pane-count {
+  min-width: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-pane-note {
+  font-size: 12px;
+}
+
+/* 編集モードのオン表示（本編タブと同じ見た目） */
+.btn.home-toggle-on {
+  background: var(--active-soft);
+  border-color: color-mix(in srgb, var(--active) 60%, transparent);
+  color: var(--active);
+}
+
+.btn.home-toggle-on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--active) 18%, var(--surface));
+}
+
+.btn-sm.home-new-title {
+  min-height: 34px;
+}
+
+/* ---------- スマホの切り替え ---------- */
+.home-switch {
+  position: sticky;
+  top: calc(var(--header-h) + var(--safe-top));
+  z-index: 10;
+  margin: -20px -16px 14px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: saturate(1.2) blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.segmented.home-switch-seg {
+  display: flex;
+  width: 100%;
+}
+
+.segmented.home-switch-seg button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  font-size: 14px;
+}
+
+.home-switch-count {
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  font-size: 12px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.segmented.home-switch-seg button[aria-selected='true'] .home-switch-count {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---------- タイトルカード ---------- */
+.home-title-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-title-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  transition: border-color 0.12s;
+}
+
+.home-title-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.home-title-link {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 14px 14px 12px 16px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.home-title-link:hover {
+  background: var(--surface-2);
+}
+
+.home-title-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.home-title-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.home-title-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mincho);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.home-title-chevron {
+  margin-top: 4px;
+  color: var(--text-faint);
+}
+
+.home-title-link:hover .home-title-chevron {
+  color: var(--accent);
+}
+
+.home-title-synopsis {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.home-title-synopsis.is-empty {
+  color: var(--text-faint);
+}
+
+.home-title-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.home-title-stats .badge {
+  font-variant-numeric: tabular-nums;
+}
+
+.home-title-stat-sub {
+  margin-left: 2px;
+  font-weight: 500;
+}
+
+.home-title-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.home-title-ideas {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-muted);
+}
+
+.home-title-ideas .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--memo);
+}
+
+.home-title-edit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.empty.home-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 36px 16px;
+  background: var(--surface);
+}
+
+.empty.home-empty p {
+  margin: 0;
+}
+
+/* ---------- 狭い画面 ---------- */
+@media (max-width: 899px) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 上部の切り替えに名前と件数が出ているので、各領域の見出しは読み上げ用だけにする */
+  .home-pane-head .home-pane-icon,
+  .home-pane-head .home-pane-count,
+  .home-pane-head .home-pane-note {
+    display: none;
+  }
+
+  .home-pane-head h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .home-ideas > .home-pane-head {
+    min-height: 0;
+    margin-bottom: -12px;
+  }
+}
+
+@media (max-width: 720px) {
+  .home-switch {
+    margin: -14px -12px 12px;
+    padding: 8px 12px;
+  }
+
+  .home-title-link {
+    padding: 12px 12px 10px 14px;
+  }
+
+  .home-title-name {
+    font-size: 18px;
+  }
+
+  .home-title-edit .icon-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  .home-title-edit .btn-sm {
+    min-height: 36px;
+  }
+}

@@ -1,0 +1,530 @@
+/* ===== アイデア（idea-）: 仕切り・カード・追加/編集/移動ダイアログ・すばやく追加 ===== */
+
+/* ---------- 仕切り ---------- */
+.idea-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.idea-section {
+  min-width: 0;
+  scroll-margin-top: calc(var(--header-h) + var(--safe-top) + 64px);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.idea-section.is-unassigned {
+  border-style: dashed;
+  border-left-style: solid;
+  border-left-color: var(--text-faint);
+  background: color-mix(in srgb, var(--surface-2) 60%, var(--bg));
+}
+
+.idea-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 6px;
+  min-width: 0;
+}
+
+.idea-section-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  margin: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.idea-section-title.is-toggle {
+  cursor: pointer;
+}
+
+.idea-section-title.is-toggle:hover {
+  background: var(--surface-3);
+}
+
+.idea-section-chevron {
+  color: var(--text-faint);
+  transition: transform 0.15s;
+  transform: rotate(90deg);
+}
+
+.idea-section.is-collapsed .idea-section-chevron {
+  transform: rotate(0deg);
+}
+
+.idea-section-mark {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.idea-section.is-unassigned .idea-section-mark {
+  color: var(--text-muted);
+}
+
+.idea-section-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.idea-section.is-unassigned .idea-section-name {
+  color: var(--text-muted);
+}
+
+.idea-section-count {
+  flex: none;
+  min-width: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn.idea-section-open {
+  color: var(--text-muted);
+}
+
+.btn.idea-section-open:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.btn.idea-section-add {
+  flex: none;
+  padding-inline: 8px 10px;
+  color: var(--accent);
+}
+
+.idea-section-body {
+  padding: 0 8px 8px;
+}
+
+.idea-section-body[hidden] {
+  display: none;
+}
+
+.idea-section-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.idea-section-empty:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.idea-section-empty-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.idea-section-empty-add .icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- カード ---------- */
+.idea-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.idea-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(30 30 40 / 4%);
+}
+
+.idea-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px 6px;
+  min-width: 0;
+}
+
+.idea-card-heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.idea-card-body {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+
+.idea-card-body.is-expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: none;
+  overflow: visible;
+}
+
+.idea-card-more {
+  align-self: flex-start;
+  min-height: 30px;
+  margin-left: -4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.idea-card-more:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.idea-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px 6px 4px;
+  border-top: 1px dashed var(--border);
+}
+
+.idea-card-actions .btn-sm.btn-ghost {
+  padding-inline: 8px;
+  color: var(--text-muted);
+}
+
+.idea-card-actions .btn-sm.btn-ghost:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.idea-card-actions .btn-sm .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.btn.btn-ghost.idea-card-make {
+  color: var(--accent);
+}
+
+.btn.btn-ghost.idea-card-make:hover:not(:disabled) {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.idea-card-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.icon-btn.idea-card-delete:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.idea-card-time {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 追加・編集ダイアログ ---------- */
+.idea-editor-place {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.idea-editor-place-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.idea-editor-place-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.textarea.idea-editor-body {
+  min-height: 180px;
+}
+
+.idea-editor-hint {
+  margin-right: auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ---------- 移動ダイアログ ---------- */
+.idea-move-lead {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.idea-move-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.idea-move-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.idea-move-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.idea-move-option:disabled {
+  cursor: default;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.idea-move-icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.idea-move-option.is-unassigned .idea-move-icon,
+.idea-move-option:disabled .idea-move-icon {
+  color: var(--text-muted);
+}
+
+.idea-move-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.idea-move-count {
+  flex: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.idea-move-current {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--active);
+}
+
+.idea-move-current .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- すばやく追加 ---------- */
+.idea-capture {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.textarea.idea-capture-input {
+  min-height: 64px;
+  border-color: transparent;
+  background: var(--surface-2);
+  font-size: 15px;
+}
+
+.textarea.idea-capture-input:focus {
+  background: var(--surface);
+}
+
+.idea-capture-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.idea-capture-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.idea-capture-target-label {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.select.idea-capture-select {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 36px;
+  padding-block: 5px;
+  font-size: 14px;
+}
+
+.idea-capture-fixed {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.idea-capture-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 720px) {
+  .idea-section-body {
+    padding: 0 6px 6px;
+  }
+
+  .idea-card-main {
+    padding: 10px 12px 4px;
+  }
+
+  .idea-card-actions .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* 追加先の選択を広く取る（右端の「追加」ボタンとの間の余白は作らない） */
+  .idea-capture-row > .grow {
+    display: none;
+  }
+
+  .idea-capture-target {
+    flex: 1 1 0;
+  }
+
+  .select.idea-capture-select {
+    flex: 1 1 0;
+    width: 100%;
+    font-size: 16px; /* iOS のズームを防ぐ */
+  }
+
+  .btn.idea-capture-add {
+    margin-left: auto;
+  }
+
+  .idea-section-title {
+    gap: 6px;
+    font-size: 14px;
+  }
+
+  /* 仕切りの見出しを詰めるため、追加ボタンはアイコンだけにする */
+  .btn.idea-section-add {
+    width: 38px;
+    min-height: 36px;
+    padding: 0;
+  }
+
+  .idea-section-add-label {
+    display: none;
+  }
+
+  .btn.btn-sm.idea-section-open {
+    min-height: 36px;
+    padding-inline: 8px;
+  }
+
+  /* 折り返した時は「この案でタイトルを作る」を2行目の右端に置く */
+  .btn.idea-card-make {
+    order: 10;
+    margin-left: auto;
+  }
+
+  .textarea.idea-capture-input {
+    font-size: 16px;
+  }
+}
