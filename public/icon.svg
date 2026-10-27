@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#2f3a4f"/>
+  <g transform="translate(256 262)">
+    <!-- 原稿用紙（2枚を重ねて「推敲バージョン」を表す） -->
+    <rect x="-150" y="-170" width="220" height="290" rx="18" fill="#c9d6ea" transform="rotate(-8)"/>
+    <rect x="-110" y="-160" width="220" height="290" rx="18" fill="#f6f1e4"/>
+    <g stroke="#c9b99a" stroke-width="7" stroke-linecap="round">
+      <line x1="70" y1="-125" x2="70" y2="95"/>
+      <line x1="30" y1="-125" x2="30" y2="95"/>
+      <line x1="-10" y1="-125" x2="-10" y2="40"/>
+      <line x1="-50" y1="-125" x2="-50" y2="-10"/>
+    </g>
+    <!-- ペン -->
+    <g transform="rotate(38 90 60)">
+      <rect x="70" y="-80" width="40" height="190" rx="12" fill="#e2a33c"/>
+      <path d="M70 110 L110 110 L90 165 Z" fill="#d8bf8f"/>
+      <path d="M82 142 L98 142 L90 165 Z" fill="#2f3a4f"/>
+      <rect x="70" y="-80" width="40" height="30" rx="10" fill="#b8771f"/>
+    </g>
+  </g>
+</svg>

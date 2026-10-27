@@ -1,0 +1,36 @@
+import { useEffect, useState } from 'react'
+import { usePrefs } from '../store/uiStore'
+
+export function useMediaQuery(query: string): boolean {
+  const get = () => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(query).matches : false)
+  const [matches, setMatches] = useState(get)
+  useEffect(() => {
+    if (!window.matchMedia) return
+    const mql = window.matchMedia(query)
+    const onChange = () => setMatches(mql.matches)
+    onChange()
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [query])
+  return matches
+}
+
+/** 広い画面（デスクトップ）なら左右、スマホ幅なら上下。設定で固定もできる */
+export function useSplitOrientation(): 'horizontal' | 'vertical' {
+  const pref = usePrefs((s) => s.splitOrientation)
+  const wide = useMediaQuery('(min-width: 900px)')
+  if (pref === 'horizontal') return 'horizontal'
+  if (pref === 'vertical') return 'vertical'
+  return wide ? 'horizontal' : 'vertical'
+}
+
+export function useIsMobile(): boolean {
+  return !useMediaQuery('(min-width: 721px)')
+}
+
+/** ドキュメントタイトルを設定する */
+export function useDocumentTitle(title: string | undefined): void {
+  useEffect(() => {
+    document.title = title ? `${title} — Novel Studio` : 'Novel Studio'
+  }, [title])
+}
