@@ -1,0 +1,34 @@
+/* ===== タイトル画面のアイデアタブ（tideas-） ===== */
+.tideas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tideas-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.tideas-hint {
+  flex: 1 1 320px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.btn.tideas-all {
+  margin-left: auto;
+  color: var(--accent);
+  padding-right: 6px;
+}
+
+@media (max-width: 720px) {
+  .btn-sm.tideas-all {
+    min-height: 36px;
+  }
+}

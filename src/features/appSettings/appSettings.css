@@ -1,0 +1,372 @@
+/* ===== アプリの設定（aset-） ===== */
+
+.aset-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.aset-title {
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+
+.card.aset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  min-width: 0;
+}
+
+.aset-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.aset-card-head h2 {
+  font-size: 17px;
+}
+
+.aset-card-lead {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.aset-subhead {
+  font-size: 14px;
+}
+
+/* ---------- 設定の行 ---------- */
+.aset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.aset-row-label {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.aset-row-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.aset-row-control {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segmented.aset-seg {
+  flex-wrap: wrap;
+}
+
+.segmented.aset-seg button {
+  min-height: 34px;
+}
+
+/* 文字サイズ */
+.aset-size {
+  gap: 10px;
+}
+
+.aset-range {
+  width: 200px;
+  min-height: 34px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.aset-size-mark {
+  font-family: var(--font-mincho);
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.aset-size-mark.is-small {
+  font-size: 13px;
+}
+
+.aset-size-mark.is-large {
+  font-size: 21px;
+}
+
+.aset-size-value {
+  min-width: 44px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn.aset-size-reset {
+  color: var(--accent);
+}
+
+/* プレビュー */
+.aset-preview-wrap {
+  margin: 0;
+  padding: 12px 18px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.aset-preview-caption {
+  margin-bottom: 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.aset-preview {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--editor-font, var(--font-mincho));
+  font-size: var(--editor-size, 17px);
+  line-height: 1.95;
+  letter-spacing: 0.02em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.switch.aset-switch {
+  min-height: 34px;
+}
+
+.aset-switch-state {
+  min-width: 2.5em;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ---------- データ ---------- */
+.aset-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.aset-count {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.aset-count dt {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.aset-count dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.aset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.aset-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.aset-storage {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.aset-storage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+}
+
+.aset-storage-list > div {
+  display: grid;
+  grid-template-columns: 9em minmax(0, 1fr);
+  gap: 12px;
+  font-size: 13px;
+}
+
+.aset-storage-list dt {
+  color: var(--text-muted);
+}
+
+.aset-storage-list dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.aset-ok {
+  color: var(--active);
+}
+
+.aset-warn {
+  color: var(--warn);
+}
+
+/* ---------- ホーム画面に追加 ---------- */
+.aset-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--active-soft);
+  color: var(--active);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.aset-install-cta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.aset-guides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.aset-guide {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.aset-guide.is-current {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+}
+
+.aset-guide-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.aset-guide-steps {
+  margin: 0;
+  padding-left: 1.3em;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* ---------- 危険な操作 ---------- */
+.card.aset-danger {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.aset-danger .aset-card-head h2 {
+  color: var(--danger);
+}
+
+.aset-row.aset-danger-row {
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* ---------- スマホ ---------- */
+@media (max-width: 720px) {
+  .aset-page {
+    gap: 14px;
+  }
+
+  .aset-title {
+    font-size: 20px;
+  }
+
+  .card.aset-card {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .aset-row {
+    padding-top: 12px;
+  }
+
+  .aset-row-label {
+    flex-basis: 100%;
+  }
+
+  .aset-row-control {
+    flex: 1 1 100%;
+  }
+
+  .aset-range {
+    flex: 1 1 140px;
+    width: auto;
+    min-width: 0;
+  }
+
+  .aset-preview-wrap {
+    padding: 10px 14px 12px;
+  }
+
+  .aset-storage-list > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .aset-actions .btn {
+    flex: 1 1 200px;
+  }
+
+  .aset-danger-row .btn {
+    width: 100%;
+  }
+}
