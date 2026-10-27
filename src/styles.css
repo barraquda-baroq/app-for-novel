@@ -15,6 +15,7 @@
   --on-accent: #ffffff;
   --active: #2c7a55;
   --active-soft: #e2f1e8;
+  --on-active: #ffffff;
   --danger: #b0402d;
   --danger-soft: #f8e6e2;
   --warn: #9a6a12;
@@ -57,6 +58,7 @@
     --on-accent: #10151f;
     --active: #6fcf9c;
     --active-soft: #1d3329;
+    --on-active: #0f1a14;
     --danger: #f08a77;
     --danger-soft: #3c2420;
     --warn: #e6b65a;
@@ -91,6 +93,7 @@
   --on-accent: #10151f;
   --active: #6fcf9c;
   --active-soft: #1d3329;
+  --on-active: #0f1a14;
   --danger: #f08a77;
   --danger-soft: #3c2420;
   --warn: #e6b65a;
@@ -367,7 +370,7 @@ h4 {
 .btn-active {
   background: var(--active);
   border-color: var(--active);
-  color: #fff;
+  color: var(--on-active);
 }
 
 .btn-active:hover:not(:disabled) {
@@ -1052,6 +1055,12 @@ h4 {
 @media (max-width: 720px) {
   .hide-mobile {
     display: none !important;
+  }
+
+  /* スマホではタップしやすい高さを確保する */
+  .btn-sm,
+  .segmented button {
+    min-height: 34px;
   }
 
   .page {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence } from '../db/persistence'
 import { actions } from './actions'
 import { flushNow, initStore, replaceAllData, resetStoreForTests, useApp } from './appStore'
@@ -41,5 +41,24 @@ describe('自動保存', () => {
     const replacement = emptyData()
     await replaceAllData(replacement)
     expect(Object.keys(useApp.getState().data.titles)).toHaveLength(0)
+  })
+})
+
+describe('保存のタイミング', () => {
+  it('操作が続いても、最初の変更から一定時間内に保存される', async () => {
+    const save = vi.fn(async () => {})
+    await initStore({ load: async () => emptyData(), save, replaceAll: async () => {}, close: () => {} })
+    vi.useFakeTimers()
+    try {
+      const titleId = actions.createTitle('連続編集')
+      // 300ms ごとに編集し続ける（毎回 400ms の待ちがリセットされる）
+      for (let i = 0; i < 8; i++) {
+        actions.updateTitle(titleId, { synopsis: `あらすじ${i}` })
+        await vi.advanceTimersByTimeAsync(300)
+      }
+      expect(save).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

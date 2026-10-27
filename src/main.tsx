@@ -1,10 +1,11 @@
+// 共通スタイルを先に読み込み、各画面の CSS で上書きできるようにする
+import './styles.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import { App } from './App'
 import { actions } from './store/actions'
 import { flushNow, getData, initStore, replaceAllData } from './store/appStore'
-import './styles.css'
 
 // 端末内のデータが勝手に消されないよう、永続ストレージを要求する（対応ブラウザのみ）
 void navigator.storage?.persist?.().catch(() => undefined)

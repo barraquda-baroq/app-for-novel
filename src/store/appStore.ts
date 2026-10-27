@@ -25,11 +25,14 @@ export const useApp = create<AppState>(() => ({
 }))
 
 const SAVE_DELAY_MS = 400
+/** 操作が続いても、最初の未保存の変更からこの時間以内には必ず保存する */
+const SAVE_MAX_WAIT_MS = 2000
 const CHANNEL_NAME = 'novel-studio-sync'
 
 let persistence: Persistence | null = null
 let persisted: AppData = emptyData()
 let timer: ReturnType<typeof setTimeout> | null = null
+let pendingSince: number | null = null
 let chain: Promise<void> = Promise.resolve()
 let channel: BroadcastChannel | null = null
 const tabId = Math.random().toString(36).slice(2)
@@ -65,11 +68,14 @@ export function commit(next: AppData): void {
 }
 
 function scheduleSave(): void {
+  const t = Date.now()
+  if (pendingSince === null) pendingSince = t
   if (timer) clearTimeout(timer)
+  const delay = Math.max(0, Math.min(SAVE_DELAY_MS, pendingSince + SAVE_MAX_WAIT_MS - t))
   timer = setTimeout(() => {
     timer = null
     void flushNow()
-  }, SAVE_DELAY_MS)
+  }, delay)
 }
 
 /** 保留中の変更をすぐに保存する（画面を離れる時など） */
@@ -78,6 +84,7 @@ export function flushNow(): Promise<void> {
     clearTimeout(timer)
     timer = null
   }
+  pendingSince = null
   chain = chain.then(async () => {
     if (!persistence) return
     const next = useApp.getState().data
@@ -137,6 +144,7 @@ export function useRecord<T extends TableName>(table: T, id: string | null | und
 export function resetStoreForTests(): void {
   if (timer) clearTimeout(timer)
   timer = null
+  pendingSince = null
   chain = Promise.resolve()
   persistence = null
   persisted = emptyData()
