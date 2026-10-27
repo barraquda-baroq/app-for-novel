@@ -119,6 +119,18 @@ export function titleSummary(data: AppData, titleId: ID): TitleSummary {
   return summary
 }
 
+/** タイトル配下のどれかが最後に編集された日時（原稿の編集も含む） */
+export function titleLastEdited(data: AppData, titleId: ID): number {
+  let latest = data.titles[titleId]?.updatedAt ?? 0
+  const tables = ['chapters', 'pieces', 'versions', 'memos', 'settingCategories', 'settingEntries', 'submissions'] as const
+  for (const table of tables) {
+    for (const r of Object.values(data[table]) as { titleId: ID; updatedAt: number }[]) {
+      if (r.titleId === titleId && r.updatedAt > latest) latest = r.updatedAt
+    }
+  }
+  return latest
+}
+
 // ---------- アイデア ----------
 
 export interface IdeaSection {

@@ -18,6 +18,7 @@ import {
   moveSubmissionStep,
   recordSubmissionSnapshot,
   submissionsOf,
+  titleLastEdited,
   titleSummary,
   updateCategory,
 } from './entityOps'
@@ -84,6 +85,15 @@ describe('タイトル配下', () => {
     data = addSubmission(data, t.result, '新人賞').data
     data = deleteTitle(data, t.result)
     expect(data).toEqual({ ...emptyData() })
+  })
+
+  it('最終編集日時には原稿の編集も含まれる', () => {
+    let data = emptyData()
+    const t = createTitle(data, '作品A')
+    data = addEpisode(t.data, t.result).data
+    const vid = Object.keys(data.versions)[0]
+    data = { ...data, versions: { ...data.versions, [vid]: { ...data.versions[vid], updatedAt: 9_999_999_999_999 } } }
+    expect(titleLastEdited(data, t.result)).toBe(9_999_999_999_999)
   })
 
   it('採用原稿の総文字数と、採用原稿がない話の数を集計できる', () => {

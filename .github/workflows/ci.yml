@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, 'claude/**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 型チェック
+        run: npx tsc -b --noEmit
+      - name: 単体テスト
+        run: npm test
+      - name: ビルド
+        run: npm run build
+      - name: E2E テスト用ブラウザ
+        run: npx playwright install --with-deps chromium
+      - name: E2E テスト
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results
+          path: e2e/artifacts
+          retention-days: 7
