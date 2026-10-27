@@ -1,0 +1,148 @@
+/* ===== メモ（付箋） =====
+   styles.css はこのファイルより後に読み込まれるため、.memo-page を前に付けて詳細度を上げている。 */
+.memo-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.memo-page .memo-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--memo-soft) 78%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--memo) 28%, var(--border));
+  border-radius: 4px 4px 4px 4px;
+  box-shadow:
+    0 1px 1px rgb(0 0 0 / 4%),
+    0 10px 24px -12px rgb(60 45 0 / 28%);
+  overflow: hidden;
+}
+
+/* 付箋の糊しろ */
+.memo-page .memo-sheet::before {
+  content: '';
+  display: block;
+  height: 8px;
+  background: color-mix(in srgb, var(--memo) 55%, var(--memo-soft));
+  opacity: 0.75;
+}
+
+/* 右下の折り返し */
+.memo-page .memo-sheet::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(
+    315deg,
+    var(--bg) 0 50%,
+    color-mix(in srgb, var(--memo) 30%, var(--memo-soft)) 50% 100%
+  );
+  box-shadow: -1px -1px 2px rgb(0 0 0 / 6%);
+  border-top-left-radius: 3px;
+  pointer-events: none;
+}
+
+.memo-page .memo-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px 6px;
+}
+
+.memo-page .memo-kind {
+  flex: none;
+  background: color-mix(in srgb, var(--memo) 16%, transparent);
+}
+
+.memo-page .memo-kind .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.memo-page .memo-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  min-height: 38px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.memo-page .memo-name:focus {
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.memo-page .memo-body {
+  display: block;
+  width: 100%;
+  min-height: max(320px, 58dvh);
+  padding: 8px 18px 24px;
+  border: 0;
+  outline: none;
+  resize: vertical;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 calc(1.9em - 1px),
+      color-mix(in srgb, var(--memo) 18%, transparent) calc(1.9em - 1px) 1.9em
+    )
+    0 8px / 100% 1.9em local;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.9;
+}
+
+.memo-page .memo-body::placeholder {
+  color: var(--text-faint);
+}
+
+.memo-page .memo-body:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--memo) 45%, transparent);
+}
+
+.memo-page .memo-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 40px 12px 18px;
+  border-top: 1px dashed color-mix(in srgb, var(--memo) 30%, var(--border));
+}
+
+.memo-page .memo-meta {
+  flex: 1;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.memo-page .memo-delete {
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.memo-page .memo-hint {
+  margin: 0;
+  padding: 0 4px;
+}
+
+@media (max-width: 720px) {
+  .memo-page .memo-head {
+    padding: 12px 14px 4px;
+  }
+
+  .memo-page .memo-body {
+    padding: 6px 14px 20px;
+    min-height: max(280px, 55dvh);
+  }
+
+  .memo-page .memo-foot {
+    padding: 10px 36px 12px 14px;
+  }
+}
