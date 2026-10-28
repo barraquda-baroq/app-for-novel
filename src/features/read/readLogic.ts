@@ -1,8 +1,8 @@
 // 通し読み画面の表示用の純粋な計算（範囲の決定・目次・文字数・縦中横など）。
 import type { ReadBlock } from '../../domain/readthrough'
-import { chaptersOf } from '../../domain/structure'
-import { countChars, textStats } from '../../domain/text'
-import type { AppData, ID } from '../../domain/types'
+import { activeVersion, chaptersOf } from '../../domain/structure'
+import { bodyMetrics } from '../../domain/text'
+import type { AppData, ID, Version } from '../../domain/types'
 
 export const FONT_MIN = 14
 export const FONT_MAX = 28
@@ -60,17 +60,26 @@ export interface ReadStats {
   pages: number
 }
 
-export function readStats(blocks: ReadBlock[]): ReadStats {
+/** 話の採用中の推敲バージョン（採用原稿がなければ null） */
+export function pieceVersion(data: AppData, pieceId: ID): Version | null {
+  const piece = data.pieces[pieceId]
+  return piece ? activeVersion(data, piece) : null
+}
+
+/** 採用原稿の話数・文字数・枚数。文字数は稿ごとに覚えておいた値を使う（長編でも全文を数え直さない） */
+export function readStats(data: AppData, blocks: ReadBlock[]): ReadStats {
   const s: ReadStats = { pieces: 0, missing: 0, chars: 0, pages: 0 }
   for (const b of blocks) {
     if (b.type !== 'piece') continue
     s.pieces += 1
-    if (b.body === null) {
+    const v = b.body === null ? null : pieceVersion(data, b.pieceId)
+    if (!v) {
       s.missing += 1
       continue
     }
-    s.chars += countChars(b.body)
-    s.pages += textStats(b.body).manuscriptPages
+    const m = bodyMetrics(v)
+    s.chars += m.chars
+    s.pages += m.manuscriptPages
   }
   return s
 }

@@ -1,24 +1,28 @@
 // 応募計画1件のカード。見出し行に応募順・コンテスト名・状態と、状態に応じた情報
 // （応募前: 締切・規定の判定／結果待ち: 応募日・結果発表まで／終了: 結果・改稿方針・再応募方針の抜粋）、開くと詳細を編集できる。
-import { useId, useMemo, useState } from 'react'
+import { memo, useId, useMemo, useRef, useState } from 'react'
 import {
   SUBMISSION_STATUSES,
   snapshotPieceBody,
   snapshotText,
+  submissionsOf,
   submissionStatusLabel,
   type SubmissionPatch,
 } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
-import type { LimitUnit, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
+import type { ID, LimitUnit, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
 import { actions } from '../../../store/actions'
-import { getData, useData } from '../../../store/appStore'
+import { getData } from '../../../store/appStore'
 import { attempt, notify, notifyError } from '../../../store/uiStore'
 import { downloadFile, formatDateTime, safeFileName } from '../../../ui/browser'
 import { confirmDialog } from '../../../ui/dialogs'
 import { DraftInput } from '../../../ui/DraftField'
-import { BookIcon, CameraIcon, ChevronRightIcon, DownIcon, DownloadIcon, LinkIcon, TrashIcon, UpIcon } from '../../../ui/icons'
+import { BookIcon, CameraIcon, ChevronRightIcon, DownloadIcon, LinkIcon, TrashIcon } from '../../../ui/icons'
+import { useKeepInPlace } from '../../../ui/keepInPlace'
 import { Modal } from '../../../ui/Modal'
+import { lineShape, lineShapeOf, lineShapeStyle, useCharsPerLine } from '../../read/lineEstimate'
 import { GrowTextarea } from '../settings/GrowTextarea'
+import { ArrowDownIcon, ArrowUpIcon } from './strategyIcons'
 import {
   deadlineInfo,
   followUpLines,
@@ -26,9 +30,11 @@ import {
   formatYmd,
   isBeforeSubmission,
   isHttpUrl,
+  limitBadgeText,
   limitBasis,
   limitCheck,
   limitRange,
+  limitTense,
   limitUnitOf,
   manuscriptSummary,
   parseLimit,
@@ -42,6 +48,7 @@ import {
   statusTone,
   toYmd,
   unitSuffix,
+  type CurrentManuscript,
   type LimitCheck,
 } from './strategyLogic'
 
@@ -82,26 +89,37 @@ export interface SubmissionCardProps {
   submission: Submission
   /** 応募順（1始まり） */
   position: number
-  isFirst: boolean
-  isLast: boolean
+  /** 応募先の数 */
+  count: number
   /** 締切順で表示している間は並べ替えボタンを出さない */
   canReorder: boolean
   expanded: boolean
-  onToggle: () => void
+  onToggle: (id: ID) => void
   /** 現在の採用原稿の総文字数・原稿用紙換算枚数 */
   current: CurrentAmount
+  /** 現在の採用原稿の状態（応募時の原稿との比較用。原稿が変わった時だけ作り直される） */
+  manuscript: CurrentManuscript
+  titleName: string
   today: Date
 }
 
-export function SubmissionCard({
+/** 並べ替えのボタン（見出し: デスクトップ、詳細: スマホ）。押した後も同じボタンにフォーカスを残す */
+const ORDER_FOCUS = {
+  head: { up: '[data-testid="submission-up"]', down: '[data-testid="submission-down"]' },
+  editor: { up: '[data-testid="submission-order-up"]', down: '[data-testid="submission-order-down"]' },
+}
+
+/** カードは自分の内容・開閉・原稿の状態が変わった時だけ描き直す（全体戦略などの入力では描き直さない） */
+export const SubmissionCard = memo(function SubmissionCard({
   submission: s,
   position,
-  isFirst,
-  isLast,
+  count,
   canReorder,
   expanded,
   onToggle,
   current,
+  manuscript,
+  titleName,
   today,
 }: SubmissionCardProps) {
   const tone = statusTone(s.status)
@@ -112,14 +130,30 @@ export function SubmissionCard({
   const result = phase === 'waiting' ? resultInfo(s.resultOn, today) : null
   const submittedOn = phase === 'waiting' ? formatYmd(s.submittedOn) : ''
   const basis = phase === 'finished' ? null : limitBasis(s, current)
-  const check = basis ? limitCheck(basis.amount, s.minChars, s.maxChars, unit) : null
+  const check = basis ? limitCheck(basis.amount, s.minChars, s.maxChars, unit, limitTense(s.status)) : null
   const followUps = phase === 'finished' && !expanded ? followUpLines(s) : null
   const followUpsEmpty = followUps !== null && followUps.every((f) => !f.text)
   const name = contestDisplayName(s.contestName)
   const bodyId = `sg-sub-${s.id}`
+  const isFirst = position === 1
+  const isLast = position === count
+  const { ref, move } = useKeepInPlace<HTMLLIElement>()
+
+  // 動かしたカードが押した指の下に残るようにし（続けて押すとそのまま動かし続けられる）、新しい応募順を知らせる
+  const step = (dir: -1 | 1, where: keyof typeof ORDER_FOCUS) => {
+    const same = dir < 0 ? ORDER_FOCUS[where].up : ORDER_FOCUS[where].down
+    const other = dir < 0 ? ORDER_FOCUS[where].down : ORDER_FOCUS[where].up
+    move(() => {
+      if (!attempt(() => (actions.moveSubmissionStep(s.id, dir), true))) return false
+      const n = submissionsOf(getData(), s.titleId).findIndex((x) => x.id === s.id) + 1
+      if (n > 0) notify(`応募順を変更しました（${n}番目）`)
+      return true
+    }, [same, other])
+  }
 
   return (
     <li
+      ref={ref}
       className={`sg-card is-${tone}${expanded ? ' is-open' : ''}`}
       data-testid="submission-card"
       data-submission-id={s.id}
@@ -135,7 +169,7 @@ export function SubmissionCard({
           className="sg-card-toggle"
           aria-expanded={expanded}
           aria-controls={expanded ? bodyId : undefined}
-          onClick={onToggle}
+          onClick={() => onToggle(s.id)}
           data-testid="submission-toggle"
         >
           <span className="sg-card-text">
@@ -171,7 +205,7 @@ export function SubmissionCard({
                   data-testid="submission-limit"
                   title={`規定 ${limitRange(s.minChars, s.maxChars, unit)}（${basis.source === 'snapshot' ? '応募時の原稿' : '現在の採用原稿'} ${formatAmount(basis.amount, unit)}）`}
                 >
-                  {check.text}
+                  {limitBadgeText(check, basis.source)}
                 </span>
               ) : null}
             </span>
@@ -195,35 +229,87 @@ export function SubmissionCard({
           </span>
           <ChevronRightIcon className="icon sg-card-chevron" />
         </button>
-        {canReorder ? (
-          <div className="sg-card-order">
+        {canReorder && count > 1 ? (
+          // スマホでは見出しに出さない（開閉の矢印と紛れて、知らないうちに応募順を変えてしまうため）。詳細の中で並べ替える
+          <div className="sg-card-order" role="group" aria-label="応募順の並べ替え">
             <button
               type="button"
               className="icon-btn"
               disabled={isFirst}
-              onClick={() => attempt(() => actions.moveSubmissionStep(s.id, -1))}
+              onClick={() => step(-1, 'head')}
               aria-label="応募順を上げる"
-              title="応募順を上げる"
+              title="応募順を1つ前へ"
               data-testid="submission-up"
             >
-              <UpIcon />
+              <ArrowUpIcon />
             </button>
             <button
               type="button"
               className="icon-btn"
               disabled={isLast}
-              onClick={() => attempt(() => actions.moveSubmissionStep(s.id, 1))}
+              onClick={() => step(1, 'head')}
               aria-label="応募順を下げる"
-              title="応募順を下げる"
+              title="応募順を1つ後へ"
               data-testid="submission-down"
             >
-              <DownIcon />
+              <ArrowDownIcon />
             </button>
           </div>
         ) : null}
       </div>
-      {expanded ? <SubmissionEditor id={bodyId} submission={s} current={current} onClose={onToggle} /> : null}
+      {expanded ? (
+        <SubmissionEditor
+          id={bodyId}
+          submission={s}
+          current={current}
+          manuscript={manuscript}
+          titleName={titleName}
+          onClose={() => onToggle(s.id)}
+          order={
+            canReorder && count > 1 ? { position, count, onUp: () => step(-1, 'editor'), onDown: () => step(1, 'editor') } : null
+          }
+        />
+      ) : null}
     </li>
+  )
+})
+
+/** 詳細の中の並べ替え（スマホ用）。何番目かと、矢印に言葉を添えたボタン */
+function OrderRow({ position, count, onUp, onDown }: { position: number; count: number; onUp: () => void; onDown: () => void }) {
+  return (
+    <div
+      className="sg-order-row show-mobile"
+      role="group"
+      aria-label={`応募順の並べ替え（${count}件中${position}番目）`}
+      data-testid="submission-order"
+    >
+      <span className="sg-order-label" aria-hidden="true">
+        応募順 <strong>{position}</strong>番目
+      </span>
+      <span className="grow" />
+      <button
+        type="button"
+        className="btn btn-sm"
+        disabled={position <= 1}
+        onClick={onUp}
+        aria-label="応募順を上げる"
+        data-testid="submission-order-up"
+      >
+        <ArrowUpIcon />
+        上げる
+      </button>
+      <button
+        type="button"
+        className="btn btn-sm"
+        disabled={position >= count}
+        onClick={onDown}
+        aria-label="応募順を下げる"
+        data-testid="submission-order-down"
+      >
+        <ArrowDownIcon />
+        下げる
+      </button>
+    </div>
   )
 }
 
@@ -264,12 +350,19 @@ function SubmissionEditor({
   id,
   submission: s,
   current,
+  manuscript,
+  titleName,
   onClose,
+  order,
 }: {
   id: string
   submission: Submission
   current: CurrentAmount
+  manuscript: CurrentManuscript
+  titleName: string
   onClose: () => void
+  /** 応募順の並べ替え（締切順で表示している間・1件だけの時は null） */
+  order: { position: number; count: number; onUp: () => void; onDown: () => void } | null
 }) {
   const uid = useId()
   // 数字として読めない入力をしたら、その入力欄だけを保存済みの値に戻すための番号
@@ -298,7 +391,8 @@ function SubmissionEditor({
   const recorded = limitBasis(s, current)
   const basis = recorded ?? { source: 'current' as const, amount: unit === 'pages' ? current.pages : current.chars }
   const fallback = phase !== 'before' && recorded === null
-  const check = limitCheck(basis.amount, s.minChars, s.maxChars, unit)
+  // 応募した後は「応募時に規定に足りていたか」として言う（これから直す「あと…字必要」は応募前だけ）
+  const check = limitCheck(basis.amount, s.minChars, s.maxChars, unit, limitTense(s.status))
 
   const remove = async () => {
     const latest = getData().submissions[s.id] ?? s
@@ -335,6 +429,7 @@ function SubmissionEditor({
 
   return (
     <div className="sg-editor" id={id} data-testid="submission-editor">
+      {order ? <OrderRow {...order} /> : null}
       <div className="sg-grid">
         <label className="field">
           <span>コンテスト名</span>
@@ -547,7 +642,7 @@ function SubmissionEditor({
         )}
       </div>
 
-      <SnapshotBox submission={s} />
+      <SnapshotBox submission={s} manuscript={manuscript} titleName={titleName} />
 
       <div className="sg-editor-actions">
         <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()} data-testid="submission-delete">
@@ -585,12 +680,26 @@ function DateField({
 /** 内訳を最初から開いておく件数の上限（多いときは畳んでおく） */
 const OPEN_ROWS_LIMIT = 12
 
-function SnapshotBox({ submission: s }: { submission: Submission }) {
-  const data = useData()
+/** 応募時の原稿を読む画面の本文の文字の大きさ（strategy.css の .sg-reader-body と合わせる） */
+const READER_FONT_SIZE = 16
+
+function SnapshotBox({
+  submission: s,
+  manuscript,
+  titleName,
+}: {
+  submission: Submission
+  manuscript: CurrentManuscript
+  titleName: string
+}) {
   const snap = s.snapshot
-  const view = useMemo(() => (snap ? snapshotView(data, s.titleId, snap) : null), [data, s.titleId, snap])
+  // 今の原稿の状態はタブで1回だけ作ったものを使う（応募先ごとに原稿全体をなめ直さない）
+  const view = useMemo(() => (snap ? snapshotView(snap, manuscript) : null), [snap, manuscript])
   const [reading, setReading] = useState(false)
-  const titleName = data.titles[s.titleId]?.name ?? ''
+  // 内訳は開いている時だけ描く（数百話の内訳を、応募先の数だけ常に描かない）
+  // 開閉を操作するまでは件数で決める（少なければ開いておく）
+  const [rowsToggled, setRowsToggled] = useState<boolean | null>(null)
+  const rowsOpen = rowsToggled ?? (view ? view.rows.length <= OPEN_ROWS_LIMIT : false)
   const pages = snap ? snapshotPages(snap) : null
   const changes = view ? snapshotChangeSummary(view.diff) : ''
   const recordedRows = view ? view.rows.filter((r) => r.change !== 'added').length : 0
@@ -656,35 +765,37 @@ function SnapshotBox({ submission: s }: { submission: Submission }) {
           )}
           {view.detailed ? (
             <>
-              <details className="sg-snap-details" open={view.rows.length <= OPEN_ROWS_LIMIT}>
+              <details className="sg-snap-details" open={rowsOpen} onToggle={(e) => setRowsToggled(e.currentTarget.open)}>
                 <summary data-testid="snapshot-pieces-toggle">応募した原稿の内訳（{recordedRows}件）</summary>
-                <ol className="sg-snap-list" data-testid="snapshot-pieces">
-                  {view.rows.map((r) => (
-                    <li
-                      key={r.pieceId}
-                      className={`sg-snap-row${r.change ? ` is-${r.change}` : ''}`}
-                      data-testid="snapshot-piece"
-                      data-change={r.change ?? ''}
-                    >
-                      <span className="sg-snap-name">
-                        <span className={`sg-snap-label${r.kind === 'special' ? ' is-special' : ''}`}>{r.label}</span>
-                        {r.subtitle ? <span className="sg-snap-subtitle">{r.subtitle}</span> : null}
-                      </span>
-                      <span className="sg-snap-meta">
-                        {r.change === 'added'
-                          ? '記録後に追加'
-                          : r.noActive
-                            ? '採用原稿なし'
-                            : `${r.versionName ?? '（稿名なし）'}・${formatCount(r.chars)}字`}
-                      </span>
-                      {r.change ? (
-                        <span className={`badge sg-snap-badge is-${r.change}`} data-testid="snapshot-piece-change">
-                          {SNAPSHOT_CHANGE_LABEL[r.change]}
+                {rowsOpen ? (
+                  <ol className="sg-snap-list" data-testid="snapshot-pieces">
+                    {view.rows.map((r) => (
+                      <li
+                        key={r.pieceId}
+                        className={`sg-snap-row${r.change ? ` is-${r.change}` : ''}`}
+                        data-testid="snapshot-piece"
+                        data-change={r.change ?? ''}
+                      >
+                        <span className="sg-snap-name">
+                          <span className={`sg-snap-label${r.kind === 'special' ? ' is-special' : ''}`}>{r.label}</span>
+                          {r.subtitle ? <span className="sg-snap-subtitle">{r.subtitle}</span> : null}
                         </span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ol>
+                        <span className="sg-snap-meta">
+                          {r.change === 'added'
+                            ? '記録後に追加'
+                            : r.noActive
+                              ? '採用原稿なし'
+                              : `${r.versionName ?? '（稿名なし）'}・${formatCount(r.chars)}字`}
+                        </span>
+                        {r.change ? (
+                          <span className={`badge sg-snap-badge is-${r.change}`} data-testid="snapshot-piece-change">
+                            {SNAPSHOT_CHANGE_LABEL[r.change]}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
               </details>
               <div className="sg-snapshot-actions">
                 <button type="button" className="btn btn-sm" onClick={() => setReading(true)} data-testid="snapshot-read">
@@ -733,6 +844,9 @@ function SnapshotReader({
   onClose: () => void
 }) {
   const order = snapshot.order ?? []
+  // 長編でも開いた時に全文を組まないよう、画面の外の話は見積もった大きさで場所だけ取る（通し読みと同じ）
+  const readerRef = useRef<HTMLDivElement>(null)
+  useCharsPerLine(readerRef, 0, [], READER_FONT_SIZE)
   return (
     <Modal
       title={`応募時の原稿（${contest}）`}
@@ -750,16 +864,19 @@ function SnapshotReader({
         </>
       }
     >
-      <div className="sg-reader" data-testid="snapshot-reader">
+      <div className="sg-reader" ref={readerRef} data-testid="snapshot-reader">
         <p className="small muted sg-reader-info">
           {formatDateTime(snapshot.at)} に記録・{formatCount(snapshot.charCount)}字
         </p>
         {order.map((id) => {
           const p = snapshot.pieces?.[id]
           if (!p) return null
-          const body = snapshotPieceBody(getData(), p)
+          const data = getData()
+          const body = snapshotPieceBody(data, p)
+          const record = p.textKey ? data.snapshotTexts[p.textKey] : undefined
+          const shape = record ? lineShape(record) : body ? lineShapeOf(body) : null
           return (
-            <article key={id} className="sg-reader-piece">
+            <article key={id} className="sg-reader-piece" style={shape ? lineShapeStyle(shape) : undefined}>
               <h3 className="sg-reader-heading">
                 <span>{p.label}</span>
                 {p.subtitle.trim() ? <span className="sg-reader-subtitle">{p.subtitle.trim()}</span> : null}

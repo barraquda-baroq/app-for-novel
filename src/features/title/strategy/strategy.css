@@ -417,6 +417,34 @@
   flex: none;
 }
 
+/* 詳細の中の並べ替え（スマホ） */
+.sg-order-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+
+.sg-order-label {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sg-order-label strong {
+  margin-inline: 1px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.sg-order-row .btn-sm {
+  gap: 4px;
+  padding-inline: 10px;
+}
+
 /* 詳細 */
 .sg-editor {
   display: flex;
@@ -790,6 +818,16 @@
   font-family: var(--font-ui);
 }
 
+/*
+ * 長編でも開いた時に全文を組まないよう、画面の外の話は組版せず、見積もった大きさで場所だけ取る
+ * （見積もりは通し読みと同じ: (段落の文字数 ÷ 1行の字数 ＋ 段落ごとの端数 0.5行 ＋ 空行) × 行の高さ ＋ 見出し）
+ */
+.sg-reader-piece {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto
+    calc((var(--ls-chars, 0) / var(--cpl, 40) + var(--ls-paras, 0) * 0.5 + var(--ls-blank, 0)) * 16px * 1.9 + 48px);
+}
+
 .sg-reader-body {
   font-family: var(--font-mincho);
   font-size: 16px;
@@ -839,18 +877,16 @@
     gap: 4px;
   }
 
-  /* 狭い画面では見出しの幅を確保する（開閉の矢印は省き、並べ替えボタンは縦に積む） */
-  .sg-card-chevron {
+  /*
+   * 狭い画面の見出しには開閉の矢印だけを出す。並べ替えのボタンは開閉の矢印と紛れて
+   * 知らないうちに応募順を変えてしまうので、詳細の中（.sg-order-row）に言葉を添えて出す
+   */
+  .sg-card-order {
     display: none;
   }
 
-  .sg-card-order {
-    flex-direction: column;
-  }
-
-  .sg-card-order .icon-btn {
-    width: 38px;
-    height: 36px;
+  .sg-card-toggle {
+    padding-right: 2px;
   }
 
   .sg-editor {

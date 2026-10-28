@@ -1,5 +1,5 @@
 // 戦略タブ: 書籍化に向けた全体方針、現在の採用原稿の規模、コンテストへの応募計画（応募順）と結果・改稿/再応募方針。
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { missingActiveLabel, submissionsOf } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
 import type { ID } from '../../../domain/types'
@@ -10,7 +10,7 @@ import { promptDialog } from '../../../ui/dialogs'
 import { PlusIcon, TargetIcon } from '../../../ui/icons'
 import { GrowTextarea } from '../settings/GrowTextarea'
 import { SubmissionCard } from './SubmissionCard'
-import { manuscriptSummary, sortByDeadline } from './strategyLogic'
+import { currentManuscript, manuscriptDeps, sortByDeadline, summarizeManuscript } from './strategyLogic'
 import { useToday } from './useToday'
 import './strategy.css'
 
@@ -19,7 +19,11 @@ type SortMode = 'order' | 'deadline'
 export function StrategyTab({ titleId }: { titleId: ID }) {
   const data = useData()
   const title = data.titles[titleId]
-  const summary = useMemo(() => manuscriptSummary(data, titleId), [data, titleId])
+  // 今の採用原稿の状態は、原稿（話・稿・章・並び）が変わった時だけ作り直す。
+  // 全体戦略・応募計画の入力では作り直さず、集計と各応募先の「応募時の原稿」との比較で使い回す
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const manuscript = useMemo(() => currentManuscript(data, titleId), manuscriptDeps(data, titleId))
+  const summary = useMemo(() => summarizeManuscript(manuscript), [manuscript])
   const submissions = useMemo(() => submissionsOf(data, titleId), [data, titleId])
   const [sort, setSort] = useState<SortMode>('order')
   // 開いたまま日付が変わっても、締切・結果発表までの日数を更新する
@@ -31,6 +35,7 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
   const current = useMemo(() => ({ chars: summary.chars, pages: summary.pages }), [summary])
   const [expanded, setExpanded] = useState<ReadonlySet<ID>>(() => new Set())
   const [reveal, setReveal] = useState<ID | null>(null)
+  const titleName = title?.name ?? ''
 
   useEffect(() => {
     if (!reveal) return
@@ -39,15 +44,19 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
     setReveal(null)
   }, [reveal])
 
-  if (!title) return null
+  // カードは開閉・自分の内容・原稿が変わった時だけ描き直す（関数は毎回同じものを渡す）
+  const toggle = useCallback(
+    (id: ID) =>
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      }),
+    [],
+  )
 
-  const toggle = (id: ID) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  if (!title) return null
 
   const add = async () => {
     const name = await promptDialog({
@@ -187,12 +196,13 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
                   key={s.id}
                   submission={s}
                   position={position}
-                  isFirst={position === 1}
-                  isLast={position === submissions.length}
+                  count={submissions.length}
                   canReorder={sort === 'order'}
                   expanded={expanded.has(s.id)}
-                  onToggle={() => toggle(s.id)}
+                  onToggle={toggle}
                   current={current}
+                  manuscript={manuscript}
+                  titleName={titleName}
                   today={today}
                 />
               )

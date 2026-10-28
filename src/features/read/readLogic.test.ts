@@ -66,7 +66,7 @@ describe('目次と集計', () => {
     expect(groups[1].chapterId).toBe(first)
 
     // プロローグは空の稿（0字・0枚）、第2話は採用原稿なし
-    expect(readStats(buildReadThrough(data, titleId))).toEqual({ pieces: 4, missing: 1, chars: 6, pages: 2 })
+    expect(readStats(data, buildReadThrough(data, titleId))).toEqual({ pieces: 4, missing: 1, chars: 6, pages: 2 })
     // 章で絞り込むと、その章だけ
     expect(tocGroups(buildReadThrough(data, titleId, c2.result)).map((g) => g.name)).toEqual(['第二章'])
   })

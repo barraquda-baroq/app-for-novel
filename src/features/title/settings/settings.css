@@ -190,10 +190,35 @@
 }
 
 .st-template-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   margin: -4px 0 2px;
   color: var(--text);
   line-height: 1.7;
   overflow-wrap: anywhere;
+}
+
+/* テンプレートのフィールド名は1つずつ札にする（名前の中の「・」と区切りを見分けられるように） */
+.st-template-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.st-template-key {
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.8;
 }
 
 .st-link-btn {

@@ -61,7 +61,8 @@ describe('設定タブ', () => {
     expect(getData().settingCategories[id].fieldTemplate).toEqual(['原理', '制約', '代償'])
     await waitFor(() => expect(screen.getByTestId('category-title').textContent).toBe('魔導体系'))
     expect(screen.getByTestId('location').textContent).toBe(`/t/${titleId}?tab=settings&cat=${id}`)
-    expect(screen.getByTestId('template-keys').textContent).toBe('原理・制約・代償')
+    // フィールド名は1つずつ札で出す（「立場・役割」のような名前と区切りを見分けられるように）
+    expect(screen.getAllByTestId('template-key').map((e) => e.textContent)).toEqual(['原理', '制約', '代償'])
   })
 
   it('エントリを追加すると名前の欄にフォーカスし、名前とフィールドを保存できる', async () => {
@@ -215,6 +216,27 @@ describe('設定タブ', () => {
     expect(getData().settingEntries[beni].categoryId).toBe(world)
     expect(names()).toEqual(['アオイ'])
     expect(screen.getAllByTestId('category-item')[1].textContent).toBe('世界観1')
+  })
+
+  it('エントリを続けて動かしても、動かしたエントリのボタンにフォーカスが残る（隣を動かして元に戻さない）', async () => {
+    const user = userEvent.setup()
+    const titleId = actions.createTitle('作品')
+    const chara = categoryOf(titleId, 'キャラクター')
+    const a = actions.addEntry(chara, 'A')
+    actions.addEntry(chara, 'B')
+    actions.addEntry(chara, 'C')
+    renderTab(titleId)
+    const names = () => screen.getAllByTestId('entry-name-label').map((e) => e.textContent)
+    await user.click(screen.getAllByTestId('entry-toggle')[0])
+    const card = () => screen.getAllByTestId('entry-card').find((el) => el.dataset.entryId === a)!
+    await user.click(within(card()).getByTestId('entry-down'))
+    expect(names()).toEqual(['B', 'A', 'C'])
+    expect(document.activeElement).toBe(within(card()).getByTestId('entry-down'))
+    // もう一度押すと同じエントリがさらに下へ
+    await user.keyboard('{Enter}')
+    expect(names()).toEqual(['B', 'C', 'A'])
+    // 末尾に着いて「下へ」が押せなくなったら「上へ」へ
+    expect(document.activeElement).toBe(within(card()).getByTestId('entry-up'))
   })
 
   it('項目の削除は確認し、中のエントリも消える', async () => {

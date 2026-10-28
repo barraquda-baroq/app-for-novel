@@ -7,6 +7,7 @@ import { attempt, notify } from '../../../store/uiStore'
 import { confirmDialog } from '../../../ui/dialogs'
 import { DraftInput, type DraftHandle } from '../../../ui/DraftField'
 import { ChevronRightIcon, DownIcon, PlusIcon, TrashIcon, UpIcon, XIcon } from '../../../ui/icons'
+import { useKeepInPlace } from '../../../ui/keepInPlace'
 import { ActionMenu } from './ActionMenu'
 import { commitEntry, commitFields } from './commits'
 import { GrowTextarea } from './GrowTextarea'
@@ -39,6 +40,14 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
   const summary = entrySummary(entry)
   const others = categories.filter((c) => c.id !== entry.categoryId)
   const bodyId = `st-entry-${entry.id}`
+  const { ref: cardRef, move } = useKeepInPlace<HTMLLIElement>()
+
+  // 動かしたエントリが押した指の下に残るように（続けて押すとそのまま動かし続けられ、戻ってしまわない）
+  const step = (dir: -1 | 1) => {
+    const same = dir < 0 ? '[data-testid="entry-up"]' : '[data-testid="entry-down"]'
+    const other = dir < 0 ? '[data-testid="entry-down"]' : '[data-testid="entry-up"]'
+    move(() => attempt(() => (actions.moveEntryStep(entry.id, dir), true)), [same, other])
+  }
 
   const addField = () => {
     let created: string | null = null
@@ -94,7 +103,7 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
   }
 
   return (
-    <li className={`st-entry${expanded ? ' is-open' : ''}`} data-testid="entry-card" data-entry-id={entry.id}>
+    <li ref={cardRef} className={`st-entry${expanded ? ' is-open' : ''}`} data-testid="entry-card" data-entry-id={entry.id}>
       <button
         type="button"
         className="st-entry-toggle"
@@ -183,7 +192,7 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
                 type="button"
                 className="icon-btn"
                 disabled={isFirst}
-                onClick={() => attempt(() => actions.moveEntryStep(entry.id, -1))}
+                onClick={() => step(-1)}
                 aria-label="エントリを上へ"
                 title="上へ"
                 data-testid="entry-up"
@@ -194,7 +203,7 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
                 type="button"
                 className="icon-btn"
                 disabled={isLast}
-                onClick={() => attempt(() => actions.moveEntryStep(entry.id, 1))}
+                onClick={() => step(1)}
                 aria-label="エントリを下へ"
                 title="下へ"
                 data-testid="entry-down"
@@ -256,14 +265,14 @@ function FieldRow({
   autoFocus: boolean
   onRemove: (label: string) => void
 }) {
-  const rowRef = useRef<HTMLLIElement>(null)
+  const { ref: rowRef, move: keepInPlace } = useKeepInPlace<HTMLLIElement>()
   const valueRef = useRef<DraftHandle>(null)
   const label = f.key.trim() || `フィールド${index + 1}`
 
+  // 動かした行が押した指の下に残るようにし、その行のメニューのボタンにフォーカスを戻す
+  // （続けて「上へ移動」を選んでも、入れ替わった隣の行を動かして元に戻してしまわない）
   const move = (dir: -1 | 1) => {
-    if (!commitFields(entryId, (fields) => moveField(fields, f.id, dir))) return
-    // 行が入れ替わるとメニューのボタンからフォーカスが外れることがあるので戻す
-    requestAnimationFrame(() => rowRef.current?.querySelector<HTMLElement>('.st-menu-trigger')?.focus())
+    keepInPlace(() => commitFields(entryId, (fields) => moveField(fields, f.id, dir)), ['.st-menu-trigger'])
   }
 
   return (

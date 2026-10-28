@@ -434,14 +434,35 @@
   margin-block-start: 0;
 }
 
+/*
+ * 1話分。画面の外にある間は組版しない（content-visibility: auto）。その間の大きさは見積もりで、
+ * （段落の文字数 ÷ 1行の字数 ＋ 段落ごとの端数 0.5行 ＋ 空行）× 行の高さ ＋ 見出し。
+ * --ls-* は話ごと（ReadThroughPage）、--cpl（1行の字数）は本文の枠に入る（lineEstimate.ts）。
+ * 一度描いた話は実際の大きさを覚えておく（auto）。
+ * 中身ははみ出すと切れるので、見出しのフォーカス枠のぶん内側に余白を取り、外側の間隔はその分詰める。
+ */
 .rt-piece {
-  margin-block-start: 3em;
-  scroll-margin-top: calc(var(--rt-top) + var(--rt-toolbar-h, 52px) + 16px);
+  --rt-line: 2em;
+  margin-block-start: calc(3em - 12px);
+  margin-inline: -6px;
+  padding: 6px;
+  scroll-margin-top: calc(var(--rt-top) + var(--rt-toolbar-h, 52px) + 10px);
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto
+    calc((var(--ls-chars, 0) / var(--cpl, 40) + var(--ls-paras, 0) * 0.5 + var(--ls-blank, 0)) * var(--rt-line) + 3.1em);
+}
+
+.rt-piece[data-state='missing'] {
+  contain-intrinsic-block-size: auto 7.4em;
+}
+
+.rt-piece[data-state='blank'] {
+  contain-intrinsic-block-size: auto 4.6em;
 }
 
 .rt-doc-head + .rt-piece,
 .rt-chapter + .rt-piece {
-  margin-block-start: 0;
+  margin-block-start: -6px;
 }
 
 .rt-piece-head {
@@ -494,7 +515,9 @@
   align-items: center;
   gap: 4px;
   flex: none;
-  min-block-size: 30px;
+  /* 縦書きの本文の中でも横書きのボタンにする（縦に組むと「編集」が枠からはみ出して重なる） */
+  writing-mode: horizontal-tb;
+  min-height: 30px;
   padding-block: 2px;
   padding-inline: 10px;
   border: 1px solid var(--border);
@@ -595,8 +618,9 @@
 }
 
 .rt-root.is-vertical .rt-piece {
+  --rt-line: 1.9em;
   scroll-margin: 0;
-  scroll-margin-block-start: 40px;
+  scroll-margin-block-start: 34px;
 }
 
 .rt-root.is-vertical .rt-text {
@@ -698,6 +722,121 @@
   }
 }
 
+/* ---------- 指で操作する端末 ---------- */
+@media (pointer: coarse) {
+  .rt-size-btn {
+    min-height: 34px;
+    min-width: 42px;
+  }
+
+  .rt-edit {
+    min-height: 34px;
+    padding-inline: 12px;
+  }
+}
+
+/* ---------- 高さの低い画面（スマホの横向きなど） ---------- */
+/* 読む面積を広く取る: ヘッダー・ツールバーは固定せず1行に詰め、縦書きでは目次を横に置いて1列の字数を確保する */
+@media (max-height: 500px) {
+  .rt-root:not(.is-vertical) .app-header,
+  .rt-toolbar {
+    position: relative;
+    top: auto;
+  }
+
+  .rt-piece {
+    scroll-margin-top: 12px;
+  }
+
+  .rt-toolbar-inner {
+    flex-wrap: nowrap;
+    gap: 8px 12px;
+    padding: 4px 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .rt-tools,
+  .rt-summary {
+    flex-wrap: nowrap;
+    flex: none;
+  }
+
+  .rt-summary {
+    white-space: nowrap;
+  }
+
+  .rt-scope .rt-tool-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .select.rt-scope-select {
+    max-width: 150px;
+  }
+
+  .rt-actions {
+    flex-wrap: nowrap;
+  }
+
+  .rt-actions .hide-mobile {
+    display: none;
+  }
+
+  .rt-actions .btn-sm {
+    min-width: 40px;
+    padding: 4px 10px;
+  }
+
+  .rt-main {
+    padding-top: 10px;
+  }
+
+  .rt-root.is-vertical .rt-main {
+    padding: 6px 12px calc(6px + var(--safe-bottom));
+  }
+
+  .rt-root.is-vertical .rt-layout {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .rt-root.is-vertical .rt-toc {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    width: 158px;
+    min-height: 0;
+  }
+
+  .rt-root.is-vertical .rt-toc-toggle {
+    white-space: nowrap;
+  }
+
+  .rt-root.is-vertical .rt-toc.is-open {
+    width: min(260px, 36%);
+  }
+
+  .rt-root.is-vertical .rt-toc-body {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .rt-root.is-vertical .rt-doc {
+    padding: 16px 24px;
+  }
+
+  .rt-root.is-vertical .rt-piece {
+    scroll-margin-block-start: 18px;
+  }
+}
+
 /* ---------- 印刷 ---------- */
 @media print {
   .app-header,
@@ -711,6 +850,11 @@
     padding: 0;
     border: 0;
     box-shadow: none;
+  }
+
+  /* 印刷では全部の話を組む */
+  .rt-piece {
+    content-visibility: visible;
   }
 }
 

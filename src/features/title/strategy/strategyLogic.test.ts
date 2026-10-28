@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { addSubmission, createTitle, recordSubmissionSnapshot, takeSnapshot } from '../../../domain/entityOps'
+import {
+  addSubmission,
+  compareSnapshotWithCurrent,
+  createTitle,
+  recordSubmissionSnapshot,
+  takeSnapshot,
+} from '../../../domain/entityOps'
 import {
   addEpisode,
   addSpecial,
@@ -11,15 +17,20 @@ import {
 } from '../../../domain/storyOps'
 import { emptyData, type AppData, type Submission, type SubmissionStatus } from '../../../domain/types'
 import {
+  compareSnapshots,
+  currentManuscript,
   daysUntil,
   deadlineInfo,
   followUpLines,
   formatYmd,
   isHttpUrl,
+  limitBadgeText,
   limitBasis,
   limitCheck,
   limitRange,
+  limitTense,
   limitUnitOf,
+  manuscriptDeps,
   manuscriptSummary,
   parseLimit,
   pieceCountLabel,
@@ -86,6 +97,22 @@ describe('規定（文字数・原稿用紙換算枚数）', () => {
     // 原稿用紙換算の枚数
     expect(limitCheck(68, 80, 130, 'pages')).toEqual({ state: 'short', diff: 12, text: 'あと12枚必要' })
     expect(limitCheck(131, 80, 130, 'pages')?.text).toBe('1枚超過')
+  })
+
+  it('応募した後は、応募した時の事実として言う（「あと…必要」は応募前だけ）', () => {
+    expect(limitTense('considering')).toBe('before')
+    expect(limitTense('planned')).toBe('before')
+    for (const st of ['submitted', 'reviewing', 'passed', 'won', 'rejected', 'withdrawn'] as const) {
+      expect(limitTense(st)).toBe('after')
+    }
+    const short = limitCheck(55_131, 100_000, null, 'chars', 'after')!
+    expect(short).toEqual({ state: 'short', diff: 44_869, text: '規定に44,869字不足' })
+    expect(limitBadgeText(short, 'snapshot')).toBe('応募時 規定に44,869字不足')
+    expect(limitCheck(131, 80, 130, 'pages', 'after')?.text).toBe('規定を1枚超過')
+    const ok = limitCheck(90_000, 80_000, 120_000, 'chars', 'after')!
+    expect(limitBadgeText(ok, 'snapshot')).toBe('応募時 規定内')
+    // 現在の採用原稿と比べた時は「応募時」を付けない
+    expect(limitBadgeText(limitCheck(78_800, 80_000, null)!, 'current')).toBe('あと1,200字必要')
   })
 
   it('範囲の表記', () => {
@@ -292,7 +319,7 @@ describe('応募時スナップショットとの比較', () => {
     data = recordSubmissionSnapshot(s.data, s.result)
     const snap = data.submissions[s.result].snapshot!
 
-    const first = snapshotView(data, titleId, snap)
+    const first = snapshotView(snap, currentManuscript(data, titleId))
     expect(first.detailed).toBe(true)
     expect([first.episodes, first.specials]).toEqual([3, 1])
     expect(first.rows.map((r) => [r.label, r.subtitle, r.versionName, r.chars, r.change])).toEqual([
@@ -305,7 +332,7 @@ describe('応募時スナップショットとの比較', () => {
 
     // 稿の名前を変えただけでは変わったことにしない
     data = updateVersion(data, data.pieces[pieces[1]].activeVersionId!, { name: '決定稿' })
-    expect(snapshotView(data, titleId, snap).rows.every((r) => r.change === null)).toBe(true)
+    expect(snapshotView(snap, currentManuscript(data, titleId)).rows.every((r) => r.change === null)).toBe(true)
 
     // 第1話: 別の稿に切り替え／第2話: 同じ稿のまま本文を編集／第3話を削除し、新しい第3話を追加
     const v = addVersion(data, pieces[0], { body: '新しい' })
@@ -314,7 +341,7 @@ describe('応募時スナップショットとの比較', () => {
     data = deletePiece(data, pieces[2])
     const added = addEpisode(data, titleId)
     data = added.data
-    const view = snapshotView(data, titleId, snap)
+    const view = snapshotView(snap, currentManuscript(data, titleId))
     expect(view.rows.map((r) => [r.label, r.change])).toEqual([
       ['プロローグ', null],
       ['第1話', 'switched'],
@@ -326,6 +353,34 @@ describe('応募時スナップショットとの比較', () => {
     expect(snapshotChangeSummary(view.diff)).toBe('稿の切り替え 1件、本文の編集 1件、追加 1件、削除 1件')
     // 記録時 4+5+5+3=17字 → 現在 4+3+6+0=13字
     expect(view.diff.charDelta).toBe(-4)
+    // 使い回す今の状態との比較は、domain の比較（その場で今の状態を作る）と同じ結果
+    expect(compareSnapshots(snap, currentManuscript(data, titleId))).toEqual(compareSnapshotWithCurrent(data, titleId, snap))
+  })
+
+  it('記録した時に採用原稿がなかった話は「採用原稿なし」として並べる', () => {
+    const { data: base, titleId, pieces } = setup()
+    const s = addSubmission(setActiveVersion(base, pieces[1], null), titleId, '賞')
+    const data = recordSubmissionSnapshot(s.data, s.result)
+    const view = snapshotView(data.submissions[s.result].snapshot!, currentManuscript(data, titleId))
+    expect(view.rows.map((r) => [r.label, r.noActive])).toEqual([
+      ['第1話', false],
+      ['第2話', true],
+      ['第3話', false],
+    ])
+  })
+
+  it('今の原稿の状態は、原稿（話・稿・章・並び）が変わった時だけ作り直す', () => {
+    const { data, titleId, pieces } = setup()
+    const deps = (d: AppData) => manuscriptDeps(d, titleId)
+    const same = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+    // 全体戦略・応募計画の入力では変わらない
+    const s = addSubmission(data, titleId, '賞')
+    expect(same(deps(data), deps(s.data))).toBe(true)
+    const noted = { ...data, titles: { ...data.titles, [titleId]: { ...data.titles[titleId], strategyNote: 'メモ' } } }
+    expect(same(deps(data), deps(noted))).toBe(true)
+    // 本文・採用の変更では変わる
+    expect(same(deps(data), deps(updateVersion(data, data.pieces[pieces[0]].versionIds[0], { body: '別' })))).toBe(false)
+    expect(same(deps(data), deps(setActiveVersion(data, pieces[0], null)))).toBe(false)
   })
 
   it('古い記録（話ごとの内容なし）は件数だけ。特殊ブロックは話に数えない', () => {
@@ -333,7 +388,7 @@ describe('応募時スナップショットとの比較', () => {
     const data = addSpecial(s.data, s.titleId, { chapterId: null, index: 0 }, 'プロローグ').data
     const full = takeSnapshot(data, s.titleId)
     const old = { at: full.at, charCount: full.charCount, activeVersions: full.activeVersions }
-    const view = snapshotView(data, s.titleId, old)
+    const view = snapshotView(old, currentManuscript(data, s.titleId))
     expect(view.detailed).toBe(false)
     expect(view.rows).toEqual([])
     expect([view.episodes, view.specials]).toEqual([3, 1])

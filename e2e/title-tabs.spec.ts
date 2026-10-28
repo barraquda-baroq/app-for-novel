@@ -67,7 +67,8 @@ test.describe('設定タブ', () => {
     await expect(items.nth(0)).toHaveAttribute('aria-current', 'true')
     await expect(page.getByTestId('category-title')).toHaveText('キャラクター')
     await expect(page.getByTestId('entries-empty')).toContainText('まだエントリがありません')
-    await expect(page.getByTestId('template-keys')).toHaveText('読み・年齢・性別・立場・役割・性格・外見・背景')
+    // フィールド名は1つずつ札で出す（「立場・役割」が2つのフィールドに見えないように）
+    await expect(page.getByTestId('template-key')).toHaveText(['読み', '年齢', '性別', '立場・役割', '性格', '外見', '背景'])
 
     // プリセットから追加
     await page.getByTestId('add-category').click()
@@ -133,6 +134,61 @@ test.describe('設定タブ', () => {
     expect(saved.fields.find((f) => f.key === '口癖')?.value).toBe('「まあ、なんとかなるさ」')
   })
 
+  test('エントリ・フィールドを続けて動かしても、動かした行が押した位置に残り、隣を動かして元に戻さない', async ({ page }) => {
+    await openApp(page)
+    const ids = await seed(page, ({ actions, getData }) => {
+      const titleId = actions.createTitle('灯台')
+      const chara = Object.values(getData().settingCategories).find((c) => c.titleId === titleId && c.name === 'キャラクター')!.id
+      for (const name of ['アオイ', 'ベニ', 'クロ']) actions.addEntry(chara, name)
+      return { titleId, chara }
+    })
+    await openApp(page, `/t/${ids.titleId}?tab=settings&cat=${ids.chara}`)
+    const names = () => page.getByTestId('entry-name-label').allTextContents()
+    const beni = page.locator('[data-testid="entry-card"]', { hasText: 'ベニ' })
+    await beni.getByTestId('entry-toggle').click()
+    // 並べ替えのボタン（開いたカードの下の方）を画面の中ほどに出しておく（下に余白を足して、上にも下にもスクロールできるようにする）
+    await page.locator('main').evaluate((el) => (el.style.paddingBottom = '1200px'))
+    await beni.getByTestId('entry-up').evaluate((el) => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - 400))
+    const top = () => beni.evaluate((el) => el.getBoundingClientRect().top)
+    const before = await top()
+    await beni.getByTestId('entry-up').click()
+    await expect.poll(names).toEqual(['ベニ', 'アオイ', 'クロ'])
+    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(2)
+    // 先頭に着いて「上へ」が押せなくなったら「下へ」にフォーカスが移る。続けて押すと同じエントリが動く
+    await expect(beni.getByTestId('entry-down')).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect.poll(names).toEqual(['アオイ', 'ベニ', 'クロ'])
+    await page.keyboard.press('Enter')
+    await expect.poll(names).toEqual(['アオイ', 'クロ', 'ベニ'])
+    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(2)
+
+    // フィールド（外見）を「…」メニューから2回続けて上へ。動かした行は同じ位置に残り、メニューのボタンにフォーカスが戻る
+    const keys = () => beni.getByTestId('field-key').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value))
+    await expect.poll(keys).toEqual(['読み', '年齢', '性別', '立場・役割', '性格', '外見', '背景'])
+    const row = beni.locator('[data-testid="entry-field"]', { has: page.locator('input[value="外見"]') })
+    await row.evaluate((el) => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - 300))
+    const rowTop = () => row.evaluate((el) => el.getBoundingClientRect().top)
+    const rowBefore = await rowTop()
+    for (const expected of [
+      ['読み', '年齢', '性別', '立場・役割', '外見', '性格', '背景'],
+      ['読み', '年齢', '性別', '外見', '立場・役割', '性格', '背景'],
+    ]) {
+      // 画面に見えている所をそのまま押す（locator.click() は押す前にスクロールし直すことがあるため、位置を指定して押す）
+      for (const id of ['field-menu', 'field-up']) {
+        const target = row.getByTestId(id)
+        await expect(target).toBeVisible()
+        const c = await target.evaluate((el) => {
+          const b = el.getBoundingClientRect()
+          return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+        })
+        await page.mouse.click(c.x, c.y)
+      }
+      await expect.poll(keys).toEqual(expected)
+      await expect(row.getByTestId('field-menu')).toBeFocused()
+      expect(Math.abs((await rowTop()) - rowBefore)).toBeLessThanOrEqual(2)
+    }
+  })
+
   test('エントリの並べ替え・別の項目への移動・削除、項目の名前変更・テンプレート編集・削除', async ({ page }) => {
     await openApp(page)
     const ids = await seed(page, ({ actions, getData }) => {
@@ -190,7 +246,7 @@ test.describe('設定タブ', () => {
     await page.getByTestId('template-input').fill('読み\n二つ名\n\n読み')
     await page.getByTestId('template-fill').check()
     await page.getByTestId('template-save').click()
-    await expect(page.getByTestId('template-keys')).toHaveText('読み・二つ名')
+    await expect(page.getByTestId('template-key')).toHaveText(['読み', '二つ名'])
     const aoi = page.getByTestId('entry-card').nth(0)
     await aoi.getByTestId('entry-toggle').click()
     // テンプレートから作られた既存の7項目はそのまま、足りない「二つ名」だけが末尾に増える
@@ -418,6 +474,7 @@ test.describe('戦略タブ', () => {
     await expect(cards.nth(2).getByTestId('submission-deadline')).toContainText('締切を過ぎています')
     await cards.nth(2).getByRole('button', { name: '応募順を上げる' }).click()
     await expect.poll(contestNames).toEqual(['海風小説大賞', '灯火ネット小説コン', '潮騒文庫新人賞'])
+    await expect(page.locator('.toast').filter({ hasText: '応募順を変更しました（2番目）' })).toBeVisible()
     await expect(cards.nth(1).getByTestId('submission-number')).toContainText('2')
     await expect(cards.nth(0).getByRole('button', { name: '応募順を上げる' })).toBeDisabled()
 
@@ -508,8 +565,9 @@ test.describe('戦略タブ', () => {
       pieceIds[1],
     )
     await expect(card.getByTestId('snapshot-piece').nth(2)).toContainText('本文を編集')
-    await expect(card.getByTestId('submission-limit')).toHaveText('あと100字必要')
-    await expect(card.getByTestId('submission-limit-detail')).toHaveText('応募時の原稿 2,000字 → あと100字必要')
+    // 応募した後は「あと…必要」ではなく、応募した時の事実として言う
+    await expect(card.getByTestId('submission-limit')).toHaveText('応募時 規定に100字不足')
+    await expect(card.getByTestId('submission-limit-detail')).toHaveText('応募時の原稿 2,000字 → 規定に100字不足')
 
     // 書き出しと読む
     const exported = await exportAndRead(page, card.getByTestId('snapshot-export'))
@@ -526,8 +584,8 @@ test.describe('戦略タブ', () => {
     await card.getByTestId('limit-unit-pages').click()
     await card.getByTestId('submission-min').fill('10')
     await card.getByTestId('submission-min').press('Enter')
-    await expect(card.getByTestId('submission-limit')).toHaveText('あと3枚必要')
-    await expect(card.getByTestId('submission-limit-detail')).toHaveText('応募時の原稿 約7枚 → あと3枚必要')
+    await expect(card.getByTestId('submission-limit')).toHaveText('応募時 規定に3枚不足')
+    await expect(card.getByTestId('submission-limit-detail')).toHaveText('応募時の原稿 約7枚 → 規定に3枚不足')
     // 数字でない値を入れて Tab で移っても、移った先の欄にフォーカスが残る
     await card.getByTestId('submission-min').fill('たくさん')
     await page.keyboard.press('Tab')
@@ -542,6 +600,61 @@ test.describe('戦略タブ', () => {
     const saved = await page.evaluate((id) => window.__ns.getData().submissions[id], ids.sub)
     expect(saved).toMatchObject({ status: 'submitted', limitUnit: 'pages', minChars: 10, submittedOn: ymd(new Date()) })
     expect(saved.snapshot?.pieces && Object.keys(saved.snapshot.pieces)).toHaveLength(3)
+    await expectNoHorizontalScroll(page)
+  })
+
+  test('見出しには開閉の矢印を出し、応募順の並べ替えは矢印のボタンで（スマホは詳細の中）。動かしたカードは指の下に残る', async ({
+    page,
+  }, info) => {
+    const mobile = info.project.name === 'mobile'
+    await openApp(page)
+    const { titleId } = await seedTitleWithEpisodes(page, '潮の音', ['本文'])
+    await seed(
+      page,
+      ({ actions }, id: string) => {
+        for (const name of ['A賞', 'B賞', 'C賞']) {
+          const s = actions.addSubmission(id, name)
+          actions.updateSubmission(s, { overview: '概要'.repeat(40) })
+        }
+      },
+      titleId,
+    )
+    await openApp(page, `/t/${titleId}?tab=strategy`)
+    const cards = page.getByTestId('submission-card')
+    const names = () => page.getByTestId('submission-name').allTextContents()
+    await expect(cards).toHaveCount(3)
+    // どの幅でも開閉の矢印が見える。スマホの見出しには並べ替えのボタンを出さない（開閉と紛れて応募順を変えてしまうため）
+    for (let i = 0; i < 3; i++) await expect(cards.nth(i).locator('.sg-card-chevron')).toBeVisible()
+    for (let i = 0; i < 3; i++) {
+      if (mobile) await expect(cards.nth(i).getByTestId('submission-up')).toBeHidden()
+      else await expect(cards.nth(i).getByTestId('submission-up')).toBeVisible()
+    }
+
+    // B賞を開いて、応募順を上げる
+    const b = page.locator('[data-testid="submission-card"]', { hasText: 'B賞' })
+    await b.getByTestId('submission-toggle').click()
+    await expect(b.getByTestId('submission-editor')).toBeVisible()
+    if (mobile) await expect(b.getByTestId('submission-order')).toContainText('応募順 2番目')
+    else await expect(b.getByTestId('submission-order')).toBeHidden()
+    const top = () => b.evaluate((el) => el.getBoundingClientRect().top)
+    // カードの頭を画面の中ほどに出しておく（上にも下にもスクロールできる位置）
+    await b.evaluate((el) => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - 260))
+    const before = await top()
+    await b.getByRole('button', { name: '応募順を上げる' }).click()
+    await expect.poll(names).toEqual(['B賞', 'A賞', 'C賞'])
+    await expect(page.locator('.toast').filter({ hasText: '応募順を変更しました（1番目）' })).toBeVisible()
+    // 動かしたカードは画面の同じ位置に残り、先頭に着いて「上げる」が押せなくなったら「下げる」にフォーカスが移る
+    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(2)
+    await expect(b.getByRole('button', { name: '応募順を下げる' })).toBeFocused()
+    if (mobile) await expect(b.getByTestId('submission-order')).toContainText('応募順 1番目')
+    // 続けて押すと同じカードがさらに動く（入れ替わった隣のカードを動かして元に戻してしまわない）
+    await page.keyboard.press('Enter')
+    await expect.poll(names).toEqual(['A賞', 'B賞', 'C賞'])
+    await page.keyboard.press('Enter')
+    await expect.poll(names).toEqual(['A賞', 'C賞', 'B賞'])
+    await expect(page.locator('.toast').filter({ hasText: '応募順を変更しました（3番目）' })).toBeVisible()
+    await expect(b.getByRole('button', { name: '応募順を上げる' })).toBeFocused()
+    expect(Math.abs((await top()) - before)).toBeLessThanOrEqual(2)
     await expectNoHorizontalScroll(page)
   })
 
@@ -610,10 +723,12 @@ test.describe('通し読み', () => {
     await expect(page.getByTestId('read-missing')).toHaveText('採用原稿なし 1話')
     await expect(page.getByTestId('read-total')).toHaveText('採用原稿 25字')
 
-    // 目次から移動できる
+    // 目次から移動できる。採用原稿のない話は目次でも「採用原稿なし」
     const toc = page.getByTestId('toc-link')
     if (!(await toc.first().isVisible())) await page.getByTestId('toc-toggle').click()
     await expect(toc).toHaveCount(4)
+    await expect(page.getByTestId('toc-missing')).toHaveText(['採用原稿なし'])
+    await expect(toc.nth(2).getByTestId('toc-missing')).toHaveCount(1)
     await toc.nth(3).click()
     await expect(page).toHaveURL(new RegExp(`#/t/${titleId}/read$`))
     await expect(pieces.nth(3).locator('h3')).toBeFocused()
@@ -715,6 +830,143 @@ test.describe('通し読み', () => {
     await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'vertical-rl')
     await page.getByTestId('vertical-toggle').click()
     await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'horizontal-tb')
+  })
+
+  test('長編でも画面の外の話は組版せず、目次から移動した先・表示を切り替えた後も同じ話が出る', async ({ page }, info) => {
+    test.setTimeout(90_000)
+    await openApp(page)
+    const para = '　夜明け前の港には、まだ誰の足音もなかった。彼女は振り返らずに、静かに扉を閉めた。\n「待って」\n\n'
+    const bodies = Array.from({ length: 120 }, (_, i) => `第${i + 1}話の本文。\n` + para.repeat(50))
+    const { titleId } = await seedTitleWithEpisodes(page, '長い物語', bodies)
+    await openApp(page, `/t/${titleId}/read`)
+    const pieces = page.getByTestId('read-piece')
+    await expect(pieces).toHaveCount(120)
+
+    // 画面の外の話は組まれていない（content-visibility: auto で中身を飛ばしている）
+    const rendered = (n: number) =>
+      pieces
+        .nth(n)
+        .getByTestId('read-text')
+        .evaluate((el) => el.checkVisibility({ contentVisibilityAuto: true }))
+    await expect.poll(() => rendered(0)).toBe(true)
+    expect(await rendered(100)).toBe(false)
+
+    /** 話の頭が、目次から移動した時に来るべき位置（ヘッダー・ツールバーの下／縦書きでは枠の右端）からどれだけずれているか */
+    const offset = (n: number) =>
+      pieces.nth(n).evaluate((el) => {
+        const doc = el.closest('[data-testid="read-body"]')!
+        const cs = getComputedStyle(el)
+        const r = el.getBoundingClientRect()
+        if (getComputedStyle(doc).writingMode.startsWith('vertical')) {
+          const d = doc.getBoundingClientRect()
+          return d.right - parseFloat(getComputedStyle(doc).borderRightWidth) - parseFloat(cs.scrollMarginRight) - r.right
+        }
+        return r.top - parseFloat(cs.scrollMarginTop)
+      })
+    const jump = async (n: number) => {
+      if (!(await page.getByTestId('toc-link').first().isVisible())) await page.getByTestId('toc-toggle').click()
+      await page.getByTestId('toc-link').nth(n).click()
+      await expect(pieces.nth(n).locator('h3')).toBeFocused()
+      await expect.poll(async () => Math.abs(await offset(n))).toBeLessThanOrEqual(2)
+    }
+
+    // 目次から遠くの話へ（途中の話は見積もりの大きさだが、組み上がってずれても合わせ直す）
+    await jump(100)
+    expect(await rendered(100)).toBe(true)
+    await page.waitForTimeout(300)
+    expect(Math.abs(await offset(100))).toBeLessThanOrEqual(2)
+
+    // 文字の大きさ・縦書きを切り替えても、読んでいた話が同じ所に出る
+    // （スマホの横書きではツールバーが上に固定されないので、縦書きにしてから試す）
+    if (info.project.name === 'mobile') {
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await page.getByTestId('vertical-toggle').click()
+      await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'vertical-rl')
+      await jump(100)
+      await page.getByTestId('font-larger').click()
+      await expect(page.getByTestId('read-body')).toHaveCSS('font-size', '18px')
+      await expect.poll(async () => Math.abs(await offset(100))).toBeLessThanOrEqual(2)
+    } else {
+      await page.getByTestId('font-larger').click()
+      await expect(page.getByTestId('read-body')).toHaveCSS('font-size', '18px')
+      await expect.poll(async () => Math.abs(await offset(100))).toBeLessThanOrEqual(2)
+      await page.getByTestId('vertical-toggle').click()
+      await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'vertical-rl')
+      await expect.poll(async () => Math.abs(await offset(100))).toBeLessThanOrEqual(2)
+    }
+
+    // 縦書きでも目次から移動でき、横書きに戻しても同じ話が出る
+    await jump(20)
+    await page.getByTestId('vertical-toggle').click()
+    await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'horizontal-tb')
+    await expect.poll(async () => Math.abs(await offset(20))).toBeLessThanOrEqual(2)
+    await expectNoHorizontalScroll(page)
+  })
+
+  test('縦書きでも「編集」は横書きのボタンのまま。指で操作する端末ではボタンが34px以上', async ({ page }, info) => {
+    await openApp(page)
+    const { titleId } = await seedTitleWithEpisodes(page, '縦の本', ['一話の本文。', '二話の本文。'])
+    await openApp(page, `/t/${titleId}/read`)
+    await page.getByTestId('vertical-toggle').click()
+    const edit = page.getByTestId('read-edit').first()
+    await expect(edit).toHaveCSS('writing-mode', 'horizontal-tb')
+    const box = (await edit.boundingBox())!
+    // 「編集」が1行に収まり、枠からはみ出して重ならない
+    expect(box.width).toBeGreaterThan(box.height)
+    expect(await edit.evaluate((el) => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)).toBe(true)
+    if (info.project.name === 'mobile') {
+      expect(box.height).toBeGreaterThanOrEqual(34)
+      for (const id of ['font-smaller', 'font-larger']) {
+        expect((await page.getByTestId(id).boundingBox())!.height).toBeGreaterThanOrEqual(34)
+      }
+    }
+  })
+
+  test('横向きのスマホ（高さが低い画面）では、ヘッダー・ツールバーが読む面積を取りすぎない', async ({ page }) => {
+    await page.setViewportSize({ width: 844, height: 390 })
+    await openApp(page)
+    const body = '　風が吹くたびに、古い看板がきしんだ音を立てる。\n'.repeat(80)
+    const { titleId } = await seedTitleWithEpisodes(page, '横向きで読む本', [body, body, body])
+    await openApp(page, `/t/${titleId}/read`)
+    const toolbar = page.getByTestId('read-toolbar')
+    // ツールバーは1行に詰め、ヘッダーと合わせても画面の4分の1以下
+    const chrome = async () => {
+      const header = (await page.locator('.app-header').boundingBox())!
+      const bar = (await toolbar.boundingBox())!
+      return { header, bar }
+    }
+    const { header, bar } = await chrome()
+    expect(bar.height).toBeLessThanOrEqual(56)
+    expect(header.height + bar.height).toBeLessThanOrEqual(390 / 4)
+    // 読み進めるとヘッダー・ツールバーは画面の外へ出る（上に固定しない）
+    await page.evaluate(() => window.scrollTo(0, 600))
+    await expect.poll(async () => toolbar.evaluate((el) => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(0)
+    await expect
+      .poll(async () => page.locator('.app-header').evaluate((el) => el.getBoundingClientRect().bottom))
+      .toBeLessThanOrEqual(0)
+
+    // 縦書きでは、1列に十分な字数が入る高さを本文に取る（目次は横に置く）
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.getByTestId('vertical-toggle').click()
+    const doc = page.getByTestId('read-body')
+    await expect(doc).toHaveCSS('writing-mode', 'vertical-rl')
+    const docBox = await doc.evaluate((el) => {
+      const cs = getComputedStyle(el)
+      return {
+        inner: el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
+        fontSize: parseFloat(cs.fontSize),
+      }
+    })
+    expect(docBox.inner / docBox.fontSize).toBeGreaterThanOrEqual(12)
+    const toc = (await page.getByTestId('read-toc').boundingBox())!
+    expect(toc.x + toc.width).toBeLessThanOrEqual((await doc.boundingBox())!.x)
+    // タイトルが本文の枠の下で切れない
+    const title = await page.locator('.rt-doc-title').evaluate((el) => {
+      const d = el.closest('[data-testid="read-body"]')!.getBoundingClientRect()
+      return el.getBoundingClientRect().bottom <= d.bottom
+    })
+    expect(title).toBe(true)
+    await expectNoHorizontalScroll(page)
   })
 
   test('話がないタイトルと、存在しないタイトル', async ({ page }) => {

@@ -1,10 +1,40 @@
 // 戦略タブの表示用の純粋な計算（締切・結果発表までの日数・規定の判定・応募時スナップショットとの比較など）。
-import { compareSnapshotWithCurrent, type SnapshotDiff } from '../../../domain/entityOps'
-import { activeBody, episodeNumbers, flatten, pieceLabel } from '../../../domain/structure'
-import { countChars, formatCount, textStats } from '../../../domain/text'
-import type { AppData, ID, LimitUnit, PieceKind, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
+import { takeSnapshot, type SnapshotDiff } from '../../../domain/entityOps'
+import { formatCount, textStats } from '../../../domain/text'
+import type {
+  AppData,
+  ID,
+  LimitUnit,
+  PieceKind,
+  SnapshotPiece,
+  Submission,
+  SubmissionSnapshot,
+  SubmissionStatus,
+} from '../../../domain/types'
 
 // ---------- 現在の原稿 ----------
+
+/**
+ * 今の採用原稿の状態（話ごとの採用稿・文字数・本文の指紋・読む順）。応募時の記録と同じ形。
+ * 文字数・指紋は稿ごとに覚えておいた値を使うので、長編でも全文を数え直さない。
+ * 戦略タブでは原稿が変わった時だけ1回作り、集計・各応募先の記録との比較に使い回す。
+ */
+export interface CurrentManuscript extends SubmissionSnapshot {
+  pages: number
+  order: ID[]
+  pieces: Record<ID, SnapshotPiece>
+}
+
+export function currentManuscript(data: AppData, titleId: ID): CurrentManuscript {
+  const { texts: _texts, ...snapshot } = takeSnapshot(data, titleId, false)
+  return snapshot as CurrentManuscript
+}
+
+/** 現在の原稿の作り直しが要るかどうかを決める値（本文・稿・章・並び・話数の振り方が変わった時だけ変わる） */
+export function manuscriptDeps(data: AppData, titleId: ID): unknown[] {
+  const t = data.titles[titleId]
+  return [titleId, data.pieces, data.versions, data.chapters, t?.structure, t?.chaptersEnabled, t?.numbering]
+}
 
 export interface ManuscriptSummary {
   /** 採用原稿の総文字数（空白・改行除く） */
@@ -21,31 +51,31 @@ export interface ManuscriptSummary {
   missingSpecials: number
 }
 
-export function manuscriptSummary(data: AppData, titleId: ID): ManuscriptSummary {
+export function summarizeManuscript(current: CurrentManuscript): ManuscriptSummary {
   const s: ManuscriptSummary = {
-    chars: 0,
-    pages: 0,
+    chars: current.charCount,
+    pages: current.pages,
     episodes: 0,
     specials: 0,
     missingActive: 0,
     missingEpisodes: 0,
     missingSpecials: 0,
   }
-  for (const item of flatten(data, titleId)) {
-    const p = data.pieces[item.pieceId]
+  for (const id of current.order) {
+    const p = current.pieces[id]
     if (p.kind === 'episode') s.episodes += 1
     else s.specials += 1
-    const body = activeBody(data, p)
-    if (body === null) {
+    if (p.versionId === null) {
       s.missingActive += 1
       if (p.kind === 'episode') s.missingEpisodes += 1
       else s.missingSpecials += 1
-      continue
     }
-    s.chars += countChars(body)
-    s.pages += textStats(body).manuscriptPages
   }
   return s
+}
+
+export function manuscriptSummary(data: AppData, titleId: ID): ManuscriptSummary {
+  return summarizeManuscript(currentManuscript(data, titleId))
 }
 
 /** 「3話＋特殊1」「3話」「特殊1」（特殊ブロックは話数に数えない） */
@@ -182,19 +212,49 @@ export interface LimitCheck {
   diff: number
 }
 
+/**
+ * 規定の判定の言い方。before = 応募前（これから直す: 「あと1,200字必要」）、
+ * after = 応募した後（済んだこととして: 「規定に1,200字不足」）
+ */
+export type LimitTense = 'before' | 'after'
+
 /** 原稿の量が規定（下限・上限）に収まっているか。どちらも未設定なら null */
-export function limitCheck(total: number, min: number | null, max: number | null, unit: LimitUnit = 'chars'): LimitCheck | null {
+export function limitCheck(
+  total: number,
+  min: number | null,
+  max: number | null,
+  unit: LimitUnit = 'chars',
+  tense: LimitTense = 'before',
+): LimitCheck | null {
   if (min === null && max === null) return null
   const u = UNIT_SUFFIX[unit]
   if (min !== null && total < min) {
     const diff = min - total
-    return { state: 'short', diff, text: `あと${formatCount(diff)}${u}必要` }
+    return {
+      state: 'short',
+      diff,
+      text: tense === 'before' ? `あと${formatCount(diff)}${u}必要` : `規定に${formatCount(diff)}${u}不足`,
+    }
   }
   if (max !== null && total > max) {
     const diff = total - max
-    return { state: 'over', diff, text: `${formatCount(diff)}${u}超過` }
+    return {
+      state: 'over',
+      diff,
+      text: tense === 'before' ? `${formatCount(diff)}${u}超過` : `規定を${formatCount(diff)}${u}超過`,
+    }
   }
   return { state: 'ok', diff: 0, text: '規定内' }
+}
+
+/** 応募前は「これから」、応募した後（結果待ち・終了）は「応募した時の事実」として言う */
+export function limitTense(status: SubmissionStatus): LimitTense {
+  return statusPhase(status) === 'before' ? 'before' : 'after'
+}
+
+/** 見出しの規定の札。応募時に記録した原稿と比べた時は「応募時 規定内」「応募時 規定に1,200字不足」 */
+export function limitBadgeText(check: LimitCheck, source: LimitBasis['source']): string {
+  return source === 'snapshot' ? `応募時 ${check.text}` : check.text
 }
 
 /** 「80,000〜120,000字」「80枚以上」「130枚以内」 */
@@ -319,9 +379,37 @@ export interface SnapshotView {
   specials: number
 }
 
-/** 応募時の記録を、今の採用原稿と比べながら表示用に並べる */
-export function snapshotView(data: AppData, titleId: ID, snapshot: SubmissionSnapshot): SnapshotView {
-  const diff = compareSnapshotWithCurrent(data, titleId, snapshot)
+/**
+ * 記録した時点と今の採用原稿を比べる（本文の指紋で比べるので、稿の名前やメモの変更は数えない）。
+ * domain の compareSnapshotWithCurrent と同じ判定で、今の状態（current）を作り直さずに使い回せる。
+ */
+export function compareSnapshots(snapshot: SubmissionSnapshot, current: CurrentManuscript): SnapshotDiff {
+  const diff: SnapshotDiff = {
+    switched: [],
+    edited: [],
+    added: [],
+    removed: [],
+    charDelta: current.charCount - snapshot.charCount,
+  }
+  for (const id of Object.keys(snapshot.activeVersions)) {
+    if (!(id in current.activeVersions)) {
+      diff.removed.push(id)
+      continue
+    }
+    if (current.activeVersions[id] !== snapshot.activeVersions[id]) {
+      diff.switched.push(id)
+      continue
+    }
+    const before = snapshot.pieces?.[id]
+    if (before && before.hash !== current.pieces[id].hash) diff.edited.push(id)
+  }
+  for (const id of Object.keys(current.activeVersions)) if (!(id in snapshot.activeVersions)) diff.added.push(id)
+  return diff
+}
+
+/** 応募時の記録を、今の採用原稿（currentManuscript）と比べながら表示用に並べる */
+export function snapshotView(snapshot: SubmissionSnapshot, current: CurrentManuscript): SnapshotView {
+  const diff = compareSnapshots(snapshot, current)
   const change = new Map<ID, SnapshotChange>()
   for (const k of ['switched', 'edited', 'added', 'removed'] as const) for (const id of diff[k]) change.set(id, k)
 
@@ -342,30 +430,28 @@ export function snapshotView(data: AppData, titleId: ID, snapshot: SubmissionSna
         subtitle: p.subtitle.trim(),
         versionName: p.versionName,
         chars: p.chars,
-        noActive: p.body === null,
+        // 本文の控えは別の表にあるので、採用原稿の有無は記録した稿で見る
+        noActive: p.versionId === null,
         change: change.get(id) ?? null,
       })
     }
-    const numbers = episodeNumbers(data, titleId)
     for (const id of diff.added) {
-      const piece = data.pieces[id]
-      if (!piece) continue
-      const body = activeBody(data, piece)
+      const p = current.pieces[id]
       rows.push({
         pieceId: id,
-        kind: piece.kind,
-        label: pieceLabel(data, piece, numbers),
-        subtitle: piece.subtitle.trim(),
+        kind: p.kind,
+        label: p.label,
+        subtitle: p.subtitle.trim(),
         versionName: null,
-        chars: body ? countChars(body) : 0,
-        noActive: body === null,
+        chars: p.chars,
+        noActive: p.versionId === null,
         change: 'added',
       })
     }
   } else {
     // 古い記録は話ごとの内容がないので、今もある話の種類から数える（消えた話は第n話として数える）
     for (const id of Object.keys(snapshot.activeVersions)) {
-      if (data.pieces[id]?.kind === 'special') specials += 1
+      if (current.pieces[id]?.kind === 'special') specials += 1
       else episodes += 1
     }
   }

@@ -203,12 +203,17 @@ export function SettingsTab({ titleId }: { titleId: ID }) {
                 />
               </div>
 
-              <p className="st-template-line small">
+              <div className="st-template-line small">
                 <span className="muted">テンプレート：</span>
                 {selected.fieldTemplate.length > 0 ? (
-                  <span className="st-template-keys" data-testid="template-keys">
-                    {selected.fieldTemplate.join('・')}
-                  </span>
+                  // 「立場・役割」のように名前に「・」を含むフィールドもあるので、区切り文字でつながず1つずつ札にする
+                  <ul className="st-template-keys" aria-label="テンプレートのフィールド" data-testid="template-keys">
+                    {selected.fieldTemplate.map((k) => (
+                      <li key={k} className="st-template-key" data-testid="template-key">
+                        {k}
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
                   <span className="faint">なし（自由記述のみ）</span>
                 )}
@@ -220,7 +225,7 @@ export function SettingsTab({ titleId }: { titleId: ID }) {
                 >
                   編集
                 </button>
-              </p>
+              </div>
 
               {entries.length === 0 ? (
                 <div className="empty st-entries-empty" data-testid="entries-empty">

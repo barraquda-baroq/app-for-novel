@@ -303,8 +303,8 @@ describe('戦略タブ（状態ごとの見出し・規定）', () => {
     expect(within(c2).queryByTestId('submission-deadline')).toBeNull()
     expect(within(c2).getByTestId('submission-submitted-on').textContent).toBe('応募日 2026/09/30')
     expect(within(c2).getByTestId('submission-result-on').textContent).toBe('結果発表まであと12日（2026/11/08）')
-    // 応募時の原稿（1,000字）と比べる
-    expect(within(c2).getByTestId('submission-limit').textContent).toBe('あと200字必要')
+    // 応募時の原稿（1,000字）と比べ、応募した時の事実として言う（「あと…必要」は応募前だけ）
+    expect(within(c2).getByTestId('submission-limit').textContent).toBe('応募時 規定に200字不足')
     expect(within(c2).getByTestId('submission-limit').getAttribute('title')).toBe('規定 1,200字以上（応募時の原稿 1,000字）')
 
     // 応募後で記録がなければ、見出しでは規定を判定しない
@@ -329,10 +329,10 @@ describe('戦略タブ（状態ごとの見出し・規定）', () => {
     renderTab(titleId)
     await user.click(screen.getByTestId('submission-toggle'))
     expect(screen.getByTestId('submission-limit-detail').textContent).toBe(
-      '現在の採用原稿 1,000字 → あと200字必要（応募時の原稿が未記録のため、現在の採用原稿と比べています）',
+      '現在の採用原稿 1,000字 → 規定に200字不足（応募時の原稿が未記録のため、現在の採用原稿と比べています）',
     )
     await user.click(screen.getByTestId('snapshot-record'))
-    expect(screen.getByTestId('submission-limit-detail').textContent).toBe('応募時の原稿 1,000字 → あと200字必要')
+    expect(screen.getByTestId('submission-limit-detail').textContent).toBe('応募時の原稿 1,000字 → 規定に200字不足')
   })
 
   it('規定を原稿用紙換算の枚数で入れられる', async () => {
