@@ -174,6 +174,13 @@ const SEND_ORDER: TableName[] = [
   'memos',
   'ideas',
   'submissions',
+  // 2.3: タイトルの子（タイトルより先に送る）
+  'proofSuggestions',
+  'proofBatches',
+  'revisionIdeas',
+  'strategyNotes',
+  'critiquePrompts',
+  'critiqueResults',
   'settingCategories',
   'pieces',
   'chapters',
@@ -196,6 +203,13 @@ const PARENT_OF: Partial<Record<TableName, { table: TableName; field: string }[]
   settingCategories: [{ table: 'titles', field: 'titleId' }],
   settingEntries: [{ table: 'settingCategories', field: 'categoryId' }],
   submissions: [{ table: 'titles', field: 'titleId' }],
+  // 2.3: タイトルの子。共通の批評プロンプト（titleId = null）は親を持たない。話・稿・応募計画への参照は確かめない（切れても残す）
+  proofSuggestions: [{ table: 'titles', field: 'titleId' }],
+  proofBatches: [{ table: 'titles', field: 'titleId' }],
+  revisionIdeas: [{ table: 'titles', field: 'titleId' }],
+  strategyNotes: [{ table: 'titles', field: 'titleId' }],
+  critiquePrompts: [{ table: 'titles', field: 'titleId' }],
+  critiqueResults: [{ table: 'titles', field: 'titleId' }],
 }
 
 /** 親が消えたら、子も消す（子にしか無い文章はゴミ箱に控える） */
@@ -208,6 +222,13 @@ const CHILDREN: Partial<Record<TableName, { table: TableName; field: string }[]>
     { table: 'settingCategories', field: 'titleId' },
     { table: 'settingEntries', field: 'titleId' },
     { table: 'submissions', field: 'titleId' },
+    // 2.3
+    { table: 'proofSuggestions', field: 'titleId' },
+    { table: 'proofBatches', field: 'titleId' },
+    { table: 'revisionIdeas', field: 'titleId' },
+    { table: 'strategyNotes', field: 'titleId' },
+    { table: 'critiquePrompts', field: 'titleId' },
+    { table: 'critiqueResults', field: 'titleId' },
   ],
   pieces: [
     { table: 'versions', field: 'pieceId' },
@@ -235,7 +256,14 @@ class NovelDB extends Dexie {
     // v2: 応募時の原稿の本文を内容ごとにまとめて保存する表を追加
     this.version(2).stores(Object.fromEntries([...v1Tables, 'snapshotTexts'].map((t) => [t, 'id'])))
     // v3（2.x）: ゴミ箱の表と、同期用の送信待ち（_outbox）・状態（_meta）を追加
+    const v3Tables = [...v1Tables, 'snapshotTexts', 'trashEntries', 'trashRecords']
     this.version(3).stores({
+      ...Object.fromEntries(v3Tables.map((t) => [t, 'id'])),
+      _outbox: 'k',
+      _meta: 'key',
+    })
+    // v4（2.3）: 推敲案・改稿案・戦略メモ・作品批評の表を追加
+    this.version(4).stores({
       ...Object.fromEntries(TABLE_NAMES.map((t) => [t, 'id'])),
       _outbox: 'k',
       _meta: 'key',

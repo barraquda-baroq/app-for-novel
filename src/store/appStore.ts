@@ -537,6 +537,13 @@ const JOURNAL_DROP_ORDER: TableName[] = [
   'trashRecords',
   'trashEntries',
   'snapshotTexts',
+  // 2.3: Claude の記録（作り直せる）を先に、利用者が書く改稿案は後に
+  'proofBatches',
+  'proofSuggestions',
+  'critiqueResults',
+  'strategyNotes',
+  'critiquePrompts',
+  'revisionIdeas',
   'submissions',
   'settingCategories',
   'settingEntries',

@@ -984,7 +984,7 @@ test.describe('アプリの設定', () => {
       }
     }
     expect(json.app).toBe('novel-studio')
-    expect(json.schemaVersion).toBe(1)
+    expect(json.schemaVersion).toBe(2)
     expect(Object.values(json.data.titles).map((t) => t.name)).toEqual(['バックアップの星'])
     expect(Object.values(json.data.versions).map((v) => v.body)).toEqual(['大切な本文'])
     expect(Object.values(json.data.ideas).map((i) => i.heading)).toEqual(['控えの案'])
@@ -1018,7 +1018,7 @@ test.describe('アプリの設定', () => {
     await button.click()
     const download = await downloadPromise
     const text = await readFile(await download.path(), 'utf8')
-    expect(text.startsWith('{"app":"novel-studio","schemaVersion":1,"exportedAt":"')).toBe(true)
+    expect(text.startsWith('{"app":"novel-studio","schemaVersion":2,"exportedAt":"')).toBe(true)
     expect(text).not.toContain('\n')
     const json = JSON.parse(text) as { data: { versions: Record<string, { body: string }> } }
     expect(

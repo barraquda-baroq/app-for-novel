@@ -52,15 +52,26 @@ export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
   settingCategories: { fieldTemplate: asString },
   settingEntries: { fields: byId },
   trashEntries: { recordIds: asString },
+  // 2.3: 改稿案の関係する話、戦略メモのコンテストの候補（［応募計画にする］を2台で別々に押しても両方残る）
+  revisionIdeas: { pieceIds: asString },
+  strategyNotes: { contests: byId },
 }
 
-/** 片方で削除・片方で編集された時に、編集された内容をゴミ箱に残す表（文章を持つもの） */
+/**
+ * 片方で削除・片方で編集された時に、編集された内容をゴミ箱に残す表（文章を持つもの）。
+ * 2.3 の推敲案（proofSuggestions）・実行の記録（proofBatches）は短い項目だけなので入れない（削除を優先し、控えない）。
+ */
 export const TEXT_TABLES: ReadonlySet<TableName> = new Set<TableName>([
   'versions',
   'memos',
   'ideas',
   'settingEntries',
   'submissions',
+  // 2.3
+  'revisionIdeas',
+  'strategyNotes',
+  'critiquePrompts',
+  'critiqueResults',
 ])
 
 const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
@@ -137,6 +148,11 @@ export const TEXT_FIELDS: Partial<Record<TableName, readonly string[]>> = {
   titles: ['synopsis', 'strategyNote'],
   chapters: ['note'],
   versions: ['note'],
+  // 2.3（フラグ・チェックなどの短い項目は項目ごとに合わせ、両方で変えていたらこの端末を優先）
+  revisionIdeas: ['body'],
+  strategyNotes: ['body'],
+  critiquePrompts: ['body'],
+  critiqueResults: ['resultMarkdown', 'note'],
 }
 
 export function joinConflictText(theirs: string, mine: string, device: string): string {

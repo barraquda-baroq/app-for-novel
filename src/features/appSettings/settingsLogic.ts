@@ -22,6 +22,12 @@ export const TABLE_LABELS: Record<TableName, string> = {
   settingEntries: '設定のエントリ',
   submissions: '応募計画',
   snapshotTexts: '応募時の原稿の控え',
+  proofSuggestions: '推敲案',
+  proofBatches: '推敲案の実行の記録',
+  revisionIdeas: '改稿案',
+  strategyNotes: '戦略メモ',
+  critiquePrompts: '批評プロンプト',
+  critiqueResults: '批評結果',
   trashEntries: 'ゴミ箱',
   trashRecords: 'ゴミ箱の中身',
 }
@@ -29,6 +35,7 @@ export const TABLE_LABELS: Record<TableName, string> = {
 /**
  * 表示の順番（主要なものから）。snapshotTexts（応募時の原稿の控え）は応募計画の一部として内部で持つ表なので、
  * 件数の一覧・確認文には出さない（同じ本文は1つにまとめて保存するため、件数を見せても意味が伝わらない）。
+ * proofBatches（推敲案の実行の記録）も推敲案の一部なので出さない。
  */
 const DISPLAY_ORDER: TableName[] = [
   'titles',
@@ -40,7 +47,15 @@ const DISPLAY_ORDER: TableName[] = [
   'settingCategories',
   'settingEntries',
   'submissions',
+  'revisionIdeas',
+  'proofSuggestions',
+  'strategyNotes',
+  'critiquePrompts',
+  'critiqueResults',
 ]
+
+/** 2.3（Claude 連携）の表は、1件以上ある時だけ出す（使っていない人の一覧・確認文を長くしない） */
+const SHOWN_IF_ANY = new Set<TableName>(['revisionIdeas', 'proofSuggestions', 'strategyNotes', 'critiquePrompts', 'critiqueResults'])
 
 export interface TableCount {
   table: TableName
@@ -49,11 +64,13 @@ export interface TableCount {
 }
 
 export function dataCounts(data: AppData): TableCount[] {
-  return DISPLAY_ORDER.filter((t) => TABLE_NAMES.includes(t)).map((table) => ({
-    table,
-    label: TABLE_LABELS[table],
-    count: Object.keys(data[table] ?? {}).length,
-  }))
+  return DISPLAY_ORDER.filter((t) => TABLE_NAMES.includes(t))
+    .map((table) => ({
+      table,
+      label: TABLE_LABELS[table],
+      count: Object.keys(data[table] ?? {}).length,
+    }))
+    .filter((c) => c.count > 0 || !SHOWN_IF_ANY.has(c.table))
 }
 
 /** 「タイトル 2件、話 5件、…」 */

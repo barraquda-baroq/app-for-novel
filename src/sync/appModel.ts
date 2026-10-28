@@ -6,10 +6,13 @@
 // 持ち主ごとの文書にする（データ users/{uid}/records と一緒に、持ち主を変えた時は新しい持ち主の版から始まる）。
 import { doc, onSnapshot, runTransaction, serverTimestamp, type Firestore, type Unsubscribe } from 'firebase/firestore'
 
-/** このアプリが書くデータの形の版。2 = 2.2（幕）。データの形を変えたら上げる */
-export const DATA_MODEL = 2
+/**
+ * このアプリが書くデータの形の版。2 = 2.2（幕）、3 = 2.3（推敲案・改稿案・戦略メモ・作品批評）。データの形を変えたら上げる。
+ * Claude 用のコネクタも同じ値（CONNECTOR_MODEL）を持ち、違えば書き込まない（読むのは続ける）
+ */
+export const DATA_MODEL = 3
 /** 記録に添えるアプリの版（古い版のアプリの画面で「どの版に更新すればよいか」を出すため） */
-export const APP_VERSION = '2.2'
+export const APP_VERSION = '2.3'
 
 export interface AppModel {
   model: number

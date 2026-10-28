@@ -3,14 +3,19 @@
 // - 片方で削除・片方で編集されていた → 削除を優先し、編集された内容をゴミ箱に残す（reason: 'conflict'。
 //   戻し方は src/domain/trash.ts。同じ id が残っていれば新しい id の複製として戻る）
 import { actLabel, pieceFullLabel } from '../domain/structure'
+import { trashLabel } from '../domain/trash'
 import type {
   AppData,
   ContentTableName,
+  CritiquePrompt,
+  CritiqueResult,
   ID,
   Idea,
   Memo,
   Piece,
+  RevisionIdea,
   SettingEntry,
+  StrategyNote,
   Submission,
   TrashEntry,
   TrashKind,
@@ -162,6 +167,11 @@ const KIND_OF: Partial<Record<ContentTableName, TrashKind>> = {
   ideas: 'idea',
   settingEntries: 'settingEntry',
   submissions: 'submission',
+  // 2.3（文章を持つもの。推敲案は控えない）
+  revisionIdeas: 'revisionIdea',
+  strategyNotes: 'strategyNote',
+  critiquePrompts: 'critiquePrompt',
+  critiqueResults: 'critiqueResult',
 }
 
 /**
@@ -244,6 +254,26 @@ export function conflictTrash(
       const text = data.snapshotTexts[key]
       if (text) extras.push({ table: 'snapshotTexts', record: text as unknown as Rec })
     }
+  } else if (table === 'revisionIdeas') {
+    const r = record as unknown as RevisionIdea
+    titleId = r.titleId
+    label = trashLabel.revisionIdea(r)
+    origin.index = r.order
+  } else if (table === 'strategyNotes') {
+    const n = record as unknown as StrategyNote
+    titleId = n.titleId
+    label = trashLabel.strategyNote(n)
+    origin.index = -1
+  } else if (table === 'critiquePrompts') {
+    const p = record as unknown as CritiquePrompt
+    titleId = p.titleId
+    label = trashLabel.critiquePrompt(p)
+    origin.index = p.order
+  } else if (table === 'critiqueResults') {
+    const r = record as unknown as CritiqueResult
+    titleId = r.titleId
+    label = trashLabel.critiqueResult(r)
+    origin.index = -1
   }
   origin.titleId = table === 'titles' ? null : titleId
   const entryId = opts.newId()

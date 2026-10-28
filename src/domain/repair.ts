@@ -6,15 +6,23 @@ import { TRASH_KIND_LABELS, isContentTable, isTrashKind } from './trash'
 import {
   type AppData,
   type Chapter,
+  type ClaudeSource,
+  type ClaudeTableName,
+  type CritiqueManuscript,
+  type CritiqueScope,
   type ID,
   type Idea,
   type Memo,
   type NodeRef,
   type Piece,
+  type ProofAnchor,
+  type ProofCategory,
+  type ProofCovered,
   type SettingCategory,
   type SettingEntry,
   type SettingField,
   type SnapshotPiece,
+  type StrategyContest,
   type Submission,
   type SubmissionSnapshot,
   type SubmissionStatus,
@@ -118,6 +126,13 @@ export function repairData(input: AppData): RepairResult {
     settingEntries: { ...input.settingEntries },
     submissions: { ...input.submissions },
     snapshotTexts: { ...(input.snapshotTexts ?? {}) },
+    // 2.3 の表（古いバックアップ・古い形のデータには無い）
+    proofSuggestions: { ...(input.proofSuggestions ?? {}) },
+    proofBatches: { ...(input.proofBatches ?? {}) },
+    revisionIdeas: { ...(input.revisionIdeas ?? {}) },
+    strategyNotes: { ...(input.strategyNotes ?? {}) },
+    critiquePrompts: { ...(input.critiquePrompts ?? {}) },
+    critiqueResults: { ...(input.critiqueResults ?? {}) },
     trashEntries: { ...(input.trashEntries ?? {}) },
     trashRecords: { ...(input.trashRecords ?? {}) },
   }
@@ -450,9 +465,199 @@ export function repairData(input: AppData): RepairResult {
     }
   }
 
+  repairClaudeRecords(d, fix)
+
   repairTrash(d, fix)
 
   return { data: fixes.length ? d : input, fixes }
+}
+
+// ---------- 2.3: 推敲案・改稿案・戦略メモ・作品批評 ----------
+// 表示用に、足りない項目を補う（知らない項目はそのまま残す。新しい版のコネクタ・アプリが書いたものかもしれない）。
+// タイトルが無いもの（共通の批評プロンプト以外）は見えなくする。話・稿・応募計画への参照は切れていても残す（画面で扱う）。
+
+const bool = (v: unknown): boolean => v === true
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+const SOURCES = ['claude', 'paste', 'manual'] as const
+const source = (v: unknown): ClaudeSource => (SOURCES.includes(v as ClaudeSource) ? (v as ClaudeSource) : 'manual')
+
+/** 共通の項目（v・source・日時） */
+function claudeBase<T extends { v?: unknown; source?: unknown; createdAt?: unknown; updatedAt?: unknown }>(r: T) {
+  return { v: num(r.v, 1), source: source(r.source), createdAt: num(r.createdAt), updatedAt: num(r.updatedAt) }
+}
+
+/** 名前の付いた項目を、文字列でなければ取り除く（無いままでよい項目） */
+function optionalString<T extends object>(rec: T, key: string): T {
+  const v = (rec as Record<string, unknown>)[key]
+  if (v === undefined || typeof v === 'string') return rec
+  const out = { ...rec } as Record<string, unknown>
+  delete out[key]
+  return out as T
+}
+
+function normalizeAnchor(raw: unknown): ProofAnchor | null {
+  if (!isObj(raw)) return null
+  return {
+    ...raw,
+    offset: num(raw.offset),
+    length: num(raw.length),
+    paragraph: num(raw.paragraph, 1),
+    before: str(raw.before),
+    after: str(raw.after),
+    bodyHash: str(raw.bodyHash),
+  } as ProofAnchor
+}
+
+function normalizeContest(raw: unknown, i: number): StrategyContest | null {
+  if (!isObj(raw)) return null
+  return {
+    ...raw,
+    id: str(raw.id, `k${i}`),
+    name: str(raw.name),
+    organizer: str(raw.organizer),
+    url: str(raw.url),
+    deadline: str(raw.deadline),
+    minChars: numOrNull(raw.minChars),
+    maxChars: numOrNull(raw.maxChars),
+    limitUnit: raw.limitUnit === 'pages' ? 'pages' : 'chars',
+    fit: str(raw.fit),
+    plan: str(raw.plan),
+    submissionId: strOrNull(raw.submissionId),
+  } as StrategyContest
+}
+
+function normalizeScope(raw: unknown): CritiqueScope {
+  if (isObj(raw) && raw.kind === 'range' && typeof raw.fromPieceId === 'string' && typeof raw.toPieceId === 'string') {
+    return { ...raw, kind: 'range', fromPieceId: raw.fromPieceId, toPieceId: raw.toPieceId, label: str(raw.label) }
+  }
+  return isObj(raw) && raw.kind === 'whole' ? (raw as CritiqueScope) : { kind: 'whole' }
+}
+
+function normalizeManuscript(raw: unknown): CritiqueManuscript | null {
+  if (!isObj(raw)) return null
+  return { ...raw, chars: num(raw.chars), pieces: num(raw.pieces), hash: str(raw.hash), at: num(raw.at) } as CritiqueManuscript
+}
+
+function repairClaudeRecords(d: AppData, fix: (m: string) => void): void {
+  /** タイトルの無いレコードを見えなくし、残りを normalize で整える */
+  const each = <T extends ClaudeTableName>(
+    table: T,
+    label: string,
+    normalize: (r: AppData[T][string]) => AppData[T][string],
+    shared = false,
+  ) => {
+    const rows = d[table] as Record<ID, AppData[T][string]>
+    for (const r of Object.values(rows)) {
+      const titleId = (r as { titleId?: unknown }).titleId
+      const keep = (shared && titleId === null) || (typeof titleId === 'string' && Boolean(d.titles[titleId]))
+      if (!keep) {
+        delete rows[r.id]
+        fix(`タイトルのない${label}を表示から外しました`)
+        continue
+      }
+      const next = normalize(r)
+      if (!same(next, r)) {
+        rows[r.id] = next
+        fix(`${label}の項目を補いました`)
+      }
+    }
+  }
+
+  each('proofSuggestions', '推敲案', (r) =>
+    optionalString(
+      {
+        ...r,
+        ...claudeBase(r),
+        pieceId: str(r.pieceId),
+        parentId: strOrNull(r.parentId),
+        versionId: strOrNull(r.versionId),
+        pieceLabel: str(r.pieceLabel),
+        anchor: normalizeAnchor(r.anchor),
+        // 知らない種類（新しいコネクタが書いたもの）も、そのまま残す
+        category: str(r.category, 'other') as ProofCategory,
+        categoryLabel: str(r.categoryLabel),
+        excerpt: str(r.excerpt),
+        suggestion: str(r.suggestion),
+        reason: str(r.reason),
+        flagged: bool(r.flagged),
+        done: bool(r.done),
+        doneAt: numOrNull(r.doneAt),
+        runId: strOrNull(r.runId),
+        batchId: strOrNull(r.batchId),
+      },
+      'model',
+    ),
+  )
+  each('proofBatches', '推敲案の実行の記録', (r) =>
+    optionalString(
+      {
+        ...r,
+        ...claudeBase(r),
+        runId: str(r.runId),
+        runLabel: str(r.runLabel),
+        runDate: str(r.runDate),
+        categories: strList(r.categories) as ProofCategory[],
+        covered: (Array.isArray(r.covered) ? r.covered : [])
+          .filter((c): c is ProofCovered => isObj(c) && typeof c.pieceId === 'string')
+          .map((c) => ({ ...c, versionId: strOrNull(c.versionId), bodyHash: str(c.bodyHash), label: str(c.label) })),
+        itemIds: strList(r.itemIds),
+      },
+      'model',
+    ),
+  )
+  each('revisionIdeas', '改稿案', (r) => ({
+    ...r,
+    ...claudeBase(r),
+    heading: str(r.heading),
+    body: str(r.body),
+    checked: bool(r.checked),
+    checkedAt: numOrNull(r.checkedAt),
+    pieceIds: strList(r.pieceIds),
+    order: num(r.order),
+  }))
+  each('strategyNotes', '戦略メモ', (r) =>
+    optionalString(
+      {
+        ...r,
+        ...claudeBase(r),
+        runDate: str(r.runDate),
+        heading: str(r.heading),
+        body: str(r.body),
+        contests: (Array.isArray(r.contests) ? r.contests : [])
+          .map((c, i) => normalizeContest(c, i))
+          .filter((c): c is StrategyContest => c !== null),
+        appliedAt: numOrNull(r.appliedAt),
+      },
+      'model',
+    ),
+  )
+  each(
+    'critiquePrompts',
+    '批評プロンプト',
+    (r) => ({
+      ...r,
+      ...claudeBase(r),
+      titleId: strOrNull(r.titleId),
+      name: str(r.name),
+      body: str(r.body),
+      order: num(r.order),
+    }),
+    true,
+  )
+  each('critiqueResults', '批評結果', (r) => ({
+    ...r,
+    ...claudeBase(r),
+    promptId: strOrNull(r.promptId),
+    promptName: str(r.promptName),
+    promptText: str(r.promptText),
+    runDate: str(r.runDate),
+    resultMarkdown: str(r.resultMarkdown),
+    artifactUrl: str(r.artifactUrl),
+    scope: normalizeScope(r.scope),
+    manuscript: normalizeManuscript(r.manuscript),
+    model: str(r.model),
+    note: str(r.note),
+  }))
 }
 
 /** 削除した時点の場所の形を整える（項目の順番は変えない。知らない項目は残す） */
