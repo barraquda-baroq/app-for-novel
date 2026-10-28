@@ -1,0 +1,8 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "records", "fieldPath": "json", "indexes": [] },
+    { "collectionGroup": "records", "fieldPath": "hash", "indexes": [] },
+    { "collectionGroup": "records", "fieldPath": "device", "indexes": [] }
+  ]
+}

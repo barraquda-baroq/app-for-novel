@@ -14,6 +14,7 @@ import {
 import { markDraftDirty } from './draftRegistry'
 import { saveBeforeLeave } from './lifecycle'
 import { emptyData, type AppData } from '../domain/types'
+import { emptyOutcome, fakePersistence } from '../test/fakePersistence'
 
 let n = 0
 const freshDb = () => createPersistence(`test-db-${++n}`)
@@ -57,8 +58,8 @@ describe('自動保存', () => {
 
 describe('保存のタイミング', () => {
   it('操作が続いても、最初の変更から一定時間内に保存される', async () => {
-    const save = vi.fn(async () => {})
-    await initStore({ load: async () => emptyData(), save, replaceAll: async () => {}, close: () => {} })
+    const save = vi.fn(async () => emptyOutcome())
+    await initStore(fakePersistence({ save }))
     vi.useFakeTimers()
     try {
       const titleId = actions.createTitle('連続編集')
@@ -111,8 +112,8 @@ describe('閉じる直前の変更の復旧', () => {
   })
 
   it('入力欄の下書きは、閉じる時にストアの保存より先に反映される', async () => {
-    const save = vi.fn(async () => {})
-    await initStore({ load: async () => emptyData(), save, replaceAll: async () => {}, close: () => {} })
+    const save = vi.fn(async () => emptyOutcome())
+    await initStore(fakePersistence({ save }))
     const titleId = actions.createTitle('下書き')
     let draft = ''
     markDraftDirty(Symbol('t'), () => actions.updateTitle(titleId, { synopsis: draft }))
@@ -189,14 +190,11 @@ describe('複数タブ・保存失敗', () => {
   })
 
   it('保存に失敗したら false を返し、未保存のまま読み込み直さない', async () => {
-    const failing = {
-      load: async () => emptyData(),
+    const failing = fakePersistence({
       save: async () => {
         throw new Error('QuotaExceededError')
       },
-      replaceAll: async () => {},
-      close: () => {},
-    }
+    })
     await initStore(failing)
     const titleId = actions.createTitle('保存できない')
     expect(await flushNow()).toBe(false)

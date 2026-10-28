@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
+    "test:sync": "firebase emulators:exec --only auth,firestore --project demo-novel-studio \"vitest run --config vitest.emu.config.ts\""
   },
   "dependencies": {
     "dexie": "^4.4.7",

@@ -1,8 +1,19 @@
-// アプリ全体の状態（Zustand）と、IndexedDB への自動保存。
+// アプリ全体の状態（Zustand）と、IndexedDB への自動保存・クラウドから届いた変更の反映。
+//
+// データは3層で持つ:
+// - raw:       端末内（IndexedDB）の内容そのもの（このタブが知っている範囲）
+// - persisted: raw を整合性の修復（repairData）に通した表示用の内容。保存の差分の基準
+// - data:      persisted に、まだ保存していないこのタブの編集を重ねたもの（画面が見る内容）
+// 修復は表示用の内容にだけ当て、端末内やクラウドには書き戻さない（利用者が触ったレコードだけ書く）。
+// 同期では別の端末の変更が少しずつ届くので、途中の状態（話より先に稿が届いた等）を「直して」書き戻すと、
+// 後から届いたものと食い違ってしまうため。
 import { create } from 'zustand'
-import { createPersistence, type Persistence, type SaveOutcome } from '../db/persistence'
+import { createPersistence, type AnyRecord, type Change, type Persistence, type SaveOutcome } from '../db/persistence'
 import { repairData } from '../domain/repair'
-import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../domain/types'
+import { TABLE_NAMES, emptyData, type AppData, type ContentTableName, type TableName, type Version } from '../domain/types'
+import { newId } from '../domain/util'
+import { conflictTrash, conflictVersionCopy, deviceLabel } from '../sync/conflicts'
+import { mergeRemote, TEXT_TABLES } from '../sync/merge'
 
 export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error'
 
@@ -40,25 +51,57 @@ const SAVE_MAX_WAIT_MS = 2000
 const CHANNEL_NAME = 'novel-studio-sync'
 
 let persistence: Persistence | null = null
+let raw: AppData = emptyData()
 let persisted: AppData = emptyData()
 let timer: ReturnType<typeof setTimeout> | null = null
 let pendingSince: number | null = null
 let chain: Promise<void> = Promise.resolve()
-type AnyRecord = { id: string; updatedAt?: number }
 let channel: BroadcastChannel | null = null
 const tabId = Math.random().toString(36).slice(2)
+
+type Listener = () => void
+const savedListeners = new Set<Listener>()
+const externalListeners = new Set<Listener>()
+
+/** 端末内に何か書いた時（同期の送信のきっかけ） */
+export function onLocalSave(fn: Listener): () => void {
+  savedListeners.add(fn)
+  return () => savedListeners.delete(fn)
+}
+
+/** 別のタブが端末内に書いた時 */
+export function onExternalSave(fn: Listener): () => void {
+  externalListeners.add(fn)
+  return () => externalListeners.delete(fn)
+}
+
+const emit = (set: Set<Listener>) => {
+  for (const fn of [...set]) {
+    try {
+      fn()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+}
+
+export function getPersistence(): Persistence | null {
+  return persistence
+}
 
 export async function initStore(p: Persistence = createPersistence()): Promise<void> {
   persistence = p
   try {
-    const data = await p.load()
-    persisted = data
-    const recovered = applyRecoveryJournal(data)
-    // 参照切れなどがあれば直してから使う（直した内容は保存される）
-    const repaired = repairData(recovered.data)
-    if (repaired.fixes.length) console.warn('データの整合性を修復しました', repaired.fixes)
-    useApp.setState({ data: repaired.data, status: 'ready', loadError: null, recoveredCount: recovered.count })
-    if (recovered.count > 0 || repaired.fixes.length > 0) {
+    const loaded = await p.load()
+    raw = loaded
+    const view = repairData(loaded)
+    if (view.fixes.length) console.warn('データの整合性を修復しました（表示用）', view.fixes)
+    persisted = view.data
+    const recovered = applyRecoveryJournal(view.data)
+    // 控えを重ねた結果にも参照切れなどがあれば直す（直した内容は控えと一緒に保存される）
+    const data = recovered.count > 0 ? repairData(recovered.data).data : view.data
+    useApp.setState({ data, status: 'ready', loadError: null, recoveredCount: recovered.count })
+    if (recovered.count > 0) {
       // 取り込んだ控えは、このタブの控えとして1つにまとめ直してから古いものを消す
       // （保存に失敗し続けても、起動のたびに控えが増えていかないように）
       writeRecoveryJournal()
@@ -76,7 +119,12 @@ export async function initStore(p: Persistence = createPersistence()): Promise<v
     channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(CHANNEL_NAME)
     if (channel) {
       channel.onmessage = (ev: MessageEvent<{ from: string }>) => {
-        if (ev.data?.from !== tabId) useApp.setState({ externalChange: true })
+        if (ev.data?.from === tabId) return
+        emit(externalListeners)
+        const s = useApp.getState()
+        // このタブに未保存の編集が無ければ、黙って読み込み直す
+        if (s.data === persisted && !s.draftsDirty && s.saveStatus === 'saved') void reloadFromDisk()
+        else useApp.setState({ externalChange: true })
       }
     }
   } catch {
@@ -117,43 +165,147 @@ function scheduleRetry(): void {
   }, delay)
 }
 
-/** 別タブの変更と合わせて保存した結果を、メモリ上のデータにも反映する */
-function reconcile(saved: AppData, outcome: SaveOutcome | void): AppData {
-  if (!outcome) return saved
-  const touched = Object.keys(outcome.merged).length + Object.keys(outcome.dropped).length
-  if (touched === 0) return saved
-  const out = { ...saved } as Record<TableName, Record<string, AnyRecord>>
-  for (const t of Object.keys(outcome.merged) as TableName[]) {
-    out[t] = { ...out[t] }
-    for (const r of outcome.merged[t] ?? []) out[t][r.id] = r
-  }
-  for (const t of Object.keys(outcome.dropped) as TableName[]) {
-    out[t] = { ...out[t] }
-    for (const id of outcome.dropped[t] ?? []) delete out[t][id]
+type Tables = Record<TableName, Record<string, AnyRecord>>
+
+/** 変化をデータに当てる（変わった表だけ複製する） */
+export function applyChanges(base: AppData, changes: readonly Change[]): AppData {
+  if (!changes.length) return base
+  const out = { ...base } as unknown as Tables
+  const copied = new Set<TableName>()
+  for (const ch of changes) {
+    if (!(ch.table in out)) continue
+    if (!copied.has(ch.table)) {
+      out[ch.table] = { ...out[ch.table] }
+      copied.add(ch.table)
+    }
+    if (ch.record) out[ch.table][ch.id] = ch.record
+    else delete out[ch.table][ch.id]
   }
   return out as unknown as AppData
 }
 
-/** saved（保存した内容）から result（実際に書いた内容）への変化を、その後に編集された latest に重ねる */
-function rebase(latest: AppData, saved: AppData, result: AppData): AppData {
-  if (saved === result) return latest
-  const out = { ...latest } as Record<TableName, Record<string, AnyRecord>>
+/** 別タブの変更と合わせて保存した結果を、メモリ上のデータにも反映する */
+function reconcile(saved: AppData, outcome: SaveOutcome): AppData {
+  const changes: Change[] = []
+  for (const t of Object.keys(outcome.merged) as TableName[])
+    for (const r of outcome.merged[t] ?? []) changes.push({ table: t, id: r.id, record: r })
+  for (const t of Object.keys(outcome.dropped) as TableName[])
+    for (const id of outcome.dropped[t] ?? []) changes.push({ table: t, id, record: null })
+  return applyChanges(saved, changes)
+}
+
+// ---------- 競合の控え（どちらの文章も消さない） ----------
+
+function versionCopy(mine: AnyRecord): AnyRecord {
+  return conflictVersionCopy(mine as unknown as Version, deviceLabel(), newId(), Date.now()) as unknown as AnyRecord
+}
+
+function trashCopy(table: TableName, record: AnyRecord): Change[] {
+  const r = conflictTrash(persisted, table as ContentTableName, record, { now: Date.now(), newId })
+  if (!r) return []
+  return [
+    { table: 'trashEntries', id: r.entry.id, record: r.entry as unknown as AnyRecord },
+    ...r.records.map((tr) => ({ table: 'trashRecords' as const, id: tr.id, record: tr as unknown as AnyRecord })),
+  ]
+}
+
+/**
+ * oldBase から newBase への変化を、その後に編集された latest に重ねる。
+ * このタブでも編集し直したレコードは、項目ごとに合わせる（同期と同じ規則。稿の本文が両方で変わっていたら
+ * newBase 側を採り、このタブの稿を別の稿として残す）。
+ */
+export function rebaseView(latest: AppData, oldBase: AppData, newBase: AppData): AppData {
+  if (latest === oldBase) return newBase
+  const out = { ...latest } as unknown as Tables
+  const extras: Change[] = []
   for (const t of TABLE_NAMES) {
-    const s = saved[t] as Record<string, AnyRecord>
-    const r = result[t] as Record<string, AnyRecord>
-    if (s === r) continue
-    let table = out[t]
-    for (const id in s) {
-      if (r[id] === s[id]) continue
-      // その後このタブで編集し直したレコードは、このタブの内容を優先する
-      if (table[id] !== s[id]) continue
-      if (table === latest[t]) table = { ...table }
-      if (id in r) table[id] = r[id]
+    const o = oldBase[t] as Record<string, AnyRecord>
+    const n = newBase[t] as Record<string, AnyRecord>
+    if (o === n) continue
+    const l = latest[t] as Record<string, AnyRecord>
+    let table = l
+    const write = (id: string, rec: AnyRecord | null) => {
+      if (table === l) table = { ...l }
+      if (rec) table[id] = rec
       else delete table[id]
+    }
+    const ids = new Set([...Object.keys(o), ...Object.keys(n)])
+    for (const id of ids) {
+      if (o[id] === n[id]) continue
+      const mine = l[id]
+      if (mine === o[id]) {
+        write(id, n[id] ?? null)
+        continue
+      }
+      // このタブでも編集していた
+      const r = mergeRemote(t, o[id] ?? null, mine ?? null, n[id] ?? null)
+      if (r.record !== mine) write(id, r.record)
+      if (r.bodyConflict) extras.push({ table: 'versions', id: '', record: versionCopy(r.bodyConflict) })
+      if (r.deletedEdit && TEXT_TABLES.has(t)) extras.push(...trashCopy(t, r.deletedEdit))
     }
     out[t] = table
   }
-  return out as unknown as AppData
+  let result = out as unknown as AppData
+  for (const ex of extras) {
+    if (!ex.record) continue
+    result = applyChanges(result, [{ table: ex.table, id: ex.record.id, record: ex.record }])
+    const pieceId = (ex.record as { pieceId?: string }).pieceId
+    const piece = ex.table === 'versions' && pieceId ? result.pieces[pieceId] : undefined
+    if (piece && !piece.versionIds.includes(ex.record.id)) {
+      result = applyChanges(result, [
+        {
+          table: 'pieces',
+          id: piece.id,
+          record: { ...piece, versionIds: [...piece.versionIds, ex.record.id], updatedAt: Date.now() } as AnyRecord,
+        },
+      ])
+    }
+  }
+  return result
+}
+
+/** 保留中の変更を保存する（chain の中で呼ぶ） */
+async function saveOnce(): Promise<boolean> {
+  if (!persistence) return true
+  const next = useApp.getState().data
+  if (next === persisted) {
+    if (useApp.getState().saveStatus !== 'error') useApp.setState({ saveStatus: 'saved' })
+    return useApp.getState().saveStatus !== 'error'
+  }
+  useApp.setState({ saveStatus: 'saving' })
+  try {
+    const outcome = await persistence.save(persisted, next)
+    const dropped: Change[] = []
+    for (const t of Object.keys(outcome.dropped) as TableName[])
+      for (const id of outcome.dropped[t] ?? []) dropped.push({ table: t, id, record: null })
+    raw = applyChanges(raw, [...outcome.written, ...dropped])
+    const mergedCount = Object.values(outcome.merged).reduce((n, a) => n + (a?.length ?? 0), 0) + dropped.length
+    // 別タブの変更と合わせたレコードは、修復した表示用の内容にしてから使う
+    const written = mergedCount > 0 ? repairData(reconcile(next, outcome)).data : next
+    persisted = written
+    const latest = useApp.getState().data
+    if (latest === next) {
+      useApp.setState({ data: written, saveStatus: 'saved', saveError: null, mergedCount })
+      clearRecoveryJournal()
+    } else {
+      useApp.setState({ data: rebaseView(latest, next, written), saveStatus: 'pending', saveError: null, mergedCount })
+      scheduleSave()
+    }
+    retryCount = 0
+    if (retryTimer) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+    if (outcome.written.length) {
+      channel?.postMessage({ from: tabId })
+      emit(savedListeners)
+    }
+    return true
+  } catch (e) {
+    useApp.setState({ saveStatus: 'error', saveError: e instanceof Error ? e.message : String(e) })
+    scheduleRetry()
+    return false
+  }
 }
 
 /**
@@ -166,44 +318,42 @@ export function flushNow(): Promise<boolean> {
     timer = null
   }
   pendingSince = null
-  const run = chain.then(async (): Promise<boolean> => {
-    if (!persistence) return true
-    const next = useApp.getState().data
-    if (next === persisted) {
-      if (useApp.getState().saveStatus !== 'error') useApp.setState({ saveStatus: 'saved' })
-      return useApp.getState().saveStatus !== 'error'
-    }
-    useApp.setState({ saveStatus: 'saving' })
-    try {
-      const outcome = await persistence.save(persisted, next)
-      const written = reconcile(next, outcome)
-      persisted = written
-      const latest = useApp.getState().data
-      const mergedCount = outcome
-        ? Object.values(outcome.merged).reduce((n, a) => n + (a?.length ?? 0), 0) +
-          Object.values(outcome.dropped).reduce((n, a) => n + (a?.length ?? 0), 0)
-        : 0
-      if (latest === next) {
-        useApp.setState({ data: written, saveStatus: 'saved', saveError: null, mergedCount })
-        clearRecoveryJournal()
-      } else {
-        useApp.setState({ data: rebase(latest, next, written), saveStatus: 'pending', saveError: null, mergedCount })
-        scheduleSave()
-      }
-      retryCount = 0
-      if (retryTimer) {
-        clearTimeout(retryTimer)
-        retryTimer = null
-      }
-      channel?.postMessage({ from: tabId })
-      return true
-    } catch (e) {
-      useApp.setState({ saveStatus: 'error', saveError: e instanceof Error ? e.message : String(e) })
-      scheduleRetry()
-      return false
-    }
-  })
+  const run = chain.then(saveOnce)
   chain = run.then(() => undefined)
+  return run
+}
+
+/**
+ * クラウドから届いた変更を反映する（同期を受け持つタブだけが呼ぶ）。
+ * 先にこのタブの未保存の変更を保存し、端末内で送信待ちと3者マージしてから、画面の内容にも重ねる。
+ * 実際に端末内に書いた内容を返す。
+ */
+export function applyRemoteChanges(changes: Change[], cursor?: unknown): Promise<Change[]> {
+  const run = chain.then(async (): Promise<Change[]> => {
+    if (!persistence) throw new Error('保存先が初期化されていません')
+    if (!(await saveOnce())) throw new Error('この端末の変更を保存できないため、クラウドの変更を反映できません')
+    const written = await persistence.applyRemote(changes, { cursor, versionCopy, trashCopy })
+    if (!written.length) return written
+    raw = applyChanges(raw, written)
+    const view = repairData(raw).data
+    const oldBase = persisted
+    persisted = view
+    const latest = useApp.getState().data
+    const next = rebaseView(latest, oldBase, view)
+    if (next === view) useApp.setState({ data: next })
+    else {
+      useApp.setState({ data: next, saveStatus: 'pending' })
+      scheduleSave()
+    }
+    // 端末内に新しく積んだ送信待ち（競合の控え）があれば送ってもらう
+    emit(savedListeners)
+    channel?.postMessage({ from: tabId })
+    return written
+  })
+  chain = run.then(
+    () => undefined,
+    () => undefined,
+  )
   return run
 }
 
@@ -211,13 +361,23 @@ export function flushNow(): Promise<boolean> {
 export async function replaceAllData(input: AppData): Promise<void> {
   await flushNow()
   if (!persistence) throw new Error('保存先が初期化されていません')
-  // 表が欠けた古い形のデータや参照切れも、ここで補ってから保存する
-  const next = repairData({ ...emptyData(), ...input }).data
-  await persistence.replaceAll(next)
-  persisted = next
-  clearRecoveryJournal()
-  useApp.setState({ data: next, saveStatus: 'saved', saveError: null })
-  channel?.postMessage({ from: tabId })
+  const p = persistence
+  const run = chain.then(async () => {
+    // 表が欠けた古い形のデータや参照切れも、ここで補ってから保存する（読み込んだ内容そのものを正とする）
+    const next = repairData({ ...emptyData(), ...input }).data
+    await p.replaceAll(next)
+    raw = next
+    persisted = next
+    clearRecoveryJournal()
+    useApp.setState({ data: next, saveStatus: 'saved', saveError: null })
+    channel?.postMessage({ from: tabId })
+    emit(savedListeners)
+  })
+  chain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  await run
 }
 
 /**
@@ -226,13 +386,25 @@ export async function replaceAllData(input: AppData): Promise<void> {
  */
 export async function reloadFromDisk(): Promise<boolean> {
   if (!persistence) return false
+  const p = persistence
   const saved = await flushNow()
   if (!saved) return false
-  const loaded = await persistence.load()
-  const data = repairData(loaded).data
-  persisted = loaded
-  useApp.setState({ data, externalChange: false })
-  if (data !== loaded) scheduleSave()
+  const run = chain.then(async () => {
+    const loaded = await p.load()
+    raw = loaded
+    const view = repairData(loaded).data
+    const oldBase = persisted
+    persisted = view
+    const latest = useApp.getState().data
+    const next = rebaseView(latest, oldBase, view)
+    useApp.setState({ data: next, externalChange: false })
+    if (next !== view) scheduleSave()
+  })
+  chain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  await run
   return true
 }
 
@@ -457,7 +629,10 @@ export function resetStoreForTests(): void {
   pendingSince = null
   chain = Promise.resolve()
   persistence = null
+  raw = emptyData()
   persisted = emptyData()
+  savedListeners.clear()
+  externalListeners.clear()
   adoptedJournalKeys = []
   retryCount = 0
   if (retryTimer) clearTimeout(retryTimer)

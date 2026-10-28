@@ -34,5 +34,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // 同期のテストは Firebase エミュレーターの中で動かす（npm run test:sync）
+    exclude: ['src/**/*.emu.test.ts', 'node_modules/**'],
   },
 })

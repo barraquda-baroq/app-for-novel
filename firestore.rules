@@ -1,0 +1,16 @@
+rules_version = '2';
+
+// 原稿はログインした本人だけが読み書きできる（users/{uid} 以下）。
+// 自分以外のアカウントを締め出したい時は、初めてログインした後に
+// `request.auth.uid == uid` を `request.auth.uid == uid && uid == '<自分の uid>'` に変えて公開し直す
+// （uid は Firebase コンソールの Authentication → ユーザー で確認できる）。
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/records/{docId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
