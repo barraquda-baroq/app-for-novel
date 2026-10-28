@@ -267,3 +267,33 @@ describe('幕（2.2）: 幕の構成を片方の端末だけが変えていた�
     expect(r.overridden).toBeUndefined()
   })
 })
+
+describe('2.3 の記録のマージ', () => {
+  const idea = { id: 'r', titleId: 't', heading: '案', body: '元の案', checked: false, checkedAt: null, pieceIds: ['p1'], order: 0, updatedAt: 1 }
+  it('改稿案: チェックなどの短い項目は項目ごとに合わせ（両方で変えたらこの端末）、本文が両方で変わればつなぐ', () => {
+    const mine = { ...idea, checked: true, checkedAt: 5, body: '元の案。こちらで足した', updatedAt: 5 }
+    const theirs = { ...idea, heading: '向こうの見出し', checked: false, body: '元の案。向こうで足した', pieceIds: ['p1', 'p2'], updatedAt: 6 }
+    const r = mergeRemote('revisionIdeas', idea, mine, theirs, D)
+    expect(r.record).toMatchObject({ heading: '向こうの見出し', checked: true, checkedAt: 5, pieceIds: ['p1', 'p2'], updatedAt: 6 })
+    expect((r.record as unknown as { body: string }).body).toContain('こちらで足した')
+    expect((r.record as unknown as { body: string }).body).toContain('向こうで足した')
+    expect(r.joined).toEqual(['body'])
+  })
+  it('改稿案を片方で削除・片方で編集したら、削除を優先し、編集された内容を控える。推敲案は短い項目だけ', () => {
+    expect(mergeRemote('revisionIdeas', idea, null, { ...idea, body: '編集' }, D)).toEqual({
+      record: null,
+      deletedEdit: { ...idea, body: '編集' },
+    })
+    const s = { id: 's', titleId: 't', flagged: false, done: false, doneAt: null, updatedAt: 1 }
+    const r = mergeRemote('proofSuggestions', s, { ...s, flagged: true }, { ...s, done: true, doneAt: 3 }, D)
+    expect(r.record).toMatchObject({ flagged: true, done: true, doneAt: 3 })
+  })
+  it('戦略メモのコンテストの候補は候補ごとに合わせる（2台で別々に［応募計画にする］を押しても両方残る）', () => {
+    const c = (id: string, submissionId: string | null) => ({ id, name: id, submissionId })
+    const note = { id: 'n', titleId: 't', body: 'B', contests: [c('k0', null), c('k1', null)], appliedAt: null, updatedAt: 1 }
+    const mine = { ...note, contests: [c('k0', 's1'), c('k1', null)], updatedAt: 2 }
+    const theirs = { ...note, contests: [c('k0', null), c('k1', 's2')], appliedAt: 9, updatedAt: 3 }
+    const r = mergeRemote('strategyNotes', note, mine, theirs, D)
+    expect(r.record).toMatchObject({ contests: [c('k0', 's1'), c('k1', 's2')], appliedAt: 9 })
+  })
+})
