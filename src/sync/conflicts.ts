@@ -15,6 +15,7 @@ import type {
   TrashKind,
   TrashOrigin,
   TrashRecord,
+  Title,
   Version,
 } from '../domain/types'
 import type { Rec } from './merge'
@@ -47,6 +48,7 @@ export function conflictVersionCopy(mine: Version, device: string, id: ID, now: 
 }
 
 const KIND_OF: Partial<Record<ContentTableName, TrashKind>> = {
+  titles: 'title',
   versions: 'version',
   memos: 'memo',
   ideas: 'idea',
@@ -72,7 +74,11 @@ export function conflictTrash(
   const origin: TrashOrigin = { titleId: null, index: 0 }
   /** 一緒に控えるレコード（応募計画の応募時の原稿の本文） */
   const extras: { table: ContentTableName; record: Rec }[] = []
-  if (table === 'versions') {
+  if (table === 'titles') {
+    const t = record as unknown as Title
+    label = t.name || '無題のタイトル'
+    origin.index = t.order
+  } else if (table === 'versions') {
     const v = record as unknown as Version
     const piece = data.pieces[v.pieceId]
     titleId = v.titleId ?? piece?.titleId ?? null
@@ -112,7 +118,7 @@ export function conflictTrash(
       if (text) extras.push({ table: 'snapshotTexts', record: text as unknown as Rec })
     }
   }
-  origin.titleId = titleId
+  origin.titleId = table === 'titles' ? null : titleId
   const entryId = opts.newId()
   const records: TrashRecord[] = [{ table, record }, ...extras].map((r) => ({
     id: opts.newId(),

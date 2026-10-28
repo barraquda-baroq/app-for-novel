@@ -142,9 +142,10 @@ describe('クラウドからの反映', () => {
     expect(Object.values(disk.trashRecords).map((r) => (r.record as { body?: string }).body)).toContain('オフラインで書いた本文')
   })
 
-  it('復元・すべて削除をクラウドに当てるまでは反映しない。当てる送信待ちは「必ず上書き」になる', async () => {
+  it('同期したことのある端末の復元・すべて削除は、クラウドに当てるまで反映しない。当てる送信待ちは「必ず上書き」になる', async () => {
     const { data, memoId } = sample()
     const p = fresh()
+    await p.setMeta('uid', 'someone')
     await p.replaceAll(data)
     expect(
       await p.applyRemote(
@@ -155,6 +156,18 @@ describe('クラウドからの反映', () => {
     expect((await p.load()).memos[memoId]).toBeDefined()
     expect((await p.readOutbox(1000)).every((i) => i.force)).toBe(true)
     expect(await p.getMeta('authoritative')).toBeTruthy()
+    // その後、別のアカウントで初めて同期する時は、突き合わせるだけにする（クラウドを消さない）
+    await p.markAllDirty()
+    expect(await p.getMeta('authoritative')).toBeFalsy()
+    expect((await p.readOutbox(1000)).some((i) => i.force)).toBe(false)
+  })
+
+  it('まだ同期したことの無い端末で復元しても、初めてのログインでほかの端末の内容を消さない', async () => {
+    const { data } = sample()
+    const p = fresh()
+    await p.replaceAll(data)
+    expect(await p.getMeta('authoritative')).toBeFalsy()
+    expect((await p.readOutbox(1000)).some((i) => i.force)).toBe(false)
   })
 
   it('初めてのログインでは、すべてを「共通の履歴が無い」送信待ちにする', async () => {
@@ -175,5 +188,107 @@ describe('クラウドからの反映', () => {
     expect(disk.memos[memoId].body).toBe('クラウドの本文')
     expect(Object.values(disk.trashEntries)[0]?.reason).toBe('conflict')
     expect((await p.readOutbox(1000)).find((i) => i.id === memoId)).toBeUndefined()
+  })
+})
+
+describe('第2回の見直しで直したこと', () => {
+  it('この端末が書いた版（返事を受け取れなかった書き込み）が届いても、端末内の新しい内容と競合させない', async () => {
+    const { data, pieceId, versionId } = sample()
+    const p = fresh()
+    await seed(p, data)
+    const l1 = updateVersion(data, versionId, { body: '一回目' })
+    await p.save(
+      data,
+      l1,
+      hooks(() => data),
+    )
+    const l2 = updateVersion(l1, versionId, { body: '一回目、二回目' })
+    await p.save(
+      l1,
+      l2,
+      hooks(() => l1),
+    )
+    // 一回目を送った返事を受け取れず、その書き込みが届いた
+    const h = hooks(() => l2)
+    await p.applyRemote([{ table: 'versions', id: versionId, record: l1.versions[versionId], own: true }], h)
+    const disk = await p.load()
+    expect(disk.versions[versionId].body).toBe('一回目、二回目')
+    expect(disk.pieces[pieceId].versionIds).toHaveLength(1)
+    expect(h.notes).toEqual([])
+    const row = (await p.readOutbox(100)).find((i) => i.id === versionId)
+    expect((row?.base as { body?: string }).body).toBe('一回目')
+  })
+
+  it('ほかの端末の復元・すべて削除はその内容を正とし、この端末で送っていない文章だけ控える。子は控えずに片付ける', async () => {
+    const { data, titleId, memoId, versionId } = sample()
+    const p = fresh()
+    await seed(p, data)
+    const edited = { ...data, memos: { ...data.memos, [memoId]: { ...data.memos[memoId], body: '送っていない追記' } } }
+    await p.save(
+      data,
+      edited,
+      hooks(() => data),
+    )
+    const h = hooks(() => edited)
+    await p.applyRemote(
+      [
+        { table: 'memos', id: memoId, record: null, reset: true },
+        { table: 'titles', id: titleId, record: null, reset: true },
+      ],
+      h,
+    )
+    const disk = await p.load()
+    expect(disk.memos[memoId]).toBeUndefined()
+    expect(disk.versions[versionId]).toBeUndefined()
+    const kept = Object.values(disk.trashRecords).map((r) => (r.record as { body?: string }).body)
+    expect(kept).toEqual(['送っていない追記'])
+  })
+
+  it('同じまとまりで応募計画と一緒に消された本文の控えは消す（使っている計画が無くなるので）', async () => {
+    const { data, titleId } = sample()
+    const s = addSubmission(data, titleId, '文学賞')
+    const d = recordSubmissionSnapshot(s.data, s.result)
+    const key = Object.keys(d.snapshotTexts)[0]
+    const p = fresh()
+    await seed(p, d)
+    await p.applyRemote(
+      [
+        { table: 'snapshotTexts', id: key, record: null },
+        { table: 'submissions', id: s.result, record: null },
+      ],
+      hooks(() => d),
+    )
+    expect((await p.load()).snapshotTexts[key]).toBeUndefined()
+    expect(await p.outboxCount()).toBe(0)
+  })
+
+  it('ゴミ箱の中身・子を先に、親を後に送る', async () => {
+    const { data } = sample()
+    const p = fresh()
+    await p.replaceAll(data)
+    const order = (await p.readOutbox(1000)).map((i) => i.table)
+    expect(order.indexOf('versions')).toBeLessThan(order.indexOf('pieces'))
+    expect(order.indexOf('pieces')).toBeLessThan(order.indexOf('titles'))
+    expect(order[order.length - 1]).toBe('titles')
+  })
+
+  it('別の端末で消されたタイトルの下に、古い表示のまま作ったメモは、ゴミ箱に控えて片付ける', async () => {
+    const { data, titleId } = sample()
+    const p = fresh()
+    await seed(p, data)
+    await p.applyRemote(
+      [{ table: 'titles', id: titleId, record: null }],
+      hooks(() => data),
+    )
+    const m = addMemo(data, titleId, '古い画面で作ったメモ')
+    const withBody = { ...m.data, memos: { ...m.data.memos, [m.result]: { ...m.data.memos[m.result], body: '大事' } } }
+    await p.save(
+      data,
+      withBody,
+      hooks(() => data),
+    )
+    const disk = await p.load()
+    expect(disk.memos[m.result]).toBeUndefined()
+    expect(Object.values(disk.trashRecords).map((r) => (r.record as { body?: string }).body)).toContain('大事')
   })
 })

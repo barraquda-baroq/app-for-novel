@@ -69,10 +69,16 @@ Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）を�
 
 最初にログインして同期を始めた Google アカウントが、このクラウドの「持ち主」になります（Firestore の `config/owner` に記録）。
 アクセスルールで、持ち主のアカウントだけが原稿を読み書きできるようにしているので、ほかの人が自分の Google アカウントで
-ログインしても、何も読めず、何も書けません（無料枠を使われることもありません）。
+ログインしても、何も読めず、何も書けません。
+（拒否された読み取りも無料枠の回数には数えられるため、悪意を持って大量に試されると、その日の読み取りの枠が減ることはあります。
+原稿が見られることはありません。）
 
 - 持ち主を変えたい時（別の Google アカウントに移したい時）は、[Firebase コンソールの Firestore](https://console.firebase.google.com/project/novel-studio-3352e/firestore) で
   `config` → `owner` の文書を削除してから、新しいアカウントでログインします。
+  前の持ち主のアカウントでログインしたままの端末は、記録が消えたことに気付いて同期を止めます（持ち主を取り戻しません）。
+  その端末では、ログアウトしてから新しいアカウントでログインし直してください。
+- 前の持ち主のアカウントの原稿は、クラウドの `users/<前の uid>` の下に残ります（新しい持ち主からは見えません）。
+  移したい時は、前のアカウントの端末でバックアップを書き出し、新しいアカウントの端末で復元してください。
 - 同じ端末で以前と別のアカウントでログインした時は、同期を始める前に「このアカウントで同期しますか？」と確かめます
   （間違えて別のアカウントを選んでも、原稿がそのアカウントに写らないように）。
 
@@ -105,8 +111,8 @@ Firebase のエミュレーター（Java が必要）で、本物のクラウド
 npm run test:sync        # 同期の結合テスト（2台の端末を動かす）
 npm run test:e2e:sync    # ブラウザ2つで同期を確かめる E2E テスト
 
-# 手で試す時
-npx firebase emulators:start --only auth,firestore --project demo-novel-studio
+# 手で試す時（テスト用のアクセスルール firestore.emu.rules を使う。持ち主の制限は外してある）
+npx firebase emulators:start --config firebase.emu.json --only auth,firestore --project demo-novel-studio
 VITE_FIREBASE_EMULATOR=127.0.0.1 npm run dev
 ```
 

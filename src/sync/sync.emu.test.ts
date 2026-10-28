@@ -503,6 +503,71 @@ describe('同期（エミュレーター）', () => {
     expect(kept.sort()).toEqual(['メモ', '消すメモ'].sort())
   })
 
+  it('まだ同期したことの無い端末で復元してから初めてログインしても、ほかの端末の内容は消えない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    let keep = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, 'Aの作品')
+      keep = t.result
+      return t.data
+    })
+    await settle(a)
+    const t = E.createTitle(emptyData(), 'Bのバックアップの作品')
+    await b.restore(t.data)
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.titles[keep]?.name).toBe('Aの作品')
+      expect(data.titles[t.result]?.name).toBe('Bのバックアップの作品')
+    }
+  })
+
+  it('すべて削除はほかの端末からも消え、受け取った端末に控えを作らない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      const vid = r.data.pieces[r.pieceId].versionIds[0]
+      return E.addMemo(S.updateVersion(r.data, vid, { body: '本文' }), r.titleId, 'メモ').data
+    })
+    await b.online()
+    await settle(a, b)
+    await a.restore(emptyData())
+    await settle(a, b)
+    const data = await b.load()
+    expect(Object.values(data).every((t) => Object.keys(t).length === 0)).toBe(true)
+  })
+
+  it('大きなタイトルを削除して何回かに分けて届いても、受け取った端末にゴミ箱の重複を作らない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '長編')
+      titleId = r.titleId
+      let data = r.data
+      for (let i = 0; i < 130; i++) data = S.addVersion(data, r.pieceId, { body: `稿${i}` }).data
+      return data
+    })
+    await b.online()
+    await settle(a, b)
+    await a.edit((d) => E.deleteTitle(d, titleId))
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.titles[titleId]).toBeUndefined()
+    expect(Object.keys(data.versions)).toHaveLength(0)
+    expect(Object.values(data.trashEntries).filter((e) => e.reason === 'conflict')).toHaveLength(0)
+    expect(Object.keys(data.trashEntries)).toHaveLength(1)
+  })
+
   it('本番のアクセスルール: 最初にログインしたアカウントだけが使え、ほかのアカウントは同期できない', async () => {
     await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
       rules: { files: [{ name: 'firestore.rules', content: prodRules }] },

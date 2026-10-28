@@ -8,6 +8,9 @@ import Dexie, { type Table } from 'dexie'
 import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../domain/types'
 import { contentEqual, deepEqual, mergeRecordLegacy, mergeRemote, TEXT_TABLES, type MergeResult } from '../sync/merge'
 
+/** 競合した時に、消える側の内容をゴミ箱に控える表（文章を持つもの。タイトルはあらすじ・全体戦略を持つ） */
+const COPY_TABLES: ReadonlySet<TableName> = new Set<TableName>([...TEXT_TABLES, 'titles'])
+
 export type AnyRecord = { id: string; updatedAt?: number }
 
 /** 送信待ちの1件。k = `${表名}/${id}` */
@@ -29,6 +32,10 @@ export interface Change {
   table: TableName
   id: string
   record: AnyRecord | null
+  /** クラウドから: ほかの端末がバックアップからの復元・すべて削除で書いた（その内容を正とする） */
+  reset?: boolean
+  /** クラウドから: この端末が書いたもの（返事を受け取れなかった書き込みなど） */
+  own?: boolean
 }
 
 export interface OutboxItem {
@@ -68,6 +75,40 @@ interface MetaRow {
 
 const outboxKey = (table: string, id: string) => `${table}/${id}`
 const KNOWN_TABLES = new Set<string>(TABLE_NAMES)
+
+/**
+ * 送る順番。ゴミ箱の中身を先に、子（稿など）を親（話・タイトル）より先に送る。大きな削除が何回かに分かれて
+ * 届いても、受け取った端末が「親が消えたのに子が残っている」と判断して控えを作らないように。
+ */
+const SEND_ORDER: TableName[] = [
+  'trashRecords',
+  'trashEntries',
+  'snapshotTexts',
+  'versions',
+  'settingEntries',
+  'memos',
+  'ideas',
+  'submissions',
+  'settingCategories',
+  'pieces',
+  'chapters',
+  'titles',
+]
+const sendRank = (k: string) => {
+  const i = SEND_ORDER.indexOf(k.slice(0, k.indexOf('/')) as TableName)
+  return i < 0 ? SEND_ORDER.length : i
+}
+
+/** 親の表と、その親を指す項目（親が無ければ見えない子になる） */
+const PARENT_OF: Partial<Record<TableName, { table: TableName; field: string }>> = {
+  chapters: { table: 'titles', field: 'titleId' },
+  pieces: { table: 'titles', field: 'titleId' },
+  versions: { table: 'pieces', field: 'pieceId' },
+  memos: { table: 'titles', field: 'titleId' },
+  settingCategories: { table: 'titles', field: 'titleId' },
+  settingEntries: { table: 'settingCategories', field: 'categoryId' },
+  submissions: { table: 'titles', field: 'titleId' },
+}
 
 /** 親が消えたら、子も消す（子にしか無い文章はゴミ箱に控える） */
 const CHILDREN: Partial<Record<TableName, { table: TableName; field: string }[]>> = {
@@ -228,7 +269,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         hooks.report?.({ kind: 'versionCopy', table, id })
       }
       for (const kept of [r.deletedEdit, r.keptCopy]) {
-        if (!kept || !TEXT_TABLES.has(table)) continue
+        if (!kept || !COPY_TABLES.has(table)) continue
         await keepInTrash(table, kept, hooks, id)
       }
       if (r.joined?.length) hooks.report?.({ kind: 'joined', table, id })
@@ -242,7 +283,12 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
      * 消えた親（タイトル・話・設定項目）の子を片付ける。別の端末で親が消された時に、この端末で作った・変えた子が
      * 誰にも見えないまま残らないように、文章はゴミ箱に控えて（同じ内容がゴミ箱にあれば控えない）から消す。
      */
-    const sweepOrphans = async (parents: Map<TableName, Set<string>>, hooks: ConflictHooks) => {
+    const sweepOrphans = async (
+      parents: Map<TableName, Set<string>>,
+      hooks: ConflictHooks,
+      resetQuiet: ReadonlySet<string> = new Set(),
+    ) => {
+      let resetParents = resetQuiet
       const pending = new Map(parents)
       let trash: AnyRecord[] | null = null
       const inTrash = async (table: TableName, rec: AnyRecord) => {
@@ -261,12 +307,16 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
             .filter((r) => ids.has((r as unknown as Record<string, string>)[field]))
             .toArray()
           for (const child of children) {
-            if (TEXT_TABLES.has(table) && !(await inTrash(table, child))) await keepInTrash(table, child, hooks, child.id)
+            const parentId = (child as unknown as Record<string, string>)[field]
+            const quiet = resetParents.has(outboxKey(parentTable, parentId))
+            if (!quiet && TEXT_TABLES.has(table) && !(await inTrash(table, child)))
+              await keepInTrash(table, child, hooks, child.id)
             await delLocal(table, child.id)
             if (CHILDREN[table]) {
               const set = pending.get(table) ?? new Set<string>()
               set.add(child.id)
               pending.set(table, set)
+              if (quiet) resetParents = new Set([...resetParents, outboxKey(table, child.id)])
             }
           }
         }
@@ -381,7 +431,22 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           if (enqueue.length) await db.outbox.bulkPut(enqueue)
           for (const fn of afterWrite) await fn()
         }
-        if (hooks && parents.size) await w.sweepOrphans(parents, hooks)
+        if (hooks) {
+          // 別の端末で消された親の下に、このタブが新しく作ったもの（古い表示のまま作った）は、文章を控えて片付ける
+          for (const job of work) {
+            const parent = PARENT_OF[job.table]
+            if (!parent) continue
+            for (const rec of job.puts) {
+              if (prev[job.table][rec.id as never]) continue
+              const parentId = (rec as unknown as Record<string, string>)[parent.field]
+              if (!parentId || (await db.tableOf(parent.table).get(parentId))) continue
+              const set = parents.get(parent.table) ?? new Set<string>()
+              set.add(parentId)
+              parents.set(parent.table, set)
+            }
+          }
+          if (parents.size) await w.sweepOrphans(parents, hooks)
+        }
       })
       if (extraWritten.size) {
         outcome.extra = [...extraWritten.values()]
@@ -393,6 +458,9 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     async replaceAll(next) {
       const at = Date.now()
       await db.transaction('rw', [...allTables(), db.outbox, db.meta], async () => {
+        // 同期したことのある端末だけ、クラウドもこの内容に揃える（まだ同期したことの無い端末で復元してから
+        // 初めてログインした時は、ほかの端末の内容と突き合わせるだけにする）
+        const synced = Boolean((await db.meta.get('uid'))?.value)
         for (const t of TABLE_NAMES) {
           const table = db.tableOf(t)
           const old = new Map((await table.toArray()).map((r) => [r.id, r]))
@@ -401,18 +469,16 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           if (rows.length) await table.bulkPut(rows)
           const ids = new Set([...old.keys(), ...rows.map((r) => r.id)])
           const queued = await db.outbox.bulkGet([...ids].map((id) => outboxKey(t, id)))
-          const enqueue: OutboxRow[] = [...ids].map((id, i) => ({
-            k: outboxKey(t, id),
-            t,
-            id,
-            base: queued[i]?.base ?? old.get(id) ?? null,
-            force: true,
-            at,
-          }))
+          const enqueue: OutboxRow[] = [...ids].map((id, i) => {
+            const row: OutboxRow = { k: outboxKey(t, id), t, id, base: queued[i]?.base ?? old.get(id) ?? null, at }
+            if (synced) row.force = true
+            else if (queued[i]?.noHistory) row.noHistory = true
+            return row
+          })
           if (enqueue.length) await db.outbox.bulkPut(enqueue)
         }
         // 同期の時に、この端末に無いクラウドのレコードも消す
-        await db.meta.put({ key: 'authoritative', value: at })
+        if (synced) await db.meta.put({ key: 'authoritative', value: at })
       })
     },
 
@@ -421,30 +487,48 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       const at = Date.now()
       const w = writer(at, written)
       const parents = new Map<TableName, Set<string>>()
+      /** 復元・すべて削除で消えた親（子は控えずに片付ける。子にも削除が届く） */
+      const resetParents = new Set(changes.filter((c) => c.reset && !c.record).map((c) => outboxKey(c.table, c.id)))
       let deferred = false
       await db.transaction('rw', [...allTables(), db.outbox, db.meta], async () => {
         if ((await db.meta.get('authoritative'))?.value) {
           deferred = true
           return
         }
-        let textKeysInUse: Set<string> | null = null
+        /** 応募時の原稿の本文の削除は、ほかの変更を当てた後で、使われていないことを確かめてから当てる */
+        const textTombstones: Change[] = []
         for (const ch of changes) {
           if (!KNOWN_TABLES.has(ch.table)) continue
           const k = outboxKey(ch.table, ch.id)
           const disk = (await db.tableOf(ch.table).get(ch.id)) ?? null
           const queued = await db.outbox.get(k)
 
-          // 応募時の原稿の本文は、この端末の応募計画が使っている間は消さない（送り直して、ほかの端末にも戻す）
           if (ch.table === 'snapshotTexts' && !ch.record && disk) {
-            textKeysInUse ??= usedTextKeys(await db.tableOf('submissions').toArray())
-            if (textKeysInUse.has(ch.id)) {
-              await db.outbox.put({ ...queued, k, t: ch.table, id: ch.id, base: null, at: queued?.at ?? at })
-              continue
-            }
+            textTombstones.push(ch)
+            continue
           }
           // バックアップからの復元・すべて削除の後: この端末の内容で上書きするまで、クラウド側は採らない
           if (queued?.force) {
             await db.outbox.put({ ...queued, base: ch.record })
+            continue
+          }
+          // この端末が書いたもの（返事を受け取れなかった書き込み）: 端末内の内容はそれより新しいので、base だけ進める
+          if (ch.own && queued) {
+            if (deepEqual(disk, ch.record)) await db.outbox.delete(k)
+            else await db.outbox.put({ k, t: ch.table, id: ch.id, base: ch.record, at: queued.at })
+            continue
+          }
+          // ほかの端末の復元・すべて削除: その内容を正とする。この端末で書いたまま送っていない文章だけ控える
+          if (ch.reset) {
+            if (queued && disk && !deepEqual(disk, queued.base) && COPY_TABLES.has(ch.table) && !contentEqual(disk, ch.record))
+              await w.keepInTrash(ch.table, disk, opts, ch.id)
+            if (queued) await db.outbox.delete(k)
+            if (ch.record) {
+              if (!deepEqual(disk, ch.record)) await w.put(ch.table, ch.record)
+            } else if (disk) {
+              await w.del(ch.table, ch.id)
+              noteDeleted(parents, ch.table, ch.id)
+            }
             continue
           }
           if (!queued) {
@@ -474,14 +558,30 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           else await db.outbox.put({ k, t: ch.table, id: ch.id, base: ch.record, at: queued.at })
           await w.keepConflict(ch.table, result, opts, ch.id)
         }
-        if (parents.size) await w.sweepOrphans(parents, opts)
+        // 応募時の原稿の本文は、この端末の応募計画がまだ使っている間は消さない（送り直して、ほかの端末にも戻す）
+        if (textTombstones.length) {
+          const inUse = usedTextKeys(await db.tableOf('submissions').toArray())
+          for (const ch of textTombstones) {
+            const k = outboxKey(ch.table, ch.id)
+            if (inUse.has(ch.id)) {
+              const queued = await db.outbox.get(k)
+              await db.outbox.put({ k, t: ch.table, id: ch.id, base: null, at: queued?.at ?? at })
+            } else {
+              await w.del(ch.table, ch.id)
+              await db.outbox.delete(k)
+            }
+          }
+        }
+        if (parents.size) await w.sweepOrphans(parents, opts, resetParents)
         if (opts.cursor !== undefined) await db.meta.put({ key: 'cursor', value: opts.cursor })
       })
       return deferred ? null : [...written.values()]
     },
 
     async readOutbox(limit) {
-      const rows = await db.outbox.limit(limit).toArray()
+      const keys = (await db.outbox.toCollection().primaryKeys()).map(String)
+      keys.sort((a, b) => sendRank(a) - sendRank(b) || (a < b ? -1 : a > b ? 1 : 0))
+      const rows = (await db.outbox.bulkGet(keys.slice(0, limit))).filter((r): r is OutboxRow => Boolean(r))
       const byTable = new Map<TableName, OutboxRow[]>()
       for (const r of rows) {
         if (!KNOWN_TABLES.has(r.t)) continue
@@ -529,7 +629,9 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
 
     async markAllDirty() {
       const at = Date.now()
-      await db.transaction('rw', [...allTables(), db.outbox], async () => {
+      await db.transaction('rw', [...allTables(), db.outbox, db.meta], async () => {
+        // 共通の履歴が無いので、以前の「クラウドもこの内容に揃える」はやめて、突き合わせるだけにする
+        await db.meta.delete('authoritative')
         await db.outbox.toCollection().modify({ base: null, noHistory: true, force: false })
         for (const t of TABLE_NAMES) {
           const ids = await db.tableOf(t).toCollection().primaryKeys()

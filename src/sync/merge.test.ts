@@ -134,6 +134,7 @@ describe('文書の形', () => {
       hash: enc.hash,
       updated: null,
       device: 'd',
+      deleted: false,
     })
     expect(decodeRecord(doc, chunk)).toEqual(rec)
     // 分割文書が揃わない・別の版の分割文書なら読み直しが要る
@@ -199,5 +200,22 @@ describe('長い文章の項目が両方で書き換えられた時', () => {
     const theirs = { ...base, body: '同じ', updatedAt: 7 }
     const mine = { ...base, body: '同じ', updatedAt: 9 }
     expect(mergeRemote('memos', base, mine, theirs, D).record).toBe(theirs)
+  })
+})
+
+describe('共通の履歴が無い時の、控えを作らない表の文章', () => {
+  it('タイトルのあらすじ・全体戦略、章のメモはつないで残す', () => {
+    const N = { device: 'iPhone', noHistory: true }
+    const mine = { id: 'T', synopsis: '新しいあらすじ', strategyNote: '戦略', structure: [] }
+    const theirs = { id: 'T', synopsis: '古いあらすじ', strategyNote: '', structure: [] }
+    const r = mergeRemote('titles', null, mine, theirs, N)
+    const rec = r.record as typeof mine
+    expect(rec.synopsis).toContain('古いあらすじ')
+    expect(rec.synopsis).toContain('新しいあらすじ')
+    expect(rec.strategyNote).toBe('戦略')
+    expect(r.joined).toEqual(['synopsis', 'strategyNote'])
+    const ch = { id: 'c', note: 'この端末のメモ', pieceIds: [] }
+    const cloudCh = { id: 'c', note: '', pieceIds: [] }
+    expect((mergeRemote('chapters', null, ch, cloudCh, N).record as typeof ch).note).toBe('この端末のメモ')
   })
 })

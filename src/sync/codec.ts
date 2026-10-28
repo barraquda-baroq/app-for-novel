@@ -24,6 +24,8 @@ export interface RecordDoc {
   updated: unknown
   /** 書いた端末 */
   device: string
+  /** バックアップからの復元・すべて削除で書いた（受け取った端末は、この内容を正とする） */
+  reset?: boolean
 }
 
 export interface ChunkDoc {
@@ -34,6 +36,8 @@ export interface ChunkDoc {
   hash: string
   updated: unknown
   device: string
+  /** 分割文書は削除の印を持たない（復元の時に一緒に探せるように常に false） */
+  deleted: false
 }
 
 export const docIdOf = (table: string, id: string) => `${table}:${id}`

@@ -338,7 +338,13 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         console.warn('クラウドのレコードを読み取れませんでした', d.id)
         continue
       }
-      changes.push({ table: recDoc.table as TableName, id: recDoc.id, record: rec as Change['record'] })
+      changes.push({
+        table: recDoc.table as TableName,
+        id: recDoc.id,
+        record: rec as Change['record'],
+        ...(recDoc.device === deviceId ? { own: true } : {}),
+        ...(recDoc.reset ? { reset: true } : {}),
+      })
     }
     const advance = !fromCache && newest && later(newest, cursor) ? newest : undefined
     if (changes.length || advance) {
@@ -351,7 +357,6 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       }
     }
     if (advance) cursor = advance
-    const first = !downloaded && !fromCache
     if (!fromCache) downloaded = true
     for (const f of [...remoteWaiters]) f()
     if (!fromCache) {
@@ -365,8 +370,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         if (pending > 0) requestUpload()
       }
     }
-    // 初めての全件の受け取りが終わったら、届いた分を抱えたままにしないよう、記録した位置から購読し直す
-    if (first && !subscribedFrom && cursor) reanchor()
+    // 全件を購読している（初めての受け取り）なら、届いた分を抱えたままにしないよう、記録した位置から購読し直す
+    if (!fromCache && !subscribedFrom && cursor) reanchor()
   }
 
   // ---------- 送信 ----------
@@ -457,6 +462,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           hash: b.enc.hash,
           updated: serverTimestamp(),
           device: deviceId,
+          ...(b.it.force ? { reset: true } : {}),
         }
         tx.set(doc(col, id), payload)
         b.enc.parts.forEach((part, j) => {
@@ -468,6 +474,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
             hash: b.enc.hash,
             updated: serverTimestamp(),
             device: deviceId,
+            deleted: false,
           }
           tx.set(doc(col, chunkIdOf(id, j)), chunk)
         })
@@ -498,7 +505,14 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         const fetched = await fetchChunks(id)
         rec = decodeRecord(data, (i) => fetched.get(chunkIdOf(id, i)))
       }
-      if (rec !== undefined) changes.push({ table: it.table, id: it.id, record: rec as Change['record'] })
+      if (rec !== undefined)
+        changes.push({
+          table: it.table,
+          id: it.id,
+          record: rec as Change['record'],
+          ...(data.device === deviceId ? { own: true } : {}),
+          ...(data.reset ? { reset: true } : {}),
+        })
     }
     if (changes.length) await target.applyRemote(changes, undefined)
   }
@@ -537,6 +551,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           hash: '',
           updated: serverTimestamp(),
           device: deviceId,
+          reset: true,
         }
         batch.set(doc(col, id), tombstone)
         for (const c of chunkDocs.get(id) ?? []) batch.delete(doc(col, c))
@@ -560,6 +575,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     uploading = (async () => {
       try {
         await target.flush?.()
+        await refreshPending()
         if (!ownerOk) {
           // 起動した時に通信できず、持ち主を確かめられなかった
           await claimOwner()
@@ -610,18 +626,78 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     const ref = doc(fs, ...OWNER_DOC)
     const snap = await getDoc(ref)
     if (!snap.exists()) {
+      // 持ち主として同期していたアカウントの記録が消えている = 持ち主を変えようとしている。取り戻さない
+      if ((await target.getMeta<string>('ownerSeen')) === uid)
+        throw new SyncError(
+          'owner-reset',
+          'クラウドの持ち主の記録が消されています（持ち主を変えようとしています）。新しい持ち主のアカウントでログインしてください。',
+        )
       await setDoc(ref, { uid, createdAt: serverTimestamp() })
-      return
-    }
-    if ((snap.data() as { uid?: string }).uid !== uid)
+    } else if ((snap.data() as { uid?: string }).uid !== uid) {
       throw new SyncError(
         'owner-mismatch',
         'このクラウドは別の Google アカウントのものです。持ち主のアカウントでログインしてください。',
       )
+    }
+    await target.setMeta('ownerSeen', uid)
+  }
+
+  let begun = false
+  let beginRetry: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * 同期を始める。持ち主を確かめてから（ownerLock の時）、初めてのアカウントなら端末内を「共通の履歴が無い」状態にし、
+   * 購読と送信を始める。通信できずに持ち主を確かめられない時は、つながってからやり直す。
+   */
+  async function begin(): Promise<void> {
+    if (stopped || begun) return
+    if (!ownerOk) {
+      try {
+        await claimOwner()
+        ownerOk = true
+      } catch (e) {
+        fail(e)
+        if (e instanceof SyncError) {
+          // 別のアカウントのクラウド: 何も送らず、受け取らない
+          stopped = true
+          return
+        }
+        if (!beginRetry && !stopped)
+          beginRetry = setTimeout(() => {
+            beginRetry = null
+            void begin()
+          }, RETRY_DELAYS_MS[1])
+        return
+      }
+    }
+    if (stopped || begun) return
+    begun = true
+    const storedUid = await target.getMeta<string>('uid')
+    if (storedUid !== uid) {
+      // このアカウントと同期するのは初めて: 端末内のものはクラウドとの共通の履歴が無い前提で突き合わせ、全件を受け取る
+      await target.markAllDirty()
+      await target.setMeta('cursor', null)
+      await target.setMeta('uid', uid)
+    }
+    if ((await target.getMeta<number>('syncSchema')) !== SYNC_SCHEMA) {
+      await target.setMeta('cursor', null)
+      await target.setMeta('syncSchema', SYNC_SCHEMA)
+    }
+    if (stopped) return
+    cursor = (await target.getMeta<StoredCursor | null>('cursor')) ?? null
+    deferred = Boolean(await target.getMeta('authoritative'))
+    setStatus({ phase: 'downloading', error: null })
+    await refreshPending()
+    if (!deferred) subscribe()
+    requestUpload(true)
   }
 
   const onOnline = () => {
     if (stopped) return
+    if (!begun) {
+      void begin()
+      return
+    }
     if (!unsub && !resubscribeTimer) subscribe()
     else reanchor()
     requestUpload(true)
@@ -633,39 +709,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     },
 
     async start() {
-      if (!ownerOk) {
-        try {
-          await claimOwner()
-          ownerOk = true
-        } catch (e) {
-          fail(e)
-          if (e instanceof SyncError) {
-            // 別のアカウントのクラウド: 何も送らず、受け取らない
-            stopped = true
-            return
-          }
-          // 通信できない時は、端末内の送信待ちを積んだまま、つながってから続ける（送る前にもう一度確かめる）
-        }
-      }
-      const storedUid = await target.getMeta<string>('uid')
-      if (storedUid !== uid) {
-        // このアカウントと同期するのは初めて: 端末内のものはクラウドとの共通の履歴が無い前提で突き合わせ、全件を受け取る
-        await target.markAllDirty()
-        await target.setMeta('cursor', null)
-        await target.setMeta('uid', uid)
-      }
-      if ((await target.getMeta<number>('syncSchema')) !== SYNC_SCHEMA) {
-        await target.setMeta('cursor', null)
-        await target.setMeta('syncSchema', SYNC_SCHEMA)
-      }
-      if (stopped) return
-      cursor = (await target.getMeta<StoredCursor | null>('cursor')) ?? null
-      deferred = Boolean(await target.getMeta('authoritative'))
-      setStatus({ phase: 'downloading', error: null })
-      await refreshPending()
-      if (!deferred) subscribe()
-      requestUpload(true)
       if (typeof window !== 'undefined') window.addEventListener('online', onOnline)
+      await begin()
     },
 
     stop() {
@@ -673,13 +718,15 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       listenerGen += 1
       unsub?.()
       unsub = null
-      for (const t of [uploadTimer, retryTimer, resubscribeTimer]) if (t) clearTimeout(t)
+      for (const t of [uploadTimer, retryTimer, resubscribeTimer, beginRetry]) if (t) clearTimeout(t)
       if (typeof window !== 'undefined') window.removeEventListener('online', onOnline)
     },
 
-    requestUpload,
+    requestUpload: (immediate?: boolean) => {
+      if (begun) requestUpload(immediate)
+    },
 
-    flush: () => uploadAll(),
+    flush: () => (begun ? uploadAll() : Promise.resolve()),
 
     reanchor,
 

@@ -209,7 +209,7 @@ export interface MergeResult {
  * 共通の履歴が無い（初めてのログイン・アカウントの切り替えで、この端末の内容をクラウドの内容と突き合わせる）時。
  * クラウド側を正とし、この端末にしか無い文章は控える。並びにはこの端末にしか無い要素を足す。
  */
-function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null): MergeResult {
+function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null, device: string): MergeResult {
   if (!mine) return { record: theirs }
   // クラウドで削除されていた: 削除を優先し、この端末の内容は控える
   if (!theirs) return { record: null, deletedEdit: mine }
@@ -219,12 +219,25 @@ function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null):
   for (const [field, key] of Object.entries(LIST_FIELDS[table] ?? {})) {
     if (field in out || field in m) out[field] = unionList(out[field], m[field], key)
   }
-  const record = out as Rec
-  const result: MergeResult = { record }
+  const result: MergeResult = { record: out as Rec }
   const mineV = mine as unknown as { body?: unknown }
   const theirV = theirs as unknown as { body?: unknown }
   if (table === 'versions' && mineV.body !== theirV.body) result.bodyConflict = mine
-  else if (TEXT_TABLES.has(table) && !contentEqual(mine, record)) result.keptCopy = mine
+  else if (TEXT_TABLES.has(table)) {
+    if (!contentEqual(mine, result.record)) result.keptCopy = mine
+  } else {
+    // 控えを作らない表（タイトルのあらすじ・全体戦略、章のメモ）は、この端末の文章をつないで残す
+    const joined: string[] = []
+    for (const f of TEXT_FIELDS[table] ?? []) {
+      const mv = m[f]
+      const tv = out[f]
+      if (typeof mv !== 'string' || mv === '' || mv === tv) continue
+      if (typeof tv === 'string' && tv.includes(mv)) continue
+      out[f] = typeof tv === 'string' && tv !== '' ? joinConflictText(tv, mv, device) : mv
+      joined.push(f)
+    }
+    if (joined.length) result.joined = joined
+  }
   return result
 }
 
@@ -235,7 +248,7 @@ export function mergeRemote(
   theirs: Rec | null,
   opts: MergeOptions & { noHistory?: boolean },
 ): MergeResult {
-  if (opts.noHistory) return mergeUnrelated(table, mine, theirs)
+  if (opts.noHistory) return mergeUnrelated(table, mine, theirs, opts.device)
   if (contentEqual(mine, base)) return { record: theirs }
   // 同じ内容になっていれば、クラウドの内容をそのまま使う（端末内とクラウドを完全に揃えるため）
   if (contentEqual(theirs, mine)) return { record: theirs }

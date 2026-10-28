@@ -102,10 +102,17 @@ function installHooks(): void {
   try {
     statusChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(STATUS_CHANNEL)
     if (statusChannel) {
-      statusChannel.onmessage = (ev: MessageEvent<{ status?: SyncStatus }>) => {
+      statusChannel.onmessage = (ev: MessageEvent<{ status?: SyncStatus; request?: boolean }>) => {
+        const { leader, status } = useSync.getState()
+        // 後から開いた画面が尋ねてきたら、いまの状態を答える
+        if (ev.data?.request) {
+          if (leader && status) publishStatus(status)
+          return
+        }
         // 同期を受け持っていない画面は、受け持つ画面の状態を出す
-        if (!useSync.getState().leader && ev.data?.status) useSync.setState({ status: ev.data.status })
+        if (!leader && ev.data?.status) useSync.setState({ status: ev.data.status })
       }
+      statusChannel.postMessage({ request: true })
     }
   } catch {
     statusChannel = null
