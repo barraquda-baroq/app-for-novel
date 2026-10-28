@@ -1,15 +1,15 @@
 // 採用原稿（左／上）。アクティブなバージョンだけが章・タイトル・通し読みに反映される。
-import { useDeferredValue, useMemo } from 'react'
+import { useDeferredValue, useId, useMemo, useRef, useState } from 'react'
 import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import type { Version } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { attempt } from '../../store/uiStore'
-import { copyText, formatDateTime, formatRelative } from '../../ui/browser'
+import { copyText, formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea } from '../../ui/DraftField'
-import { CopyIcon, PlusIcon } from '../../ui/icons'
-import { commitVersion, flushEditors, tryRun, useLiveText, useRegisteredDraft } from './editing'
-import { statsParts } from './logic'
+import { CopyIcon, MoreIcon, PlusIcon } from '../../ui/icons'
+import { commitVersion, flushEditors, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
+import { formatStats, liveStats } from './logic'
 import { ReviseIcon, UnadoptIcon } from './pieceIcons'
 import type { WorkspaceApi } from './VersionsPane'
 
@@ -22,7 +22,21 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
   const [live, onDraftChange] = useLiveText(active.id, active.body)
   const nameRef = useRegisteredDraft()
   const deferred = useDeferredValue(live)
-  const stats = useMemo(() => statsParts(deferred), [deferred])
+  // 保存済みの本文と同じなら稿ごとにキャッシュした値を使い、書いている間だけ数え直す
+  const stats = useMemo(() => formatStats(liveStats(active, deferred)), [active, deferred])
+  const updated = formatUpdated(active.updatedAt)
+
+  // 狭いペインでは、使う頻度の低い操作（コピー・採用を解除）を「…」のメニューにしまう
+  const [moreOpen, setMoreOpen] = useState(false)
+  const headRef = useRef<HTMLDivElement>(null)
+  const moreToggleRef = useRef<HTMLButtonElement>(null)
+  const moreId = useId()
+  const closeMore = () => {
+    // 閉じたメニューの中にフォーカスを残さない（確認ダイアログを閉じた後も「…」に戻る）
+    if (document.activeElement?.closest('.pw-amore')) moreToggleRef.current?.focus()
+    setMoreOpen(false)
+  }
+  useDismiss(moreOpen, headRef, closeMore)
 
   const duplicate = () => {
     flushEditors(api.activeEditor, nameRef)
@@ -30,7 +44,13 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
     if (id) api.select(id)
   }
 
+  const copy = () => {
+    closeMore()
+    void copyText(live)
+  }
+
   const unadopt = async () => {
+    closeMore()
     const ok = await confirmDialog({
       title: '採用を解除しますか？',
       message: `この話には採用原稿がなくなり、章・タイトルの通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。\n\n「${active.name || '無題の稿'}」は削除されず、推敲バージョンの一覧に残ります。あとで「採用する」で戻せます。`,
@@ -43,7 +63,7 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
 
   return (
     <div className="pw-pane pw-pane-active" data-testid="active-pane">
-      <div className="pw-head pw-ahead">
+      <div className={`pw-head pw-ahead${moreOpen ? ' is-more-open' : ''}`} ref={headRef}>
         <span className="badge badge-active pw-head-badge">採用中</span>
         <DraftInput
           ref={nameRef}
@@ -56,10 +76,6 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
           data-testid="active-version-name"
         />
         <div className="pw-tools" role="group" aria-label="採用原稿の操作">
-          <button type="button" className="btn pw-tbtn" onClick={() => void copyText(live)} title="本文をクリップボードにコピー">
-            <CopyIcon />
-            <span className="pw-tlabel">コピー</span>
-          </button>
           <button
             type="button"
             className="btn pw-tbtn"
@@ -68,18 +84,54 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
             data-testid="duplicate-active"
           >
             <ReviseIcon />
-            <span className="pw-tlabel">複製して推敲</span>
+            {/* 狭いペインでは「推敲」だけを出す */}
+            <span className="pw-tlabel pw-tlabel-keep">
+              <span className="pw-tlabel-long">複製して</span>推敲
+            </span>
           </button>
           <button
+            ref={moreToggleRef}
             type="button"
-            className="btn pw-tbtn"
-            onClick={() => void unadopt()}
-            title="どのバージョンも採用しない状態にする"
-            data-testid="unadopt-button"
+            className="icon-btn pw-more-toggle"
+            aria-expanded={moreOpen}
+            aria-controls={moreId}
+            aria-label="採用原稿のその他の操作"
+            title="採用原稿のその他の操作"
+            onClick={() => (moreOpen ? closeMore() : setMoreOpen(true))}
+            data-testid="active-more-button"
           >
-            <UnadoptIcon />
-            <span className="pw-tlabel">採用を解除</span>
+            <MoreIcon />
           </button>
+          {/* 広いペインではヘッダーにそのまま並び、狭いペインでは「…」で開くメニューになる */}
+          <div className="pw-amore" id={moreId}>
+            {/* 狭いヘッダーに出しきれない原稿用紙換算と更新日時 */}
+            <p className="pw-amore-meta">
+              <span>
+                {stats.chars}・{stats.pages}
+              </span>
+              <span title={formatDateTime(active.updatedAt)}>{updated}</span>
+            </p>
+            <button
+              type="button"
+              className="btn pw-tbtn"
+              onClick={copy}
+              title="本文をクリップボードにコピー"
+              data-testid="copy-active"
+            >
+              <CopyIcon />
+              <span className="pw-tlabel">コピー</span>
+            </button>
+            <button
+              type="button"
+              className="btn pw-tbtn"
+              onClick={() => void unadopt()}
+              title="どのバージョンも採用しない状態にする"
+              data-testid="unadopt-button"
+            >
+              <UnadoptIcon />
+              <span className="pw-tlabel">採用を解除</span>
+            </button>
+          </div>
         </div>
         <span className="pw-break" aria-hidden="true" />
         <div className="pw-meta">
@@ -88,7 +140,7 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
             <span className="pw-pages">・{stats.pages}</span>
           </span>
           <span className="faint pw-updated" title={formatDateTime(active.updatedAt)}>
-            {formatRelative(active.updatedAt)}に更新
+            {updated}
           </span>
           <span className="faint pw-meta-hint">通し読みに反映されます</span>
         </div>
@@ -123,8 +175,9 @@ function NoActive({ api }: { api: WorkspaceApi }) {
   return (
     <div className="pw-pane pw-pane-active is-empty" data-testid="active-pane">
       <div className="pw-head">
-        <span className="badge badge-missing pw-head-badge">未採用</span>
-        <span className="pw-head-title">採用原稿</span>
+        <span className="badge badge-missing pw-head-badge" data-testid="no-active-badge">
+          採用原稿なし
+        </span>
       </div>
       <div className="pw-body pw-scroll">
         <div className="pw-empty" data-testid="no-active">

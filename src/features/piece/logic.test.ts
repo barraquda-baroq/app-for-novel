@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createTitle } from '../../domain/entityOps'
 import { addEpisode, addSpecial, addVersion, deleteVersion, setActiveVersion, updateVersion } from '../../domain/storyOps'
 import { emptyData, type AppData, type ID } from '../../domain/types'
@@ -6,6 +6,8 @@ import {
   activeVersionOf,
   firstLine,
   formatCharDelta,
+  formatStats,
+  liveStats,
   mapScrollTop,
   neighborPieces,
   ratioToSlider,
@@ -19,6 +21,23 @@ import {
   versionRows,
   versionsNewestFirst,
 } from './logic'
+
+// 本文を数え直した回数（一覧や自動保存のたびに全稿を数え直していないかを確かめる）
+const counted = vi.hoisted(() => ({ n: 0 }))
+vi.mock('../../domain/text', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../domain/text')>()
+  return {
+    ...mod,
+    countChars: (text: string) => {
+      counted.n += 1
+      return mod.countChars(text)
+    },
+    textStats: (text: string) => {
+      counted.n += 1
+      return mod.textStats(text)
+    },
+  }
+})
 
 function setup() {
   let data: AppData = emptyData()
@@ -54,6 +73,39 @@ describe('推敲バージョンの一覧', () => {
     expect(rows.map((r) => r.delta)).toEqual([2, -5, null])
     expect(rows[1].note).toBe('短くした')
     expect(rows[0].note).toBe('')
+  })
+
+  it('文字数は稿ごとにキャッシュした値を使い、別の稿の保存では数え直さない', () => {
+    let { data, p1 } = setup()
+    const v1 = firstVersion(data, p1)
+    data = updateVersion(data, v1, { body: 'あ'.repeat(5000) })
+    data = addVersion(data, p1, { body: 'い'.repeat(4000) }).data
+    const r3 = addVersion(data, p1, { body: 'う'.repeat(3000) })
+    data = r3.data
+    const first = versionRows(data, data.pieces[p1])
+    expect(first.map((r) => r.chars)).toEqual([3000, 4000, 5000])
+    // 第3稿だけを保存し直した（他の稿のレコードはそのまま）
+    data = updateVersion(data, r3.result, { body: 'う'.repeat(3010) })
+    counted.n = 0
+    const again = versionRows(data, data.pieces[p1])
+    expect(again.map((r) => r.chars)).toEqual([3010, 4000, 5000])
+    expect(again.map((r) => r.delta)).toEqual([-1990, -1000, null])
+    // 公開の countChars / textStats では数えない（bodyMetrics のキャッシュを使う）
+    expect(counted.n).toBe(0)
+  })
+
+  it('編集中の文字数: 保存済みの本文と同じならキャッシュを使い、下書きだけを数え直す', () => {
+    let { data, p1 } = setup()
+    const v1 = firstVersion(data, p1)
+    data = updateVersion(data, v1, { body: 'あいう\nえお' })
+    const version = data.versions[v1]
+    counted.n = 0
+    expect(liveStats(version, version.body).chars).toBe(5)
+    expect(liveStats(version, version.body).chars).toBe(5)
+    expect(counted.n).toBe(0)
+    expect(liveStats(version, 'あいう\nえおか').chars).toBe(6)
+    expect(counted.n).toBe(1)
+    expect(formatStats(liveStats(version, version.body))).toEqual({ chars: '5字', pages: '原稿用紙1枚' })
   })
 
   it('採用原稿がないときは差を出さない', () => {

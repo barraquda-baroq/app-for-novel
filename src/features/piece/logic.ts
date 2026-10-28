@@ -1,7 +1,7 @@
 // 原稿画面（採用原稿と推敲バージョンの比較）で使う純粋な計算。
 import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import { flatten } from '../../domain/structure'
-import { countChars, formatCount, textStats } from '../../domain/text'
+import { bodyMetrics, formatCount, textStats, type TextStats } from '../../domain/text'
 import type { AppData, ID, Piece, Submission, Version } from '../../domain/types'
 
 /** 採用中のバージョン（採用なし・参照切れなら null） */
@@ -52,8 +52,19 @@ export function statsLabel(text: string): string {
 
 /** 文字数と原稿用紙換算を別々に（狭いヘッダーでは文字数だけを出す） */
 export function statsParts(text: string): { chars: string; pages: string } {
-  const s = textStats(text)
+  return formatStats(textStats(text))
+}
+
+export function formatStats(s: Pick<TextStats, 'chars' | 'manuscriptPages'>): { chars: string; pages: string } {
   return { chars: `${formatCount(s.chars)}字`, pages: `原稿用紙${formatCount(s.manuscriptPages)}枚` }
+}
+
+/**
+ * 編集中の稿の文字数など。表示中の本文が保存済みの本文と同じ（未編集・保存済み）なら、
+ * 稿ごとにキャッシュした値（bodyMetrics）を使い、書いている間の下書きだけを数え直す。
+ */
+export function liveStats(version: Version, text: string): TextStats {
+  return text === version.body ? bodyMetrics(version) : textStats(text)
 }
 
 /** 推敲メモなどの最初の空でない行 */
@@ -75,11 +86,12 @@ export interface VersionRowInfo {
   note: string
 }
 
+/** 文字数は稿ごとにキャッシュした値を使う（自動保存のたびに全稿の本文を数え直さない） */
 export function versionRows(data: AppData, piece: Piece): VersionRowInfo[] {
   const active = activeVersionOf(data, piece)
-  const activeChars = active ? countChars(active.body) : 0
+  const activeChars = active ? bodyMetrics(active).chars : 0
   return versionsNewestFirst(data, piece).map((v) => {
-    const chars = countChars(v.body)
+    const chars = bodyMetrics(v).chars
     const isActive = active?.id === v.id
     return {
       version: v,
