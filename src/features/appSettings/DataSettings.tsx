@@ -5,6 +5,7 @@ import { DomainError, type AppData } from '../../domain/types'
 import { replaceAllData, useData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
 import { formatDateTime, pickTextFile } from '../../ui/browser'
+import { useSync } from '../../sync/controller'
 import { confirmDialog } from '../../ui/dialogs'
 import { DownloadIcon, UploadIcon } from '../../ui/icons'
 import { useBackupExport, useLastBackup } from './backupExport'
@@ -52,6 +53,7 @@ export function DataSettings() {
   const lastBackup = useLastBackup()
   const { exporting, run: exportBackup } = useBackupExport()
   const [busy, setBusy] = useState(false)
+  const synced = useSync((s) => s.everSignedIn)
 
   const restore = async () => {
     const text = await pickTextFile()
@@ -66,6 +68,9 @@ export function DataSettings() {
     const exportedAt = readExportedAt(text)
     const lines = [
       'この端末の現在のデータは、すべてバックアップの内容に置き換えられます。現在のデータは元に戻せません。必要なら先に「バックアップを書き出す」で保存してください。',
+      synced
+        ? '同期を使っているため、クラウドとほかの端末のデータもバックアップの内容に置き換わります（ログアウト中なら、次にログインした時に置き換わります）。'
+        : null,
       '',
       exportedAt ? `書き出し日時: ${formatDateTime(exportedAt)}` : null,
       `バックアップの内容: ${countsSummary(dataCounts(next))}`,
@@ -109,7 +114,9 @@ export function DataSettings() {
       <div className="aset-card-head">
         <h2 id={`${id}-title`}>データ</h2>
         <p className="aset-card-lead">
-          データはこの端末のブラウザの中（IndexedDB）にだけ保存され、サーバーには送られません。機種変更やブラウザのデータ削除に備えて、ときどきバックアップを書き出しておきましょう。別の端末へは、バックアップを書き出して、その端末で復元すると移せます。
+          {synced
+            ? 'データはこの端末の中（IndexedDB）と、同期のためのクラウド（あなたの Google アカウントだけが読み書きできる場所）に保存されます。万一に備えて、ときどきバックアップを書き出しておきましょう。'
+            : 'データはこの端末のブラウザの中（IndexedDB）にだけ保存され、サーバーには送られません（上の「同期」でログインすると、ほかの端末と同じ内容にできます）。機種変更やブラウザのデータ削除に備えて、ときどきバックアップを書き出しておきましょう。'}
         </p>
       </div>
 

@@ -3,6 +3,7 @@ import { useId, useState } from 'react'
 import { emptyData } from '../../domain/types'
 import { getData, replaceAllData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
+import { useSync } from '../../sync/controller'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { TrashIcon } from '../../ui/icons'
 import { clearLocalState } from './localState'
@@ -12,19 +13,26 @@ export function DangerZone() {
   const id = useId()
   const [busy, setBusy] = useState(false)
 
+  const synced = useSync((s) => s.everSignedIn)
+
   const deleteAll = async () => {
     const current = getData()
     const ok = await confirmDialog({
       title: 'すべてのデータを削除しますか？',
       message: [
-        'この端末に保存されているタイトル・原稿・推敲バージョン・設定項目・戦略・メモ・アイデアをすべて削除します。この操作は取り消せません。',
+        'この端末に保存されているタイトル・原稿・推敲バージョン・設定項目・戦略・メモ・アイデア・ゴミ箱をすべて削除します。この操作は取り消せません。',
+        synced
+          ? '同期を使っているため、クラウドとほかの端末のデータもすべて削除されます（ログアウト中なら、次にログインした時に削除されます）。'
+          : null,
         'この端末の書きかけ（アイデアの入力欄など）や折りたたみの状態も消えます。表示の設定（テーマ・文字サイズなど）は残ります。',
         '必要なら、先に「バックアップを書き出す」で保存してください。',
         '',
         isEmptyData(current)
           ? '（いまは保存されているデータがありません）'
           : `削除される内容: ${countsSummary(dataCounts(current))}`,
-      ].join('\n'),
+      ]
+        .filter((l): l is string => l !== null)
+        .join('\n'),
       danger: true,
       confirmLabel: '削除へ進む',
     })
@@ -63,6 +71,7 @@ export function DangerZone() {
           <span>すべてのデータを削除</span>
           <span className="aset-row-desc">
             この端末のタイトル・原稿・アイデア・書きかけなどをすべて削除して、最初の状態に戻します。表示の設定（テーマ・文字サイズなど）は残ります。
+            {synced ? '同期を使っているため、ほかの端末からも削除されます。' : ''}
           </span>
         </div>
         <div className="aset-row-control">

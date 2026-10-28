@@ -12,7 +12,7 @@ import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea, type DraftHandle } from '../../ui/DraftField'
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, MoreIcon, NoteIcon, PlusIcon, TrashIcon } from '../../ui/icons'
 import { DiffView } from './DiffView'
-import { commitVersion, flushEditors, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
+import { commitVersion, flushEditors, versionBodyGuard, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
 import {
   firstLine,
   formatCharDelta,
@@ -460,6 +460,7 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
             className="manuscript"
             value={selected.body}
             onCommit={(v) => commitVersion(selected.id, { body: v })}
+            conflictGuard={versionBodyGuard(selected.id)}
             onDraftChange={onDraftChange}
             placeholder="推敲中の本文"
             aria-label="推敲バージョンの本文"

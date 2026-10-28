@@ -2,8 +2,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type RefObject } from 'react'
 import { actions } from '../../store/actions'
 import { getData } from '../../store/appStore'
-import { attempt } from '../../store/uiStore'
-import type { DraftHandle } from '../../ui/DraftField'
+import { attempt, notify } from '../../store/uiStore'
+import { conflictVersionName } from '../../sync/conflicts'
+import type { DraftConflictGuard, DraftHandle } from '../../ui/DraftField'
 import { mapScrollTop } from './logic'
 
 type VersionPatch = { name?: string; body?: string; note?: string }
@@ -18,6 +19,31 @@ export function commitVersion(versionId: string, patch: VersionPatch): void {
   const changed = (Object.keys(patch) as (keyof VersionPatch)[]).some((k) => patch[k] !== undefined && patch[k] !== v[k])
   if (!changed) return
   attempt(() => actions.updateVersion(versionId, patch))
+}
+
+/**
+ * 本文の編集中に、同期で別の端末の編集が届いて稿の本文が書き換わっていたら、入力中の本文を上書きせずに
+ * 「（競合: この端末の編集）」の新しい稿として残す（どちらの文章も消さない）。
+ */
+export function versionBodyGuard(versionId: string): DraftConflictGuard {
+  return {
+    read: () => getData().versions[versionId]?.body ?? '',
+    onConflict: (draft) => {
+      const v = getData().versions[versionId]
+      if (!v) return
+      const ok = tryRun(() =>
+        actions.addVersion(v.pieceId, {
+          body: draft,
+          sourceVersionId: v.id,
+          name: conflictVersionName(v.name, 'この端末'),
+        }),
+      )
+      if (ok)
+        notify(
+          `別の端末で「${v.name}」が書き換えられたため、入力中の本文を「${conflictVersionName(v.name, 'この端末')}」として残しました`,
+        )
+    },
+  }
 }
 
 export function commitPiece(pieceId: string, patch: { subtitle?: string; label?: string }): void {

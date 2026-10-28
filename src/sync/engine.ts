@@ -174,35 +174,52 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
 
   let resubscribeTimer: ReturnType<typeof setTimeout> | null = null
   let resubscribeCount = 0
+  /** 購読の世代（購読し直したら、前の購読の通知は使わない） */
+  let listenerGen = 0
+
+  /** 購読をやめ、少し待ってから記録した位置から購読し直す */
+  function resubscribeLater(): void {
+    listenerGen += 1
+    unsub?.()
+    unsub = null
+    if (stopped || resubscribeTimer) return
+    const delay = RETRY_DELAYS_MS[Math.min(resubscribeCount, RETRY_DELAYS_MS.length - 1)]
+    resubscribeCount += 1
+    resubscribeTimer = setTimeout(() => {
+      resubscribeTimer = null
+      subscribe()
+    }, delay)
+  }
 
   function subscribe(): void {
     if (stopped) return
     unsub?.()
+    const gen = ++listenerGen
     const q = cursor
       ? query(col, where('updated', '>', new Timestamp(cursor.s, cursor.n)), orderBy('updated'))
       : query(col, orderBy('updated'))
     unsub = onSnapshot(
       q,
       (snap) => {
-        resubscribeCount = 0
         const changed = snap
           .docChanges()
           .filter((c) => c.type !== 'removed')
           .map((c) => c.doc)
         const fromCache = snap.metadata.fromCache
         const all = snap.docs
-        void exclusive(() => handleSnapshot(changed, all, fromCache)).catch(fail)
+        void exclusive(async () => {
+          // 反映に失敗した後の通知は捨てる（後の通知で位置が進むと、失敗した分を取りこぼすため）
+          if (gen !== listenerGen) return
+          await handleSnapshot(changed, all, fromCache)
+          resubscribeCount = 0
+        }).catch((e) => {
+          fail(e)
+          if (gen === listenerGen) resubscribeLater()
+        })
       },
       (err) => {
         fail(err)
-        unsub = null
-        if (stopped) return
-        const delay = RETRY_DELAYS_MS[Math.min(resubscribeCount, RETRY_DELAYS_MS.length - 1)]
-        resubscribeCount += 1
-        resubscribeTimer = setTimeout(() => {
-          resubscribeTimer = null
-          subscribe()
-        }, delay)
+        if (gen === listenerGen) resubscribeLater()
       },
     )
   }
@@ -441,7 +458,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
 
   const onOnline = () => {
     if (stopped) return
-    if (!unsub) subscribe()
+    if (!unsub && !resubscribeTimer) subscribe()
     requestUpload(true)
   }
 
@@ -473,6 +490,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
 
     stop() {
       stopped = true
+      listenerGen += 1
       unsub?.()
       unsub = null
       for (const t of [uploadTimer, retryTimer, resubscribeTimer]) if (t) clearTimeout(t)

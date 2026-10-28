@@ -19,12 +19,21 @@ jobs:
         run: npx tsc -b --noEmit
       - name: 単体テスト
         run: npm test
+      - name: Firebase エミュレーターのキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('package-lock.json') }}
+      - name: 同期のテスト（Firebase エミュレーター）
+        run: npm run test:sync
       - name: ビルド
         run: npm run build
       - name: E2E テスト用ブラウザ
         run: npx playwright install --with-deps chromium
       - name: E2E テスト
         run: npm run test:e2e
+      - name: 同期の E2E テスト（Firebase エミュレーター）
+        run: npm run test:e2e:sync
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -6,6 +6,8 @@ const port = Number(process.env.E2E_PORT ?? 5174)
 
 export default defineConfig({
   testDir: './e2e',
+  // 同期のテストはエミュレーターが要るので別に動かす（playwright.sync.config.ts）
+  testIgnore: '**/*.sync.spec.ts',
   outputDir: './e2e/artifacts/results',
   fullyParallel: true,
   retries: 0,

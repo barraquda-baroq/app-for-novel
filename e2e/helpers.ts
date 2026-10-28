@@ -8,6 +8,8 @@ interface DevHook {
   getData: () => AppData
   flushNow: () => Promise<boolean>
   replaceAllData: (data: AppData) => Promise<void>
+  /** エミュレーターにつないでいる時だけ: 仮のアカウントでログインする */
+  signInForTest: (sub: string) => Promise<void>
 }
 
 declare global {

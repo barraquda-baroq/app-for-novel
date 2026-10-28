@@ -7,6 +7,7 @@ import { flushAllDrafts } from '../store/draftRegistry'
 import { notify, notifyError, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost, cancelAllDialogs } from './dialogs'
 import { GearIcon, XIcon } from './icons'
+import { SyncIndicator } from './SyncIndicator'
 
 export interface Crumb {
   label: string
@@ -72,6 +73,7 @@ export function AppHeader({ crumbs, actions }: { crumbs?: Crumb[]; actions?: Rea
       <span className="spacer" />
       {actions}
       <SaveStatus />
+      <SyncIndicator />
       <Link to="/settings" className="icon-btn" aria-label="アプリの設定・バックアップ" title="アプリの設定・バックアップ">
         <GearIcon />
       </Link>

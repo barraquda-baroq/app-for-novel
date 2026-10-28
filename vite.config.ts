@@ -6,11 +6,17 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig({
   // 相対パスで出力しておくと、静的ホスティング・Capacitor/Tauri 等のラッパーにそのまま載せられる
   base: './',
+  // 同期（Firebase）は使う時に読み込む。開発サーバーで途中に依存を最適化し直して再読み込みしないよう、先にまとめておく
+  optimizeDeps: { include: ['firebase/app', 'firebase/auth', 'firebase/firestore'] },
   plugins: [
     react(),
     VitePWA({
       // 執筆中に勝手に再読み込みしないよう、更新はユーザーが「更新する」を押した時に適用する
       registerType: 'prompt',
+      workbox: {
+        // Firebase のログイン画面（/__/auth/…）はオフライン用のアプリの画面に差し替えない
+        navigateFallbackDenylist: [/^\/__\//],
+      },
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Novel Studio — 小説執筆アプリ',

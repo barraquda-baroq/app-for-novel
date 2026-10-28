@@ -8,6 +8,7 @@ import { actions } from './store/actions'
 import { flushNow, getData, initStore, replaceAllData } from './store/appStore'
 import { installLeaveHandlers, saveBeforeLeave } from './store/lifecycle'
 import { useAppUpdate } from './store/uiStore'
+import { initSync, signInForTest } from './sync/controller'
 
 // 端末内のデータが勝手に消されないよう、永続ストレージを要求する（対応ブラウザのみ）
 void navigator.storage?.persist?.().catch(() => undefined)
@@ -32,10 +33,11 @@ if (import.meta.env.PROD) {
 
 // E2E テストからデータを用意するための開発用フック（本番ビルドには含まれない）
 if (import.meta.env.DEV) {
-  ;(window as unknown as { __ns: unknown }).__ns = { actions, getData, flushNow, replaceAllData }
+  ;(window as unknown as { __ns: unknown }).__ns = { actions, getData, flushNow, replaceAllData, signInForTest }
 }
 
-void initStore()
+// 端末内のデータを読み込んでから、ログインしたことのある端末なら同期を始める
+void initStore().then(() => initSync())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

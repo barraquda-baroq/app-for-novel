@@ -8,7 +8,7 @@ import { copyText, formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea } from '../../ui/DraftField'
 import { CopyIcon, MoreIcon, PlusIcon } from '../../ui/icons'
-import { commitVersion, flushEditors, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
+import { commitVersion, flushEditors, versionBodyGuard, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
 import { formatStats, liveStats } from './logic'
 import { ReviseIcon, UnadoptIcon } from './pieceIcons'
 import type { WorkspaceApi } from './VersionsPane'
@@ -152,6 +152,7 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
           className="manuscript"
           value={active.body}
           onCommit={(v) => commitVersion(active.id, { body: v })}
+          conflictGuard={versionBodyGuard(active.id)}
           onDraftChange={onDraftChange}
           placeholder="ここに本文を書きます"
           aria-label="採用原稿の本文"

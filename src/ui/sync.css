@@ -1,0 +1,48 @@
+/* ===== 同期の状態（ヘッダー） ===== */
+.sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-faint);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.sync-indicator:hover {
+  background: var(--surface-3);
+}
+
+.sync-indicator .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.sync-indicator.ok .icon {
+  color: var(--active);
+}
+
+.sync-indicator.busy .icon {
+  color: var(--accent);
+}
+
+.sync-indicator.warn {
+  color: var(--warn);
+}
+
+.sync-indicator.error {
+  color: var(--danger);
+}
+
+/* アプリの設定の「同期」 */
+.sync-state.warn {
+  color: var(--warn);
+}
+
+.sync-state.error,
+.aset-note.aset-error {
+  color: var(--danger);
+}

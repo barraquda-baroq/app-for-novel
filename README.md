@@ -1,7 +1,8 @@
 # Novel Studio — 小説執筆アプリ
 
 アイデア・設定・話数単位の原稿と推敲バージョン・コンテスト応募戦略を、タイトルごとにまとめて管理する小説執筆アプリです。
-ブラウザで動く PWA なので、デスクトップ（Windows / macOS / Linux）でも iPhone / Android でも同じアプリを使えます。データはすべて端末内（IndexedDB）に保存され、サーバーには送られません。
+ブラウザで動く PWA なので、デスクトップ（Windows / macOS / Linux）でも iPhone / Android でも同じアプリを使えます。
+データは端末内（IndexedDB）に保存され、Google アカウントでログインすると、Firebase（Cloud Firestore）を通して Windows・iPhone・Android の間でリアルタイムに同期します（2.x）。
 
 ## できること
 
@@ -18,6 +19,7 @@
 | 比較画面 | 採用原稿の右（スマホは下）に推敲バージョンの一覧。選ぶと採用原稿と並べて比較でき、比率はスライダー／境界のドラッグで変更。差分ハイライトあり |
 | 通し読み | 採用原稿だけをタイトル全体・章ごとに通して読む。採用原稿がない話は「採用原稿がありません。」と表示。縦書き表示・テキスト書き出し |
 | 戦略 | 応募先コンテストを応募順に並べ、締切・規定（文字数または原稿用紙換算枚数）・状態・結果・改稿方針・再応募方針を管理。応募時点の採用原稿（どの話にどの稿を採用していたかと本文の控え）を記録し、あとから読む・書き出せる |
+| 同期 | Google でログインすると、どの端末で書いた内容も自動で同じになる。オフラインでも書け、つながった時に送る。同時に同じ稿の本文を直していたら、片方を「（競合: ○○での編集）」の別の稿として残す |
 | バックアップ | 全データを JSON で書き出し・復元。しばらく書き出していないとホームでお知らせ |
 
 ### データを失わないための仕組み
@@ -28,7 +30,8 @@
 - 壊れたバックアップや参照の切れたデータは読み込み時に自動で修復
 - アプリの更新は「更新する」を押した時だけ（執筆中に勝手に再読み込みしない）
 
-詳しい仕様と設計上の決定は [docs/SPEC.md](docs/SPEC.md) を参照してください。
+詳しい仕様と設計上の決定は [docs/SPEC.md](docs/SPEC.md)（1.x）と [docs/SPEC-2.md](docs/SPEC-2.md)（2.x）を参照してください。
+公開（Firebase Hosting）と同期の準備は [docs/DEPLOY.md](docs/DEPLOY.md) にまとめています。
 
 ## 使い方（開発）
 
@@ -39,12 +42,18 @@ npm test           # 単体テスト（Vitest）
 npm run test:e2e   # E2E テスト（Playwright: デスクトップ幅とスマホ幅）
 npm run build      # dist/ に本番ビルド（PWA）
 npm run format     # Prettier で整形
+
+npm run test:sync      # 同期の結合テスト（Firebase エミュレーター。Java が必要）
+npm run test:e2e:sync  # ブラウザ2つで同期を確かめる E2E テスト（同上）
+npm run deploy         # Firebase Hosting とアクセスルールを公開（docs/DEPLOY.md）
 ```
 
 `dist/` は相対パスで出力されるので、任意の静的ホスティング（GitHub Pages など）にそのまま置けます。
 `.github/workflows/pages.yml` は main ブランチを GitHub Pages に公開します（リポジトリの Settings → Pages で Source を「GitHub Actions」にし、このブランチを main に取り込んでください）。
 
 ## アプリとしてインストールする
+
+公開先は <https://novel-studio-3352e.web.app>（Firebase Hosting。公開の手順は [docs/DEPLOY.md](docs/DEPLOY.md)）。
 
 - **iPhone / iPad**: Safari で開き、共有ボタン →「ホーム画面に追加」
 - **Android**: Chrome で開き、メニュー →「アプリをインストール」
@@ -60,7 +69,8 @@ Web アプリのまま [Capacitor](https://capacitorjs.com/)（iOS / Android）�
 
 ```
 src/domain/    ドメインロジック（純粋関数・テスト済み）
-src/db/        IndexedDB への保存（Dexie）
+src/db/        IndexedDB への保存（Dexie）と同期の送信待ち
+src/sync/      クラウドとの同期（Firebase。マージ・送受信・ログイン）
 src/store/     状態管理（Zustand）と UI から呼ぶ actions
 src/ui/        共通部品（ダイアログ・分割ペイン・自動保存入力など）
 src/features/  各画面
