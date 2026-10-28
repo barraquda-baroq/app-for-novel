@@ -6,12 +6,14 @@
 // - 幕はさらに分けたり、次の幕とつないだりできる。幕の番号（第x幕）は保存せず、話の actIds の中の位置から導出する
 // - セパレート解除はすべての幕に採用稿がある時だけ。各幕の採用稿をつないだ本文を、話の新しい稿として採用する
 // 消える幕の採用していなかった稿はゴミ箱へ1件にまとめて移す（戻すと、つないだ先の幕・話の稿として戻る）。
+// 消える幕の採用稿の推敲メモは、稿の名前とともに新しい稿の推敲メモに引き継ぐ。
+// 消える幕を戻し先にしていたゴミ箱の稿（前につないだ時・稿を削除した時のもの）は、残る幕・話へ付け替える。
 // すべて純粋関数で、新しい AppData を返す。仕様違反は DomainError を投げる。
 import { makeVersion } from './storyOps'
 import { activeVersion, actLabel, actParts, actsOf, isSplit, parentOf, pieceFullLabel, type ActPart } from './structure'
 import { putInTrash } from './trash'
 import { Tx, transact } from './tx'
-import { DomainError, type AppData, type ID, type Piece, type Version } from './types'
+import { DomainError, type AppData, type ID, type Piece, type TrashOrigin, type Version } from './types'
 import { newId, now } from './util'
 
 /** さらに分けた幕の、最初の区切りの本文を入れる稿の名前に付ける */
@@ -61,8 +63,12 @@ export function splitSegments(body: string, offsets: readonly number[]): string[
   return out
 }
 
-/** 区切った本文の数と同じ幕を作る（各幕の第1稿が採用中。本文はその区切り） */
-function newAct(episode: Piece, body: string, ts: number): { act: Piece; version: Version } {
+/**
+ * 区切った本文の数と同じ幕を作る（各幕の第1稿が採用中。本文はその区切り）。
+ * 作った時刻は読む順（order）に1ずつずらす（同期の途中で、話の幕の並びより先に幕が届いても、
+ * 修復（repair.ts）が作られた順＝読む順に並べられるように）
+ */
+function newAct(episode: Piece, body: string, ts: number, order = 0): { act: Piece; version: Version } {
   const base: Piece = {
     id: newId(),
     titleId: episode.titleId,
@@ -73,7 +79,7 @@ function newAct(episode: Piece, body: string, ts: number): { act: Piece; version
     activeVersionId: null,
     versionIds: [],
     versionSeq: 1,
-    createdAt: ts,
+    createdAt: ts + order,
     updatedAt: ts,
   }
   const version = { ...makeVersion(base, 1, body), createdAt: ts, updatedAt: ts }
@@ -118,6 +124,29 @@ function leftoverVersions(tx: Tx, act: Piece, number: number): Version[] {
     .map((v) => ({ ...v, name: `${actLabel(number)}の${v.name.trim() || '無題の稿'}` }))
 }
 
+/** 消える幕の採用稿の推敲メモを、稿の名前つきで新しい稿の推敲メモに引き継ぐ（空のメモは飛ばす） */
+function carriedNote(parts: readonly { number: number; version: Version }[]): string {
+  return parts
+    .filter((x) => x.version.note.trim() !== '')
+    .map((x) => `【${actLabel(x.number)}　${x.version.name.trim() || '無題の稿'}】\n${x.version.note}`)
+    .join('\n\n')
+}
+
+/**
+ * 消える幕（removedId）を戻し先にしていたゴミ箱の稿（前につないだ時の残り・幕から削除した稿）を、残る幕・話（into）へ付け替える。
+ * 末尾に、採用せずに戻す（戻した稿が、つないだ本文の採用稿を入れ替えないように）
+ */
+function retargetTrash(tx: Tx, removedId: ID, into: Piece): void {
+  const ts = now()
+  for (const e of tx.all('trashEntries')) {
+    if (e.kind !== 'version' || e.origin?.pieceId !== removedId) continue
+    // 位置は分からない（-1）ことにして直前の要素も外す（末尾に戻る）。null の直前は「先頭」の意味なので入れない
+    const origin: TrashOrigin = { ...e.origin, titleId: into.titleId, pieceId: into.id, index: -1, wasActive: false }
+    delete origin.prevId
+    tx.put('trashEntries', { ...e, origin, updatedAt: ts })
+  }
+}
+
 /** 幕と、その採用稿を消す（採用稿の本文は、つないだ稿に入っている） */
 function removeAct(tx: Tx, act: Piece): void {
   for (const v of versionsOf(tx, act)) tx.delete('versions', v.id)
@@ -147,7 +176,7 @@ export function separatePiece(data: AppData, pieceId: ID, offsets: readonly numb
     const ts = now()
 
     if (p.kind === 'episode') {
-      const made = segments.map((seg) => newAct(p, seg, ts))
+      const made = segments.map((seg, i) => newAct(p, seg, ts, i))
       for (const m of made) {
         tx.put('pieces', m.act)
         tx.put('versions', m.version)
@@ -166,7 +195,7 @@ export function separatePiece(data: AppData, pieceId: ID, offsets: readonly numb
     }
     tx.put('versions', first)
     tx.put('pieces', { ...p, versionIds: [...p.versionIds, first.id], activeVersionId: first.id, versionSeq: seq, updatedAt: ts })
-    const made = segments.slice(1).map((seg) => newAct(parent, seg, ts))
+    const made = segments.slice(1).map((seg, i) => newAct(parent, seg, ts, i))
     for (const m of made) {
       tx.put('pieces', m.act)
       tx.put('versions', m.version)
@@ -219,6 +248,11 @@ export function joinActWithNext(data: AppData, actId: ID): { data: AppData; resu
     const seq = act.versionSeq + 1
     const joined: Version = {
       ...makeVersion(act, seq, a.body + b.body, a.id, `第${seq}稿${JOINED_VERSION_SUFFIX}`),
+      // 消える次の幕の採用稿の推敲メモを残す（この幕のメモも入れて、つないだ稿だけで分かるように）
+      note: carriedNote([
+        { number: index + 1, version: a },
+        { number: index + 2, version: b },
+      ]),
       createdAt: ts,
       updatedAt: ts,
     }
@@ -233,11 +267,20 @@ export function joinActWithNext(data: AppData, actId: ID): { data: AppData; resu
         label: `${actLabel(index + 2)}の採用していなかった稿（${leftovers.length}稿）`,
         titleName: title?.name ?? '',
         parentLabel: label,
-        origin: { titleId: act.titleId, pieceId: act.id, index: versionIds.length, prevId: joined.id, wasActive: false },
+        origin: {
+          titleId: act.titleId,
+          pieceId: act.id,
+          // この幕も後でつないだ・解除したことで無くなっても、話（の幕）へ戻せるように
+          parentId: parent.id,
+          index: versionIds.length,
+          prevId: joined.id,
+          wasActive: false,
+        },
         records: leftovers.map((record) => ({ table: 'versions' as const, record })),
         at: ts,
       })
     }
+    retargetTrash(tx, next.id, act)
     removeAct(tx, next)
     tx.put('pieces', { ...parent, actIds: acts.filter((x) => x.id !== next.id).map((x) => x.id), updatedAt: ts })
     return joined.id
@@ -271,6 +314,8 @@ export function unseparatePiece(data: AppData, pieceId: ID): { data: AppData; re
     const own = adoptedOf(tx, p)
     const v: Version = {
       ...makeVersion(p, seq, body, own?.id ?? null, `第${seq}稿${UNSEPARATED_VERSION_SUFFIX}`),
+      // 消える各幕の採用稿の推敲メモを残す
+      note: carriedNote(parts.map((x) => ({ number: x.number, version: x.version! }))),
       createdAt: ts,
       updatedAt: ts,
     }
@@ -289,7 +334,10 @@ export function unseparatePiece(data: AppData, pieceId: ID): { data: AppData; re
         at: ts,
       })
     }
-    for (const x of parts) removeAct(tx, x.act)
+    for (const x of parts) {
+      retargetTrash(tx, x.act.id, p)
+      removeAct(tx, x.act)
+    }
     tx.put('pieces', { ...p, versionIds, activeVersionId: v.id, versionSeq: seq, actIds: [], updatedAt: ts })
     return v.id
   })

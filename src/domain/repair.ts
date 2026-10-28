@@ -37,6 +37,12 @@ const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Numbe
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
 
+/**
+ * 幕か。幕は kind 'act'。古い版（2.1 まで）の端末は知らない kind を第n話（'episode'）にして書き戻すことがあるので、
+ * 属する話（parentId。幕だけが持つ）があれば幕として扱う（第n話として本編に並べない）
+ */
+const isActPiece = (p: Piece): boolean => p.kind === 'act' || (p.kind !== 'special' && typeof p.parentId === 'string')
+
 const STATUSES: SubmissionStatus[] = [
   'considering',
   'planned',
@@ -169,9 +175,9 @@ export function repairData(input: AppData): RepairResult {
   // 幕: 属する話（同じタイトルの第n話）がなければ見えなくする（同期の途中で、話より先に幕が届いた時など）。
   // 幕の稿も、話のない稿として下で一緒に見えなくなる
   for (const p of Object.values(d.pieces)) {
-    if (p.kind !== 'act') continue
+    if (!isActPiece(p)) continue
     const parent = typeof p.parentId === 'string' ? d.pieces[p.parentId] : undefined
-    if (!parent || parent.kind === 'special' || parent.kind === 'act' || parent.titleId !== p.titleId) {
+    if (!parent || parent.kind === 'special' || isActPiece(parent) || parent.titleId !== p.titleId) {
       delete d.pieces[p.id]
       fix('属する話のない幕を表示から外しました')
     }
@@ -276,10 +282,12 @@ export function repairData(input: AppData): RepairResult {
     list.push(v.id)
     versionsByPiece.set(v.pieceId, list)
   }
-  // 話を指している幕（作られた順）。幕の並びに載っていない幕を後ろに足すのに使う
+  // 話を指している幕（作られた順。同じ時刻なら id の順にして、どの端末・タブでも同じ並びにする）。
+  // 幕の並びに載っていない幕を後ろに足すのに使う
   const actsByParent = new Map<ID, ID[]>()
-  for (const p of Object.values(d.pieces).sort((a, b) => num(a.createdAt) - num(b.createdAt))) {
-    if (p.kind !== 'act' || typeof p.parentId !== 'string') continue
+  const byCreated = (a: Piece, b: Piece) => num(a.createdAt) - num(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  for (const p of Object.values(d.pieces).sort(byCreated)) {
+    if (!isActPiece(p) || typeof p.parentId !== 'string') continue
     const list = actsByParent.get(p.parentId) ?? []
     list.push(p.id)
     actsByParent.set(p.parentId, list)
@@ -291,8 +299,8 @@ export function repairData(input: AppData): RepairResult {
     )
     const versionIds = [...listed, ...owned.filter((id) => !listed.includes(id))]
     const activeVersionId = p.activeVersionId && versionIds.includes(p.activeVersionId) ? p.activeVersionId : null
-    // 幕（kind 'act'）は幕のまま（第n話にしない）
-    const kind = p.kind === 'special' || p.kind === 'act' ? p.kind : 'episode'
+    // 幕は幕のまま（第n話にしない。古い版の端末が第n話として書いた幕も幕に戻す）
+    const kind = p.kind === 'special' ? 'special' : isActPiece(p) ? 'act' : 'episode'
     const next: Piece = {
       ...p,
       kind,
@@ -305,12 +313,18 @@ export function repairData(input: AppData): RepairResult {
       updatedAt: num(p.updatedAt),
     }
     // 幕に分けた話の幕の並び: この話を指している幕だけを残し（重複も除く）、載っていない幕は作られた順に後ろへ足す。
+    // - 幕の並びが空（[]。セパレートを解除した話）なら、残っている幕は足さない（解除した端末の幕の削除が同期で届くまでの間や、
+    //   解除と別の端末での幕の変更が重なった時に、採用稿のない幕・一部の幕だけの話に見えないように。残った幕は見えないまま、
+    //   話の削除でいっしょに片付く）
+    // - 幕の並びが無い（一度も分けていない話）のに話を指す幕があれば、分けた端末の話の更新より先に幕が届いたので、
+    //   作られた順（＝読む順。acts.ts の newAct）に並べる
     // 第n話以外の幕の並びは使わない（そのまま残すが、どこからも読まない）
     if (kind === 'episode') {
       const mine = actsByParent.get(p.id) ?? []
-      const raw = Array.isArray(p.actIds) ? p.actIds : []
-      const kept = raw.filter((id, i) => typeof id === 'string' && mine.includes(id) && raw.indexOf(id) === i)
-      const actIds = [...kept, ...mine.filter((id) => !kept.includes(id))]
+      const raw: unknown[] = Array.isArray(p.actIds) ? p.actIds : []
+      const kept = raw.filter((id, i): id is ID => typeof id === 'string' && mine.includes(id) && raw.indexOf(id) === i)
+      const undone = Array.isArray(p.actIds) && p.actIds.length === 0
+      const actIds = undone ? [] : [...kept, ...mine.filter((id) => !kept.includes(id))]
       if (Array.isArray(p.actIds) || actIds.length > 0) next.actIds = actIds
     }
     if (!same(next, p)) {
@@ -449,7 +463,7 @@ function normalizeOrigin(raw: unknown): TrashOrigin {
     if (key === 'titleId' || key === 'chapterId' || key === 'prevId') out[key] = strOrNull(v)
     // 位置が分からない時は -1（戻す時は末尾、order で並ぶものは元の order の値の位置へ）
     else if (key === 'index') out[key] = num(v, -1)
-    else if (key === 'pieceId' || key === 'categoryId') {
+    else if (key === 'pieceId' || key === 'parentId' || key === 'categoryId') {
       if (typeof v === 'string') out[key] = v
     } else if (key === 'wasActive') {
       if (typeof v === 'boolean') out[key] = v

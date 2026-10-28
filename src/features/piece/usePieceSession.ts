@@ -1,6 +1,8 @@
 // 原稿画面の保存ボタンまわり: 編集セッションの保存・破棄、画面を離れる時の確認、端末内の控えと復元。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, type Blocker, type BlockerFunction } from 'react-router-dom'
+import type { OrphanKeepTarget } from '../../domain/pieceEdits'
+import { pieceFullLabel } from '../../domain/structure'
 import type { AppData, ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { flushNow, getData } from '../../store/appStore'
@@ -26,9 +28,17 @@ export const DRAFT_DELAY_MS = 1000
 /** 打ち続けていても、この時間ごとには控える */
 export const DRAFT_MAX_WAIT_MS = 3000
 
-/** 本文が競合した時の、この端末の本文を残す稿の名前 */
+/** 本文が競合した時（保存先が無くなった時も）の、この端末の本文を残す稿の名前 */
 // 名前は同期されてほかの端末でも見えるので、端末の呼び名（Windows・iPhone など）を入れる
-const conflictName = (name: string) => conflictVersionName(name, deviceLabel())
+export const conflictName = (name: string) => conflictVersionName(name, deviceLabel())
+
+/** 保存先が無くなった編集を残した後の知らせ（targetLabel が null ならゴミ箱に残した） */
+export function keptMessage(names: readonly string[], targetLabel: string | null): string {
+  const list = names.map((n) => `「${n}」`).join('')
+  return targetLabel
+    ? `この端末の編集を、「${targetLabel}」の新しい稿${list}として残しました`
+    : `残し先がないため、この端末の編集をゴミ箱に${list}として残しました`
+}
 
 /** 項目の保存先の値（無くなっていれば undefined） */
 export function storedFieldValue(data: AppData, pieceId: ID, key: FieldKey): string | undefined {
@@ -76,10 +86,22 @@ export interface PieceSession {
 /** 確認の文に出す、この画面で編集できる項目 */
 const EDITED_FIELDS = '本文・稿の名前・推敲メモ・話の題・見出し'
 
-export function usePieceSession(pieceId: ID): PieceSession {
+export interface PieceSessionOptions {
+  /** 開いた時に、前回保存されなかった編集の控えを聞くか（話・幕が見つかる時だけ。true になった時に1回だけ聞く） */
+  restore?: boolean
+  /**
+   * 保存先の話・幕が無くなった（話が幕に分けられた）時の、編集の残し先。ふつうに保存できる時は null。
+   * これがある間の「保存」（保存して移動・保存して続ける・Ctrl+S も）は、編集を残し先の新しい稿（無ければゴミ箱）として残す
+   */
+  keepTarget?: () => OrphanKeepTarget | null
+}
+
+export function usePieceSession(pieceId: ID, opts: PieceSessionOptions = {}): PieceSession {
   const [session] = useState(() => new EditSession(pieceId))
   const [hub] = useState(() => new EditorHub(session))
   const dirty = useSessionDirty(session)
+  const keepTargetRef = useRef(opts.keepTarget)
+  keepTargetRef.current = opts.keepTarget
 
   // ヘッダーの「保存済み」を、保存していない編集がある間は出さない
   useEffect(() => setUnsavedEdits(dirty), [dirty])
@@ -91,7 +113,34 @@ export function usePieceSession(pieceId: ID): PieceSession {
     session.draftOwned = false
   }, [session])
 
+  /** 保存先が無くなった編集を、残し先の新しい稿（無ければゴミ箱）として残す */
+  const keep = useCallback(
+    async (target: OrphanKeepTarget): Promise<boolean> => {
+      const edits = session.pendingEdits()
+      let message = '保存しました'
+      if (edits.length > 0) {
+        const result = attempt(() => actions.keepOrphanedEdits(edits, target, { conflictName }))
+        if (!result) return false
+        session.discard()
+        forgetDraft()
+        const into = target.pieceId ? getData().pieces[target.pieceId] : undefined
+        if (result.names.length > 0) {
+          message = keptMessage(result.names, result.trashEntryId || !into ? null : pieceFullLabel(getData(), into))
+        }
+        if (result.dropped.length > 0) notifyError('話がなくなっていたため、保存できなかった話の題・見出しの編集があります。')
+      }
+      const ok = await flushNow()
+      if (!ok) notifyError('端末に保存できませんでした。端末の空き容量を確認してください。')
+      else notify(message)
+      return ok
+    },
+    [session, forgetDraft],
+  )
+
   const save = useCallback(async (): Promise<boolean> => {
+    // 保存先が無くなっていれば（幕がつながれた・話が幕に分けられた等）、残し先へ
+    const target = keepTargetRef.current?.() ?? null
+    if (target) return keep(target)
     const edits = session.pendingEdits()
     let dropped = 0
     if (edits.length > 0) {
@@ -171,7 +220,7 @@ export function usePieceSession(pieceId: ID): PieceSession {
   useEffect(() => holdEditOwner(session.owner), [session])
 
   useCrashDraftWriter(session)
-  useRestorePrompt(session)
+  useRestorePrompt(session, opts.restore ?? true)
   useLeaveGuard(session, dirty, save, forgetDraft)
 
   // Ctrl/Cmd+S で保存
@@ -200,7 +249,7 @@ function useCrashDraftWriter(session: EditSession): void {
       timer = null
       since = 0
       if (session.isDirty()) {
-        if (writeCrashDraft(pieceId, session.edits(), session.owner)) session.draftOwned = true
+        if (writeCrashDraft(pieceId, session.edits(), session.owner, Date.now(), session.context)) session.draftOwned = true
       } else if (session.draftOwned) {
         // 巻き戻して編集が無くなった: 自分で書いた控えは消す（前回の控えにはまだ答えていなければ触らない）
         removeCrashDraft(pieceId, session.owner)
@@ -228,21 +277,22 @@ function useCrashDraftWriter(session: EditSession): void {
   }, [session])
 }
 
-/** 画面を開いた時、前回保存されなかった編集の控えがあれば復元するか聞く */
-function useRestorePrompt(session: EditSession): void {
+/** 画面を開いた時（enabled になった時）、前回保存されなかった編集の控えがあれば復元するか聞く */
+function useRestorePrompt(session: EditSession, enabled: boolean): void {
   const asked = useRef(false)
   const mounted = useRef(false)
   useEffect(() => {
     mounted.current = true
-    if (!asked.current) {
-      asked.current = true
-      const draft = readCrashDraft(session.pieceId)
-      if (draft) void askRestore(session, draft, () => mounted.current)
-    }
     return () => {
       mounted.current = false
     }
-  }, [session])
+  }, [])
+  useEffect(() => {
+    if (!enabled || asked.current) return
+    asked.current = true
+    const draft = readCrashDraft(session.pieceId)
+    if (draft) void askRestore(session, draft, () => mounted.current)
+  }, [session, enabled])
 }
 
 async function askRestore(session: EditSession, draft: CrashDraft, isMounted: () => boolean): Promise<void> {
@@ -277,7 +327,7 @@ async function askRestore(session: EditSession, draft: CrashDraft, isMounted: ()
   const edits = resolveCrashDraft(draft, read)
   session.restore(edits)
   // 控えはこのタブのものとして書き直す（落ちた前のタブの持ち主のままにしない）
-  if (writeCrashDraft(pieceId, session.edits(), session.owner)) session.draftOwned = true
+  if (writeCrashDraft(pieceId, session.edits(), session.owner, Date.now(), session.context)) session.draftOwned = true
   notify('前回の編集を復元しました。「保存」を押すと保存されます')
 }
 

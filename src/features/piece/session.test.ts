@@ -6,7 +6,7 @@ import type { AppData } from '../../domain/types'
 import { createTitle } from '../../domain/entityOps'
 import { addEpisode } from '../../domain/storyOps'
 import { emptyData } from '../../domain/types'
-import { draftKey, readCrashDraft, removeCrashDraft, resolveCrashDraft, writeCrashDraft } from './crashDraft'
+import { draftKey, findOrphanDrafts, readCrashDraft, removeCrashDraft, resolveCrashDraft, writeCrashDraft } from './crashDraft'
 import { EditSession, parseFieldKey, pieceField, versionField } from './session'
 import { describeEdits, storedFieldValue } from './usePieceSession'
 
@@ -201,6 +201,24 @@ describe('端末内の控え（アプリが落ちた時のため）', () => {
     const r = applyPieceEdits(data, pieceId, restored.pendingEdits(), opts)
     expect(r.data.versions[v1].body).toBe('元の本文。続き')
     expect(r.data.pieces[pieceId].subtitle).toBe('旅立ち')
+  })
+
+  it('幕の控えには幕の場所（属する話・前の幕）を入れ、幕が無くなった控えを話ごとに探せる（古い控えにはなくてよい）', () => {
+    const { data, pieceId, v1 } = setup()
+    writeCrashDraft('act-2', { [versionField('v-act-2', 'body')]: { base: '', value: '幕2' } }, 'o', 1, {
+      parentId: pieceId,
+      prevId: 'act-1',
+    })
+    writeCrashDraft('act-3', { [versionField('v-act-3', 'body')]: { base: '', value: '幕3' } }, 'o', 2, {
+      parentId: 'other',
+      prevId: null,
+    })
+    writeCrashDraft(pieceId, { [versionField(v1, 'body')]: { base: '元の本文', value: '話' } }, 'o', 3)
+    expect(readCrashDraft('act-2')).toMatchObject({ parentId: pieceId, prevId: 'act-1' })
+    expect(readCrashDraft(pieceId)?.parentId).toBeUndefined()
+    expect(findOrphanDrafts(data.pieces, pieceId).map((d) => d.pieceId)).toEqual(['act-2'])
+    // 幕がまだあれば、なくなった幕の控えではない
+    expect(findOrphanDrafts({ ...data.pieces, 'act-2': data.pieces[pieceId] }, pieceId)).toEqual([])
   })
 
   it('もう保存されている項目は復元しない', () => {

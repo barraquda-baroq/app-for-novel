@@ -6,20 +6,22 @@
 // いちばん下に記号バー（巻き戻し／進む・ダッシュ・三点リーダー・全角空白・ルビ・傍点）を置く。
 // 幕（セパレート）も同じ画面で編集する（見出しは「第3話　題　第2幕」、前後の移動は同じ話の中の幕）。
 // 幕に分けた話は、話自身の本文は編集せず、幕の一覧（EpisodeFolder）を出す。
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { joinError, unseparateError } from '../../domain/acts'
 import {
   activeVersion,
   actLabel,
   actNumber,
+  actsOf,
   episodeNumbers,
   isSplit,
   locatePiece,
   parentOf,
+  pieceFullLabel,
   pieceLabel,
 } from '../../domain/structure'
-import type { ID, Piece, Title } from '../../domain/types'
+import type { AppData, ID, Piece, Title } from '../../domain/types'
 import { paths } from '../../routes'
 import { getData, useData } from '../../store/appStore'
 import { usePrefs } from '../../store/uiStore'
@@ -31,6 +33,7 @@ import type { PopupMenuItem } from '../../ui/PopupMenu'
 import { SplitPane } from '../../ui/SplitPane'
 import { confirmJoin, confirmUnseparate } from '../acts/actFlows'
 import { ActsIcon, JoinActsIcon, ScissorsIcon, SplitActsIcon, UnsplitIcon } from '../acts/actIcons'
+import { SEPARATE_FROM_PIECE } from '../acts/separateLogic'
 import { EpisodeFolder } from '../acts/EpisodeFolder'
 import { ActivePane } from './ActivePane'
 import { isTypingWithin, useHeldWhile, useLocalFlag, useScrollSync, useTypingFocus } from './editing'
@@ -39,9 +42,12 @@ import { activeVersionOf, actNeighbors, neighborPieces, pieceHeading, resolveSel
 import { PieceBar } from './PieceBar'
 import './piece.css'
 import { SaveControls } from './SaveControls'
+import { readCrashDraft, type CrashDraft } from './crashDraft'
+import { askOrphanDrafts, orphanState, type LastSeen } from './orphan'
+import { OrphanEdits } from './OrphanEdits'
 import { pieceField } from './session'
 import { SymbolBar } from './SymbolBar'
-import { usePieceSession } from './usePieceSession'
+import { usePieceSession, type PieceSession } from './usePieceSession'
 import { VersionsPane, type WorkspaceApi } from './VersionsPane'
 
 /** 一覧から比較を開いた履歴の印（history.state に入れる） */
@@ -50,22 +56,110 @@ type CompareHistoryState = { [COMPARE_FROM_LIST]?: boolean }
 
 export function PieceWorkspace() {
   const { titleId = '', pieceId = '' } = useParams()
-  const data = useData()
-  const title = data.titles[titleId]
-  const piece = data.pieces[pieceId]
-  if (!title || !piece || piece.titleId !== title.id) {
-    return <NotFound message="話が見つかりません。削除された可能性があります。" />
-  }
-  if (piece.kind === 'act' && !parentOf(data, piece)) {
-    return <NotFound message="幕が見つかりません。つないだり、セパレートを解除したりした可能性があります。" />
-  }
-  // 幕に分けた話: 幕の一覧（話自身の本文は編集しない）
-  if (isSplit(piece)) return <EpisodeFolder key={piece.id} title={title} piece={piece} />
   // 話を切り替えたら画面内の状態（ポップオーバー・編集セッション等）をリセットする
-  return <Workspace key={piece.id} title={title} piece={piece} />
+  return <PieceHost key={pieceId} titleId={titleId} pieceId={pieceId} />
 }
 
-function Workspace({ title, piece }: { title: Title; piece: Piece }) {
+/** 原稿画面で開ける幕か（属する話の幕の並びに載っている） */
+const isListedAct = (data: AppData, piece: Piece) => piece.kind !== 'act' || actNumber(data, piece) !== null
+
+/**
+ * 編集セッションを URL の話・幕ごとに持つ（原稿画面・幕に分けた話の画面・見つからない時の表示をまたいで）。
+ * 別の画面・端末で、開いている幕がつながれた・セパレートを解除された・削除された、話が幕に分けられた時も、
+ * 保存していない編集があれば黙って消さず、残す画面（OrphanEdits）を出す（画面を離れる時の確認・端末内の控えも続ける）
+ */
+function PieceHost({ titleId, pieceId }: { titleId: ID; pieceId: ID }) {
+  const data = useData()
+  const title = data.titles[titleId]
+  const found = data.pieces[pieceId]
+  const piece = title && found && found.titleId === title.id ? found : undefined
+  const parent = piece?.kind === 'act' ? parentOf(data, piece) : undefined
+  const viewable = piece !== undefined && isListedAct(data, piece)
+
+  // 最後に見えていた場所（幕が無くなった後の、編集の残し先を決めるのに使う）と、残す幕の選択
+  const last = useRef<LastSeen | null>(null)
+  const [choice, setChoice] = useState<ID | null>(null)
+  const choiceRef = useRef(choice)
+  choiceRef.current = choice
+  const keepTarget = useCallback(
+    () => orphanState(getData(), titleId, pieceId, last.current)?.keep(choiceRef.current) ?? null,
+    [titleId, pieceId],
+  )
+  const ps = usePieceSession(pieceId, { restore: viewable, keepTarget })
+  const { session } = ps
+
+  useLayoutEffect(() => {
+    if (!piece || !viewable) return
+    const acts = parent ? actsOf(data, parent) : []
+    const index = parent ? acts.findIndex((a) => a.id === piece.id) : -1
+    const prevId = index > 0 ? acts[index - 1].id : null
+    last.current = { titleId, parentId: parent?.id ?? null, index, prevId, label: pieceFullLabel(data, piece) }
+    // 端末内の控えにも幕の場所を書く（幕が無くなった後で、残った幕・話を開いた時に聞けるように）
+    session.context = parent ? { parentId: parent.id, prevId, index } : {}
+  }, [data, piece, parent, viewable, titleId, session])
+
+  // なくなった幕の控え（アプリが落ちる等で残っていた、つないだ・解除した幕の編集）は、残った幕・話を開いた時に聞く
+  const scope = viewable && !ps.dirty ? (parent?.id ?? (piece.kind === 'episode' ? piece.id : null)) : null
+  const scopeActs = scope ? (data.pieces[scope]?.actIds ?? []).join(',') : ''
+  useOrphanDrafts(scope, scopeActs, pieceId)
+
+  if (ps.dirty) {
+    const orphan = orphanState(data, titleId, pieceId, last.current)
+    if (orphan) {
+      return <OrphanEdits title={title} state={orphan} last={last.current} ps={ps} choice={choice} onChoice={setChoice} />
+    }
+  }
+  if (!title || !piece || !viewable) {
+    if (piece?.kind !== 'act' && !last.current?.parentId) {
+      return <NotFound message="話が見つかりません。削除された可能性があります。" />
+    }
+    // 無くなった幕: 属していた話が残っていれば、そこへ移れるようにする
+    const lostParentId = last.current?.parentId ?? readCrashDraft(pieceId)?.parentId ?? piece?.parentId
+    const lostParent = lostParentId ? data.pieces[lostParentId] : undefined
+    return (
+      <NotFound
+        message="幕が見つかりません。つないだり、セパレートを解除したりした可能性があります。"
+        action={
+          lostParent && lostParent.kind === 'episode'
+            ? { to: paths.piece(lostParent.titleId, lostParent.id), label: `「${pieceFullLabel(data, lostParent)}」を開く` }
+            : undefined
+        }
+      />
+    )
+  }
+  // 幕に分けた話: 幕の一覧（話自身の本文は編集しない）
+  if (isSplit(piece)) return <EpisodeFolder title={title} piece={piece} />
+  return <Workspace title={title} piece={piece} ps={ps} />
+}
+
+/**
+ * 話 scope の、なくなった幕の控えを聞く（scope が変わった時・幕の並びが変わった時に見直す。聞いた控えは開いている間は聞き直さない）。
+ * 残し先は、控えに書いた前の幕（つないだ時に本文を引き継いだ幕）、なければ開いている幕か第1幕。分けていない話ならその話
+ */
+function useOrphanDrafts(scope: ID | null, scopeActs: string, current: ID): void {
+  const asked = useRef(new Set<ID>())
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  useEffect(() => {
+    if (!scope) return
+    const targetFor = (draft: CrashDraft) => {
+      const d = getData()
+      const p = d.pieces[scope]
+      if (!p || p.kind !== 'episode') return undefined
+      if (!isSplit(p)) return p
+      const acts = actsOf(d, p)
+      return acts.find((a) => a.id === draft.prevId) ?? acts.find((a) => a.id === current) ?? acts[0]
+    }
+    void askOrphanDrafts(scope, targetFor, asked.current, () => mounted.current)
+  }, [scope, scopeActs, current])
+}
+
+function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: PieceSession }) {
   const data = useData()
   const navigate = useNavigate()
   const location = useLocation()
@@ -78,7 +172,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
   const [scrollSync, setScrollSync] = useLocalFlag('novel-studio:piece-scroll-sync', false)
 
   const rootRef = useRef<HTMLDivElement>(null)
-  const { session, hub, dirty, save, discard, ensureSaved } = usePieceSession(piece.id)
+  const { session, hub, dirty, save, discard, ensureSaved } = ps
   useKeyboardInset()
 
   const numbers = useMemo(() => episodeNumbers(data, title.id), [data, title.id])
@@ -186,6 +280,10 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
     const guarded = (fn: () => unknown) => () => {
       void ensureSaved().then((ok) => (ok ? fn() : undefined))
     }
+    // 控えのある別の幕を開く（つなぐ・解除の前に、その幕の保存されていない編集を確かめる時）
+    const open = (id: ID) => navigate(paths.piece(titleId, id))
+    // セパレート画面へは、原稿画面から開いた印を付けて移る（分けた後は履歴を戻り、同じ画面を二重に積まない）
+    const toSeparate = () => navigate(paths.separate(titleId, pieceId), { state: { [SEPARATE_FROM_PIECE]: true } })
     return (): PopupMenuItem[] => {
       const d = getData()
       if (!parentId) {
@@ -194,7 +292,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
             label: '幕に分ける（セパレート）',
             icon: <SplitActsIcon />,
             hint: '採用原稿を区切って WEB 掲載用の幕にする（話数は増えません）',
-            onSelect: guarded(() => navigate(paths.separate(titleId, pieceId))),
+            onSelect: guarded(toSeparate),
             testId: 'separate-button',
           },
         ]
@@ -207,7 +305,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
           icon: <ScissorsIcon />,
           disabled: !adopted,
           hint: adopted ? undefined : '採用稿のない幕は分けられません',
-          onSelect: guarded(() => navigate(paths.separate(titleId, pieceId))),
+          onSelect: guarded(toSeparate),
           testId: 'separate-button',
         },
       ]
@@ -219,7 +317,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
           icon: <JoinActsIcon />,
           disabled: blocked !== null,
           hint: blocked ?? undefined,
-          onSelect: guarded(() => confirmJoin(pieceId)),
+          onSelect: guarded(() => confirmJoin(pieceId, { open })),
           testId: 'join-next-button',
         })
       }
@@ -232,7 +330,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
           hint: unsplitBlocked ?? '各幕の採用稿をつないで、1つの話に戻す',
           // 解除するとこの幕はなくなるので、話の画面へ移る
           onSelect: guarded(async () => {
-            if (await confirmUnseparate(parentId)) navigate(paths.piece(titleId, parentId), { replace: true })
+            if (await confirmUnseparate(parentId, { open })) navigate(paths.piece(titleId, parentId), { replace: true })
           }),
           testId: 'unseparate-act-button',
         },

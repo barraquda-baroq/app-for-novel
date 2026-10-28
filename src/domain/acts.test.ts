@@ -552,4 +552,328 @@ describe('幕の修復（表示用）', () => {
     for (const id of acts) expect(rs.data.pieces[id]).toBeUndefined()
     expect(isSplit(rs.data.pieces[ids[0]])).toBe(false)
   })
+
+  it('幕の並びが空（セパレートを解除した話）なら、話を指したまま残っている幕を足さない（話自身の採用稿のまま）', () => {
+    const { data, ids, acts } = sample()
+    const undone = unseparatePiece(data, ids[0]).data
+    // 解除した端末の幕の削除が届く前（幕の1つがまだ残っている）
+    const withLeftover: AppData = {
+      ...undone,
+      pieces: { ...undone.pieces, [acts[1]]: data.pieces[acts[1]] },
+      versions: {
+        ...undone.versions,
+        [data.pieces[acts[1]].activeVersionId!]: data.versions[data.pieces[acts[1]].activeVersionId!],
+      },
+    }
+    const r = repairData(withLeftover).data
+    const ep = r.pieces[ids[0]]
+    expect(isSplit(ep)).toBe(false)
+    expect(ep.actIds).toEqual([])
+    expect(adoptedText(r, ep)?.body).toBe('ABCDEF')
+    expect(unseparateError(r, ids[0])).toBe('幕に分けていない話です')
+  })
+
+  it('セパレート解除と、別の端末で幕をさらに分けたのが重なっても（解除が勝った並び）、話は分けていないまま本文は全部', () => {
+    const { data: d0, ids } = setup(['ABCDEFGHI'])
+    const { data, acts } = split(d0, ids[0], [3, 6])
+    // 端末 X: セパレート解除
+    const x = unseparatePiece(data, ids[0]).data
+    // 端末 Y: 第2幕をさらに分ける（新しい幕 C1 が第2幕の後ろに入る）
+    const y = separatePiece(data, acts[1], [1])
+    const c1 = y.result[1]
+    // 同期で合わさった内容: 話は X（幕の並びは空）、Y が作った幕 C1 とその稿はまだ残っている
+    const merged: AppData = {
+      ...x,
+      pieces: { ...x.pieces, [c1]: y.data.pieces[c1] },
+      versions: { ...x.versions, [y.data.pieces[c1].activeVersionId!]: y.data.versions[y.data.pieces[c1].activeVersionId!] },
+    }
+    const r = repairData(merged).data
+    expect(isSplit(r.pieces[ids[0]])).toBe(false)
+    expect(adoptedText(r, r.pieces[ids[0]])?.body).toBe('ABCDEFGHI')
+  })
+
+  it('話の更新より先に幕が届いた時（幕の並びが無い）は、作られた順＝読む順に並べる（id の順に関わらない）', () => {
+    const body = 'AAAABBBBCCCCDDDDEEEEFFFF'
+    const { data: d0, ids } = setup([body])
+    const { data, acts } = split(d0, ids[0], [4, 8, 12, 16, 20])
+    // 作った時刻は読む順に増える
+    const created = acts.map((id) => data.pieces[id].createdAt)
+    expect(created).toEqual([...created].sort((a, b) => a - b))
+    expect(new Set(created).size).toBe(acts.length)
+    // id を読む順と逆にし、入れる順も混ぜる。話は分ける前のまま（幕の並びが無い）
+    const pieces: AppData['pieces'] = {}
+    const versions: AppData['versions'] = { ...d0.versions }
+    for (const p of Object.values(d0.pieces)) pieces[p.id] = p
+    const order = [3, 0, 5, 2, 4, 1]
+    for (const i of order) {
+      const act = data.pieces[acts[i]]
+      const newActId = `z${9 - i}`
+      const vid = act.activeVersionId!
+      pieces[newActId] = { ...act, id: newActId }
+      versions[vid] = { ...data.versions[vid], pieceId: newActId }
+    }
+    const arrived: AppData = { ...d0, pieces, versions }
+    expect(arrived.pieces[ids[0]].actIds).toBeUndefined()
+    const r = repairData(arrived).data
+    expect(isSplit(r.pieces[ids[0]])).toBe(true)
+    expect(adoptedText(r, r.pieces[ids[0]])?.body).toBe(body)
+    // その状態で解除しても、元の本文を採用する
+    const u = unseparatePiece(r, ids[0])
+    expect(u.data.versions[u.result].body).toBe(body)
+  })
+
+  it('同じ時刻に作られた幕は id の順に並べる（どの端末でも同じ並び）', () => {
+    const { data, ids, acts } = sample()
+    const ts = data.pieces[acts[0]].createdAt
+    const pieces = { ...data.pieces, [ids[0]]: { ...data.pieces[ids[0]] } }
+    delete pieces[ids[0]].actIds
+    for (const id of acts) pieces[id] = { ...pieces[id], createdAt: ts }
+    const r = repairData({ ...data, pieces }).data
+    expect(r.pieces[ids[0]].actIds).toEqual([...acts].sort())
+  })
+
+  it('古い版の端末が第n話として書いた幕（kind episode・parentId あり）も幕として扱い、本編の並びに入れない', () => {
+    const { data, titleId, ids, acts } = sample()
+    const t = data.titles[titleId]
+    // 2.1 の修復は幕を第n話にして本編の末尾に足し、その並びを書き戻すことがある
+    const old: AppData = {
+      ...data,
+      pieces: { ...data.pieces, [acts[1]]: { ...data.pieces[acts[1]], kind: 'episode' } },
+      titles: {
+        ...data.titles,
+        [titleId]: { ...t, structure: [...t.structure, ...acts.map((id) => ({ type: 'piece' as const, id }))] },
+      },
+    }
+    const r = repairData(old).data
+    expect(r.pieces[acts[1]].kind).toBe('act')
+    expect(flatten(r, titleId).map((f) => f.pieceId)).toEqual(ids)
+    expect(r.pieces[ids[0]].actIds).toEqual(acts)
+    expect(adoptedText(r, r.pieces[ids[0]])?.body).toBe('ABCDEF')
+  })
+})
+
+// ---------- ゴミ箱から戻す（幕が無くなった後） ----------
+
+describe('消えた幕の稿をゴミ箱から戻す', () => {
+  /** 'AAABBBCCC' を3幕に分ける */
+  function three() {
+    const { data: d0, titleId, ids } = setup(['AAABBBCCC'])
+    const { data, acts } = split(d0, ids[0], [3, 6])
+    return { data, titleId, ep: ids[0], acts }
+  }
+  const versionsWithBody = (data: AppData, pieceId: ID, body: string) =>
+    data.pieces[pieceId].versionIds.map((id) => data.versions[id]).filter((v) => v.body === body)
+
+  it('つないだ後にまた前の幕とつないでも、前につないだ時の稿は残った幕の稿として（採用せずに）戻せる', () => {
+    let { data, ep, acts } = three()
+    data = addVersion(data, acts[2], { body: '第3幕の下書き' }).data
+    data = joinActWithNext(data, acts[1]).data
+    const entryA = Object.values(data.trashEntries)[0]
+    expect(entryA.origin).toMatchObject({ pieceId: acts[1], parentId: ep })
+    data = joinActWithNext(data, acts[0]).data
+    expect(data.pieces[acts[1]]).toBeUndefined()
+    const before = data.pieces[acts[0]]
+    const back = restoreTrashEntry(data, entryA.id).data
+    const restored = versionsWithBody(back, acts[0], '第3幕の下書き')
+    expect(restored).toHaveLength(1)
+    expect(restored[0].pieceId).toBe(acts[0])
+    expect(back.pieces[acts[0]].activeVersionId).toBe(before.activeVersionId)
+    expect(adoptedText(back, back.pieces[ep])?.body).toBe('AAABBBCCC')
+    expect(repairData(back).fixes).toEqual([])
+  })
+
+  it('ゴミ箱の件の幕の属する話（origin.parentId）は、文字列の時だけ残す（修復）', () => {
+    let { data, acts } = three()
+    data = addVersion(data, acts[2], { body: '下書き' }).data
+    data = joinActWithNext(data, acts[1]).data
+    const entry = Object.values(data.trashEntries)[0]
+    const broken: AppData = {
+      ...data,
+      trashEntries: { [entry.id]: { ...entry, origin: { ...entry.origin, parentId: 42 as unknown as string } } },
+    }
+    expect(repairData(broken).data.trashEntries[entry.id].origin).not.toHaveProperty('parentId')
+    expect(repairData(data).data.trashEntries[entry.id].origin.parentId).toBe(entry.origin.parentId)
+  })
+
+  it('つないだ後にセパレートを解除しても、つないだ時の稿は話の稿として（採用せずに）戻せる', () => {
+    let { data, ep, acts } = three()
+    data = addVersion(data, acts[2], { body: '第3幕の下書き' }).data
+    data = joinActWithNext(data, acts[1]).data
+    const entryA = Object.values(data.trashEntries)[0]
+    const u = unseparatePiece(data, ep)
+    data = u.data
+    const back = restoreTrashEntry(data, entryA.id).data
+    const restored = versionsWithBody(back, ep, '第3幕の下書き')
+    expect(restored).toHaveLength(1)
+    expect(back.pieces[ep].versionIds.at(-1)).toBe(restored[0].id)
+    expect(back.pieces[ep].activeVersionId).toBe(u.result)
+    expect(repairData(back).fixes).toEqual([])
+  })
+
+  it('幕から削除した稿は、その幕がつないで無くなっても、解除して無くなっても戻せる', () => {
+    let { data, ep, acts } = three()
+    const extra = addVersion(data, acts[1], { body: '第2幕の別案' })
+    data = deleteVersion(extra.data, extra.result)
+    const entry = Object.values(data.trashEntries)[0]
+    expect(entry.origin).toMatchObject({ pieceId: acts[1], parentId: ep })
+
+    // つないで第2幕が無くなった → 第1幕へ
+    const joined = joinActWithNext(data, acts[0]).data
+    const backJoined = restoreTrashEntry(joined, entry.id).data
+    expect(versionsWithBody(backJoined, acts[0], '第2幕の別案')).toHaveLength(1)
+
+    // さらに解除した → 話へ
+    const undone = unseparatePiece(joined, ep).data
+    const backUndone = restoreTrashEntry(undone, entry.id).data
+    expect(versionsWithBody(backUndone, ep, '第2幕の別案')).toHaveLength(1)
+
+    // 解除だけ → 話へ
+    const onlyUndone = unseparatePiece(data, ep).data
+    const back = restoreTrashEntry(onlyUndone, entry.id).data
+    expect(versionsWithBody(back, ep, '第2幕の別案')).toHaveLength(1)
+  })
+
+  it('別の端末でつながれて（ゴミ箱の付け替えが無くても）、幕の属する話から戻せる。採用中だった稿でも採用は変えない', () => {
+    let { data, ep, acts } = three()
+    // 第2幕の採用稿を消してから、別の稿を採用する
+    const a2 = data.pieces[acts[1]].activeVersionId!
+    const other = addVersion(data, acts[1], { body: 'BBB改' })
+    data = deleteVersion(other.data, a2)
+    data = setActiveVersion(data, acts[1], other.result)
+    const entry = Object.values(data.trashEntries)[0]
+    expect(entry.origin).toMatchObject({ pieceId: acts[1], parentId: ep, wasActive: true })
+    // 別の端末でのつなぎ: この件はまだ届いていなかった（付け替えられていない）
+    const withoutEntry: AppData = { ...data, trashEntries: {} }
+    const remote = joinActWithNext(withoutEntry, acts[0]).data
+    let synced: AppData = { ...remote, trashEntries: { ...remote.trashEntries, [entry.id]: entry } }
+    // 第1幕の採用を外しておいても、戻した稿は採用しない（つないだ本文が黙って変わらないように）
+    synced = setActiveVersion(synced, acts[0], null)
+    const back = restoreTrashEntry(synced, entry.id).data
+    const restored = versionsWithBody(back, acts[0], 'BBB')
+    expect(restored).toHaveLength(1)
+    expect(back.pieces[acts[0]].activeVersionId).toBeNull()
+
+    // 話をまた分けていた時は最初の幕へ
+    const resplit: AppData = (() => {
+      const u = unseparatePiece({ ...remote, trashEntries: {} }, ep).data
+      return { ...separatePiece(u, ep, [2]).data, trashEntries: { [entry.id]: entry }, trashRecords: remote.trashRecords }
+    })()
+    const first = actsOf(resplit, resplit.pieces[ep])[0]
+    const back2 = restoreTrashEntry(resplit, entry.id).data
+    expect(versionsWithBody(back2, first.id, 'BBB')).toHaveLength(1)
+  })
+})
+
+// ---------- 推敲メモを引き継ぐ ----------
+
+describe('消える幕の推敲メモ', () => {
+  it('つなぐ・解除すると、消える幕の採用稿の推敲メモと名前を新しい稿の推敲メモに引き継ぐ', () => {
+    const { data: d0, ids } = setup(['AAABBBCCC'])
+    let { data, acts } = split(d0, ids[0], [3, 6])
+    const notes = ['第1幕のメモ：書き出しを短く', '第2幕のメモ：伏線を回収する', '第3幕のメモ：余韻']
+    acts.forEach((id, i) => {
+      data = updateVersion(data, data.pieces[id].activeVersionId!, { name: `幕${i + 1}の稿`, note: notes[i] })
+    })
+    const j = joinActWithNext(data, acts[1])
+    const joinedNote = j.data.versions[j.result].note
+    expect(joinedNote).toBe(`【第2幕　幕2の稿】\n${notes[1]}\n\n【第3幕　幕3の稿】\n${notes[2]}`)
+
+    const u = unseparatePiece(j.data, ids[0])
+    const live = Object.values(u.data.versions).map((v) => v.note)
+    const trashed = Object.values(u.data.trashRecords).map((r) => (r.record as { note?: string }).note ?? '')
+    const all = [...live, ...trashed].join('\n')
+    for (const n of notes) expect(all).toContain(n)
+    for (const name of ['幕1の稿', '幕2の稿', '幕3の稿']) expect(all).toContain(name)
+    expect(u.data.versions[u.result].note).toContain('【第1幕　幕1の稿】')
+    // 空のメモは引き継がない
+    const { data: e0, ids: eids } = setup(['ABCD'])
+    const e = unseparatePiece(split(e0, eids[0], [2]).data, eids[0])
+    expect(e.data.versions[e.result].note).toBe('')
+  })
+})
+
+// ---------- 古い版の端末がゴミ箱に入れた幕 ----------
+
+describe('古い版（2.1）の端末が第n話として削除した幕を戻す', () => {
+  /** 2.1 の削除: 幕を第n話（kind episode）のまま話のレコードとしてゴミ箱へ入れ、幕だけを消す（話の幕の並びは書かない） */
+  function deletedBy21(data: AppData, actId: ID): { data: AppData; entryId: ID } {
+    const act = data.pieces[actId]
+    const entryId = 'old-entry'
+    const records = [
+      {
+        id: 'old-r1',
+        entryId,
+        table: 'pieces' as const,
+        record: { ...act, kind: 'episode' as const },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      ...act.versionIds.map((vid, i) => ({
+        id: `old-r${i + 2}`,
+        entryId,
+        table: 'versions' as const,
+        record: data.versions[vid],
+        createdAt: 1,
+        updatedAt: 1,
+      })),
+    ]
+    const pieces = { ...data.pieces }
+    delete pieces[actId]
+    const versions = { ...data.versions }
+    for (const vid of act.versionIds) delete versions[vid]
+    return {
+      entryId,
+      data: {
+        ...data,
+        pieces,
+        versions,
+        trashEntries: {
+          [entryId]: {
+            id: entryId,
+            kind: 'piece',
+            label: '第3話',
+            titleName: '作品',
+            origin: { titleId: act.titleId, chapterId: null, index: 2, prevId: null },
+            recordIds: records.map((r) => r.id),
+            reason: 'deleted',
+            deletedAt: Date.now(),
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        trashRecords: Object.fromEntries(records.map((r) => [r.id, r])),
+      },
+    }
+  }
+
+  it('幕として戻し、話の幕の並びの元の位置に入る（本編の並びには入れない）', () => {
+    const { data: d0, titleId, ids } = setup(['ABCDEF'])
+    const { data, acts } = split(d0, ids[0], [2, 4])
+    const gone = deletedBy21(data, acts[2])
+    expect(adoptedText(gone.data, gone.data.pieces[ids[0]])?.body).toBe('ABCD')
+    const back = restoreTrashEntry(gone.data, gone.entryId).data
+    expect(back.pieces[acts[2]].kind).toBe('act')
+    expect(back.pieces[ids[0]].actIds).toEqual(acts)
+    expect(flatten(back, titleId).map((f) => f.pieceId)).toEqual(ids)
+    expect(adoptedText(back, back.pieces[ids[0]])?.body).toBe('ABCDEF')
+    expect(repairData(back).fixes).toEqual([])
+  })
+
+  it('話の幕の並びから外れていたら作られた順の位置に入れ、話を分けていなければ戻せない', () => {
+    const { data: d0, ids } = setup(['ABCDEF'])
+    const { data, acts } = split(d0, ids[0], [2, 4])
+    const gone = deletedBy21(data, acts[1])
+    const unlisted: AppData = {
+      ...gone.data,
+      pieces: { ...gone.data.pieces, [ids[0]]: { ...gone.data.pieces[ids[0]], actIds: [acts[0], acts[2]] } },
+    }
+    const back = restoreTrashEntry(unlisted, gone.entryId).data
+    expect(back.pieces[ids[0]].actIds).toEqual(acts)
+
+    const undone = unseparatePiece(unlisted, ids[0]).data
+    expect(errorOf(() => restoreTrashEntry(undone, gone.entryId))).toContain('幕として戻せません')
+    const noParent = { ...unlisted, pieces: { ...unlisted.pieces } }
+    delete noParent.pieces[ids[0]]
+    expect(errorOf(() => restoreTrashEntry(noParent, gone.entryId))).toContain('元の話がないため戻せません')
+  })
 })

@@ -1,5 +1,6 @@
 // 指定した位置（右クリック・長押しした所、または「…」ボタンの下）に開く小さな操作メニュー。
-// 外側を押す・Esc・Tab・スクロールで閉じ、矢印キーで項目を移動できる。閉じたら開く前の要素へフォーカスを戻す。
+// 外側を押す・Esc・Tab・スクロール・画面の幅の変更で閉じ、矢印キーで項目を移動できる。閉じたら開く前の要素へフォーカスを戻す。
+// 外側を押して閉じた時は閉じるだけ（下にある行のリンクなどは開かない）。
 // 押せない項目は aria-disabled にして（フォーカスは移せる）、押すと理由（hint）を知らせる。
 import { useEffect, useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -33,6 +34,29 @@ export interface PopupMenuProps {
 
 /** 画面の端からの余白 */
 const EDGE = 8
+
+/**
+ * 外側を押してメニューを閉じた時は、続けて届くクリック（下にある行のリンクなど）を取り消す（閉じるだけにする。
+ * 各 OS のメニューと同じ）。取り消しは document に付けるので、閉じて消えたメニューより長く残る
+ */
+function swallowNextClick(): void {
+  const stop = (e: MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    done()
+  }
+  const done = () => {
+    clearTimeout(timer)
+    document.removeEventListener('click', stop, true)
+    document.removeEventListener('pointerdown', done, true)
+  }
+  // クリックが届かなかった時（なぞってスクロールした等）は持ち越さない
+  const timer = setTimeout(done, 1000)
+  document.addEventListener('click', stop, true)
+  // 次に触れたら取り消しをやめる（今の pointerdown の途中で足したものは、今回は呼ばれない）
+  document.addEventListener('pointerdown', done, true)
+}
+
 /** 置く位置を測るまでは見せない（位置は描いた後に直接置く） */
 const HIDDEN = { left: 0, top: 0, visibility: 'hidden' } as const
 
@@ -81,13 +105,22 @@ export function PopupMenu({ label, items, placement, onClose, returnFocus, testI
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node
       if (anchor?.contains(target)) return
-      if (ref.current && !ref.current.contains(target)) closeRef.current()
+      if (ref.current && !ref.current.contains(target)) {
+        // 外側を押して閉じる時は、閉じるだけにする（下にある行のリンクなどを開かない）
+        swallowNextClick()
+        closeRef.current()
+      }
     }
     const onScroll = (e: Event) => {
       if (ref.current && e.target instanceof Node && ref.current.contains(e.target)) return
       closeRef.current()
     }
-    const onResize = () => closeRef.current()
+    // 画面キーボードの開閉（Android は interactive-widget=resizes-content で高さだけが変わる）では閉じない。
+    // 回転・ウィンドウの幅の変更の時だけ閉じる（置いた位置がずれるので）
+    const openWidth = window.innerWidth
+    const onResize = () => {
+      if (window.innerWidth !== openWidth) closeRef.current()
+    }
     document.addEventListener('pointerdown', onDown, true)
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', onResize)

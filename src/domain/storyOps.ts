@@ -718,6 +718,8 @@ export function deleteVersion(data: AppData, versionId: ID): AppData {
       origin: {
         titleId: p.titleId,
         pieceId: p.id,
+        // 幕の稿: 後で幕がつないだ・セパレートを解除したことで無くなっても、話（の幕）へ戻せるように
+        ...(p.kind === 'act' && typeof p.parentId === 'string' ? { parentId: p.parentId } : {}),
         index: index < 0 ? p.versionIds.length : index,
         prevId: index > 0 ? p.versionIds[index - 1] : null,
         wasActive: p.activeVersionId === versionId,

@@ -1,11 +1,14 @@
 // 本編の一覧の、幕に分けた話の行・集計・操作メニューの項目
+import { cleanup, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { separatePiece } from '../../../domain/acts'
 import { createTitle } from '../../../domain/entityOps'
 import { addEpisode, addSpecial, addVersion, setActiveVersion, updatePiece, updateVersion } from '../../../domain/storyOps'
 import { emptyData, type AppData, type ID } from '../../../domain/types'
+import { ActRow } from './ActRow'
 import { rowMenuItems } from './RowMenu'
-import { actRows, chapterStats, pieceRows, statsOfPieces, titleStats } from './storyLogic'
+import { actRows, chapterStats, pieceRows, progressDescription, statsOfPieces, titleStats } from './storyLogic'
 
 function setup(): { data: AppData; titleId: ID; ids: ID[]; acts: ID[] } {
   const t = createTitle(emptyData(), '作品')
@@ -85,5 +88,26 @@ describe('幕に分けた話の一覧', () => {
       '次の幕とつなぐ（不可）',
     ])
     expect(rowMenuItems(data, { type: 'piece', id: 'missing' }, deps)).toBeNull()
+  })
+
+  it('幕の行のリンクの読み上げに、採用稿と文字数（採用原稿なし）と進捗も入れる', () => {
+    const { data, ids, acts } = setup()
+    const unadopted = setActiveVersion(data, acts[1], null)
+    const rows = actRows(unadopted, unadopted.pieces[ids[0]], undefined)
+    render(
+      <MemoryRouter>
+        <ol>
+          {rows.map((r) => (
+            <ActRow key={r.act.id} {...r} />
+          ))}
+        </ol>
+      </MemoryRouter>,
+    )
+    const links = screen.getAllByRole('link')
+    expect(links[0].getAttribute('aria-label')).toBe(
+      `第1話　題　第1幕（採用: 第1稿・3字）。${progressDescription(rows[0].progress, true, 'この幕')}`,
+    )
+    expect(links[1].getAttribute('aria-label')).toContain('第1話　題　第2幕（採用原稿なし）')
+    cleanup()
   })
 })

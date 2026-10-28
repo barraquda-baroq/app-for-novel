@@ -5,6 +5,12 @@ import { splitPointError } from '../../domain/acts'
 import { countChars } from '../../domain/text'
 import { firstLine } from '../piece/logic'
 
+/**
+ * 原稿画面からセパレート画面を開いた履歴の印（history.state に入れる）。この印があれば、分けた後は履歴を1つ戻る
+ * （同じ原稿画面の URL を二重に積まない。Android の「戻る」1回で、原稿画面を開く前の画面へ戻れるように）
+ */
+export const SEPARATE_FROM_PIECE = 'pwSeparateFromPiece'
+
 /** 入力欄の値（改行は LF）の位置 normalized を、元の本文 raw（CRLF のことがある）の位置にする */
 export function rawOffset(raw: string, normalized: number): number {
   let i = 0

@@ -60,6 +60,41 @@ async function placeCaret(area: Locator, position: number): Promise<void> {
   }, position)
 }
 
+/** 入力欄の line 行目（0始まり）の左端を実際にクリック／タップする（位置は入力欄の書式から求める） */
+async function pointAtLine(area: Locator, line: number, tap: boolean): Promise<void> {
+  const { pl, pt, lh } = await area.evaluate((el) => {
+    const cs = getComputedStyle(el)
+    return { pl: parseFloat(cs.paddingLeft), pt: parseFloat(cs.paddingTop), lh: parseFloat(cs.lineHeight) }
+  })
+  const position = { x: pl + 1, y: pt + lh * (line + 0.5) }
+  if (tap) await area.tap({ position })
+  else await area.click({ position })
+}
+
+/** カーソルの印（読み取り専用の入力欄に自分で描く縦線）が、入力欄の line 行目に見えていること */
+async function expectCaretOnLine(page: Page, area: Locator, line: number): Promise<void> {
+  const caret = page.getByTestId('separate-caret')
+  await expect(caret).toHaveCount(1)
+  await expect(caret).toBeVisible()
+  const { top, pt, lh } = await area.evaluate((el) => {
+    const cs = getComputedStyle(el)
+    return { top: el.getBoundingClientRect().top, pt: parseFloat(cs.paddingTop), lh: parseFloat(cs.lineHeight) }
+  })
+  const box = (await caret.boundingBox())!
+  expect(Math.abs(box.y - (top + pt + lh * line))).toBeLessThan(lh / 2)
+  expect(box.height).toBeGreaterThan(lh / 2)
+}
+
+/** link の中で、開いているメニューに重ならない点（画面上の座標） */
+async function pointBeside(link: Locator, menu: Locator): Promise<{ x: number; y: number }> {
+  const l = (await link.boundingBox())!
+  const m = (await menu.boundingBox())!
+  const y = l.y + l.height / 2
+  const inside = (x: number) => x >= m.x && x <= m.x + m.width && y >= m.y && y <= m.y + m.height
+  for (const x of [l.x + 8, l.x + l.width - 8, l.x + l.width / 2]) if (!inside(x)) return { x, y }
+  throw new Error('メニューに重ならない点がありません')
+}
+
 /** 原稿画面の上部バーの「幕」メニューを開いて、項目を押す */
 async function actsMenu(page: Page, item: string): Promise<void> {
   await page.getByTestId('acts-menu-button').click()
@@ -116,16 +151,22 @@ test.describe('セパレート（幕）', () => {
     await expect(page.getByTestId('separate-message')).toHaveText('先頭では区切れません')
     await expect(page.getByTestId('split-divider')).toHaveCount(0)
 
-    // 1か所目: カーソルを置いて Enter
-    await placeCaret(areas.first(), ACT1.length)
+    // 1か所目: 2行目の始まりを実際にクリック（スマホはタップ）してカーソルを置き、Enter
+    const tap = !isDesktop(test.info())
+    await pointAtLine(areas.first(), 1, tap)
+    await expect.poll(() => areas.first().evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(ACT1.length)
+    // 読み取り専用の入力欄でも、カーソルの位置に印が出る（ブラウザはカーソルを描かない）
+    await expectCaretOnLine(page, areas.first(), 1)
+    await expect(page.getByTestId('separate-message')).toContainText('で区切れます')
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('split-divider')).toHaveCount(1)
     await expect(page.getByTestId('split-divider').first()).toContainText('ここから第2幕')
     await expect(areas).toHaveCount(2)
     await expect(apply).toBeEnabled()
 
-    // 2か所目: カーソルを置いて「ここで区切る」（決定）
-    await placeCaret(areas.nth(1), ACT2.length)
+    // 2か所目: 2つ目の区切りの2行目をクリック（タップ）して「ここで区切る」（決定）
+    await pointAtLine(areas.nth(1), 1, tap)
+    await expect.poll(() => areas.nth(1).evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(ACT2.length)
     await page.getByTestId('separate-decide').click()
     await expect(page.getByTestId('split-divider')).toHaveCount(2)
     await expect(page.getByTestId('split-divider').nth(1)).toContainText('ここから第3幕')
@@ -198,6 +239,19 @@ test.describe('セパレート（幕）', () => {
     await page.keyboard.press('Escape')
     await expect(menu).toHaveCount(0)
     // 右クリックではリンクを開かない
+    await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
+    // 開いている間に別の行をクリックすると、閉じるだけ（その行は開かない）
+    await first.locator('.story-row-link').click({ button: 'right' })
+    await expect(menu).toBeVisible()
+    const outside = await pointBeside(page.getByTestId('piece-row').nth(1).locator('.story-row-link'), menu)
+    await page.mouse.click(outside.x, outside.y)
+    await expect(menu).toHaveCount(0)
+    await page.waitForTimeout(200)
+    await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
+    // 閉じた後のクリックはふつうに届く
+    await page.getByTestId('piece-row').nth(1).locator('.story-row-link').click()
+    await expect(page).toHaveURL(new RegExp(`/p/${ids.secondId}$`))
+    await page.goBack()
     await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
 
     // 「…」はキーボードでも開け、閉じたら「…」に戻る
@@ -282,6 +336,20 @@ test.describe('セパレート（幕）', () => {
     await touch('touchEnd', ab.x + 20, ab.y + ab.height / 2)
     await expect(menu.getByRole('menuitem')).toHaveText(['開く', 'さらに分ける', '次の幕とつなぐ'])
     await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
+    // 開いている間にほかの行（第1話のフォルダの行）をタップすると、閉じるだけ（その行は開かない）
+    const other = await pointBeside(page.getByTestId('piece-row').first().locator('.story-row-link'), menu)
+    await touch('touchStart', other.x, other.y)
+    await touch('touchEnd', other.x, other.y)
+    await expect(menu).toHaveCount(0)
+    await page.waitForTimeout(300)
+    await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
+    // もう一度長押しして、メニューから幕の画面を開く
+    await act.scrollIntoViewIfNeeded()
+    const ab2 = (await act.boundingBox())!
+    await touch('touchStart', ab2.x + 20, ab2.y + ab2.height / 2)
+    await page.waitForTimeout(800)
+    await touch('touchEnd', ab2.x + 20, ab2.y + ab2.height / 2)
+    await expect(menu).toBeVisible()
     // メニューから幕の画面を開く
     await menu.getByTestId('menu-open').click()
     await expect(page.getByTestId('piece-workspace')).toBeVisible()
@@ -371,6 +439,41 @@ test.describe('セパレート（幕）', () => {
     await confirmIn(page, '保存して続ける')
     await expect(page).toHaveURL(new RegExp(`/p/${acts[0]}/separate$`))
     expect((await actBodies(page, ids.pieceId))[0]).toBe(`${ACT1}追記。`)
+  })
+
+  test('原稿画面からセパレート・さらに分けると、分けた後の「戻る」1回で原稿画面を開く前の画面へ戻る', async ({ page }) => {
+    const ids = await seedWork(page)
+    await openApp(page, `/t/${ids.titleId}`)
+    await page.getByTestId('piece-row').first().locator('.story-row-link').click()
+    await expect(page.getByTestId('piece-workspace')).toBeVisible()
+    await actsMenu(page, 'separate-button')
+    await expect(page).toHaveURL(/\/separate$/)
+    await placeCaret(page.getByTestId('separate-text').first(), ACT1.length)
+    await page.getByTestId('separate-decide').click()
+    await page.getByTestId('separate-apply').click()
+    await expect(page.getByTestId('episode-folder')).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/p/${ids.pieceId}$`))
+    await expect(page.locator('.toast', { hasText: '「第1話　雨の日」を2幕に分けました' })).toHaveCount(1)
+    await page.goBack()
+    await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
+
+    // 幕の画面の「さらに分ける」も同じ（戻ると幕の一覧）
+    await openApp(page, `/t/${ids.titleId}/p/${ids.pieceId}`)
+    await page.getByTestId('act-row').nth(1).locator('.story-act-link').click()
+    await expect(page.getByTestId('piece-workspace')).toBeVisible()
+    await expect(page.getByTestId('act-label')).toHaveText('第2幕')
+    const actUrl = page.url()
+    await actsMenu(page, 'separate-button')
+    await expect(page).toHaveURL(/\/separate$/)
+    await placeCaret(page.getByTestId('separate-text').first(), ACT2.length)
+    await page.getByTestId('separate-decide').click()
+    await page.getByTestId('separate-apply').click()
+    await expect(page.getByTestId('piece-workspace')).toBeVisible()
+    await expect(page.getByTestId('act-label')).toHaveText('第2幕')
+    expect(page.url()).toBe(actUrl)
+    await page.goBack()
+    await expect(page.getByTestId('episode-folder')).toBeVisible()
+    expect(await actBodies(page, ids.pieceId)).toEqual([ACT1, ACT2, ACT3])
   })
 
   test('次の幕とつなぐ: 「第n稿（つないだ稿）」を採用し、次の幕の採用していなかった稿はゴミ箱へ', async ({ page }) => {
@@ -491,6 +594,15 @@ test.describe('セパレート（スマホ）', () => {
     const area = page.getByTestId('separate-text').first()
     await expect(area).toHaveAttribute('readonly', '')
     await expect(area).toHaveAttribute('inputmode', 'none')
+    // 狭い画面では、キャンセル・幕に分けるは見出しの横に置き、ヘッダーのパンくずを削らない
+    await expect(page.locator('.sep-intro [data-testid="separate-apply"]')).toHaveCount(1)
+    await expect(page.locator('.app-header [data-testid="separate-apply"]')).toHaveCount(0)
+    const nav = (await page.locator('.app-header .breadcrumbs').boundingBox())!
+    const current = page.locator('.app-header .breadcrumbs .current')
+    await expect(current).toHaveText('セパレート')
+    const cur = (await current.boundingBox())!
+    expect(cur.x).toBeGreaterThanOrEqual(nav.x - 1)
+    expect(cur.x + cur.width).toBeLessThanOrEqual(nav.x + nav.width + 1)
     // 「ここで区切る」は画面の下に見えている
     const decide = page.getByTestId('separate-decide')
     const box = (await decide.boundingBox())!
@@ -498,14 +610,22 @@ test.describe('セパレート（スマホ）', () => {
     expect(box.height).toBeGreaterThanOrEqual(34)
     await noHorizontalScroll(page)
 
-    // タップで2行目の始まりにカーソルを置く（位置は入力欄の中の座標から）
-    await area.tap({ position: { x: 20, y: 10 } })
-    await placeCaret(area, ACT1.length)
+    // タップで2行目の始まりにカーソルを置く（位置は入力欄の書式から求める）。カーソルの印も出る
+    await pointAtLine(area, 1, true)
+    await expect.poll(() => area.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(ACT1.length)
+    await expectCaretOnLine(page, area, 1)
+    await page.screenshot({ path: 'e2e/artifacts/screens/separate-360-caret.png' })
     await decide.tap()
     await expect(page.getByTestId('split-divider')).toHaveCount(1)
     const remove = page.getByTestId('remove-split').first()
     expect((await remove.boundingBox())!.height).toBeGreaterThanOrEqual(34)
     await noHorizontalScroll(page)
+    // 分けた後の幕の一覧は畳んであり、開閉の矢印で開けることが分かる
+    const summary = page.getByTestId('separate-summary')
+    expect(await summary.evaluate((el) => getComputedStyle(el, '::before').content)).not.toBe('none')
+    await summary.tap()
+    await expect(page.getByTestId('separate-preview-item')).toHaveCount(2)
+    await page.screenshot({ path: 'e2e/artifacts/screens/separate-360.png' })
     await page.getByTestId('separate-apply').tap()
     await expect(page.getByTestId('episode-folder')).toBeVisible()
     await noHorizontalScroll(page)
@@ -525,5 +645,23 @@ test.describe('セパレート（スマホ）', () => {
     const mb = (await page.getByTestId('acts-menu-button').boundingBox())!
     expect(Math.min(mb.width, mb.height)).toBeGreaterThanOrEqual(34)
     expect(mb.x + mb.width).toBeLessThanOrEqual(360)
+  })
+})
+
+test.describe('セパレート（画面の高さだけが変わる時）', () => {
+  test('画面キーボードの開閉（高さだけの変化）では「幕の操作」メニューを閉じず、幅が変わったら閉じる', async ({ page }) => {
+    const ids = await seedWork(page)
+    const acts = await seedSplit(page, ids)
+    await page.setViewportSize({ width: 360, height: 400 })
+    await openApp(page, `/t/${ids.titleId}/p/${acts[1]}`)
+    await page.getByTestId('acts-menu-button').click()
+    await expect(page.getByTestId('acts-menu')).toHaveCount(1)
+    // キーボードが閉じた（高さだけが伸びた）
+    await page.setViewportSize({ width: 360, height: 740 })
+    await page.waitForTimeout(200)
+    await expect(page.getByTestId('acts-menu')).toHaveCount(1)
+    // 回転した（幅が変わった）
+    await page.setViewportSize({ width: 740, height: 360 })
+    await expect(page.getByTestId('acts-menu')).toHaveCount(0)
   })
 })

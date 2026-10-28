@@ -2,7 +2,13 @@
 // 仕様違反は DomainError を投げるので、UI 側では attempt() で受けてトースト表示する。
 import * as A from '../domain/acts'
 import * as E from '../domain/entityOps'
-import { applyPieceEdits, type PieceEdit, type PieceEditOptions } from '../domain/pieceEdits'
+import {
+  applyPieceEdits,
+  keepOrphanedEdits,
+  type OrphanKeepTarget,
+  type PieceEdit,
+  type PieceEditOptions,
+} from '../domain/pieceEdits'
 import * as S from '../domain/storyOps'
 import * as T from '../domain/trash'
 import type { AppData, ID, NumberingMode, SettingEntry, Slot } from '../domain/types'
@@ -60,6 +66,9 @@ export const actions = {
   /** 原稿画面の「保存」: 画面の中で持っていた編集をまとめて書き込む（本文が競合したら別の稿として残す） */
   savePieceEdits: (pieceId: ID, edits: readonly PieceEdit[], opts: PieceEditOptions) =>
     run((d) => applyPieceEdits(d, pieceId, edits, opts)),
+  /** 保存先の話・幕が無くなった（幕に分けられた）編集を、残し先の新しい稿（無ければゴミ箱）として残す */
+  keepOrphanedEdits: (edits: readonly PieceEdit[], target: OrphanKeepTarget, opts: PieceEditOptions) =>
+    run((d) => keepOrphanedEdits(d, edits, target, opts)),
 
   // セパレート（幕）
   /** 話（または幕）を採用稿の offsets の位置で幕に分ける。戻り値は分けた後の幕の id（読む順） */

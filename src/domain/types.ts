@@ -233,6 +233,11 @@ export interface TrashOrigin {
   chapterId?: ID | null
   /** 稿: 属していた話 */
   pieceId?: ID
+  /**
+   * 稿: 幕の稿だった時、その幕の属する話。幕がつないだ・セパレートを解除したことで無くなっていても、
+   * 話（まだ分けていればその幕）へ戻せるように
+   */
+  parentId?: ID
   /** 設定エントリ: 属していた設定項目 */
   categoryId?: ID
   /** 並びの中の位置（structure・pieceIds・versionIds の添字、または order の値） */

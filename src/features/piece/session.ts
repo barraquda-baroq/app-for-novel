@@ -45,6 +45,17 @@ export interface FieldEdit {
   label?: string
 }
 
+/** 項目ごとの編集を、保存する編集の一覧にする */
+export function toPieceEdits(edits: Record<FieldKey, FieldEdit>): PieceEdit[] {
+  const out: PieceEdit[] = []
+  for (const [key, edit] of Object.entries(edits)) {
+    const f = parseFieldKey(key)
+    if (!f) continue
+    out.push({ ...f, base: edit.base, value: edit.value, ...(edit.label !== undefined ? { label: edit.label } : {}) })
+  }
+  return out
+}
+
 export interface FieldState {
   /** 保存していない編集（なければ保存先の値をそのまま表示する） */
   edit: FieldEdit | null
@@ -77,6 +88,11 @@ export class EditSession {
   private nameRev = 0
   /** 端末内の控え（src/features/piece/crashDraft.ts）をこのセッションが書いた・復元したか */
   draftOwned = false
+  /**
+   * 編集している幕の場所（属する話と、前の幕。幕でなければ空）。画面が描くたびに入れ直し、控えにも書く。
+   * 幕がつないだ・セパレートを解除したことで無くなった後も、保存していない編集の残し先を決められるように
+   */
+  context: { parentId?: ID; prevId?: ID | null; index?: number } = {}
   /** 控えの持ち主の印（同じ話を別のタブで開いている時に、そのタブの控えを「前回の編集」と取り違えない） */
   readonly owner = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -118,13 +134,7 @@ export class EditSession {
 
   /** 保存する編集の一覧 */
   pendingEdits(): PieceEdit[] {
-    const out: PieceEdit[] = []
-    for (const [key, edit] of Object.entries(this.edits())) {
-      const f = parseFieldKey(key)
-      if (!f) continue
-      out.push({ ...f, base: edit.base, value: edit.value, ...(edit.label !== undefined ? { label: edit.label } : {}) })
-    }
-    return out
+    return toPieceEdits(this.edits())
   }
 
   private put(key: FieldKey, next: FieldState): void {

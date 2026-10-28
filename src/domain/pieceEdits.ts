@@ -4,7 +4,11 @@
 // - 稿の名前・推敲メモ・話の題・見出しは、この端末の編集を正とする
 // - 稿が削除されていたら、この端末の編集（本文・稿の名前・推敲メモ）を同じ話の新しい稿として残す
 import { addVersion, updatePiece, updateVersion } from './storyOps'
+import { isSplit } from './structure'
+import { putInTrash } from './trash'
+import { transact } from './tx'
 import type { AppData, ID } from './types'
+import { newId, now } from './util'
 
 export type PieceEditField = 'body' | 'name' | 'note' | 'subtitle' | 'label'
 
@@ -119,4 +123,112 @@ export function applyPieceEdits(
   }
 
   return { data: d, result: { conflicts, dropped } }
+}
+
+// ---------- 保存先の話・幕が無くなった編集を残す ----------
+
+/** 保存先の話・幕が無くなった（または幕に分けられて話自身の稿を変えられなくなった）編集の残し先 */
+export interface OrphanKeepTarget {
+  /** 新しい稿として残す話・幕。null（または見つからない・幕に分けた話）ならゴミ箱に「同期の競合で残した内容」として残す */
+  pieceId: ID | null
+  /** ゴミ箱に残す時の元の場所（編集していた話・幕と、幕ならその属する話） */
+  origin: { titleId: ID; pieceId: ID; parentId?: ID }
+  /** ゴミ箱の一覧に出す元の場所の表記（「第3話　題　第2幕」など） */
+  parentLabel: string
+}
+
+export interface OrphanKeepResult {
+  /** 新しく作った稿（ゴミ箱に残した時は空） */
+  versionIds: ID[]
+  /** 残した稿の名前（ゴミ箱に残した時も） */
+  names: string[]
+  /** ゴミ箱に残した件（残さなければ null） */
+  trashEntryId: ID | null
+  /** 書き込めなかった編集（話ごと無くなった話の題・見出し） */
+  dropped: PieceEdit[]
+}
+
+/**
+ * 保存先の幕がつないだ・セパレートを解除したことで無くなった、話が幕に分けられた、話が削除された時の、
+ * 保存していない編集を残す（どちらの文章も消さない）。
+ * - 稿の編集（本文・稿の名前・推敲メモ）は、稿ごとに残し先の話・幕の新しい稿「元の稿名（競合: ○○での編集）」にする（採用はしない）。
+ *   残し先が無ければ、ゴミ箱に1件にまとめて残す（元の話・幕を戻すと、その稿として戻せる）
+ * - 話の題・見出しは、話が残っていればふつうに書き込む（幕の画面の題は、属する話のもの）
+ */
+export function keepOrphanedEdits(
+  data: AppData,
+  edits: readonly PieceEdit[],
+  target: OrphanKeepTarget,
+  opts: PieceEditOptions,
+): { data: AppData; result: OrphanKeepResult } {
+  let d = data
+  const dropped: PieceEdit[] = []
+  const pieceEdits = edits.filter((e) => e.target === 'piece')
+  if (pieceEdits.length > 0) {
+    const r = applyPieceEdits(d, target.origin.pieceId, pieceEdits, opts)
+    d = r.data
+    dropped.push(...r.result.dropped)
+  }
+
+  const byVersion = new Map<ID, Partial<Record<PieceEditField, PieceEdit>>>()
+  for (const e of edits) {
+    if (e.target !== 'version') continue
+    const fields = byVersion.get(e.id) ?? {}
+    fields[e.field] = e
+    byVersion.set(e.id, fields)
+  }
+  const kept: { name: string; body: string; note: string }[] = []
+  for (const [versionId, { body, name, note }] of byVersion) {
+    if (![body, name, note].some((e) => e && e.value !== '')) continue
+    const originalName = name?.value ?? body?.label ?? note?.label ?? name?.base ?? d.versions[versionId]?.name ?? ''
+    kept.push({ name: opts.conflictName(originalName), body: body?.value ?? '', note: note?.value ?? '' })
+  }
+
+  const versionIds: ID[] = []
+  let trashEntryId: ID | null = null
+  const into = target.pieceId ? d.pieces[target.pieceId] : undefined
+  if (into && !isSplit(into)) {
+    for (const k of kept) {
+      const r = addVersion(d, into.id, { body: k.body, name: k.name })
+      d = k.note !== '' ? updateVersion(r.data, r.result, { note: k.note }) : r.data
+      versionIds.push(r.result)
+    }
+  } else if (kept.length > 0) {
+    const { origin } = target
+    const r = transact(d, (tx) => {
+      const ts = now()
+      return putInTrash(tx, {
+        kind: 'version',
+        label: kept.length > 1 ? `${kept[0].name} ほか${kept.length - 1}稿` : kept[0].name,
+        titleName: tx.get('titles', origin.titleId)?.name ?? '',
+        parentLabel: target.parentLabel,
+        origin: {
+          titleId: origin.titleId,
+          pieceId: origin.pieceId,
+          ...(origin.parentId ? { parentId: origin.parentId } : {}),
+          index: -1,
+          wasActive: false,
+        },
+        records: kept.map((k) => ({
+          table: 'versions' as const,
+          record: {
+            id: newId(),
+            pieceId: origin.pieceId,
+            titleId: origin.titleId,
+            name: k.name,
+            body: k.body,
+            note: k.note,
+            sourceVersionId: null,
+            createdAt: ts,
+            updatedAt: ts,
+          },
+        })),
+        reason: 'conflict',
+        at: ts,
+      })
+    })
+    d = r.data
+    trashEntryId = r.result
+  }
+  return { data: d, result: { versionIds, names: kept.map((k) => k.name), trashEntryId, dropped } }
 }

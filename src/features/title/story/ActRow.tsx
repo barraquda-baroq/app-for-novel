@@ -9,23 +9,26 @@ import { ChevronRightIcon, MoreIcon } from '../../../ui/icons'
 import { LazyRubySegments } from '../../../ui/RubyText'
 import { ProgressMeter } from './ProgressMeter'
 import { useRowMenu } from './RowMenu'
-import { excerptSegments, type ActRowData } from './storyLogic'
+import { excerptSegments, progressDescription, type ActRowData } from './storyLogic'
 
 function ActRowView({ act, version, label, fullLabel, progress }: ActRowData) {
   const menu = useRowMenu({ type: 'act', id: act.id })
   const excerptRef = useRef<HTMLSpanElement>(null)
   const excerpt = version ? excerptSegments(version.body, 60) : []
+  // 採用中の稿（リンクの読み上げにも出すので一度だけ作る。aria-label はリンクの中の表示の代わりに読まれる）
+  const adopted = version ? `採用: ${version.name.trim() || '無題の稿'}・${formatCount(bodyMetrics(version).chars)}字` : null
+  const ariaLabel = `${fullLabel}（${adopted ?? '採用原稿なし'}）。${progressDescription(progress, version !== null, 'この幕')}`
   return (
     <li className={`story-act${version ? '' : ' is-missing'}`} data-testid="act-row" data-act-id={act.id}>
       <div className="story-row-main story-act-main" {...menu?.handlers}>
-        <Link to={paths.piece(act.titleId, act.id)} className="story-act-link" aria-label={fullLabel}>
+        <Link to={paths.piece(act.titleId, act.id)} className="story-act-link" aria-label={ariaLabel}>
           <span className="story-act-head">
             <span className="story-act-label" data-testid="act-label">
               {label}
             </span>
-            {version ? (
+            {adopted ? (
               <span className="badge badge-active" data-testid="act-adopted">
-                採用: {version.name.trim() || '無題の稿'}・{formatCount(bodyMetrics(version).chars)}字
+                {adopted}
               </span>
             ) : (
               <span className="badge badge-missing" data-testid="act-missing">

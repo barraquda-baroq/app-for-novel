@@ -1,8 +1,10 @@
 // 原稿画面の保存: 画面の中で持っていた編集をまとめて書き込む・本文が競合したら別の稿として残す
 import { describe, expect, it } from 'vitest'
+import { joinActWithNext, separatePiece } from './acts'
 import { createTitle } from './entityOps'
-import { applyPieceEdits, type PieceEdit } from './pieceEdits'
+import { applyPieceEdits, keepOrphanedEdits, type PieceEdit } from './pieceEdits'
 import { addEpisode, addSpecial, deleteVersion, updatePiece, updateVersion } from './storyOps'
+import { restoreTrashEntry } from './trash'
 import { emptyData, type AppData } from './types'
 
 const opts = { conflictName: (n: string) => `${n || '無題の稿'}（競合: この端末での編集）` }
@@ -174,5 +176,68 @@ describe('保存', () => {
     const r = applyPieceEdits(data, pieceId, [edit('version', v1, 'note', '元のメモ', '')], opts)
     expect(r.result).toEqual({ conflicts: [], dropped: [] })
     expect(r.data.pieces[pieceId].versionIds).toEqual(data.pieces[pieceId].versionIds)
+  })
+})
+
+describe('保存先が無くなった編集を残す（keepOrphanedEdits）', () => {
+  /** 'AAABBB' を2幕に分け、第2幕を第1幕とつないだ（第2幕は無くなった） */
+  function joined() {
+    const { data: d0, titleId, pieceId } = setup()
+    const v = d0.pieces[pieceId].versionIds[0]
+    const s = separatePiece(updateVersion(d0, v, { body: 'AAABBB' }), pieceId, [3])
+    const [a1, a2] = s.result
+    const a2v = s.data.pieces[a2].activeVersionId!
+    const data = joinActWithNext(s.data, a1).data
+    return { data, titleId, pieceId, a1, a2, a2v }
+  }
+
+  it('稿の編集（本文・稿の名前・推敲メモ）を、残し先の新しい稿（採用しない）にする。話の題はふつうに書く', () => {
+    const { data, titleId, pieceId, a1, a2, a2v } = joined()
+    const before = data.pieces[a1]
+    const r = keepOrphanedEdits(
+      data,
+      [
+        { ...edit('version', a2v, 'body', 'BBB', 'BBB追記'), label: '第1稿' },
+        { ...edit('version', a2v, 'note', '', '第2幕のメモ'), label: '第1稿' },
+        edit('piece', pieceId, 'subtitle', '', '雨'),
+      ],
+      { pieceId: a1, origin: { titleId, pieceId: a2, parentId: pieceId }, parentLabel: '第1話　第2幕' },
+      opts,
+    )
+    expect(r.result.trashEntryId).toBeNull()
+    expect(r.result.names).toEqual(['第1稿（競合: この端末での編集）'])
+    const kept = r.data.versions[r.result.versionIds[0]]
+    expect(kept).toMatchObject({ pieceId: a1, name: '第1稿（競合: この端末での編集）', body: 'BBB追記', note: '第2幕のメモ' })
+    expect(r.data.pieces[a1].activeVersionId).toBe(before.activeVersionId)
+    expect(r.data.pieces[pieceId].subtitle).toBe('雨')
+  })
+
+  it('残し先が無い・幕に分けた話なら、ゴミ箱に「同期の競合で残した内容」として1件にまとめて残す', () => {
+    const { data, titleId, pieceId, a2, a2v } = joined()
+    const r = keepOrphanedEdits(
+      data,
+      [{ ...edit('version', a2v, 'body', 'BBB', 'BBB追記'), label: '第1稿' }],
+      { pieceId: pieceId, origin: { titleId, pieceId: a2, parentId: pieceId }, parentLabel: '第1話　第2幕' },
+      opts,
+    )
+    const entry = r.data.trashEntries[r.result.trashEntryId!]
+    expect(entry).toMatchObject({ kind: 'version', reason: 'conflict', label: '第1稿（競合: この端末での編集）' })
+    expect(entry.origin).toMatchObject({ pieceId: a2, parentId: pieceId, wasActive: false })
+    // 戻すと（話をまだ分けていれば）最初の幕の稿として戻る
+    const back = restoreTrashEntry(r.data, entry.id).data
+    const first = back.pieces[pieceId].actIds![0]
+    expect(back.pieces[first].versionIds.map((id) => back.versions[id].body)).toContain('BBB追記')
+  })
+
+  it('空にしただけの編集は残さない', () => {
+    const { data, titleId, pieceId, a1, a2, a2v } = joined()
+    const r = keepOrphanedEdits(
+      data,
+      [edit('version', a2v, 'note', '元', '')],
+      { pieceId: a1, origin: { titleId, pieceId: a2, parentId: pieceId }, parentLabel: '' },
+      opts,
+    )
+    expect(r.result.versionIds).toEqual([])
+    expect(r.data.versions).toBe(data.versions)
   })
 })

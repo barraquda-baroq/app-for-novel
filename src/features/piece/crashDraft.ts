@@ -25,7 +25,19 @@ export interface CrashDraft {
   at: number
   /** 書いた画面（編集セッション）の印。古い控えには無い */
   owner?: string
+  /**
+   * 幕の控え: 幕の属する話と、控えた時に幕の前にあった幕（先頭なら null）。幕がつないだ・セパレートを解除したことで
+   * 無くなった後も、残った幕・話を開いた時に「新しい稿として残す」か聞けるように（古い控え・幕でない話の控えには無い）
+   */
+  parentId?: string
+  prevId?: string | null
   edits: Record<FieldKey, StoredEdit>
+}
+
+/** 控えに入れる、編集している幕の場所（幕でなければ空） */
+export interface DraftContext {
+  parentId?: string
+  prevId?: string | null
 }
 
 const OWNER_LOCK_PREFIX = 'novel-studio:edit-owner:'
@@ -76,6 +88,7 @@ function build(
   owner: string | undefined,
   at: number,
   hashBase: boolean,
+  context: DraftContext,
 ): CrashDraft {
   const out: Record<FieldKey, StoredEdit> = {}
   for (const [key, e] of Object.entries(edits)) {
@@ -85,22 +98,34 @@ function build(
     if (e.label !== undefined) item.label = e.label
     out[key] = item
   }
-  return owner ? { v: 1, pieceId, at, owner, edits: out } : { v: 1, pieceId, at, edits: out }
+  const draft: CrashDraft = { v: 1, pieceId, at, edits: out }
+  if (owner) draft.owner = owner
+  if (context.parentId) {
+    draft.parentId = context.parentId
+    draft.prevId = context.prevId ?? null
+  }
+  return draft
 }
 
-/** 控えを書く（書けたら true）。編集がなければ消す。owner は書いた画面の印 */
-export function writeCrashDraft(pieceId: string, edits: Record<FieldKey, FieldEdit>, owner?: string, at = Date.now()): boolean {
+/** 控えを書く（書けたら true）。編集がなければ消す。owner は書いた画面の印、context は幕の場所 */
+export function writeCrashDraft(
+  pieceId: string,
+  edits: Record<FieldKey, FieldEdit>,
+  owner?: string,
+  at = Date.now(),
+  context: DraftContext = {},
+): boolean {
   if (Object.keys(edits).length === 0) {
     removeCrashDraft(pieceId, owner)
     return true
   }
   try {
-    localStorage.setItem(draftKey(pieceId), JSON.stringify(build(pieceId, edits, owner, at, false)))
+    localStorage.setItem(draftKey(pieceId), JSON.stringify(build(pieceId, edits, owner, at, false, context)))
     return true
   } catch {
     // 容量不足: 長い base は指紋だけにして、もう一度
     try {
-      localStorage.setItem(draftKey(pieceId), JSON.stringify(build(pieceId, edits, owner, at, true)))
+      localStorage.setItem(draftKey(pieceId), JSON.stringify(build(pieceId, edits, owner, at, true, context)))
       return true
     } catch (e) {
       console.warn('保存していない編集を端末内に控えられませんでした', e)
@@ -150,7 +175,13 @@ export function readCrashDraft(pieceId: string): CrashDraft | null {
         if (typeof e.base !== 'string' && typeof e.baseHash !== 'string') continue
         edits[key] = e
       }
-      return typeof d.owner === 'string' ? { v: 1, pieceId, at: d.at, owner: d.owner, edits } : { v: 1, pieceId, at: d.at, edits }
+      const draft: CrashDraft = { v: 1, pieceId, at: d.at, edits }
+      if (typeof d.owner === 'string') draft.owner = d.owner
+      if (typeof d.parentId === 'string') {
+        draft.parentId = d.parentId
+        draft.prevId = typeof d.prevId === 'string' ? d.prevId : null
+      }
+      return draft
     }
   } catch {
     /* 壊れている */
@@ -187,4 +218,28 @@ export function resolveCrashDraft(
     out[key] = e.label !== undefined ? { base, value: e.value, label: e.label } : { base, value: e.value }
   }
   return out
+}
+
+/** 端末内にあるすべての控え（壊れたものは消す） */
+export function listCrashDrafts(): CrashDraft[] {
+  const ids: string[] = []
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key?.startsWith(PREFIX)) ids.push(key.slice(PREFIX.length))
+    }
+  } catch {
+    return []
+  }
+  return ids.map((id) => readCrashDraft(id)).filter((d): d is CrashDraft => d !== null)
+}
+
+/**
+ * 話 parentId の幕だった控えのうち、幕がもう無いもの（つないだ・セパレートを解除したことで無くなった幕の、保存されなかった編集）。
+ * 古い順に返す
+ */
+export function findOrphanDrafts(pieces: Readonly<Record<string, unknown>>, parentId: string): CrashDraft[] {
+  return listCrashDrafts()
+    .filter((d) => d.parentId === parentId && !pieces[d.pieceId])
+    .sort((a, b) => a.at - b.at)
 }

@@ -1502,3 +1502,79 @@
     margin-left: 20px;
   }
 }
+
+/* ---------- 保存先が無くなった編集を残す画面（OrphanEdits.tsx） ---------- */
+.orphan-card {
+  border-color: var(--warn);
+  background: var(--surface);
+}
+
+.orphan-title {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+.orphan-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.orphan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orphan-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.orphan-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.orphan-item-name {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.orphan-item-head .btn {
+  flex: none;
+  min-height: 34px;
+}
+
+.orphan-value {
+  width: 100%;
+  font-family: var(--editor-font);
+  resize: vertical;
+}
+
+.orphan-target {
+  max-width: 100%;
+}
+
+.orphan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.orphan-actions .btn {
+  min-height: 34px;
+}

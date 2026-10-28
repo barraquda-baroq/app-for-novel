@@ -44,6 +44,30 @@
   background: var(--surface-2);
 }
 
+/* スマホではキャンセル・幕に分けるを見出しの横に置き、ヘッダーのパンくずを削らない */
+.sep-intro-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sep-intro-head .sep-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 保存されていない編集の控えがある時の知らせ */
+.sep-draft-notice {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .sep-title {
   margin: 0;
   font-family: var(--editor-font);
@@ -100,9 +124,35 @@
   min-height: 3em;
   padding: 6px 20px 10px;
   overflow: hidden;
-  /* 読み取り専用でもカーソル（キャレット）を置けることが分かるように */
-  caret-color: var(--accent);
   cursor: text;
+}
+
+/* 読み取り専用の入力欄にはブラウザがカーソルを描かないので、カーソルの位置に印（縦線）を描く（SeparatePage.tsx の SegmentArea） */
+.sep-area-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.sep-caret {
+  position: absolute;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  animation: sep-blink 1s steps(1) infinite;
+}
+
+@keyframes sep-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sep-caret {
+    animation: none;
+  }
 }
 
 .manuscript.sep-area:focus {
@@ -213,9 +263,45 @@
   min-height: 34px;
   display: flex;
   align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  list-style: none;
+}
+
+/* 開閉の矢印（summary を flex にするとブラウザの印が出ないので、自分で描く。戦略の .sg-snap-details と同じ） */
+.sep-preview-details > summary::-webkit-details-marker,
+.ef-frozen > summary::-webkit-details-marker,
+.ef-version > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sep-preview-details > summary::before,
+.ef-frozen > summary::before,
+.ef-version > summary::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.sep-preview-details[open] > summary::before,
+.ef-frozen[open] > summary::before,
+.ef-version[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sep-preview-details > summary::before,
+  .ef-frozen > summary::before,
+  .ef-version > summary::before {
+    transition: none;
+  }
 }
 
 .sep-preview-details[open] > summary {
@@ -379,6 +465,8 @@
 .ef-frozen > summary {
   display: flex;
   align-items: center;
+  gap: 10px;
+  list-style: none;
   min-height: 44px;
   padding: 8px 14px;
   font-size: 14px;
@@ -404,6 +492,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
+  list-style: none;
   min-height: 40px;
   padding: 6px 12px;
   font-size: 14px;

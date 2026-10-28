@@ -71,7 +71,7 @@ export function rowMenuItems(data: AppData, target: RowTarget, deps: MenuDeps): 
         icon: <JoinActsIcon />,
         disabled: blocked !== null,
         hint: blocked ?? undefined,
-        onSelect: () => void confirmJoin(piece.id),
+        onSelect: () => void confirmJoin(piece.id, { open: (id) => deps.navigate(paths.piece(piece.titleId, id)) }),
         testId: 'menu-join',
       })
     }
@@ -83,7 +83,7 @@ export function rowMenuItems(data: AppData, target: RowTarget, deps: MenuDeps): 
       items.push({
         label: 'セパレート解除',
         icon: <UnsplitIcon />,
-        onSelect: () => void confirmUnseparate(piece.id),
+        onSelect: () => void confirmUnseparate(piece.id, { open: (id) => deps.navigate(paths.piece(piece.titleId, id)) }),
         testId: 'menu-unseparate',
       })
     } else {

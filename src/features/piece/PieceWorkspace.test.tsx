@@ -620,6 +620,140 @@ describe('端末内の控え', () => {
   })
 })
 
+describe('保存先が無くなった編集（幕）', () => {
+  /** 'AAABBBCCC' を3幕に分けた第1話（題「雨」） */
+  function seedActs(): { titleId: ID; pieceId: ID; acts: ID[] } {
+    const titleId = actions.createTitle('幕の作品')
+    const pieceId = actions.addEpisode(titleId)
+    actions.updatePiece(pieceId, { subtitle: '雨' })
+    actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body: 'AAABBBCCC' })
+    const acts = actions.separatePiece(pieceId, [3, 6])
+    return { titleId, pieceId, acts }
+  }
+  const versionsOf = (pieceId: ID) => getData().pieces[pieceId].versionIds.map((id) => getData().versions[id])
+
+  it('開いている幕が別の画面・端末で前の幕とつながれても、編集を消さずに出し、前の幕の新しい稿として残せる', async () => {
+    const { titleId, pieceId, acts } = seedActs()
+    renderAt(`/t/${titleId}/p/${acts[1]}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), '幕2の未保存')
+    act(() => void actions.joinActWithNext(acts[0]))
+    const view = await screen.findByTestId('orphan-edits')
+    expect(view.getAttribute('data-reason')).toBe('joined')
+    expect(view.textContent).toContain('前の幕とつながれたため')
+    expect((screen.getByTestId('orphan-value') as HTMLTextAreaElement).value).toBe('BBB幕2の未保存')
+    // 保存していない編集がある間は、画面を離れる時の確認も続く
+    expect(document.querySelector('.save-status')).toBeNull()
+    expect(screen.getByTestId('orphan-keep').textContent).toBe('「第1話　雨　第1幕」の新しい稿として残す')
+    await user.click(screen.getByTestId('orphan-keep'))
+    const kept = versionsOf(acts[0]).at(-1)!
+    expect(kept.name).toBe('第1稿（競合: ブラウザでの編集）')
+    expect(kept.body).toBe('BBB幕2の未保存')
+    // 採用は変えない（つないだ本文はそのまま）
+    expect(getData().versions[getData().pieces[acts[0]].activeVersionId!].body).toBe('AAABBB')
+    await waitFor(() =>
+      expect(toastTexts()).toContain(
+        'この端末の編集を、「第1話　雨　第1幕」の新しい稿「第1稿（競合: ブラウザでの編集）」として残しました',
+      ),
+    )
+    // 残したら、無くなった幕の表示（属していた話へ移れる）
+    expect(await screen.findByTestId('not-found-action')).toBeTruthy()
+    expect(localStorage.getItem(draftKey(acts[1]))).toBeNull()
+    expect(getData().pieces[pieceId].actIds).toHaveLength(2)
+  })
+
+  it('セパレートが解除されたら、話の新しい稿として残す。画面を離れる時の「保存して移動」でも残す', async () => {
+    const { titleId, pieceId, acts } = seedActs()
+    const { router } = renderAt(`/t/${titleId}/p/${acts[2]}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), '終わりの追記')
+    act(() => void actions.unseparatePiece(pieceId))
+    expect((await screen.findByTestId('orphan-edits')).getAttribute('data-reason')).toBe('unseparated')
+    act(() => void router.navigate(`/t/${titleId}`))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '保存して移動' }))
+    await screen.findByTestId('title-page')
+    const kept = versionsOf(pieceId).at(-1)!
+    expect(kept.body).toBe('CCC終わりの追記')
+    expect(kept.name).toBe('第1稿（競合: ブラウザでの編集）')
+    expect(getData().versions[getData().pieces[pieceId].activeVersionId!].body).toBe('AAABBBCCC')
+  })
+
+  it('開いている話が別の画面・端末で幕に分けられたら、黙って幕の一覧にせず、選んだ幕の新しい稿として残せる', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), '追記')
+    act(() => void actions.separatePiece(pieceId, [5]))
+    const view = await screen.findByTestId('orphan-edits')
+    expect(view.getAttribute('data-reason')).toBe('split')
+    expect(screen.queryByTestId('episode-folder')).toBeNull()
+    const acts = getData().pieces[pieceId].actIds!
+    await user.selectOptions(screen.getByTestId('orphan-target'), acts[1])
+    await user.click(screen.getByTestId('orphan-keep'))
+    const kept = versionsOf(acts[1]).at(-1)!
+    expect(kept.body).toBe(`${bodyOf(v1)}追記`)
+    // 話自身の稿は変えない
+    expect(bodyOf(v1)).toBe('春は曙。\nやうやう白くなりゆく山際。')
+    expect(await screen.findByTestId('episode-folder')).toBeTruthy()
+  })
+
+  it('話・幕が削除されて残し先が無ければ、ゴミ箱に残す', async () => {
+    const { titleId, pieceId } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), '消えた話の追記')
+    act(() => actions.deletePiece(pieceId))
+    expect((await screen.findByTestId('orphan-edits')).getAttribute('data-reason')).toBe('deleted')
+    expect(screen.getByTestId('orphan-keep').textContent).toBe('ゴミ箱に残す')
+    await user.click(screen.getByTestId('orphan-keep'))
+    const entries = Object.values(getData().trashEntries)
+    const conflict = entries.find((e) => e.reason === 'conflict')!
+    expect(conflict.kind).toBe('version')
+    const record = Object.values(getData().trashRecords).find((r) => r.entryId === conflict.id)!
+    expect((record.record as { body: string }).body).toContain('消えた話の追記')
+  })
+
+  it('アプリが落ちて残った、なくなった幕の控えは、残った幕・話を開いた時に新しい稿として残せる', async () => {
+    const { titleId, pieceId, acts } = seedActs()
+    const vid = getData().pieces[acts[1]].activeVersionId!
+    // 第2幕で書いていた控え（幕の場所つき）。その後で第1幕とつながれた
+    writeCrashDraft(
+      acts[1],
+      { [versionField(vid, 'body')]: { base: 'BBB', value: 'BBB落ちる前の追記', label: '第1稿' } },
+      'closed-tab',
+      new Date(2026, 9, 28, 9, 5).getTime(),
+      { parentId: pieceId, prevId: acts[0] },
+    )
+    act(() => void actions.joinActWithNext(acts[0]))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('なくなった幕で保存されなかった編集があります（2026/10/28 09:05）')
+    expect(dialog.textContent).toContain('「第1話　雨　第1幕」の新しい稿として残します')
+    await user.click(within(dialog).getByRole('button', { name: '残す' }))
+    await waitFor(() => expect(versionsOf(acts[0]).at(-1)!.body).toBe('BBB落ちる前の追記'))
+    expect(localStorage.getItem(draftKey(acts[1]))).toBeNull()
+  })
+
+  it('幕に分けた話自身の控え（分ける前の編集）は、幕の一覧を開いた時に聞き、幕の新しい稿として残せる', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    writeCrashDraft(pieceId, { [versionField(v1, 'body')]: { base: bodyOf(v1)!, value: '分ける前の編集' } }, 'closed-tab')
+    act(() => void actions.separatePiece(pieceId, [5]))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    expect(await screen.findByTestId('episode-folder')).toBeTruthy()
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('前回保存されなかった編集があります')
+    await user.click(within(dialog).getByRole('button', { name: '復元' }))
+    expect((await screen.findByTestId('orphan-edits')).getAttribute('data-reason')).toBe('split')
+    await user.click(screen.getByTestId('orphan-keep'))
+    const first = getData().pieces[pieceId].actIds![0]
+    expect(versionsOf(first).at(-1)!.body).toBe('分ける前の編集')
+    expect(await screen.findByTestId('episode-folder')).toBeTruthy()
+  })
+})
+
 describe('コピー', () => {
   it('見出し（第n話　題）と、保存していない編集も含めた本文をコピーする', async () => {
     const { titleId, pieceId, v2 } = seed()

@@ -2,7 +2,7 @@
 // 話の本文は各幕の採用稿をつないだもので、ここでは編集しない（幕の画面で編集する）。
 // 話自身の稿（分けた時の採用稿など）は、セパレートを解除するまで変えられないので、読み取り専用で見られるようにする。
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { missingActiveLabel } from '../../domain/entityOps'
 import { titleProgress } from '../../domain/progress'
 import { adoptedText, episodeNumbers, locatePiece, pieceFullLabel, pieceLabel } from '../../domain/structure'
@@ -30,6 +30,7 @@ import { ActsIcon, UnsplitIcon } from './actIcons'
 import './acts.css'
 
 export function EpisodeFolder({ title, piece }: { title: Title; piece: Piece }) {
+  const navigate = useNavigate()
   const data = useData()
   // 一覧・集計は本編に関わるデータが変わった時だけ作り直す
   const story = useStoryData(title.id)
@@ -143,7 +144,7 @@ export function EpisodeFolder({ title, piece }: { title: Title; piece: Piece }) 
             <button
               type="button"
               className="btn btn-sm"
-              onClick={() => void confirmUnseparate(piece.id)}
+              onClick={() => void confirmUnseparate(piece.id, { open: (id) => navigate(paths.piece(title.id, id)) })}
               title={missing > 0 ? '採用稿のない幕があると解除できません' : '各幕の採用稿をつないで、1つの話に戻す'}
               data-testid="unseparate-button"
             >
