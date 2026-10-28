@@ -1,12 +1,21 @@
 // 端末内の保存と送信待ち: 同期の規則（どちらの文章も黙って消さない）が、ほかの画面の保存・クラウドからの反映の
 // どちらでも守られること。
 import { describe, expect, it } from 'vitest'
+import { joinActWithNext, separatePiece } from '../domain/acts'
 import { addMemo, addSubmission, createTitle, recordSubmissionSnapshot } from '../domain/entityOps'
-import { addEpisode, updateVersion } from '../domain/storyOps'
+import { addEpisode, addVersion, setActiveVersion, updatePiece, updateVersion } from '../domain/storyOps'
 import { emptyData, type AppData, type Version } from '../domain/types'
 import { newId } from '../domain/util'
-import { conflictTrash, conflictVersionCopy } from '../sync/conflicts'
-import { createPersistence, type AnyRecord, type Change, type ConflictHooks, type Persistence } from './persistence'
+import { conflictTrash, conflictVersionCopy, createConflictHooks } from '../sync/conflicts'
+import { deepEqual } from '../sync/merge'
+import {
+  createPersistence,
+  type AnyRecord,
+  type Change,
+  type ConflictHooks,
+  type ConflictNote,
+  type Persistence,
+} from './persistence'
 
 let n = 0
 const fresh = () => createPersistence(`persistence-test-${++n}`)
@@ -290,5 +299,119 @@ describe('第2回の見直しで直したこと', () => {
     const disk = await p.load()
     expect(disk.memos[m.result]).toBeUndefined()
     expect(Object.values(disk.trashRecords).map((r) => (r.record as { body?: string }).body)).toContain('大事')
+  })
+})
+
+// ---------- 幕（2.2） ----------
+
+/** 第1話（'ABCDEFGHI'）を3幕に分けた作品 */
+function actsSample() {
+  const t = createTitle(emptyData(), '作品')
+  const e = addEpisode(t.data, t.result)
+  const vid = e.data.pieces[e.result].versionIds[0]
+  const d0 = setActiveVersion(updateVersion(e.data, vid, { body: 'ABCDEFGHI' }), e.result, vid)
+  const s = separatePiece(d0, e.result, [3, 6])
+  const m = addMemo(s.data, t.result, 'メモ')
+  return { data: m.data, ep: e.result, acts: s.result, memoId: m.result }
+}
+
+/** 送信待ちの約束: 送信待ちに無いレコードは端末内 = クラウド、あれば base = クラウド */
+async function outboxProblems(p: Persistence, cloud: AppData): Promise<string[]> {
+  const disk = await p.load()
+  const rows = new Map((await p.readOutbox(10_000)).map((r) => [r.k, r]))
+  const out: string[] = []
+  for (const t of Object.keys(disk) as (keyof AppData)[]) {
+    const ids = new Set([...Object.keys(disk[t]), ...Object.keys(cloud[t])])
+    for (const id of ids) {
+      const c = (cloud[t] as Record<string, AnyRecord>)[id] ?? null
+      const row = rows.get(`${t}/${id}`)
+      if (row && !deepEqual(row.base, c)) out.push(`${t}/${id}: base がクラウドと違う`)
+      if (!row && !deepEqual((disk[t] as Record<string, AnyRecord>)[id] ?? null, c))
+        out.push(`${t}/${id}: 端末内がクラウドと違う`)
+    }
+  }
+  return out
+}
+
+const apply = (cloud: AppData, changes: Change[]): AppData => {
+  const out = { ...cloud } as unknown as Record<string, Record<string, AnyRecord>>
+  for (const c of changes) {
+    out[c.table] = { ...out[c.table] }
+    if (c.record) out[c.table][c.id] = c.record
+    else delete out[c.table][c.id]
+  }
+  return out as unknown as AppData
+}
+
+function actsHooks(data: AppData, notes: ConflictNote[]) {
+  return createConflictHooks({ device: 'テスト端末', data: () => data, newId, now: () => 1, report: (n) => notes.push(n) })
+}
+
+describe('幕（2.2）の送信待ちと反映', () => {
+  it('幕の構成を変えた話は、話・幕・稿・ゴミ箱の件を続けて1つのまとまりとして並べる（上限を超えてもまとまりは切らない）', async () => {
+    const { data, ep, acts, memoId } = actsSample()
+    const p = fresh()
+    await seed(p, data)
+    const withLeftover = addVersion(data, acts[1], { body: 'DEF別稿' }).data
+    await p.save(data, withLeftover)
+    await p.completeUpload((await p.readOutbox(100)).map((i) => ({ table: i.table, id: i.id, record: i.local })))
+    const joined = joinActWithNext(withLeftover, acts[0]).data
+    const next = { ...joined, memos: { ...joined.memos, [memoId]: { ...joined.memos[memoId], body: '別の変更' } } }
+    await p.save(withLeftover, next)
+    const items = await p.readOutbox(1)
+    const group = items.filter((i) => i.group === `pieces/${ep}`)
+    expect(items.length).toBeGreaterThan(1)
+    expect(group.map((i) => i.table)).toEqual(expect.arrayContaining(['pieces', 'versions', 'trashEntries', 'trashRecords']))
+    expect(group.map((i) => i.id)).toEqual(expect.arrayContaining([ep, acts[0], acts[1]]))
+    // まとまりは続けて並び、まとまりでない変更（メモ）はまとまりに入らない
+    const all = await p.readOutbox(100)
+    const idx = all.map((i, n) => (i.group ? n : -1)).filter((n) => n >= 0)
+    expect(idx[idx.length - 1] - idx[0] + 1).toBe(idx.length)
+    expect(all.find((i) => i.id === memoId)?.group).toBeUndefined()
+    // 幕の構成を変えていなければ、まとまりは無い
+    const q = fresh()
+    await seed(q, data)
+    await q.save(data, updatePiece(data, ep, { subtitle: '題' }))
+    expect((await q.readOutbox(100)).every((i) => !i.group)).toBe(true)
+  })
+
+  it('クラウドから直接読んだ話が知らない幕を指していれば、その話は合わせずに購読で届くのを待つ', async () => {
+    const { data, ep, acts } = actsSample()
+    const p = fresh()
+    await seed(p, data)
+    const mine = joinActWithNext(data, acts[0]).data
+    await p.save(data, mine)
+    const cloudEp = { ...data.pieces[ep], actIds: [acts[0], 'unknown-act', acts[1], acts[2]], updatedAt: 99 }
+    const notes: ConflictNote[] = []
+    await p.applyRemote([{ table: 'pieces', id: ep, record: cloudEp as AnyRecord }], { ...actsHooks(mine, notes), direct: true })
+    const disk = await p.load()
+    expect(disk.pieces[ep].actIds).toEqual(mine.pieces[ep].actIds)
+    expect((await p.readOutbox(100)).find((i) => i.id === ep)?.base).toEqual(data.pieces[ep])
+    expect(notes).toEqual([])
+  })
+
+  it('この端末でつないで消した幕に、別の端末で足した稿が届いたら、残る幕の稿として残して消す（送信待ちの約束を守る）', async () => {
+    const { data, ep, acts } = actsSample()
+    const p = fresh()
+    await seed(p, data)
+    const mine = joinActWithNext(data, acts[0]).data
+    await p.save(data, mine)
+    const added: Version = {
+      ...data.versions[data.pieces[acts[1]].activeVersionId!],
+      id: newId(),
+      name: '第2稿',
+      body: 'Yの第2稿',
+    }
+    const change: Change = { table: 'versions', id: added.id, record: added as unknown as AnyRecord }
+    const notes: ConflictNote[] = []
+    await p.applyRemote([change], actsHooks(mine, notes))
+    const disk = await p.load()
+    expect(disk.versions[added.id]).toBeUndefined()
+    const copy = Object.values(disk.versions).find((v) => v.body === 'Yの第2稿')!
+    expect(copy.pieceId).toBe(acts[0])
+    expect(copy.name).toBe('第2幕の第2稿（競合: 別の端末での編集）')
+    expect(disk.pieces[acts[0]].versionIds).toContain(copy.id)
+    expect(notes).toEqual([{ kind: 'acts', table: 'pieces', id: ep, detail: 'theirsDropped', kept: { versions: 1, trash: 0 } }])
+    expect(await outboxProblems(p, apply(data, [change]))).toEqual([])
   })
 })

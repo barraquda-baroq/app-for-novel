@@ -18,6 +18,22 @@ service cloud.firestore {
       allow create, update: if request.auth != null && request.auth.uid == uid && validRecord();
     }
 
+    function validAppModel() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['model', 'appVersion', 'updatedAt'])
+        && d.keys().hasAll(['model', 'appVersion', 'updatedAt'])
+        && d.model is int && d.model >= 1
+        && d.appVersion is string && d.appVersion.size() <= 32
+        && d.updatedAt == request.time;
+    }
+
+    match /users/{uid}/meta/app {
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid && validAppModel();
+      allow update: if request.auth != null && request.auth.uid == uid && validAppModel()
+        && request.resource.data.model >= resource.data.model;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -6,6 +6,18 @@ import './sync.css'
 
 export type SyncBadge = { tone: 'ok' | 'busy' | 'warn' | 'error' | 'off'; label: string; detail: string }
 
+/**
+ * クラウドのデータが新しい版のアプリで書かれている時の説明（受け取りは続け、送るのは止めている）。
+ * appVersion はクラウドに記録された、データを書いたアプリの版
+ */
+export function outdatedMessage(appVersion: string, pending: number): string {
+  const notes = [
+    ...(appVersion ? [`${appVersion} で保存`] : []),
+    ...(pending > 0 ? [`この端末の変更 ${pending} 件は送らずに残しています`] : []),
+  ]
+  return `新しいバージョンのアプリで保存されたデータがあります。アプリを更新してください${notes.length ? `（${notes.join('。')}）` : ''}`
+}
+
 /** 同期の状態を、ヘッダー・設定で使う短い言葉にする */
 export function syncBadge(
   s: Pick<SyncState, 'auth' | 'status' | 'leader' | 'everSignedIn'> & Partial<Pick<SyncState, 'accountMismatch'>>,
@@ -22,6 +34,7 @@ export function syncBadge(
   if (s.auth === 'signedOut')
     return { tone: 'off', label: '未ログイン', detail: 'ログインしていないため、ほかの端末と同期していません' }
   const st = s.status
+  if (st?.outdated) return { tone: 'warn', label: '要更新', detail: outdatedMessage(st.outdated.appVersion, st.pending) }
   if (!s.leader && !st) return { tone: 'ok', label: '同期中', detail: '別のウィンドウ（タブ）で同期しています' }
   if (!st || st.phase === 'starting' || st.phase === 'downloading')
     return { tone: 'busy', label: '同期中', detail: 'クラウドの内容を受け取っています' }

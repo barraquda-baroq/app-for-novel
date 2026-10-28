@@ -25,19 +25,9 @@ import {
 } from 'firebase/firestore'
 import type { Change, OutboxItem } from '../db/persistence'
 import type { TableName } from '../domain/types'
-import {
-  CHUNK_CHARS,
-  RECORDS,
-  chunkIdOf,
-  decodeRecord,
-  docIdOf,
-  encodeRecord,
-  hashRecord,
-  type ChunkDoc,
-  type Encoded,
-  type RecordDoc,
-} from './codec'
-import { deepEqual } from './merge'
+import { watchAppModel, type AppModel } from './appModel'
+import { decideBatch, nothingToSend, selectBatch } from './batch'
+import { CHUNK_CHARS, RECORDS, chunkIdOf, decodeRecord, docIdOf, type ChunkDoc, type RecordDoc } from './codec'
 
 /** エンジンが端末内のデータを読み書きする口（アプリではストア、テストでは保存先を直接使う） */
 export interface SyncTarget {
@@ -46,8 +36,9 @@ export interface SyncTarget {
   /**
    * クラウドの変更を反映する。cursor は同じトランザクションで記録する。
    * バックアップからの復元・すべて削除をクラウドに当てる前は反映せずに null を返す（後で受け取り直す）。
+   * direct = 購読ではなく、書けなかったものだけをクラウドから直接読んだ（1回の書き込みの一部だけのことがある）。
    */
-  applyRemote(changes: Change[], cursor?: unknown): Promise<Change[] | null>
+  applyRemote(changes: Change[], cursor?: unknown, opts?: { direct?: boolean }): Promise<Change[] | null>
   outboxCount(): Promise<number>
   markAllDirty(): Promise<void>
   /** 端末内のレコードと送信待ちのキー（`${表名}/${id}`） */
@@ -67,6 +58,11 @@ export interface SyncStatus {
   /** 最後にクラウドと揃った時刻 */
   lastSyncedAt: number | null
   error: string | null
+  /**
+   * クラウドのデータが、このアプリより新しい版のアプリで書かれている（データの形の版。src/sync/appModel.ts）。
+   * 受け取りは続け、送るのは止めている（この端末の変更は送信待ちに残る）
+   */
+  outdated?: AppModel | null
 }
 
 export interface EngineOptions {
@@ -85,6 +81,11 @@ export interface EngineOptions {
    * アクセスルールも持ち主だけに読み書きを許す（firestore.rules）。
    */
   ownerLock?: boolean
+  /**
+   * このアプリのデータの形の版。クラウドに記録し（無い・低ければ上げる）、クラウドの版の方が高ければ送らない。
+   * 渡さなければ確かめない（テスト用）
+   */
+  appModel?: AppModel
 }
 
 export interface SyncEngine {
@@ -173,6 +174,9 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   const sent = new Map<string, string[]>()
   /** 持ち主の確認が済んだ（ownerLock の時） */
   let ownerOk = opts.ownerLock === false
+  /** データの形の版: unknown = まだサーバーから確かめていない、newer = 新しい版のアプリで書かれている（どちらも送らない） */
+  let modelState: 'unknown' | 'ok' | 'newer' = opts.appModel ? 'unknown' : 'ok'
+  let modelUnsub: Unsubscribe | null = null
 
   // 送受信を1つずつ行うための鎖
   let lock: Promise<unknown> = Promise.resolve()
@@ -205,6 +209,21 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     list.push(hash)
     if (list.length > SENT_MEMORY) list.splice(0, list.length - SENT_MEMORY)
     sent.set(id, list)
+  }
+
+  /**
+   * この端末が書いて置き換えたクラウドの版の指紋（文書ごと）。購読の通知は、書く前のクラウドの内容のまま、書いた後に
+   * 届くことがある（通知を受け取ってから反映するまでの間に送った時）。その古い版で、送ったばかりの内容を戻さないように
+   */
+  const replaced = new Map<string, string>()
+
+  /** 送る前のクラウドの版の通知か（この端末が書いて置き換えた版。書いた後の内容が届いたら、もう古い版は届かない） */
+  function isSuperseded(id: string, data: RecordDoc): boolean {
+    const old = replaced.get(id)
+    if (old === undefined) return false
+    if (data.hash === old && !data.reset) return true
+    replaced.delete(id)
+    return false
   }
 
   /** この端末が先に送った古い版の通知か（その後にもっと新しい版を送っている） */
@@ -344,7 +363,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       }
       if (data.table === '_chunk') continue
       const recDoc = data as RecordDoc
-      if (isStaleEcho(d.id, recDoc)) continue
+      if (isStaleEcho(d.id, recDoc) || isSuperseded(d.id, recDoc)) continue
       let rec = decodeRecord(recDoc, (i) => chunks.get(chunkIdOf(d.id, i)))
       if (rec === undefined && recDoc.chunks > 0) {
         const fetched = await fetchChunks(d.id)
@@ -432,42 +451,27 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     conflicts: OutboxItem[]
   }
 
-  /** 送る必要が無い送信待ち（この端末にもクラウドにも無いもの・クラウドと全く同じもの） */
-  const nothingToSend = (it: OutboxItem) => !it.force && (it.noHistory ? it.local === null : deepEqual(it.local, it.base))
-
   async function uploadBatch(): Promise<BatchResult> {
     const items = await target.readOutbox(BATCH_RECORDS)
     if (!items.length) return { done: true, progressed: 0, conflicts: [] }
     const idle = items.filter(nothingToSend)
     if (idle.length) await target.completeUpload(idle.map((it) => ({ table: it.table, id: it.id, record: it.local })))
-    const batch: { it: OutboxItem; enc: Encoded; baseHash: string }[] = []
-    let chars = 0
-    let docs = 0
-    for (const it of items) {
-      if (nothingToSend(it)) continue
-      const enc = encodeRecord(it.local, chunkSize)
-      if (batch.length && (chars + enc.size > BATCH_CHARS || docs + 1 + enc.parts.length > BATCH_DOCS)) break
-      batch.push({ it, enc, baseHash: hashRecord(it.base) })
-      chars += enc.size
-      docs += 1 + enc.parts.length
-    }
+    const batch = selectBatch(items, { chunkSize, maxChars: BATCH_CHARS, maxDocs: BATCH_DOCS })
     if (!batch.length) return { done: false, progressed: idle.length, conflicts: [] }
 
     const result = await runTransaction(fs, async (tx) => {
       const snaps = await Promise.all(batch.map((b) => tx.get(doc(col, docIdOf(b.it.table, b.it.id)))))
-      const written: { change: Change; hash: string }[] = []
-      const conflicts: OutboxItem[] = []
+      const clouds = snaps.map((snap) => (snap.exists() ? (snap.data() as RecordDoc) : null))
+      // 共通の履歴が無いものは、クラウドに何も無い時だけ書く（あれば受信で突き合わせる）。
+      // 復元・すべて削除の後は、この端末の内容で必ず上書きする。幕のまとまりは全部を書ける時だけ書く
+      const decision = decideBatch(
+        batch,
+        clouds.map((c) => ({ exists: c !== null, hash: c && !c.deleted ? c.hash : '' })),
+      )
+      const written: { change: Change; hash: string; replaced: string }[] = []
       batch.forEach((b, i) => {
-        const snap = snaps[i]
-        const cloud = snap.exists() ? (snap.data() as RecordDoc) : null
-        const cloudHash = cloud && !cloud.deleted ? cloud.hash : ''
-        // 共通の履歴が無いものは、クラウドに何も無い時だけ書く（あれば受信で突き合わせる）。
-        // 復元・すべて削除の後は、この端末の内容で必ず上書きする
-        const ok = b.it.force || (b.it.noHistory ? !snap.exists() : cloudHash === b.baseHash)
-        if (!ok) {
-          conflicts.push(b.it)
-          return
-        }
+        if (!decision.write[i]) return
+        const cloud = clouds[i]
         const id = docIdOf(b.it.table, b.it.id)
         const payload: RecordDoc = {
           table: b.it.table,
@@ -495,11 +499,19 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           tx.set(doc(col, chunkIdOf(id, j)), chunk)
         })
         for (let j = b.enc.parts.length; j < (cloud?.chunks ?? 0); j++) tx.delete(doc(col, chunkIdOf(id, j)))
-        written.push({ change: { table: b.it.table, id: b.it.id, record: b.it.local }, hash: b.enc.hash })
+        written.push({
+          change: { table: b.it.table, id: b.it.id, record: b.it.local },
+          hash: b.enc.hash,
+          replaced: cloud && !cloud.deleted ? cloud.hash : '',
+        })
       })
-      return { written, conflicts }
+      return { written, conflicts: decision.conflicts }
     })
-    for (const w of result.written) rememberSent(docIdOf(w.change.table, w.change.id), w.hash)
+    for (const w of result.written) {
+      const id = docIdOf(w.change.table, w.change.id)
+      rememberSent(id, w.hash)
+      if (w.replaced !== w.hash) replaced.set(id, w.replaced)
+    }
     await target.completeUpload(result.written.map((w) => w.change))
     return { done: false, progressed: idle.length + result.written.length, conflicts: result.conflicts }
   }
@@ -530,7 +542,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           ...(data.reset ? { reset: true } : {}),
         })
     }
-    if (changes.length) await target.applyRemote(changes, undefined)
+    if (changes.length) await target.applyRemote(changes, undefined, { direct: true })
   }
 
   /**
@@ -588,6 +600,9 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       uploadTimer = null
       uploadSince = null
     }
+    // データの形の版をまだ確かめていない・新しい版のアプリで書かれたデータがある間は送らない
+    // （送信待ちはそのまま残し、確かめられた・アプリを更新した時に送る）
+    if (modelState !== 'ok') return Promise.resolve()
     uploading = (async () => {
       try {
         await target.flush?.()
@@ -704,6 +719,17 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     deferred = Boolean(await target.getMeta('authoritative'))
     setStatus({ phase: 'downloading', error: null })
     await refreshPending()
+    if (opts.appModel && !modelUnsub) {
+      modelUnsub = watchAppModel(fs, uid, opts.appModel, (s) => {
+        if (stopped) return
+        const was = modelState
+        modelState = s.state
+        if (s.state === 'newer') setStatus({ outdated: s.cloud })
+        else if (status.outdated) setStatus({ outdated: null })
+        // 送ってよいと分かった: 待たせていた送信待ちを送る
+        if (s.state === 'ok' && was !== 'ok') requestUpload(true)
+      })
+    }
     if (!deferred) subscribe()
     requestUpload(true)
   }
@@ -734,6 +760,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       listenerGen += 1
       unsub?.()
       unsub = null
+      modelUnsub?.()
+      modelUnsub = null
       for (const t of [uploadTimer, retryTimer, resubscribeTimer, beginRetry]) if (t) clearTimeout(t)
       if (typeof window !== 'undefined') window.removeEventListener('online', onOnline)
     },

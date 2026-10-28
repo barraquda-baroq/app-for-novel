@@ -57,7 +57,7 @@ function storeTarget(): SyncTarget {
   return {
     readOutbox: (n) => p.readOutbox(n),
     completeUpload: (sent) => p.completeUpload(sent),
-    applyRemote: (changes, cursor) => applyRemoteChanges(changes, cursor),
+    applyRemote: (changes, cursor, opts) => applyRemoteChanges(changes, cursor, opts),
     outboxCount: () => p.outboxCount(),
     markAllDirty: () => p.markAllDirty(),
     localKeys: () => p.localKeys(),
@@ -141,7 +141,7 @@ function startEngine(uid: string): void {
   const token = generation
   const run = async () => {
     if (token !== generation) return
-    const [{ createSyncEngine }, fb] = await Promise.all([import('./engine'), firebaseModule()])
+    const [{ createSyncEngine }, fb, model] = await Promise.all([import('./engine'), firebaseModule(), import('./appModel')])
     if (token !== generation) return
     const e = createSyncEngine({
       firestore: fb.firebase().firestore,
@@ -149,6 +149,8 @@ function startEngine(uid: string): void {
       deviceId: await deviceId(),
       target: storeTarget(),
       ownerLock: !fb.usingEmulator,
+      // データの形の版（新しい版のアプリで書かれたデータがあれば送らない）
+      appModel: { model: model.DATA_MODEL, appVersion: model.APP_VERSION },
       onStatus: (status) => {
         if (engine !== e) return
         useSync.setState({ status })

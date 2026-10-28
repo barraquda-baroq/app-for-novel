@@ -148,6 +148,12 @@ export interface MergeOptions {
   body?: 'theirs' | 'mine'
   /** この端末の呼び名（文章をつないだ時の印に使う） */
   device: string
+  /**
+   * 幕（2.2）: 話の幕の構成（分ける・さらに分ける・つなぐ・解除）を片方の端末だけが変えていた時の、その側（structure）。
+   * 話の採用稿はその側のもの（分けた時の採用稿。分けている間は変えられない）、幕の採用稿を両方が別々に変えていたら
+   * その側のもの（つないだ稿・分けた稿が採用原稿から抜けないように）。採らなかった側は overridden で返す
+   */
+  acts?: { structure: 'mine' | 'theirs' }
 }
 
 export interface FieldMerge {
@@ -155,7 +161,12 @@ export interface FieldMerge {
   bodyConflict: boolean
   /** 両方の文章をつないだ項目 */
   joined: string[]
+  /** 幕の構成を変えた側の採用稿を採ったため、採らなかった側（acts の時） */
+  overridden?: 'mine' | 'theirs'
 }
+
+/** 幕のレコードか（古い版の端末が第n話として書いた幕も、属する話 parentId を持つ） */
+const isActLike = (r: Record<string, unknown>) => r.kind === 'act' || (r.kind !== 'special' && typeof r.parentId === 'string')
 
 /**
  * 両方にあるレコードを項目ごとに合わせる。同じ項目を両方が別々に変えていたら、並びは要素ごとに合わせ、
@@ -188,9 +199,30 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
     }
     if (out[k] === undefined) delete out[k]
   }
+  let overridden: FieldMerge['overridden']
+  if (table === 'pieces' && opts.acts) {
+    const side = opts.acts.structure
+    const other = side === 'mine' ? 'theirs' : 'mine'
+    const w = side === 'mine' ? m : t
+    const l = side === 'mine' ? t : m
+    const bv = b.activeVersionId
+    const lostChanged = !deepEqual(l.activeVersionId, bv) && !deepEqual(l.activeVersionId, w.activeVersionId)
+    if (isActLike(m) || isActLike(t)) {
+      // 幕: 両方が採用稿を別々に変えていたら、幕の構成を変えた側（つないだ稿・分けた稿を採用している）
+      if (!deepEqual(w.activeVersionId, bv) && lostChanged) {
+        out.activeVersionId = w.activeVersionId
+        overridden = other
+      }
+    } else {
+      // 話: 幕の構成を変えた側の採用稿（分けた時の採用稿・解除した時の幕をつないだ稿）
+      if (w.activeVersionId === undefined) delete out.activeVersionId
+      else out.activeVersionId = w.activeVersionId
+      if (lostChanged) overridden = other
+    }
+  }
   if (mine.updatedAt !== undefined || theirs.updatedAt !== undefined)
     out.updatedAt = Math.max(mine.updatedAt ?? 0, theirs.updatedAt ?? 0)
-  return { record: out as Rec, bodyConflict, joined }
+  return { record: out as Rec, bodyConflict, joined, ...(overridden ? { overridden } : {}) }
 }
 
 export interface MergeResult {
@@ -204,6 +236,8 @@ export interface MergeResult {
   keptCopy?: Rec
   /** 両方の文章をつないだ項目 */
   joined?: string[]
+  /** 幕の構成を変えた側の採用稿を採ったため、採らなかった側（MergeOptions.acts の時） */
+  overridden?: 'mine' | 'theirs'
 }
 
 /**
@@ -262,10 +296,11 @@ export function mergeRemote(
     // 別の端末で削除・この端末で編集（クラウドに無かったものはこの端末で作ったものなので残す）
     return base ? { record: null, deletedEdit: mine } : { record: mine }
   }
-  const { record, bodyConflict, joined } = mergeFields(table, base, mine, theirs, opts)
+  const { record, bodyConflict, joined, overridden } = mergeFields(table, base, mine, theirs, opts)
   const result: MergeResult = { record }
   if (bodyConflict) result.bodyConflict = mine
   if (joined.length) result.joined = joined
+  if (overridden) result.overridden = overridden
   return result
 }
 

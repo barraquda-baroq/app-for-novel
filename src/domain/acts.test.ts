@@ -47,7 +47,7 @@ import {
   pieceFullLabel,
   pieceLabel,
 } from './structure'
-import { countChars } from './text'
+import { countChars, textHash } from './text'
 import { restoreTrashEntry, trashContents } from './trash'
 import { DomainError, emptyData, type AppData, type ID, type Piece } from './types'
 
@@ -875,5 +875,31 @@ describe('古い版（2.1）の端末が第n話として削除した幕を戻す
     const noParent = { ...unlisted, pieces: { ...unlisted.pieces } }
     delete noParent.pieces[ids[0]]
     expect(errorOf(() => restoreTrashEntry(noParent, gone.entryId))).toContain('元の話がないため戻せません')
+  })
+})
+
+// ---------- 同期のための元の稿の指紋（2.2） ----------
+
+describe('分けた・つないだ稿の元の稿の指紋', () => {
+  it('分けた幕の第1稿・さらに分けた稿・つないだ稿は、元の稿と、その本文の指紋を控える（解除した稿は控えない）', () => {
+    const { data: d0, ids } = setup(['ABCDEFGHI'])
+    const ev = d0.pieces[ids[0]].versionIds[0]
+    const { data, acts } = split(d0, ids[0], [3, 6])
+    for (const id of acts) {
+      const v = data.versions[data.pieces[id].activeVersionId!]
+      expect(v.sourceVersionId).toBe(ev)
+      expect(v.sourceHash).toBe(textHash('ABCDEFGHI'))
+    }
+    const a2v = data.pieces[acts[1]].activeVersionId!
+    const further = separatePiece(data, acts[1], [1])
+    const ds = further.data.versions[further.data.pieces[acts[1]].activeVersionId!]
+    expect(ds).toMatchObject({ sourceVersionId: a2v, sourceHash: textHash('DEF'), body: 'D' })
+    const c1 = further.data.versions[further.data.pieces[further.result[1]].activeVersionId!]
+    expect(c1).toMatchObject({ sourceVersionId: a2v, sourceHash: textHash('DEF'), body: 'EF' })
+    const a1v = data.pieces[acts[0]].activeVersionId!
+    const joined = joinActWithNext(data, acts[0])
+    expect(joined.data.versions[joined.result]).toMatchObject({ sourceVersionId: a1v, sourceHash: textHash('ABC') })
+    const un = unseparatePiece(data, ids[0])
+    expect(un.data.versions[un.result].sourceHash).toBeUndefined()
   })
 })

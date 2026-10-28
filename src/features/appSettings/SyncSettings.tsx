@@ -5,7 +5,7 @@ import { notify, notifyError } from '../../store/uiStore'
 import { confirmAccountSwitch, signIn, signOut, syncNow, useSync } from '../../sync/controller'
 import { formatRelative } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
-import { syncBadge } from '../../ui/SyncIndicator'
+import { outdatedMessage, syncBadge } from '../../ui/SyncIndicator'
 
 export function SyncSettings() {
   const id = useId()
@@ -34,7 +34,8 @@ export function SyncSettings() {
     try {
       await syncNow()
       const st = useSync.getState().status
-      if (st?.phase === 'error' || st?.phase === 'offline') notifyError(st.error ?? '同期できませんでした')
+      if (st?.outdated) notifyError(outdatedMessage(st.outdated.appVersion, st.pending))
+      else if (st?.phase === 'error' || st?.phase === 'offline') notifyError(st.error ?? '同期できませんでした')
       else notify('クラウドと同期しました')
     } finally {
       setSyncing(false)

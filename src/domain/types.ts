@@ -80,6 +80,11 @@ export interface Version {
   note: string
   /** 複製元のバージョン */
   sourceVersionId: ID | null
+  /**
+   * 幕（2.2）: 分けた・つないだ時の元の稿（sourceVersionId）の本文の指紋（textHash）。同期で、元の稿が別の端末で
+   * 書き換えられていたのに気付けるように（書き換える前の本文から分けた・つないだ稿は、その書き換えを含まない）
+   */
+  sourceHash?: string
   createdAt: number
   updatedAt: number
 }

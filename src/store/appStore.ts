@@ -10,6 +10,7 @@
 import { create } from 'zustand'
 import {
   createPersistence,
+  type ActsNoteDetail,
   type AnyRecord,
   type Change,
   type ConflictHooks,
@@ -18,9 +19,10 @@ import {
   type SaveOutcome,
 } from '../db/persistence'
 import { repairData } from '../domain/repair'
-import { TABLE_NAMES, emptyData, type AppData, type ContentTableName, type TableName, type Version } from '../domain/types'
+import { pieceFullLabel } from '../domain/structure'
+import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../domain/types'
 import { newId } from '../domain/util'
-import { conflictTrash, conflictVersionCopy, deviceLabel } from '../sync/conflicts'
+import { createConflictHooks, deviceLabel } from '../sync/conflicts'
 import { mergeRemote, TEXT_TABLES } from '../sync/merge'
 import { notify } from './uiStore'
 
@@ -206,35 +208,89 @@ function reconcile(saved: AppData, outcome: SaveOutcome): AppData {
 
 // ---------- 競合の控え（どちらの文章も消さない） ----------
 
-function versionCopy(mine: AnyRecord): AnyRecord {
-  return conflictVersionCopy(mine as unknown as Version, deviceLabel(), newId(), Date.now()) as unknown as AnyRecord
-}
-
-function trashCopy(table: TableName, record: AnyRecord): Change[] {
-  const r = conflictTrash(persisted, table as ContentTableName, record, { now: Date.now(), newId })
-  if (!r) return []
-  return [
-    { table: 'trashEntries', id: r.entry.id, record: r.entry as unknown as AnyRecord },
-    ...r.records.map((tr) => ({ table: 'trashRecords' as const, id: tr.id, record: tr as unknown as AnyRecord })),
-  ]
-}
-
 /** 競合の控え方。report で集めたものは、保存・反映が終わってからまとめて知らせる */
 function conflictHooks(notes: ConflictNote[]): ConflictHooks {
-  return { device: deviceLabel(), versionCopy, trashCopy, report: (n) => notes.push(n) }
+  // 控えの表記（話の番号・名前）は、保存・反映する前の表示用の内容で作る
+  return createConflictHooks({ device: deviceLabel(), data: () => persisted, newId, report: (n) => notes.push(n) })
 }
 
-/** 競合を控えたことを知らせる */
-function announceConflicts(notes: ConflictNote[]): void {
-  if (!notes.length) return
+/** 幕の知らせを、同じ話に重なった時に1つだけ出す順（前ほど優先） */
+const ACTS_NOTE_ORDER: ActsNoteDetail[] = [
+  'lost',
+  'won',
+  'deletedHere',
+  'deletedThere',
+  'mineDropped',
+  'theirsDropped',
+  'stale',
+  'source',
+]
+
+/** 幕（2.2）の構成が別の端末と重なった時の知らせの文。label は「第3話　題」 */
+export function actsNoteMessage(detail: ActsNoteDetail, label: string, kept?: { versions: number; trash: number }): string {
+  const where = !kept
+    ? ''
+    : kept.versions && kept.trash
+      ? '稿の一覧とゴミ箱'
+      : kept.versions
+        ? '稿の一覧'
+        : kept.trash
+          ? 'ゴミ箱'
+          : ''
+  switch (detail) {
+    case 'lost':
+      return `${label}の幕の分け方が別の端末と同時に変わりました。別の端末の分け方に合わせ、この端末での幕の操作は取り消しました${where ? `（この端末で作った稿は${where}に残しています）` : ''}`
+    case 'won':
+      return `${label}の幕の分け方が別の端末と同時に変わりました。この端末のセパレート解除を優先し${where ? `、別の端末で分けた・つないだ幕の稿は${where}に残しました` : 'ました'}`
+    case 'deletedHere':
+      return `${label}を削除したため、別の端末で同時に分けた・つないだ幕の稿はゴミ箱に残しました`
+    case 'deletedThere':
+      return `${label}は別の端末で削除されていました。この端末で分けた・つないだ幕の稿はゴミ箱に残しました（話をゴミ箱から戻すと、幕の稿も戻せます）`
+    case 'mineDropped':
+      return `${label}の幕が別の端末で分けられた・つながれたため、この端末での編集・採用の一部が採用原稿に入っていません${where ? `（${where}に残しています）` : ''}`
+    case 'theirsDropped':
+      return `${label}の幕の操作と同時に別の端末で書き換えられた・採用された稿は、採用原稿に入れていません${where ? `（${where}に残しました）` : ''}`
+    case 'stale':
+      return `${label}の幕は、書き換えられる前の稿から分けられた・つながれたため、その書き換えが採用原稿に入っていません（書き換えた稿は稿の一覧に残っています）`
+    case 'source':
+      return `${label}の分ける前の採用稿が別の端末で書き換えられていました。書き換えた本文は幕に入っていません（分ける前の稿に残っています）`
+  }
+}
+
+/**
+ * 競合を控えたことを知らせる文（知らせるものが無ければ null）。
+ * 幕の知らせは話ごとに1つ（重なったら ACTS_NOTE_ORDER の前のもの）。話の表記は views（反映する前・後の表示用の内容）の順に探す
+ */
+export function conflictMessage(notes: readonly ConflictNote[], views: readonly AppData[] = []): string | null {
+  if (!notes.length) return null
+  const best = new Map<string, Extract<ConflictNote, { kind: 'acts' }>>()
+  for (const n of notes) {
+    if (n.kind !== 'acts') continue
+    const cur = best.get(n.id)
+    if (!cur || ACTS_NOTE_ORDER.indexOf(n.detail) < ACTS_NOTE_ORDER.indexOf(cur.detail)) best.set(n.id, n)
+  }
+  const labelOf = (id: string) => {
+    for (const v of views) {
+      const p = v.pieces[id]
+      if (p) return pieceFullLabel(v, p)
+    }
+    return '幕に分けた話'
+  }
+  const parts: string[] = [...best.values()].map((n) => actsNoteMessage(n.detail, labelOf(n.id), n.kept))
   const copies = notes.filter((n) => n.kind === 'versionCopy').length
   const trashed = notes.filter((n) => n.kind === 'trash').length
   const joined = notes.filter((n) => n.kind === 'joined').length
-  const parts: string[] = []
   if (copies) parts.push(`本文が両方で書き換えられた稿 ${copies} 件を、この端末の本文を別の稿として残しました`)
   if (trashed) parts.push(`削除と編集が重なった内容など ${trashed} 件をゴミ箱に残しました`)
   if (joined) parts.push(`両方で書き換えられた文章 ${joined} 件は、両方の文章をつないで残しました`)
-  notify(`ほかの端末と同時に編集されていました。${parts.join('。')}。`)
+  if (!parts.length) return null
+  return `ほかの端末と同時に編集されていました。${parts.join('。')}。`
+}
+
+/** 競合を控えたことを知らせる */
+function announceConflicts(notes: ConflictNote[], views: readonly AppData[] = []): void {
+  const message = conflictMessage(notes, views)
+  if (message) notify(message)
 }
 
 /**
@@ -246,6 +302,7 @@ export function rebaseView(latest: AppData, oldBase: AppData, newBase: AppData):
   if (latest === oldBase) return newBase
   const out = { ...latest } as unknown as Tables
   const extras: Change[] = []
+  const hooks = conflictHooks([])
   for (const t of TABLE_NAMES) {
     const o = oldBase[t] as Record<string, AnyRecord>
     const n = newBase[t] as Record<string, AnyRecord>
@@ -268,8 +325,8 @@ export function rebaseView(latest: AppData, oldBase: AppData, newBase: AppData):
       // このタブでも編集していた
       const r = mergeRemote(t, o[id] ?? null, mine ?? null, n[id] ?? null, { device: deviceLabel() })
       if (r.record !== mine) write(id, r.record)
-      if (r.bodyConflict) extras.push({ table: 'versions', id: '', record: versionCopy(r.bodyConflict) })
-      for (const kept of [r.deletedEdit, r.keptCopy]) if (kept && TEXT_TABLES.has(t)) extras.push(...trashCopy(t, kept))
+      if (r.bodyConflict) extras.push({ table: 'versions', id: '', record: hooks.versionCopy(r.bodyConflict) })
+      for (const kept of [r.deletedEdit, r.keptCopy]) if (kept && TEXT_TABLES.has(t)) extras.push(...hooks.trashCopy(t, kept))
     }
     out[t] = table
   }
@@ -358,16 +415,25 @@ export function flushNow(): Promise<boolean> {
  * 先にこのタブの未保存の変更を保存し、端末内で送信待ちと3者マージしてから、画面の内容にも重ねる。
  * 実際に端末内に書いた内容を返す。
  */
-export function applyRemoteChanges(changes: Change[], cursor?: unknown): Promise<Change[] | null> {
+export function applyRemoteChanges(
+  changes: Change[],
+  cursor?: unknown,
+  opts: { direct?: boolean } = {},
+): Promise<Change[] | null> {
   const run = chain.then(async (): Promise<Change[] | null> => {
     if (!persistence) throw new Error('保存先が初期化されていません')
     if (!(await saveOnce())) throw new Error('この端末の変更を保存できないため、クラウドの変更を反映できません')
     const notes: ConflictNote[] = []
-    const written = await persistence.applyRemote(changes, { cursor, ...conflictHooks(notes) })
-    announceConflicts(notes)
-    if (!written || !written.length) return written
+    const before = persisted
+    const written = await persistence.applyRemote(changes, { cursor, ...opts, ...conflictHooks(notes) })
+    if (!written || !written.length) {
+      announceConflicts(notes, [before])
+      return written
+    }
     raw = applyChanges(raw, written)
     const view = repairData(raw).data
+    // 知らせる話の表記（第n話　題）は、反映する前の表示用の内容（無ければ反映した後）で作る
+    announceConflicts(notes, [before, view])
     const oldBase = persisted
     persisted = view
     const latest = useApp.getState().data

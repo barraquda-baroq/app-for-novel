@@ -5,8 +5,33 @@
 // 守ること: 送信待ちに無いレコードは「端末内 = 最後に知ったクラウドの内容」、送信待ちにあれば
 // 「base = 最後に知ったクラウドの内容」。どちらの文章も黙って消さない（競合は別の稿・ゴミ箱・文章をつないで残す）。
 import Dexie, { type Table } from 'dexie'
+import { textHash } from '../domain/text'
 import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../domain/types'
-import { contentEqual, deepEqual, mergeRecordLegacy, mergeRemote, TEXT_TABLES, type MergeResult } from '../sync/merge'
+import {
+  actIdsOf,
+  actsVerdict,
+  chooseTarget,
+  familyText,
+  groupOutbox,
+  isActRecord,
+  isDirtyEpisodeRow,
+  isEpisodeRecord,
+  isRedundant,
+  parentIdOf,
+  resolveActsPieces,
+  sameIds,
+  type ActsResolution,
+  type ActsVerdict,
+} from '../sync/acts'
+import {
+  contentEqual,
+  deepEqual,
+  mergeRecordLegacy,
+  mergeRemote,
+  TEXT_TABLES,
+  type MergeOptions,
+  type MergeResult,
+} from '../sync/merge'
 
 /** 競合した時に、消える側の内容をゴミ箱に控える表（文章を持つもの。タイトルはあらすじ・全体戦略を持つ） */
 const COPY_TABLES: ReadonlySet<TableName> = new Set<TableName>([...TEXT_TABLES, 'titles'])
@@ -47,13 +72,57 @@ export interface OutboxItem {
   force: boolean
   /** いまの端末内の内容（null = 削除した） */
   local: AnyRecord | null
+  /**
+   * 幕のまとまり（幕に分けた・つないだ・解除した話と、その幕・稿・この操作で作ったゴミ箱の件）。
+   * 同じまとまりは1つのトランザクションで、全部を書けるか、1つも書かない（src/sync/batch.ts）
+   */
+  group?: string
 }
 
+/**
+ * 幕（2.2）の構成が別の端末と重なった時の知らせの種類。
+ * - lost: 両方で幕の構成を変えていて、別の端末の構成に合わせた（この端末の幕の操作を取り消した）
+ * - won: 両方で幕の構成を変えていて、この端末のセパレート解除を優先した
+ * - deletedHere / deletedThere: この端末で・別の端末で削除した話の下に、もう一方の端末が幕を作っていた
+ * - mineDropped / theirsDropped: 片方の端末の幕の操作で、もう一方（この端末・別の端末）の編集・採用が採用原稿に入らなかった
+ * - stale: 別の端末で、書き換える前の稿から分けられた・つながれた（この端末の書き換えが採用原稿に入っていない）
+ * - source: この端末で分けた話の、分ける前の採用稿が別の端末で書き換えられていた
+ */
+export type ActsNoteDetail =
+  | 'lost'
+  | 'won'
+  | 'deletedHere'
+  | 'deletedThere'
+  | 'mineDropped'
+  | 'theirsDropped'
+  | 'stale'
+  | 'source'
+
 /** 競合をどう残したか（画面で知らせる） */
-export interface ConflictNote {
-  kind: 'versionCopy' | 'trash' | 'joined'
-  table: TableName
-  id: string
+export type ConflictNote =
+  | {
+      kind: 'versionCopy' | 'trash' | 'joined'
+      table: TableName
+      id: string
+    }
+  | {
+      /** 幕（2.2）: 話（id）の幕の構成が別の端末と重なった */
+      kind: 'acts'
+      table: 'pieces'
+      id: string
+      detail: ActsNoteDetail
+      /** 残した稿の数（稿の一覧に残した・ゴミ箱に入れた） */
+      kept?: { versions: number; trash: number }
+    }
+
+/** 幕の構成の競合で残す稿の控え方 */
+export interface ActsCopyInfo {
+  /** 稿が何幕目の稿だったか（別の幕・話へ移す時の名前に使う。分からなければ null） */
+  actNumber: number | null
+  /** edit = 書き換えた・採用した稿、acts = 幕の操作で作った稿 */
+  reason: 'edit' | 'acts'
+  /** この端末で書いた・作った稿 */
+  mine: boolean
 }
 
 /** 競合の控えの作り方（ストアが用意する） */
@@ -62,8 +131,24 @@ export interface ConflictHooks {
   device: string
   /** 稿の本文が両方で変わっていた時の、この端末の稿の控え（新しい id の稿）を作る */
   versionCopy: (mine: AnyRecord) => AnyRecord
-  /** 片方で削除・片方で編集された文章などの控え（ゴミ箱のエントリと中身）を作る。控えない時は空 */
-  trashCopy: (table: TableName, record: AnyRecord) => Change[]
+  /**
+   * 片方で削除・片方で編集された文章などの控え（ゴミ箱のエントリと中身）を作る。控えない時は空。
+   * ctx.piece は稿の話・幕（端末内から消えている時の内容。幕なら、戻せるように属する話も控える）
+   */
+  trashCopy: (table: TableName, record: AnyRecord, ctx?: { piece?: AnyRecord | null }) => Change[]
+  /**
+   * 幕の構成の競合で残す稿を、残し先（target）の稿にする。target が稿の幕そのものなら同じ id のまま名前を変え、
+   * 別の幕・話なら新しい id の写しを作る（無ければ trashCopy でゴミ箱に残す）
+   */
+  actsCopy?: (version: AnyRecord, target: AnyRecord, info: ActsCopyInfo) => AnyRecord
+  /**
+   * 幕の構成の競合で残す稿（採用原稿に入っている稿・削除された話の幕の稿）を、ゴミ箱の1件にまとめる
+   * （無ければ trashCopy で1件ずつ）
+   */
+  actsTrash?: (
+    items: { record: AnyRecord; actNumber: number | null }[],
+    info: { episodeId: string; episode: AnyRecord | null; target: AnyRecord | null; deleted: boolean },
+  ) => Change[]
   /** 競合を控えた時に呼ぶ（トランザクションの中なので、知らせるのは後で） */
   report?: (note: ConflictNote) => void
 }
@@ -190,6 +275,11 @@ export interface SaveOutcome {
 export interface RemoteApplyOptions extends ConflictHooks {
   /** 受け取った位置（差分の取得の続きに使う）。undefined なら変えない */
   cursor?: unknown
+  /**
+   * 購読で届いたのではなく、書けなかったものだけをクラウドから直接読んだ（pullDirectly）。
+   * 1回の書き込みの一部だけのことがあるので、幕の並びが知らない幕を指していれば、その話は合わせずに購読で届くのを待つ
+   */
+  direct?: boolean
 }
 
 export interface Persistence {
@@ -224,6 +314,55 @@ export interface Persistence {
   close(): void
 }
 
+type PieceRec = AnyRecord & {
+  kind?: string
+  parentId?: string
+  titleId?: string
+  actIds?: string[]
+  versionIds?: string[]
+  activeVersionId?: string | null
+  versionSeq?: number
+}
+type VersionRec = AnyRecord & {
+  pieceId?: string
+  body?: string
+  note?: string
+  name?: string
+  sourceHash?: unknown
+  sourceVersionId?: unknown
+}
+
+/** 幕（2.2）: 反映の時の、1つの話（第n話）の幕の構成のまとまり */
+interface ActsUnit {
+  episodeId: string
+  /** conflict = 両方で幕の構成が変わった、theirs / mine = 別の端末・この端末だけが変えた、none = どちらも変えていない・同じに変えた */
+  kind: 'conflict' | 'theirs' | 'mine' | 'none'
+  /** 幕の並び: base・この端末（反映する前）・クラウド */
+  B: string[]
+  M: string[]
+  T: string[]
+  noHistory: boolean
+  /** conflict の時に採る側 */
+  verdict: ActsVerdict | null
+  /** conflict の時に合わせる幕（話は含まない） */
+  members: Set<string>
+  resolution?: ActsResolution
+}
+
+/** 幕・話の稿の控え（反映の最後に、残る幕・話の稿かゴミ箱に残す） */
+interface Keep {
+  record: AnyRecord
+  episodeId: string
+  /** 稿の元の話・幕 */
+  pieceId: string
+  /** この端末で書いた・作った稿 */
+  mine: boolean
+  /** edit = 書き換えた・採用した稿（いつも見える稿として残す）、acts = 幕の操作で作った稿 */
+  reason: 'edit' | 'acts'
+  /** 端末内に残っている稿（同じ幕・話に名前を変えて残すか、移す） */
+  live: boolean
+}
+
 /** 応募計画が使っている応募時の原稿の本文のキー */
 function usedTextKeys(submissions: AnyRecord[]): Set<string> {
   const used = new Set<string>()
@@ -239,11 +378,17 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
 
   /** トランザクションの中で使う書き込みの道具 */
   function writer(at: number, written: Map<string, Change>) {
+    /** この反映・保存で消した話・幕（消す前の内容。消えた幕の稿を控える時に、幕の属する話を知るため） */
+    const gone = new Map<string, AnyRecord>()
     const put = async (table: TableName, record: AnyRecord) => {
       await db.tableOf(table).put(record)
       written.set(outboxKey(table, record.id), { table, id: record.id, record })
     }
-    const del = async (table: TableName, id: string) => {
+    const del = async (table: TableName, id: string, before?: AnyRecord | null) => {
+      if (table === 'pieces') {
+        const prev = before === undefined ? await db.tableOf(table).get(id) : before
+        if (prev) gone.set(id, prev)
+      }
       await db.tableOf(table).delete(id)
       written.set(outboxKey(table, id), { table, id, record: null })
     }
@@ -260,40 +405,72 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     const delLocal = async (table: TableName, id: string) => {
       const before = (await db.tableOf(table).get(id)) ?? null
       if (!before) return
-      await del(table, id)
+      await del(table, id, before)
       await enqueueLocal(table, id, before)
     }
-    /** 競合の控え（別の稿・ゴミ箱）を書く */
-    const keepConflict = async (table: TableName, r: MergeResult, hooks: ConflictHooks, id: string) => {
+    /** 稿を話・幕の稿の一覧の末尾に足す（もう載っていれば何もしない） */
+    const listVersion = async (pieceId: string, versionId: string) => {
+      const piece = (await db.tableOf('pieces').get(pieceId)) as (AnyRecord & { versionIds?: string[] }) | undefined
+      const ids = piece?.versionIds
+      if (!piece || !Array.isArray(ids) || ids.includes(versionId)) return
+      const versionIds = [...ids, versionId]
+      const seq = (piece as { versionSeq?: unknown }).versionSeq
+      const versionSeq = Math.max(typeof seq === 'number' ? seq : 1, versionIds.length)
+      await putLocal('pieces', { ...piece, versionIds, versionSeq, updatedAt: at } as AnyRecord)
+    }
+    /**
+     * 競合の控え（別の稿・ゴミ箱）を書く。
+     * keepVersion を渡すと、片方で削除・片方で編集された稿は、ゴミ箱に入れる代わりにそれに渡す（幕の稿は、反映の最後に
+     * 残る幕・話の稿として残す。applyRemote）。listCopy = false なら、本文の競合の控えを稿の一覧に載せない（後で載せる）
+     */
+    const keepConflict = async (
+      table: TableName,
+      r: MergeResult,
+      hooks: ConflictHooks,
+      id: string,
+      opts: {
+        keepVersion?: (kept: AnyRecord) => Promise<boolean>
+        /** ゴミ箱に控える稿の話・幕（端末内から消えている時） */
+        pieceOf?: (kept: AnyRecord) => Promise<AnyRecord | null>
+        listCopy?: (copy: AnyRecord) => boolean
+      } = {},
+    ) => {
       if (r.bodyConflict) {
         const copy = hooks.versionCopy(r.bodyConflict) as AnyRecord & { pieceId?: string }
         await putLocal('versions', copy)
-        const piece = copy.pieceId ? await db.tableOf('pieces').get(copy.pieceId) : undefined
-        const ids = (piece as { versionIds?: string[] } | undefined)?.versionIds
-        if (piece && Array.isArray(ids) && !ids.includes(copy.id)) {
-          await putLocal('pieces', { ...piece, versionIds: [...ids, copy.id], updatedAt: at } as AnyRecord)
-        }
+        if (copy.pieceId && (opts.listCopy?.(copy) ?? true)) await listVersion(copy.pieceId, copy.id)
         hooks.report?.({ kind: 'versionCopy', table, id })
       }
       for (const kept of [r.deletedEdit, r.keptCopy]) {
         if (!kept || !COPY_TABLES.has(table)) continue
-        await keepInTrash(table, kept, hooks, id)
+        if (table === 'versions' && opts.keepVersion && (await opts.keepVersion(kept))) continue
+        const piece = table === 'versions' && opts.pieceOf ? await opts.pieceOf(kept) : null
+        await keepInTrash(table, kept, hooks, id, piece ? { piece } : undefined)
       }
       if (r.joined?.length) hooks.report?.({ kind: 'joined', table, id })
     }
-    const keepInTrash = async (table: TableName, record: AnyRecord, hooks: ConflictHooks, id: string) => {
-      const extras = hooks.trashCopy(table, record)
+    const keepInTrash = async (
+      table: TableName,
+      record: AnyRecord,
+      hooks: ConflictHooks,
+      id: string,
+      ctx?: { piece?: AnyRecord | null },
+    ) => {
+      const extras = hooks.trashCopy(table, record, ctx)
       for (const extra of extras) if (extra.record) await putLocal(extra.table, extra.record)
       if (extras.length) hooks.report?.({ kind: 'trash', table, id })
     }
     /**
      * 消えた親（タイトル・話・設定項目）の子を片付ける。別の端末で親が消された時に、この端末で作った・変えた子が
      * 誰にも見えないまま残らないように、文章はゴミ箱に控えて（同じ内容がゴミ箱にあれば控えない）から消す。
+     * keepActVersion を渡すと、消えた話・幕の稿をゴミ箱に入れる前にそれに渡す（true を返したら、applyRemote が残る幕・話の稿か
+     * ゴミ箱の1件として残すので、ここでは控えない）
      */
     const sweepOrphans = async (
       parents: Map<TableName, Set<string>>,
       hooks: ConflictHooks,
       resetQuiet: ReadonlySet<string> = new Set(),
+      keepActVersion?: (child: AnyRecord, piece: AnyRecord) => Promise<boolean>,
     ) => {
       let resetParents = resetQuiet
       const pending = new Map(parents)
@@ -316,8 +493,11 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           for (const child of children) {
             const parentId = (child as unknown as Record<string, string>)[field]
             const quiet = resetParents.has(outboxKey(parentTable, parentId))
-            if (!quiet && TEXT_TABLES.has(table) && !(await inTrash(table, child)))
-              await keepInTrash(table, child, hooks, child.id)
+            if (!quiet && TEXT_TABLES.has(table) && !(await inTrash(table, child))) {
+              const parent = parentTable === 'pieces' ? gone.get(parentId) : undefined
+              const kept = table === 'versions' && parent && keepActVersion ? await keepActVersion(child, parent) : false
+              if (!kept) await keepInTrash(table, child, hooks, child.id, parent ? { piece: parent } : undefined)
+            }
             await delLocal(table, child.id)
             if (CHILDREN[table]) {
               const set = pending.get(table) ?? new Set<string>()
@@ -329,7 +509,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         }
       }
     }
-    return { put, del, enqueueLocal, putLocal, delLocal, keepConflict, keepInTrash, sweepOrphans }
+    return { gone, put, del, enqueueLocal, putLocal, delLocal, listVersion, keepConflict, keepInTrash, sweepOrphans }
   }
 
   const noteDeleted = (parents: Map<TableName, Set<string>>, table: TableName, id: string) => {
@@ -337,6 +517,712 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     const set = parents.get(table) ?? new Set<string>()
     set.add(id)
     parents.set(table, set)
+  }
+
+  /** 送信待ちの行と、いまの端末内の内容（keys の順） */
+  async function itemsOf(keys: readonly string[]): Promise<OutboxItem[]> {
+    if (!keys.length) return []
+    const rows = (await db.outbox.bulkGet([...keys])).filter((r): r is OutboxRow => Boolean(r) && KNOWN_TABLES.has(r!.t))
+    const byTable = new Map<TableName, OutboxRow[]>()
+    for (const r of rows) {
+      const list = byTable.get(r.t) ?? []
+      list.push(r)
+      byTable.set(r.t, list)
+    }
+    const items = new Map<string, OutboxItem>()
+    for (const [t, list] of byTable) {
+      const locals = await db.tableOf(t).bulkGet(list.map((r) => r.id))
+      list.forEach((r, i) =>
+        items.set(r.k, {
+          k: r.k,
+          table: t,
+          id: r.id,
+          base: r.base,
+          noHistory: Boolean(r.noHistory),
+          force: Boolean(r.force),
+          local: locals[i] ?? null,
+        }),
+      )
+    }
+    return keys.map((k) => items.get(k)).filter((x): x is OutboxItem => Boolean(x))
+  }
+
+  /**
+   * クラウドの変更を反映する（applyRemote のトランザクションの中）。
+   * 1. 幕の構成のまとまりを決める（届いた話・幕と、幕の構成を変えた話の送信待ちから。話ごとに、両方で変わった・片方だけ）
+   * 2. 1件ずつ反映する（3者マージ）。両方で幕の構成が変わった話・幕は後で丸ごと合わせる。片方だけなら、その側の採用稿を採る
+   * 3. 応募時の原稿の本文の削除
+   * 4. 両方で幕の構成が変わった話を、どちらかの構成に合わせる（resolveActsPieces）。採らなかった側の稿を控える
+   * 5. この端末で消した幕・話の下に届いた稿・幕を控えて片付ける
+   * 6. 消えた親の子を片付ける
+   * 7. 控える幕の稿を、残る幕・話の稿（競合の名前付き）かゴミ箱に残す
+   * 8. 書き換えられる前の稿から分けた・つないだ稿が届いたら知らせる
+   */
+  async function applyRemoteTx(
+    changes: Change[],
+    opts: RemoteApplyOptions,
+    at: number,
+    written: Map<string, Change>,
+  ): Promise<void> {
+    const w = writer(at, written)
+    const parents = new Map<TableName, Set<string>>()
+    /** 復元・すべて削除で消えた親（子は控えずに片付ける。子にも削除が届く） */
+    const resetParents = new Set(changes.filter((c) => c.reset && !c.record).map((c) => outboxKey(c.table, c.id)))
+    const piecesT = db.tableOf('pieces')
+    const versionsT = db.tableOf('versions')
+    const getPiece = async (id: string) => ((await piecesT.get(id)) as PieceRec | undefined) ?? null
+    const getVersion = async (id: string) => ((await versionsT.get(id)) as VersionRec | undefined) ?? null
+    const rowOf = (table: TableName, id: string) => db.outbox.get(outboxKey(table, id))
+    /** 反映する前の話・幕 */
+    const pre = new Map<string, PieceRec | null>()
+    const prePiece = async (id: string) => {
+      if (!pre.has(id)) pre.set(id, await getPiece(id))
+      return pre.get(id) ?? null
+    }
+    const incoming = new Map<string, Change>()
+    for (const ch of changes) incoming.set(outboxKey(ch.table, ch.id), ch)
+    /** ほかの端末からの話・幕の変化（この端末が書いたもの・復元を除く） */
+    const remotePieces = new Map<string, Change>()
+    for (const ch of changes) if (ch.table === 'pieces' && !ch.own && !ch.reset) remotePieces.set(ch.id, ch)
+
+    /** 幕の知らせ（話ごと・種類ごとに1つ） */
+    const actsNotes = new Map<string, { id: string; detail: ActsNoteDetail; kept: { versions: number; trash: number } }>()
+    const noteActs = (episodeId: string, detail: ActsNoteDetail, kept?: { versions?: number; trash?: number }) => {
+      const key = `${episodeId}:${detail}`
+      const n = actsNotes.get(key) ?? { id: episodeId, detail, kept: { versions: 0, trash: 0 } }
+      n.kept.versions += kept?.versions ?? 0
+      n.kept.trash += kept?.trash ?? 0
+      actsNotes.set(key, n)
+    }
+
+    // ---------- 1. 幕の構成のまとまり ----------
+    const units = new Map<string, ActsUnit>()
+    const skip = new Set<string>()
+    const pieceRows = await db.outbox.where('k').startsWith('pieces/').toArray()
+    const candidates = new Set<string>()
+    for (const [id, ch] of remotePieces) {
+      const disk = await prePiece(id)
+      const row = await rowOf('pieces', id)
+      const recs = [ch.record, disk, row?.base ?? null]
+      const act = recs.find((r) => r && isActRecord(r))
+      if (act) {
+        const parentId = parentIdOf(act)
+        if (parentId) {
+          candidates.add(parentId)
+          await prePiece(parentId)
+        }
+      } else if (recs.some((r) => r && isEpisodeRecord(r) && actIdsOf(r).length > 0)) candidates.add(id)
+    }
+    for (const row of pieceRows) {
+      if (row.force) continue
+      const local = await prePiece(row.id)
+      if (isDirtyEpisodeRow({ base: row.base, local, noHistory: Boolean(row.noHistory), force: false })) candidates.add(row.id)
+    }
+    for (const ep of candidates) {
+      const disk = await prePiece(ep)
+      const row = await rowOf('pieces', ep)
+      if (row?.force) continue
+      const inc = remotePieces.get(ep)
+      const baseRec = row ? row.base : disk
+      const cloudRec = inc ? inc.record : baseRec
+      if (!isEpisodeRecord(disk ?? cloudRec ?? baseRec)) continue
+      const B = actIdsOf(baseRec)
+      const M = actIdsOf(disk)
+      const T = actIdsOf(cloudRec)
+      const noHistory = Boolean(row?.noHistory)
+      // 両方で幕の構成が変わった（話がどちらにもあり、この端末も変えている）。共通の履歴が無ければ、違っていれば
+      const conflict =
+        Boolean(disk && inc?.record && row) &&
+        ((!sameIds(M, B) && !sameIds(T, B) && !sameIds(M, T)) || (noHistory && !sameIds(M, T)))
+      const kind: ActsUnit['kind'] = conflict
+        ? 'conflict'
+        : !sameIds(T, B) && sameIds(M, B)
+          ? 'theirs'
+          : !sameIds(M, B) && sameIds(T, B)
+            ? 'mine'
+            : 'none'
+      const unit: ActsUnit = {
+        episodeId: ep,
+        kind,
+        B,
+        M,
+        T,
+        noHistory,
+        verdict: conflict ? (noHistory ? 'theirs' : actsVerdict(B, M, T)) : null,
+        members: new Set(),
+      }
+      if (conflict) {
+        const members = new Set<string>([...B, ...M, ...T])
+        for (const p of await piecesT.filter((r) => isActRecord(r) && parentIdOf(r) === ep).toArray()) members.add(p.id)
+        for (const [id, ch] of remotePieces) {
+          const r = ch.record ?? (await prePiece(id))
+          if (r && isActRecord(r) && parentIdOf(r) === ep) members.add(id)
+        }
+        for (const r of pieceRows) {
+          const rec = (await prePiece(r.id)) ?? r.base
+          if (rec && isActRecord(rec) && parentIdOf(rec) === ep) members.add(r.id)
+        }
+        members.delete(ep)
+        for (const id of members) await prePiece(id)
+        if (opts.direct) {
+          // 直接読んだ時は1回の書き込みの一部だけのことがある: 知らない幕を指していれば合わせずに、購読で届くのを待つ
+          let unknown = false
+          for (const id of T) if (!remotePieces.has(id) && !(await prePiece(id)) && !(await rowOf('pieces', id))) unknown = true
+          if (unknown) {
+            for (const id of [ep, ...members]) skip.add(outboxKey('pieces', id))
+            continue
+          }
+        }
+        unit.members = members
+      }
+      units.set(ep, unit)
+    }
+    /** 両方で幕の構成が変わった話と、その幕 → まとまり */
+    const conflictOf = new Map<string, ActsUnit>()
+    for (const u of units.values()) {
+      if (u.kind !== 'conflict') continue
+      conflictOf.set(u.episodeId, u)
+      for (const id of u.members) conflictOf.set(id, u)
+    }
+    /** 話・幕の変化を合わせる時に、幕の構成を片方だけが変えていればその側 */
+    const structureOf = (rec: AnyRecord | null, id: string): MergeOptions['acts'] => {
+      const ep = rec && isActRecord(rec) ? parentIdOf(rec) : id
+      const u = ep ? units.get(ep) : undefined
+      return u && (u.kind === 'theirs' || u.kind === 'mine') ? { structure: u.kind } : undefined
+    }
+    /** 稿の話・幕（端末内 → この反映で消した → 反映する前 → base → 届いたもの） */
+    const pieceOfVersion = async (v: AnyRecord): Promise<PieceRec | null> => {
+      const pieceId = (v as VersionRec).pieceId
+      if (typeof pieceId !== 'string') return null
+      const disk = await getPiece(pieceId)
+      if (disk) return disk
+      const gone = w.gone.get(pieceId) as PieceRec | undefined
+      if (gone) return gone
+      const before = pre.get(pieceId)
+      if (before) return before
+      const base = (await rowOf('pieces', pieceId))?.base as PieceRec | null | undefined
+      if (base) return base
+      return (incoming.get(outboxKey('pieces', pieceId))?.record as PieceRec | null | undefined) ?? null
+    }
+    const keeps: Keep[] = []
+    /** 両方で幕の構成が変わった幕・話の稿の、本文の競合の控え（合わせた後で、残る幕・話の稿の一覧に載せる） */
+    const listOnly = new Set<string>()
+    /** 片方で削除・片方で編集された幕・話の稿は、ゴミ箱でなく、反映の最後に残る幕・話の稿として残す */
+    const keepVersionOf = (editedHere: boolean) => async (kept: AnyRecord) => {
+      const piece = await pieceOfVersion(kept)
+      if (!piece) return false
+      const ep = isActRecord(piece) ? parentIdOf(piece) : units.has(piece.id) ? piece.id : null
+      if (!ep) return false
+      keeps.push({ record: kept, episodeId: ep, pieceId: piece.id, mine: editedHere, reason: 'edit', live: false })
+      return true
+    }
+    const bodyOf = async (id: unknown) => {
+      if (typeof id !== 'string') return null
+      const inc = incoming.get(outboxKey('versions', id))
+      if (inc) return ((inc.record as VersionRec | null)?.body as string | undefined) ?? null
+      return ((await getVersion(id))?.body as string | undefined) ?? null
+    }
+    /** 話・幕を合わせた結果、どちらかの採用・編集が採用原稿に入らなかったら知らせる */
+    const notePieceMerge = async (ch: Change, result: MergeResult, disk: AnyRecord | null, base: AnyRecord | null) => {
+      const rec = (ch.record ?? disk ?? base) as PieceRec | null
+      if (!rec) return
+      const ep = isActRecord(rec) ? parentIdOf(rec) : ch.id
+      if (!ep) return
+      if (result.overridden) {
+        const a = await bodyOf((disk as PieceRec | null)?.activeVersionId)
+        const b = await bodyOf((ch.record as PieceRec | null)?.activeVersionId)
+        if (a === null || a !== b) noteActs(ep, result.overridden === 'mine' ? 'mineDropped' : 'theirsDropped')
+      }
+      // 幕がつないだ・解除したことで消えた一方で、もう一方の端末がその幕の採用稿を変えていた
+      if (result.deletedEdit && isActRecord(result.deletedEdit) && base) {
+        const edited = result.deletedEdit as PieceRec
+        if (!deepEqual(edited.activeVersionId, (base as PieceRec).activeVersionId))
+          noteActs(ep, disk ? 'mineDropped' : 'theirsDropped')
+      }
+    }
+    /** この端末で分けた話の、分ける前の採用稿が別の端末で書き換えられた */
+    const checkSource = async (v: VersionRec, old: VersionRec) => {
+      if (v.body === old.body || typeof v.pieceId !== 'string') return
+      const piece = await prePiece(v.pieceId)
+      if (piece && isEpisodeRecord(piece) && actIdsOf(piece).length > 0 && piece.activeVersionId === v.id)
+        noteActs(piece.id, 'source')
+    }
+
+    // ---------- 2. 1件ずつ反映する ----------
+    /** 応募時の原稿の本文の削除は、ほかの変更を当てた後で、使われていないことを確かめてから当てる */
+    const textTombstones: Change[] = []
+    /** 両方で幕の構成が変わった話・幕の、ほかの端末からの変化（4で丸ごと合わせる） */
+    const deferredMembers = new Map<string, Change>()
+    /** 届いた新しい稿（この端末に無かった） */
+    const newVersions: string[] = []
+    /** この端末で変えていたのに、別の端末で消された話・幕 */
+    const editedHere = new Set<string>()
+    for (const ch of changes) {
+      if (!KNOWN_TABLES.has(ch.table)) continue
+      const k = outboxKey(ch.table, ch.id)
+      if (skip.has(k)) continue
+      if (ch.table === 'pieces' && !ch.own && !ch.reset && conflictOf.has(ch.id)) {
+        deferredMembers.set(ch.id, ch)
+        continue
+      }
+      const disk = (await db.tableOf(ch.table).get(ch.id)) ?? null
+      const queued = await db.outbox.get(k)
+
+      if (ch.table === 'snapshotTexts' && !ch.record && disk) {
+        textTombstones.push(ch)
+        continue
+      }
+      // バックアップからの復元・すべて削除の後: この端末の内容で上書きするまで、クラウド側は採らない
+      if (queued?.force) {
+        await db.outbox.put({ ...queued, base: ch.record })
+        continue
+      }
+      // この端末が書いたもの（返事を受け取れなかった書き込み）: 端末内の内容はそれより新しいので、base だけ進める
+      if (ch.own && queued) {
+        if (deepEqual(disk, ch.record)) await db.outbox.delete(k)
+        else await db.outbox.put({ k, t: ch.table, id: ch.id, base: ch.record, at: queued.at })
+        continue
+      }
+      // ほかの端末の復元・すべて削除: その内容を正とする。この端末で書いたまま送っていない文章だけ控える
+      if (ch.reset) {
+        if (queued && disk && !deepEqual(disk, queued.base) && COPY_TABLES.has(ch.table) && !contentEqual(disk, ch.record))
+          await w.keepInTrash(ch.table, disk, opts, ch.id)
+        if (queued) await db.outbox.delete(k)
+        if (ch.record) {
+          if (!deepEqual(disk, ch.record)) await w.put(ch.table, ch.record)
+        } else if (disk) {
+          await w.del(ch.table, ch.id, disk)
+          noteDeleted(parents, ch.table, ch.id)
+        }
+        continue
+      }
+      if (!queued) {
+        if (deepEqual(disk, ch.record)) continue
+        if (ch.table === 'versions' && ch.record && !ch.own) {
+          if (!disk) newVersions.push(ch.id)
+          else await checkSource(ch.record as VersionRec, disk as VersionRec)
+        }
+        if (ch.record) await w.put(ch.table, ch.record)
+        else if (disk) {
+          await w.del(ch.table, ch.id, disk)
+          noteDeleted(parents, ch.table, ch.id)
+        }
+        continue
+      }
+      const acts = ch.table === 'pieces' && !ch.own ? structureOf(ch.record ?? disk ?? queued.base, ch.id) : undefined
+      const result = mergeRemote(ch.table, queued.base, disk, ch.record, {
+        device: opts.device,
+        noHistory: queued.noHistory,
+        ...(acts ? { acts } : {}),
+      })
+      // クラウドと同じ内容になったら、クラウドの内容そのものを使う（更新日時まで揃える）
+      if (contentEqual(result.record, ch.record)) result.record = ch.record
+      if (!deepEqual(result.record, disk)) {
+        if (result.record) await w.put(ch.table, result.record)
+        else if (disk) {
+          await w.del(ch.table, ch.id, disk)
+          noteDeleted(parents, ch.table, ch.id)
+        }
+      }
+      // クラウドの内容が新しい base。合わせた結果がクラウドと同じなら送るものは無い
+      if (deepEqual(result.record, ch.record)) await db.outbox.delete(k)
+      else await db.outbox.put({ k, t: ch.table, id: ch.id, base: ch.record, at: queued.at })
+      if (ch.table === 'pieces') {
+        await notePieceMerge(ch, result, disk, queued.base)
+        // この端末で変えた幕・話が別の端末で消された: その稿（もう送った稿も）はこの端末のもの
+        if (result.deletedEdit && disk) editedHere.add(ch.id)
+      }
+      await w.keepConflict(ch.table, result, opts, ch.id, {
+        keepVersion: keepVersionOf(disk !== null),
+        pieceOf: pieceOfVersion,
+        listCopy: (copy) => {
+          const pieceId = (copy as VersionRec).pieceId
+          if (typeof pieceId !== 'string' || !conflictOf.has(pieceId)) return true
+          listOnly.add(copy.id)
+          return false
+        },
+      })
+    }
+
+    // ---------- 3. 応募時の原稿の本文の削除 ----------
+    // この端末の応募計画がまだ使っている間は消さない（送り直して、ほかの端末にも戻す）
+    if (textTombstones.length) {
+      const inUse = usedTextKeys(await db.tableOf('submissions').toArray())
+      for (const ch of textTombstones) {
+        const k = outboxKey(ch.table, ch.id)
+        if (inUse.has(ch.id)) {
+          const queued = await db.outbox.get(k)
+          await db.outbox.put({ k, t: ch.table, id: ch.id, base: null, at: queued?.at ?? at })
+        } else {
+          await w.del(ch.table, ch.id)
+          await db.outbox.delete(k)
+        }
+      }
+    }
+
+    // ---------- 4. 両方で幕の構成が変わった話を、どちらかの構成に合わせる ----------
+    for (const u of units.values()) {
+      if (u.kind !== 'conflict' || !u.verdict) continue
+      const ep = u.episodeId
+      const tri = async (id: string) => {
+        const local = await getPiece(id)
+        const row = await rowOf('pieces', id)
+        const inc = deferredMembers.get(id)
+        const base = row ? row.base : local
+        return { base, local, cloud: inc ? inc.record : base, row }
+      }
+      const tris = new Map<string, Awaited<ReturnType<typeof tri>>>([[ep, await tri(ep)]])
+      for (const id of u.members) tris.set(id, await tri(id))
+      const res = resolveActsPieces({
+        episodeId: ep,
+        episode: tris.get(ep)!,
+        acts: new Map([...tris].filter(([id]) => id !== ep)),
+        verdict: u.verdict,
+        noHistory: u.noHistory,
+        device: opts.device,
+      })
+      u.resolution = res
+      for (const [id, f] of res.pieces) {
+        const t = tris.get(id)!
+        if (!deepEqual(f, t.local)) {
+          if (f) await w.put('pieces', f)
+          else if (t.local) {
+            await w.del('pieces', id, t.local)
+            noteDeleted(parents, 'pieces', id)
+          }
+        }
+        // クラウドの内容が新しい base。合わせた結果がクラウドと同じなら送るものは無い
+        const k = outboxKey('pieces', id)
+        if (deepEqual(f, t.cloud)) {
+          if (t.row) await db.outbox.delete(k)
+        } else await db.outbox.put({ k, t: 'pieces', id, base: t.cloud, at: t.row?.at ?? at })
+      }
+      // 稿: 消える幕の稿・残る幕に載らないこの端末の稿は控える。この端末の操作で消した稿は、幕が戻るなら戻す
+      const finalOf = (pieceId: string) => res.pieces.get(pieceId) as PieceRec | null | undefined
+      const memberIds = new Set(res.pieces.keys())
+      const vids = new Set<string>()
+      for (const v of await versionsT.filter((r) => memberIds.has(String((r as VersionRec).pieceId))).toArray()) vids.add(v.id)
+      for (const r of await db.outbox.where('k').startsWith('versions/').toArray()) {
+        const pieceId = (r.base as VersionRec | null)?.pieceId
+        if (typeof pieceId === 'string' && memberIds.has(pieceId)) vids.add(r.id)
+      }
+      for (const ch of changes) {
+        const pieceId = (ch.record as VersionRec | null)?.pieceId
+        if (ch.table === 'versions' && typeof pieceId === 'string' && memberIds.has(pieceId)) vids.add(ch.id)
+      }
+      const add = new Map<string, string[]>()
+      const remove = new Map<string, string[]>()
+      const push = (m: Map<string, string[]>, pieceId: string, id: string) => m.set(pieceId, [...(m.get(pieceId) ?? []), id])
+      for (const vid of vids) {
+        const v = await getVersion(vid)
+        const row = await rowOf('versions', vid)
+        if (v) {
+          const pieceId = String(v.pieceId)
+          const f = finalOf(pieceId)
+          if (f === undefined) continue
+          const edited = listOnly.has(vid) || Boolean(row && row.base !== null && !deepEqual(row.base, v))
+          if (f === null) {
+            keeps.push({
+              record: v,
+              episodeId: ep,
+              pieceId,
+              mine: listOnly.has(vid) || Boolean(row && !deepEqual(row.base, v)),
+              reason: edited ? 'edit' : 'acts',
+              live: false,
+            })
+            await w.delLocal('versions', vid)
+          } else if (!(f.versionIds ?? []).includes(vid)) {
+            if (listOnly.has(vid)) push(add, pieceId, vid)
+            else if (row && row.base === null)
+              keeps.push({ record: v, episodeId: ep, pieceId, mine: true, reason: edited ? 'edit' : 'acts', live: true })
+          }
+        } else if (row?.base) {
+          const pieceId = String((row.base as VersionRec).pieceId)
+          const f = finalOf(pieceId)
+          if (!f || !(f.versionIds ?? []).includes(vid)) continue
+          if (res.resurrected.has(pieceId)) {
+            // この端末の操作で消した幕が戻る: その稿も戻す
+            await w.put('versions', row.base)
+            await db.outbox.delete(row.k)
+          } else push(remove, pieceId, vid)
+        }
+      }
+      for (const pieceId of new Set([...add.keys(), ...remove.keys()])) {
+        const cur = await getPiece(pieceId)
+        if (!cur) continue
+        const drop = new Set(remove.get(pieceId) ?? [])
+        const versionIds = [...(cur.versionIds ?? []).filter((id) => !drop.has(id)), ...(add.get(pieceId) ?? [])]
+        const seq = typeof cur.versionSeq === 'number' ? cur.versionSeq : 1
+        await w.putLocal('pieces', {
+          ...cur,
+          versionIds,
+          versionSeq: Math.max(seq, versionIds.length),
+          updatedAt: at,
+        } as AnyRecord)
+      }
+      // この端末の操作でゴミ箱に入れた稿（まだ送っていない件）が、すべて稿に戻ったら、その件を消す
+      for (const r of await db.outbox.where('k').startsWith('trashEntries/').toArray()) {
+        if (r.base !== null) continue
+        const entry = (await db.tableOf('trashEntries').get(r.id)) as
+          | (AnyRecord & { kind?: string; origin?: { parentId?: string; pieceId?: string }; recordIds?: string[] })
+          | undefined
+        if (!entry || entry.kind !== 'version') continue
+        const origin = entry.origin
+        if (!(origin?.parentId === ep || (origin?.pieceId && memberIds.has(origin.pieceId)))) continue
+        const recs = await db
+          .tableOf('trashRecords')
+          .filter((x) => (x as { entryId?: string }).entryId === entry.id)
+          .toArray()
+        let back = recs.length > 0
+        for (const x of recs) {
+          const rec = (x as { table?: string; record?: VersionRec }).record
+          const cur = rec && (x as { table?: string }).table === 'versions' ? await getVersion(rec.id) : null
+          if (!cur || !rec || cur.body !== rec.body || (cur.note ?? '') !== (rec.note ?? '')) back = false
+        }
+        if (!back) continue
+        for (const x of recs) await w.delLocal('trashRecords', x.id)
+        await w.delLocal('trashEntries', entry.id)
+      }
+      noteActs(ep, u.verdict === 'mine' ? 'won' : 'lost')
+    }
+
+    // ---------- 5. この端末で消した幕・話の下に届いた稿・幕 ----------
+    for (const ch of changes) {
+      if (ch.own || ch.reset || !ch.record || skip.has(outboxKey(ch.table, ch.id))) continue
+      if (ch.table === 'versions') {
+        const v = await getVersion(ch.id)
+        const pieceId = v?.pieceId
+        if (!v || typeof pieceId !== 'string' || w.gone.has(pieceId) || (await getPiece(pieceId))) continue
+        // 消した幕、または幕の構成のまとまりの話（分けていた・この反映で分けた・解除した）の稿
+        const prow = await rowOf('pieces', pieceId)
+        const owner = prow?.base
+        const ep = owner && isActRecord(owner) ? parentIdOf(owner) : owner && units.has(pieceId) ? pieceId : null
+        if (!ep) continue
+        keeps.push({ record: v, episodeId: ep, pieceId, mine: false, reason: 'edit', live: false })
+        await w.delLocal('versions', v.id)
+      } else if (ch.table === 'pieces' && isActRecord(ch.record)) {
+        const ep = parentIdOf(ch.record)
+        if (!ep || !(await getPiece(ch.id)) || (await getPiece(ep))) continue
+        if (await rowOf('pieces', ep)) noteDeleted(parents, 'pieces', ep)
+      }
+    }
+
+    // ---------- 6. 消えた親の子を片付ける ----------
+    if (parents.size)
+      await w.sweepOrphans(parents, opts, resetParents, async (child, piece) => {
+        // 消えた幕の稿、幕の構成のまとまりの話が消えた時のその話の稿は、反映の最後に残す（それ以外は今までどおりゴミ箱）
+        const ep = isActRecord(piece) ? parentIdOf(piece) : units.has(piece.id) ? piece.id : null
+        if (!ep) return false
+        const row = await rowOf('versions', child.id)
+        keeps.push({
+          record: child,
+          episodeId: ep,
+          pieceId: piece.id,
+          mine: Boolean(row && !deepEqual(row.base, child)) || editedHere.has(piece.id),
+          reason: 'edit',
+          live: false,
+        })
+        return true
+      })
+
+    // ---------- 7. 幕の稿を、残る幕・話の稿かゴミ箱に残す ----------
+    if (keeps.length) await flushKeeps(keeps, { opts, w, units, pre, noteActs, getPiece, getVersion, rowOf, pieceOfVersion })
+
+    // ---------- 8. 書き換えられる前の稿から分けた・つないだ稿 ----------
+    for (const u of units.values()) {
+      if (u.kind !== 'theirs') continue
+      for (const vid of newVersions) {
+        const v = await getVersion(vid)
+        if (!v || typeof v.sourceHash !== 'string' || typeof v.sourceVersionId !== 'string') continue
+        const piece = await getPiece(String(v.pieceId))
+        if (!piece || (piece.id !== u.episodeId && parentIdOf(piece) !== u.episodeId)) continue
+        const src = await getVersion(v.sourceVersionId)
+        if (src && typeof src.body === 'string' && textHash(src.body) !== v.sourceHash) {
+          noteActs(u.episodeId, 'stale')
+          break
+        }
+      }
+    }
+
+    // 話が消えた知らせがあれば、その話の幕の採用・編集が入らなかった知らせは出さない（話ごと消えたので）
+    const gone = new Set(
+      [...actsNotes.values()].filter((n) => n.detail === 'deletedHere' || n.detail === 'deletedThere').map((n) => n.id),
+    )
+    for (const n of actsNotes.values()) {
+      if (gone.has(n.id) && (n.detail === 'mineDropped' || n.detail === 'theirsDropped') && !n.kept.versions && !n.kept.trash)
+        continue
+      opts.report?.({
+        kind: 'acts',
+        table: 'pieces',
+        id: n.id,
+        detail: n.detail,
+        ...(n.kept.versions || n.kept.trash ? { kept: n.kept } : {}),
+      })
+    }
+  }
+
+  /**
+   * 控える幕の稿を残す（話ごと）。
+   * - 話が消えた: ゴミ箱の1件（削除された話の幕の稿）
+   * - 稿の幕・話が残っていて、書き換えた稿が削除と重なった: ゴミ箱（2.1 と同じ）
+   * - 幕の操作で作った稿で、本文が採用原稿にそのまま入っている（推敲メモも空）: ゴミ箱の1件（幕の分け方の競合で残した稿）
+   * - それ以外: 稿の幕が残っていればその幕、なければ近くの残る幕・話の稿（「第2幕の第1稿（競合: ○○での編集）」。採用しない）
+   */
+  async function flushKeeps(
+    keeps: readonly Keep[],
+    c: {
+      opts: RemoteApplyOptions
+      w: ReturnType<typeof writer>
+      units: ReadonlyMap<string, ActsUnit>
+      pre: ReadonlyMap<string, PieceRec | null>
+      noteActs: (episodeId: string, detail: ActsNoteDetail, kept?: { versions?: number; trash?: number }) => void
+      getPiece: (id: string) => Promise<PieceRec | null>
+      getVersion: (id: string) => Promise<VersionRec | null>
+      rowOf: (table: TableName, id: string) => Promise<OutboxRow | undefined>
+      pieceOfVersion: (v: AnyRecord) => Promise<PieceRec | null>
+    },
+  ): Promise<void> {
+    const { opts, w } = c
+    let trash: AnyRecord[] | null = null
+    /** 同じ稿（id・本文・推敲メモ）がもうゴミ箱にある */
+    const inTrash = async (v: VersionRec) => {
+      trash ??= await db.tableOf('trashRecords').toArray()
+      return trash.some((t) => {
+        const tr = t as unknown as { table?: string; record?: VersionRec }
+        return (
+          tr.table === 'versions' &&
+          tr.record?.id === v.id &&
+          tr.record.body === v.body &&
+          (tr.record.note ?? '') === (v.note ?? '')
+        )
+      })
+    }
+    const byEpisode = new Map<string, Keep[]>()
+    for (const k of keeps) byEpisode.set(k.episodeId, [...(byEpisode.get(k.episodeId) ?? []), k])
+    for (const [ep, list] of byEpisode) {
+      const u = c.units.get(ep)
+      const pending: Keep[] = []
+      for (const k of list) {
+        const rec = k.record as VersionRec
+        if (!k.live) {
+          // 稿に戻っている（この端末の操作で消した幕が戻った時など）
+          const cur = await c.getVersion(rec.id)
+          if (cur && cur.body === rec.body && (cur.note ?? '') === (rec.note ?? '')) continue
+        }
+        if (await inTrash(rec)) continue
+        if (pending.some((p) => p.record.id === rec.id)) continue
+        pending.push(k)
+      }
+      if (!pending.length) continue
+      const episode = await c.getPiece(ep)
+      const before = c.pre.get(ep) ?? (w.gone.get(ep) as PieceRec | undefined) ?? null
+      const orders = [
+        u ? u.M : actIdsOf(before),
+        u ? u.B : actIdsOf((await c.rowOf('pieces', ep))?.base ?? before),
+        u ? u.T : actIdsOf(episode),
+      ]
+      const numberIn = (pieceId: string) => {
+        const o = orders.find((x) => x.includes(pieceId))
+        return o ? o.indexOf(pieceId) + 1 : null
+      }
+      // 幕の順（同じ幕の中は控えた順）に並べる
+      const rank = (k: Keep) => numberIn(k.pieceId) ?? Number.MAX_SAFE_INTEGER
+      pending.sort((a, b) => rank(a) - rank(b))
+      const fallback = async (k: Keep) =>
+        w.keepInTrash('versions', k.record, opts, k.record.id, { piece: await c.pieceOfVersion(k.record) })
+
+      if (!episode) {
+        // 話が消えた（この端末・別の端末で削除した）: 幕の稿はゴミ箱の1件に（話を戻すと、話の稿として戻せる）
+        const items = pending.map((k) => ({ record: k.record, actNumber: numberIn(k.pieceId) }))
+        for (const k of pending) if (k.live) await w.delLocal('versions', k.record.id)
+        const extras = opts.actsTrash?.(items, { episodeId: ep, episode: before, target: null, deleted: true })
+        if (extras) {
+          for (const x of extras) if (x.record) await w.putLocal(x.table, x.record)
+        } else for (const k of pending) await fallback(k)
+        const deletedHere = c.pre.has(ep) ? c.pre.get(ep) === null : !w.gone.has(ep)
+        c.noteActs(ep, deletedHere ? 'deletedHere' : 'deletedThere', { trash: items.length })
+        continue
+      }
+
+      // 話が残っている: 残る幕と採用原稿
+      const acts = new Map<string, PieceRec>()
+      const versions = new Map<string, VersionRec>()
+      const live: string[] = []
+      for (const id of actIdsOf(episode)) {
+        const a = await c.getPiece(id)
+        if (!a || parentIdOf(a) !== ep) continue
+        acts.set(id, a)
+        live.push(id)
+        const av = typeof a.activeVersionId === 'string' ? await c.getVersion(a.activeVersionId) : null
+        if (av) versions.set(av.id, av)
+      }
+      if (!live.length && typeof episode.activeVersionId === 'string') {
+        const ev = await c.getVersion(episode.activeVersionId)
+        if (ev) versions.set(ev.id, ev)
+      }
+      const text = familyText(
+        live.length ? episode : { ...episode, actIds: [] },
+        (id) => acts.get(id),
+        (id) => versions.get(id),
+      )
+      const kept = new Map<ActsNoteDetail, { versions: number; trash: number }>()
+      const count = (d: ActsNoteDetail, f: 'versions' | 'trash') => {
+        const n = kept.get(d) ?? { versions: 0, trash: 0 }
+        n[f] += 1
+        kept.set(d, n)
+      }
+      const trashItems: { record: AnyRecord; actNumber: number | null; detail: ActsNoteDetail }[] = []
+      let trashTarget: AnyRecord | null = null
+      for (const k of pending) {
+        const detail: ActsNoteDetail =
+          u?.kind === 'conflict' && u.verdict ? (u.verdict === 'mine' ? 'won' : 'lost') : k.mine ? 'mineDropped' : 'theirsDropped'
+        const own = await c.getPiece(k.pieceId)
+        const ownLive = own !== null && (own.id === ep || live.includes(own.id))
+        if (k.reason === 'edit' && !k.live && ownLive) {
+          // 稿の幕・話が残っている: 削除と編集が重なった稿（2.1 と同じくゴミ箱へ）
+          await w.keepInTrash('versions', k.record, opts, k.record.id, { piece: own })
+          continue
+        }
+        const { targetId, actNumber } = chooseTarget({
+          episodeId: ep,
+          live,
+          orders,
+          pieceId: k.pieceId,
+          createdHere: !(u?.B ?? orders[1]).includes(k.pieceId) && !(u?.T ?? orders[2]).includes(k.pieceId),
+        })
+        if (k.reason === 'acts' && isRedundant(k.record as VersionRec, text)) {
+          trashItems.push({ record: k.record, actNumber: numberIn(k.pieceId), detail })
+          trashTarget ??= await c.getPiece(targetId)
+          if (k.live) await w.delLocal('versions', k.record.id)
+          continue
+        }
+        const target = ownLive && k.live ? own : await c.getPiece(targetId)
+        if (!target || !opts.actsCopy) {
+          await fallback(k)
+          if (k.live) await w.delLocal('versions', k.record.id)
+          count(detail, 'trash')
+          continue
+        }
+        const copy = opts.actsCopy(k.record, target, { actNumber, reason: k.reason, mine: k.mine })
+        if (k.live && copy.id !== k.record.id) await w.delLocal('versions', k.record.id)
+        await w.putLocal('versions', copy)
+        await w.listVersion(target.id, copy.id)
+        count(detail, 'versions')
+      }
+      if (trashItems.length) {
+        const extras = opts.actsTrash?.(
+          trashItems.map((x) => ({ record: x.record, actNumber: x.actNumber })),
+          { episodeId: ep, episode, target: trashTarget ?? episode, deleted: false },
+        )
+        if (extras) {
+          for (const x of extras) if (x.record) await w.putLocal(x.table, x.record)
+        } else
+          for (const x of trashItems)
+            await w.keepInTrash('versions', x.record, opts, x.record.id, { piece: await c.pieceOfVersion(x.record) })
+        for (const x of trashItems) count(x.detail, 'trash')
+      }
+      for (const [detail, n] of kept) c.noteActs(ep, detail, n)
+    }
   }
 
   return {
@@ -492,94 +1378,13 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     async applyRemote(changes, opts) {
       const written = new Map<string, Change>()
       const at = Date.now()
-      const w = writer(at, written)
-      const parents = new Map<TableName, Set<string>>()
-      /** 復元・すべて削除で消えた親（子は控えずに片付ける。子にも削除が届く） */
-      const resetParents = new Set(changes.filter((c) => c.reset && !c.record).map((c) => outboxKey(c.table, c.id)))
       let deferred = false
       await db.transaction('rw', [...allTables(), db.outbox, db.meta], async () => {
         if ((await db.meta.get('authoritative'))?.value) {
           deferred = true
           return
         }
-        /** 応募時の原稿の本文の削除は、ほかの変更を当てた後で、使われていないことを確かめてから当てる */
-        const textTombstones: Change[] = []
-        for (const ch of changes) {
-          if (!KNOWN_TABLES.has(ch.table)) continue
-          const k = outboxKey(ch.table, ch.id)
-          const disk = (await db.tableOf(ch.table).get(ch.id)) ?? null
-          const queued = await db.outbox.get(k)
-
-          if (ch.table === 'snapshotTexts' && !ch.record && disk) {
-            textTombstones.push(ch)
-            continue
-          }
-          // バックアップからの復元・すべて削除の後: この端末の内容で上書きするまで、クラウド側は採らない
-          if (queued?.force) {
-            await db.outbox.put({ ...queued, base: ch.record })
-            continue
-          }
-          // この端末が書いたもの（返事を受け取れなかった書き込み）: 端末内の内容はそれより新しいので、base だけ進める
-          if (ch.own && queued) {
-            if (deepEqual(disk, ch.record)) await db.outbox.delete(k)
-            else await db.outbox.put({ k, t: ch.table, id: ch.id, base: ch.record, at: queued.at })
-            continue
-          }
-          // ほかの端末の復元・すべて削除: その内容を正とする。この端末で書いたまま送っていない文章だけ控える
-          if (ch.reset) {
-            if (queued && disk && !deepEqual(disk, queued.base) && COPY_TABLES.has(ch.table) && !contentEqual(disk, ch.record))
-              await w.keepInTrash(ch.table, disk, opts, ch.id)
-            if (queued) await db.outbox.delete(k)
-            if (ch.record) {
-              if (!deepEqual(disk, ch.record)) await w.put(ch.table, ch.record)
-            } else if (disk) {
-              await w.del(ch.table, ch.id)
-              noteDeleted(parents, ch.table, ch.id)
-            }
-            continue
-          }
-          if (!queued) {
-            if (deepEqual(disk, ch.record)) continue
-            if (ch.record) await w.put(ch.table, ch.record)
-            else if (disk) {
-              await w.del(ch.table, ch.id)
-              noteDeleted(parents, ch.table, ch.id)
-            }
-            continue
-          }
-          const result = mergeRemote(ch.table, queued.base, disk, ch.record, {
-            device: opts.device,
-            noHistory: queued.noHistory,
-          })
-          // クラウドと同じ内容になったら、クラウドの内容そのものを使う（更新日時まで揃える）
-          if (contentEqual(result.record, ch.record)) result.record = ch.record
-          if (!deepEqual(result.record, disk)) {
-            if (result.record) await w.put(ch.table, result.record)
-            else if (disk) {
-              await w.del(ch.table, ch.id)
-              noteDeleted(parents, ch.table, ch.id)
-            }
-          }
-          // クラウドの内容が新しい base。合わせた結果がクラウドと同じなら送るものは無い
-          if (deepEqual(result.record, ch.record)) await db.outbox.delete(k)
-          else await db.outbox.put({ k, t: ch.table, id: ch.id, base: ch.record, at: queued.at })
-          await w.keepConflict(ch.table, result, opts, ch.id)
-        }
-        // 応募時の原稿の本文は、この端末の応募計画がまだ使っている間は消さない（送り直して、ほかの端末にも戻す）
-        if (textTombstones.length) {
-          const inUse = usedTextKeys(await db.tableOf('submissions').toArray())
-          for (const ch of textTombstones) {
-            const k = outboxKey(ch.table, ch.id)
-            if (inUse.has(ch.id)) {
-              const queued = await db.outbox.get(k)
-              await db.outbox.put({ k, t: ch.table, id: ch.id, base: null, at: queued?.at ?? at })
-            } else {
-              await w.del(ch.table, ch.id)
-              await db.outbox.delete(k)
-            }
-          }
-        }
-        if (parents.size) await w.sweepOrphans(parents, opts, resetParents)
+        await applyRemoteTx(changes, opts, at, written)
         if (opts.cursor !== undefined) await db.meta.put({ key: 'cursor', value: opts.cursor })
       })
       return deferred ? null : [...written.values()]
@@ -588,28 +1393,40 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     async readOutbox(limit) {
       const keys = (await db.outbox.toCollection().primaryKeys()).map(String)
       keys.sort((a, b) => sendRank(a) - sendRank(b) || (a < b ? -1 : a > b ? 1 : 0))
-      const rows = (await db.outbox.bulkGet(keys.slice(0, limit))).filter((r): r is OutboxRow => Boolean(r))
-      const byTable = new Map<TableName, OutboxRow[]>()
-      for (const r of rows) {
-        if (!KNOWN_TABLES.has(r.t)) continue
-        const list = byTable.get(r.t) ?? []
-        list.push(r)
-        byTable.set(r.t, list)
+      // 幕の構成を変えた話があれば、その話・幕・稿・ゴミ箱の件を1つのまとまりとして続けて並べる（全部を1回で送る）
+      const pieceItems = await itemsOf(keys.filter((k) => k.startsWith('pieces/')))
+      if (!pieceItems.some(isDirtyEpisodeRow)) return itemsOf(keys.slice(0, limit))
+      const known = new Map<string, OutboxItem>()
+      const related = keys.filter((k) => /^(versions|trashEntries|trashRecords)\//.test(k))
+      for (const it of [...pieceItems, ...(await itemsOf(related))]) known.set(it.k, it)
+      const groups = groupOutbox([...known.values()])
+      const members = new Map<string, string[]>()
+      for (const k of keys) {
+        const g = groups.get(k)
+        if (!g) continue
+        const list = members.get(g) ?? []
+        list.push(k)
+        members.set(g, list)
       }
+      const order: string[] = []
+      const done = new Set<string>()
+      for (const k of keys) {
+        // 上限に達しても、並べ始めたまとまりは最後まで入れる
+        if (order.length >= limit) break
+        if (done.has(k)) continue
+        const g = groups.get(k)
+        for (const m of g ? members.get(g)! : [k]) {
+          order.push(m)
+          done.add(m)
+        }
+      }
+      for (const it of await itemsOf(order.filter((k) => !known.has(k)))) known.set(it.k, it)
       const out: OutboxItem[] = []
-      for (const [t, list] of byTable) {
-        const locals = await db.tableOf(t).bulkGet(list.map((r) => r.id))
-        list.forEach((r, i) =>
-          out.push({
-            k: r.k,
-            table: t,
-            id: r.id,
-            base: r.base,
-            noHistory: Boolean(r.noHistory),
-            force: Boolean(r.force),
-            local: locals[i] ?? null,
-          }),
-        )
+      for (const k of order) {
+        const it = known.get(k)
+        if (!it) continue
+        const g = groups.get(k)
+        out.push(g ? { ...it, group: g } : it)
       }
       return out
     },

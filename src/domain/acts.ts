@@ -11,6 +11,7 @@
 // すべて純粋関数で、新しい AppData を返す。仕様違反は DomainError を投げる。
 import { makeVersion } from './storyOps'
 import { activeVersion, actLabel, actParts, actsOf, isSplit, parentOf, pieceFullLabel, type ActPart } from './structure'
+import { textHash } from './text'
 import { putInTrash } from './trash'
 import { Tx, transact } from './tx'
 import { DomainError, type AppData, type ID, type Piece, type TrashOrigin, type Version } from './types'
@@ -66,9 +67,10 @@ export function splitSegments(body: string, offsets: readonly number[]): string[
 /**
  * 区切った本文の数と同じ幕を作る（各幕の第1稿が採用中。本文はその区切り）。
  * 作った時刻は読む順（order）に1ずつずらす（同期の途中で、話の幕の並びより先に幕が届いても、
- * 修復（repair.ts）が作られた順＝読む順に並べられるように）
+ * 修復（repair.ts）が作られた順＝読む順に並べられるように）。
+ * 第1稿には区切った元の稿（source）と、その本文の指紋を控える（同期で、元の稿が別の端末で書き換えられていたのに気付けるように）
  */
-function newAct(episode: Piece, body: string, ts: number, order = 0): { act: Piece; version: Version } {
+function newAct(episode: Piece, body: string, ts: number, order: number, source: Version): { act: Piece; version: Version } {
   const base: Piece = {
     id: newId(),
     titleId: episode.titleId,
@@ -82,7 +84,12 @@ function newAct(episode: Piece, body: string, ts: number, order = 0): { act: Pie
     createdAt: ts + order,
     updatedAt: ts,
   }
-  const version = { ...makeVersion(base, 1, body), createdAt: ts, updatedAt: ts }
+  const version: Version = {
+    ...makeVersion(base, 1, body, source.id),
+    sourceHash: textHash(source.body),
+    createdAt: ts,
+    updatedAt: ts,
+  }
   return { act: { ...base, activeVersionId: version.id, versionIds: [version.id] }, version }
 }
 
@@ -176,7 +183,7 @@ export function separatePiece(data: AppData, pieceId: ID, offsets: readonly numb
     const ts = now()
 
     if (p.kind === 'episode') {
-      const made = segments.map((seg, i) => newAct(p, seg, ts, i))
+      const made = segments.map((seg, i) => newAct(p, seg, ts, i, v))
       for (const m of made) {
         tx.put('pieces', m.act)
         tx.put('versions', m.version)
@@ -190,12 +197,13 @@ export function separatePiece(data: AppData, pieceId: ID, offsets: readonly numb
     const seq = p.versionSeq + 1
     const first: Version = {
       ...makeVersion(p, seq, segments[0], v.id, `第${seq}稿${SPLIT_VERSION_SUFFIX}`),
+      sourceHash: textHash(v.body),
       createdAt: ts,
       updatedAt: ts,
     }
     tx.put('versions', first)
     tx.put('pieces', { ...p, versionIds: [...p.versionIds, first.id], activeVersionId: first.id, versionSeq: seq, updatedAt: ts })
-    const made = segments.slice(1).map((seg, i) => newAct(parent, seg, ts, i))
+    const made = segments.slice(1).map((seg, i) => newAct(parent, seg, ts, i, v))
     for (const m of made) {
       tx.put('pieces', m.act)
       tx.put('versions', m.version)
@@ -248,6 +256,8 @@ export function joinActWithNext(data: AppData, actId: ID): { data: AppData; resu
     const seq = act.versionSeq + 1
     const joined: Version = {
       ...makeVersion(act, seq, a.body + b.body, a.id, `第${seq}稿${JOINED_VERSION_SUFFIX}`),
+      // つないだ時のこの幕の採用稿の本文の指紋（同期で、それが別の端末で書き換えられていたのに気付けるように）
+      sourceHash: textHash(a.body),
       // 消える次の幕の採用稿の推敲メモを残す（この幕のメモも入れて、つないだ稿だけで分かるように）
       note: carriedNote([
         { number: index + 1, version: a },

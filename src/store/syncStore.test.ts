@@ -1,11 +1,13 @@
 // ストアの同期まわり: 修復は表示用の内容にだけ当てる・クラウドの変更の反映・送信待ち
 import { afterEach, describe, expect, it } from 'vitest'
-import { createPersistence, type Persistence } from '../db/persistence'
+import { createPersistence, type Change, type Persistence } from '../db/persistence'
+import { joinActWithNext, separatePiece } from '../domain/acts'
 import { createTitle, addMemo } from '../domain/entityOps'
-import { addEpisode, updateVersion } from '../domain/storyOps'
+import { addEpisode, setActiveVersion, updateVersion } from '../domain/storyOps'
 import { emptyData, type AppData, type Piece, type Version } from '../domain/types'
 import { actions } from './actions'
 import { applyRemoteChanges, flushNow, getData, initStore, rebaseView, resetStoreForTests, useApp } from './appStore'
+import { useToasts } from './uiStore'
 
 let n = 0
 const dbName = () => `sync-store-${++n}`
@@ -134,3 +136,38 @@ describe('rebaseView', () => {
     expect(out.versions[piece.versionIds[1]].body).toBe('このタブの本文')
   })
 })
+
+describe('幕（2.2）の構成の競合', () => {
+  it('両方の端末で同じ話の幕をつないでいたら、別の端末の分け方に合わせ、話の名前で知らせる', async () => {
+    const t = createTitle(emptyData(), '作品')
+    const e = addEpisode(t.data, t.result)
+    const vid = e.data.pieces[e.result].versionIds[0]
+    const d0 = setActiveVersion(updateVersion(e.data, vid, { body: 'ABCDEFGHI' }), e.result, vid)
+    const s = separatePiece(d0, e.result, [3, 6])
+    const d = s.data
+    const p = createPersistence(dbName())
+    await seedSynced(p, d)
+    // この端末: 第1幕と第2幕をつないだ（保存済み・未送信）
+    await p.save(d, joinActWithNext(d, s.result[0]).data)
+    await initStore(p)
+    // 別の端末: 第2幕と第3幕をつないだ
+    const theirs = joinActWithNext(d, s.result[1]).data
+    await applyRemoteChanges(diffChanges(d, theirs))
+    const out = getData()
+    expect(out.pieces[e.result].actIds).toEqual(theirs.pieces[e.result].actIds)
+    const messages = useToasts.getState().toasts.map((x) => x.message)
+    expect(messages.some((m) => m.includes('第1話の幕の分け方が別の端末と同時に変わりました'))).toBe(true)
+  })
+})
+
+/** a から b への変化（クラウドから届く変化の形） */
+function diffChanges(a: AppData, b: AppData): Change[] {
+  const out: Change[] = []
+  for (const t of Object.keys(b) as (keyof AppData)[]) {
+    const x = a[t] as Record<string, { id: string }>
+    const y = b[t] as Record<string, { id: string }>
+    for (const id of Object.keys(y)) if (x[id] !== y[id]) out.push({ table: t, id, record: y[id] })
+    for (const id of Object.keys(x)) if (!(id in y)) out.push({ table: t, id, record: null })
+  }
+  return out
+}

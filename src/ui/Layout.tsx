@@ -4,11 +4,13 @@ import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigationType } from 'react-router-dom'
 import { flushNow, reloadFromDisk, useApp } from '../store/appStore'
 import { flushAllDrafts } from '../store/draftRegistry'
+import { saveBeforeLeave } from '../store/lifecycle'
 import { useUnsavedEdits } from '../store/unsavedEdits'
 import { notify, notifyError, resolveAppearance, THEME_COLORS, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost, cancelAllDialogs } from './dialogs'
 import { GearIcon, XIcon } from './icons'
-import { SyncIndicator } from './SyncIndicator'
+import { useSync } from '../sync/controller'
+import { SyncIndicator, outdatedMessage } from './SyncIndicator'
 
 export interface Crumb {
   label: string
@@ -149,27 +151,62 @@ function SaveErrorBanner() {
   )
 }
 
+/** 原稿画面の保存していない編集を保存してから（キャンセルしたら false）、アプリを更新する・読み込み直す */
+async function updateApp(apply: (() => Promise<void>) | null): Promise<void> {
+  const ensure = useUnsavedEdits.getState().ensureSaved
+  if (
+    ensure &&
+    !(await ensure({
+      message: 'アプリを更新する（読み込み直す）前に、この話で保存していない編集を保存します。',
+      confirmLabel: '保存して更新',
+    }))
+  )
+    return
+  if (apply) {
+    await apply()
+    return
+  }
+  // 新しい版がまだ届いていない: 保存してから読み込み直す（読み込み直すと新しい版を取りに行く）
+  await saveBeforeLeave()
+  location.reload()
+}
+
 function UpdateBanner() {
   const ready = useAppUpdate((s) => s.ready)
   const apply = useAppUpdate((s) => s.apply)
-  if (!ready || !apply) return null
-  const update = async () => {
-    // 原稿画面の保存していない編集は、保存してから更新する（キャンセルしたら更新しない）
-    const ensure = useUnsavedEdits.getState().ensureSaved
-    if (
-      ensure &&
-      !(await ensure({
-        message: 'アプリを更新する（読み込み直す）前に、この話で保存していない編集を保存します。',
-        confirmLabel: '保存して更新',
-      }))
-    )
-      return
-    await apply()
-  }
+  const outdated = useSync((s) => Boolean(s.status?.outdated))
+  // 新しい版のアプリで書かれたデータがある時は、そちらの知らせから更新する
+  if (!ready || !apply || outdated) return null
+  const update = () => updateApp(apply)
   return (
     <div className="banner banner-info" role="status" data-testid="update-banner">
       <span className="grow">新しいバージョンのアプリがあります。書いた内容を保存してから更新します。</span>
       <button type="button" className="btn btn-sm" onClick={() => void update()} data-testid="app-update">
+        更新する
+      </button>
+    </div>
+  )
+}
+
+/**
+ * クラウドのデータが新しい版のアプリで書かれている（データの形の版）: この端末からは送らずに残しているので、更新を促す。
+ * 「更新する」は、新しい版が届いていればそれに切り替え、まだなら保存してから読み込み直す
+ */
+function OutdatedBanner() {
+  const outdated = useSync((s) => s.status?.outdated ?? null)
+  const pending = useSync((s) => s.status?.pending ?? 0)
+  const ready = useAppUpdate((s) => s.ready)
+  const apply = useAppUpdate((s) => s.apply)
+  if (!outdated) return null
+  return (
+    <div className="banner" role="alert" data-testid="outdated-banner">
+      <span className="grow">{outdatedMessage(outdated.appVersion, pending)}</span>
+      <button
+        type="button"
+        className="btn btn-sm"
+        onClick={() => void updateApp(ready ? apply : null)}
+        data-testid="outdated-update"
+      >
         更新する
       </button>
     </div>
@@ -320,6 +357,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
       <CloseDialogsOnNavigate />
       <PrefsEffect />
       <RecoveryNotice />
+      <OutdatedBanner />
       <UpdateBanner />
       <SaveErrorBanner />
       <ExternalChangeBanner />

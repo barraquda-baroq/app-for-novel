@@ -219,3 +219,51 @@ describe('共通の履歴が無い時の、控えを作らない表の文章', (
     expect((mergeRemote('chapters', null, ch, cloudCh, N).record as typeof ch).note).toBe('この端末のメモ')
   })
 })
+
+describe('幕（2.2）: 幕の構成を片方の端末だけが変えていた時の採用稿', () => {
+  const E = { id: 'E', kind: 'episode', activeVersionId: 'EV', versionIds: ['EV'], subtitle: '', updatedAt: 1 }
+  const A = { id: 'a1', kind: 'act', parentId: 'E', activeVersionId: 'v1', versionIds: ['v1'], updatedAt: 1 }
+
+  it('話: 分けた側の採用稿を採り、もう一方が採用を変えていたら知らせる（ほかの項目は今までどおり）', () => {
+    const split = { ...E, actIds: ['a1', 'a2'] }
+    const adopted = { ...E, activeVersionId: 'EV2', versionIds: ['EV', 'EV2'], subtitle: 'この端末の題' }
+    const r = mergeRemote('pieces', E, adopted, split, { ...D, acts: { structure: 'theirs' } })
+    const rec = r.record as typeof split & typeof adopted
+    expect(rec.activeVersionId).toBe('EV')
+    expect(rec.actIds).toEqual(['a1', 'a2'])
+    expect(rec.versionIds).toEqual(['EV', 'EV2'])
+    expect(rec.subtitle).toBe('この端末の題')
+    expect(r.overridden).toBe('mine')
+    // この端末が分けた側: 別の端末の採用を採らない
+    const r2 = mergeRemote('pieces', E, split, adopted, { ...D, acts: { structure: 'mine' } })
+    expect((r2.record as typeof E).activeVersionId).toBe('EV')
+    expect(r2.overridden).toBe('theirs')
+    // 幕の構成と関係ない項目だけなら知らせない
+    const titled = { ...E, subtitle: '題' }
+    expect(mergeRemote('pieces', E, titled, split, { ...D, acts: { structure: 'theirs' } }).overridden).toBeUndefined()
+  })
+
+  it('幕: 両方が採用稿を別々に変えていたら、幕の構成を変えた側（つないだ稿・分けた稿）', () => {
+    const joined = { ...A, activeVersionId: 'J', versionIds: ['v1', 'J'] }
+    const other = { ...A, activeVersionId: 'v1b', versionIds: ['v1', 'v1b'] }
+    const r = mergeRemote('pieces', A, other, joined, { ...D, acts: { structure: 'theirs' } })
+    expect((r.record as typeof A).activeVersionId).toBe('J')
+    expect((r.record as typeof A).versionIds).toEqual(['v1', 'J', 'v1b'])
+    expect(r.overridden).toBe('mine')
+    // 片方だけが変えていたら、その変更（知らせない）
+    const added = { ...A, versionIds: ['v1', 'x'] }
+    const r2 = mergeRemote('pieces', A, added, joined, { ...D, acts: { structure: 'mine' } })
+    expect((r2.record as typeof A).activeVersionId).toBe('J')
+    expect(r2.overridden).toBeUndefined()
+  })
+
+  it('幕の構成の指定が無ければ、今までどおり（短い項目はこの端末、幕の並びは要素ごと）', () => {
+    const mine = { ...E, activeVersionId: 'EV2', actIds: ['a1', 'm'] }
+    const theirs = { ...E, activeVersionId: 'EV3', actIds: ['t', 'a1'] }
+    const base = { ...E, actIds: ['a1'] }
+    const r = mergeRemote('pieces', base, mine, theirs, D)
+    expect((r.record as typeof mine).activeVersionId).toBe('EV2')
+    expect((r.record as typeof mine).actIds).toEqual(['t', 'a1', 'm'])
+    expect(r.overridden).toBeUndefined()
+  })
+})

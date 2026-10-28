@@ -3,7 +3,7 @@ rules_version = '2';
 // 原稿は持ち主のアカウントだけが読み書きできる。
 // - 持ち主: 最初にログインして同期を始めたアカウント（config/owner に記録。後から変えられない）。
 //   持ち主を変えたい時は、Firebase コンソールの Firestore で config/owner を消してから、新しい持ち主でログインする。
-// - 持ち主のデータは users/{uid}/records の下だけ。ほかの場所は誰も読み書きできない。
+// - 持ち主のデータは users/{uid}/records と、データの形の版 users/{uid}/meta/app だけ。ほかの場所は誰も読み書きできない。
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
@@ -35,6 +35,25 @@ service cloud.firestore {
       allow read: if isOwner(uid);
       allow create, update: if isOwner(uid) && validRecord();
       allow delete: if isOwner(uid);
+    }
+
+    // データの形の版（src/sync/appModel.ts）: データを書いたアプリの形の版。古い版のアプリは、これが自分より高いと送らない。
+    // 持ち主だけが読み書きでき、下げることはできない（戻したい時は、コンソールでこの文書を消す）。
+    // 2.3 で Claude 用のコネクタにも読ませる時は、ここに get を足す。
+    function validAppModel() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['model', 'appVersion', 'updatedAt'])
+        && d.keys().hasAll(['model', 'appVersion', 'updatedAt'])
+        && d.model is int && d.model >= 1
+        && d.appVersion is string && d.appVersion.size() <= 32
+        && d.updatedAt == request.time;
+    }
+
+    match /users/{uid}/meta/app {
+      allow get: if isOwner(uid);
+      allow create: if isOwner(uid) && validAppModel();
+      allow update: if isOwner(uid) && validAppModel()
+        && request.resource.data.model >= resource.data.model;
     }
 
     match /{document=**} {

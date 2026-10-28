@@ -10,6 +10,7 @@ import {
   getDocs,
   initializeFirestore,
   memoryLocalCache,
+  onSnapshot,
   serverTimestamp,
   setDoc,
   terminate,
@@ -18,12 +19,16 @@ import {
 import emuRules from '../../firestore.emu.rules?raw'
 import prodRules from '../../firestore.rules?raw'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createPersistence, type Persistence } from '../db/persistence'
+import { createPersistence, type ConflictNote, type Persistence } from '../db/persistence'
+import * as A from '../domain/acts'
 import * as E from '../domain/entityOps'
+import { repairData } from '../domain/repair'
 import * as S from '../domain/storyOps'
-import { emptyData, type AppData, type Version } from '../domain/types'
+import { emptyData, type AppData } from '../domain/types'
 import { newId } from '../domain/util'
-import { conflictTrash, conflictVersionCopy } from './conflicts'
+import { ACTS_SCENARIOS, scenarioProblems, scenarioStart, texts, type ActsScenario, type Order } from '../test/actsScenarios'
+import { appModelRef, type AppModel } from './appModel'
+import { createConflictHooks } from './conflicts'
 import { createSyncEngine, type SyncEngine, type SyncTarget } from './engine'
 import { stableStringify } from './merge'
 
@@ -36,6 +41,8 @@ interface Device {
   p: Persistence
   fs: Firestore
   engine: SyncEngine | null
+  /** 競合の知らせ（applyRemote の report） */
+  notes: ConflictNote[]
   load(): Promise<AppData>
   edit(fn: (d: AppData) => AppData): Promise<void>
   /** バックアップからの復元・すべて削除 */
@@ -61,7 +68,7 @@ afterEach(async () => {
 async function makeDevice(
   name: string,
   account: string,
-  opts: { chunkSize?: number; ownerLock?: boolean } = {},
+  opts: { chunkSize?: number; ownerLock?: boolean; appModel?: AppModel } = {},
 ): Promise<Device> {
   const app = initializeApp({ projectId: PROJECT, apiKey: 'fake-api-key', authDomain: 'localhost' }, `${name}-${++seq}`)
   const auth = getAuth(app)
@@ -74,24 +81,16 @@ async function makeDevice(
   connectFirestoreEmulator(fs, '127.0.0.1', 8080)
   apps.push({ app, fs })
   const p = createPersistence(`emu-${name}-${seq}-${Math.random().toString(36).slice(2)}`)
-  let context: AppData = emptyData()
+  const notes: ConflictNote[] = []
   const target: SyncTarget = {
     readOutbox: (n) => p.readOutbox(n),
     completeUpload: (s) => p.completeUpload(s),
-    applyRemote: (changes, cursor) =>
-      p.applyRemote(changes, {
-        cursor,
-        device: name,
-        versionCopy: (mine) => conflictVersionCopy(mine as unknown as Version, name, newId(), Date.now()) as never,
-        trashCopy: (table, record) => {
-          const r = conflictTrash(context, table as never, record, { now: Date.now(), newId })
-          if (!r) return []
-          return [
-            { table: 'trashEntries', id: r.entry.id, record: r.entry as never },
-            ...r.records.map((tr) => ({ table: 'trashRecords' as const, id: tr.id, record: tr as never })),
-          ]
-        },
-      }),
+    applyRemote: async (changes, cursor, opts) => {
+      // 控えの表記は、反映する前の表示用の内容で作る（ストアと同じ）
+      const before = repairData(await p.load()).data
+      const hooks = createConflictHooks({ device: name, data: () => before, newId, report: (n) => notes.push(n) })
+      return p.applyRemote(changes, { cursor, ...hooks, ...opts })
+    },
     outboxCount: () => p.outboxCount(),
     markAllDirty: () => p.markAllDirty(),
     localKeys: () => p.localKeys(),
@@ -104,9 +103,9 @@ async function makeDevice(
     p,
     fs,
     engine: null,
-    async load() {
-      context = await p.load()
-      return context
+    notes,
+    load() {
+      return p.load()
     },
     async edit(fn) {
       const prev = await device.load()
@@ -128,6 +127,7 @@ async function makeDevice(
         uploadMaxWait: 50,
         chunkSize: opts.chunkSize,
         ownerLock: opts.ownerLock ?? false,
+        appModel: opts.appModel,
       })
       await device.engine.start()
     },
@@ -608,10 +608,206 @@ describe('同期（エミュレーター）', () => {
   })
 })
 
+/**
+ * 幕の場面を1つ試す: 2台で揃えてから、片方（second）をオフラインにして、先に送る端末（first）の操作を送り終え、
+ * オフラインの端末でも操作してからつなぐ。揃った後の内容が場面の約束を守っているかを返す
+ */
+async function runActsScenario(s: ActsScenario, order: Order): Promise<string[]> {
+  const who = account()
+  const x = await makeDevice('x', who)
+  const y = await makeDevice('y', who)
+  await x.online()
+  await y.online()
+  const start = scenarioStart(s)
+  await x.edit(() => start.data)
+  await settle(x, y)
+  x.notes.length = 0
+  y.notes.length = 0
+  const ep = start.ep
+  const [first, second] = order === 'x-first' ? [x, y] : [y, x]
+  const opOf = (d: Device) => (d === x ? s.x : s.y)
+  second.offline()
+  await first.edit((d) => opOf(first)(d, ep))
+  await settle(first)
+  await second.edit((d) => opOf(second)(d, ep))
+  const seen = [...texts(await x.load()), ...texts(await y.load())]
+  await second.online()
+  await settle(x, y)
+  const problems = scenarioProblems(s, order, await x.load(), ep, seen, { x: x.notes, y: y.notes })
+  if (problems.length) problems.push(`知らせ: x=${JSON.stringify(x.notes)} y=${JSON.stringify(y.notes)}`)
+  return problems
+}
+
+describe('幕の構成を2台で同時に変えた時の同期（エミュレーター）', () => {
+  it('幕のまとまりは1回の書き込みで送られ、ほかの端末には幕の並びと幕がいっしょに届く', async () => {
+    const who = account()
+    const x = await makeDevice('x', who)
+    const y = await makeDevice('y', who)
+    await x.online()
+    await y.online()
+    const start = scenarioStart({ body: 'ABCDEF', splitAt: null })
+    const ep = start.ep
+    await x.edit(() => start.data)
+    await settle(x, y)
+    // 生の購読で、届いた内容が途中の状態（話の幕の並びに載っていない幕がある）にならないかを見る
+    const seenDocs = new Map<string, { json: string | null; deleted: boolean }>()
+    const problems: string[] = []
+    const unsub = onSnapshot(collection(y.fs, 'users', y.uid, 'records'), (snap) => {
+      for (const ch of snap.docChanges()) {
+        const d = ch.doc.data() as { json: string | null; deleted: boolean }
+        seenDocs.set(ch.doc.id, d)
+      }
+      const episode = seenDocs.get(`pieces:${ep}`)
+      const listed: string[] = episode?.json ? ((JSON.parse(episode.json) as { actIds?: string[] }).actIds ?? []) : []
+      for (const [id, d] of seenDocs) {
+        if (!id.startsWith('pieces:') || !d.json || d.deleted) continue
+        const rec = JSON.parse(d.json) as { kind?: string; parentId?: string; id: string }
+        if (rec.kind === 'act' && rec.parentId === ep && !listed.includes(rec.id))
+          problems.push(`幕 ${rec.id} が話の幕の並びより先に届いた`)
+      }
+    })
+    // Y が先に話の題を変えて送り、オフラインだった X が分ける（X の話は書けないので、幕だけ先に書かれないように）
+    x.offline()
+    await y.edit((d) => S.updatePiece(d, ep, { subtitle: 'Yの題' }))
+    await settle(y)
+    await x.edit((d) => A.separatePiece(d, ep, [3]).data)
+    const calls: number[] = []
+    const realApply = y.p.applyRemote.bind(y.p)
+    y.p.applyRemote = async (changes, opts) => {
+      const acts = changes.filter((c) => c.table === 'pieces' && (c.record as { kind?: string } | null)?.kind === 'act')
+      if (acts.length) calls.push(changes.filter((c) => c.table === 'pieces').length)
+      return realApply(changes, opts)
+    }
+    await x.online()
+    await settle(x, y)
+    unsub()
+    expect(problems).toEqual([])
+    // 幕は、話の幕の並びと同じ反映で届いた（話 + 幕2つ）
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.every((n) => n >= 3)).toBe(true)
+    const d = await y.load()
+    expect(d.pieces[ep].actIds).toHaveLength(2)
+    expect(d.pieces[ep].subtitle).toBe('Yの題')
+  })
+
+  it('つないだ端末の送信を待たせている間も、負けた側の幕はクラウドに残っている（第2幕と第3幕をつなぐ側が後）', async () => {
+    const who = account()
+    const x = await makeDevice('x', who)
+    const y = await makeDevice('y', who)
+    await x.online()
+    await y.online()
+    const start = scenarioStart({ body: 'ABCDEFGHI', splitAt: [3, 6] })
+    const ep = start.ep
+    await x.edit(() => start.data)
+    await settle(x, y)
+    const acts = start.data.pieces[ep].actIds!
+    y.offline()
+    await x.edit((d) => A.joinActWithNext(d, acts[0]).data)
+    await settle(x)
+    await y.edit((d) => A.joinActWithNext(d, acts[1]).data)
+    // Y の送信（第3幕の削除を含むまとまり）は、話がクラウドで変わっているので書かれない
+    const ref = doc(y.fs, 'users', y.uid, 'records', `pieces:${acts[2]}`)
+    await y.online()
+    await settle(x, y)
+    const cloud = (await getDoc(ref)).data() as { deleted: boolean } | undefined
+    expect(cloud?.deleted).toBe(false)
+    expect((await y.load()).pieces[acts[2]]).toBeDefined()
+  })
+
+  for (const s of ACTS_SCENARIOS.filter((x) => x.emu)) {
+    for (const order of ['x-first', 'y-first'] as const) {
+      it(`${s.name}（${order === 'x-first' ? 'X' : 'Y'} が先に送る）`, async () => {
+        expect(await runActsScenario(s, order)).toEqual([])
+      })
+    }
+  }
+})
+
+describe('データの形の版（エミュレーター）', () => {
+  const APP = { model: 2, appVersion: '2.2' }
+
+  it('新しい版のアプリで書かれたデータがあると、受け取りは続け、送るのは止める。記録が消えたら書き直して送る', async () => {
+    const who = account()
+    const a = await makeDevice('a', who, { appModel: APP })
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    const ref = appModelRef(a.fs, a.uid)
+    // 記録が無ければ、この版を書く
+    await waitFor(async () => (await getDoc(ref)).data()?.model === 2, '形の版が記録される')
+    expect((await getDoc(ref)).data()?.appVersion).toBe('2.2')
+    // 新しい版のアプリが記録を上げた
+    await setDoc(ref, { model: 3, appVersion: '2.3', updatedAt: serverTimestamp() })
+    await waitFor(async () => a.engine?.status.outdated?.model === 3, '古い版の端末が気付く')
+    expect(a.engine?.status.outdated?.appVersion).toBe('2.3')
+    // 受け取りは続ける
+    let memoId = ''
+    await b.edit((d) => {
+      const t = E.createTitle(d, '作品')
+      const m = E.addMemo(t.data, t.result, 'Bのメモ')
+      memoId = m.result
+      return m.data
+    })
+    await waitFor(async () => (await a.load()).memos[memoId], 'B の変更が届く')
+    // 送らない（送信待ちに残し、クラウドには書かない）
+    let ideaId = ''
+    await a.edit((d) => {
+      const r = E.addIdea(d, null, 'Aのアイデア', '本文')
+      ideaId = r.result
+      return r.data
+    })
+    await new Promise((r) => setTimeout(r, 1500))
+    await a.engine?.idle()
+    expect(await a.p.outboxCount()).toBeGreaterThan(0)
+    const ideaDoc = doc(a.fs, 'users', a.uid, 'records', `ideas:${ideaId}`)
+    expect((await getDoc(ideaDoc)).exists()).toBe(false)
+    // 記録が消された（新しい版をやめて戻した）: この版を書き直し、残していた変更を送る
+    await emulatorRequest('DELETE', `/v1/projects/${PROJECT}/databases/(default)/documents/users/${a.uid}/meta/app`)
+    await waitFor(async () => (await getDoc(ref)).data()?.model === 2, '形の版が書き直される')
+    await waitFor(async () => (await getDoc(ideaDoc)).exists(), '残していた変更が送られる')
+    await settle(a, b)
+    expect(a.engine?.status.outdated ?? null).toBeNull()
+    expect((await b.load()).ideas[ideaId]).toBeDefined()
+  })
+
+  it('本番のアクセスルール: 持ち主だけが読み書きでき、形の違う記録・下げる書き込みは拒む', async () => {
+    await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
+      rules: { files: [{ name: 'firestore.rules', content: prodRules }] },
+    })
+    await emulatorRequest('DELETE', `/emulator/v1/projects/${PROJECT}/databases/(default)/documents`)
+    try {
+      const owner = await makeDevice('owner', account(), { ownerLock: true, appModel: APP })
+      await owner.online()
+      const ref = appModelRef(owner.fs, owner.uid)
+      await waitFor(async () => (await getDoc(ref)).data()?.model === 2, '持ち主が形の版を記録できる')
+      // 上げられる
+      await setDoc(ref, { model: 3, appVersion: '2.3', updatedAt: serverTimestamp() })
+      expect((await getDoc(ref)).data()?.model).toBe(3)
+      // 下げられない・形の違う記録は書けない
+      await expect(setDoc(ref, { model: 2, appVersion: '2.2', updatedAt: serverTimestamp() })).rejects.toThrow()
+      await expect(setDoc(ref, { model: 4, appVersion: '2.4', updatedAt: serverTimestamp(), extra: 1 })).rejects.toThrow()
+      await expect(setDoc(ref, { model: '4', appVersion: '2.4', updatedAt: serverTimestamp() })).rejects.toThrow()
+      await expect(setDoc(ref, { model: 4, appVersion: '2.4', updatedAt: 12345 })).rejects.toThrow()
+      expect((await getDoc(ref)).data()?.model).toBe(3)
+      // 持ち主でないアカウントは、持ち主の記録を読めず、自分の場所にも書けない
+      const stranger = await makeDevice('stranger', account())
+      await expect(getDoc(appModelRef(stranger.fs, owner.uid))).rejects.toThrow()
+      await expect(
+        setDoc(appModelRef(stranger.fs, stranger.uid), { model: 2, appVersion: '2.2', updatedAt: serverTimestamp() }),
+      ).rejects.toThrow()
+    } finally {
+      await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
+        rules: { files: [{ name: 'firestore.rules', content: emuRules }] },
+      })
+    }
+  })
+})
+
 async function emulatorRequest(method: string, path: string, body?: unknown): Promise<void> {
   const res = await fetch(`http://127.0.0.1:8080${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    // owner = エミュレーターの管理者（アクセスルールを通さない）
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`)
