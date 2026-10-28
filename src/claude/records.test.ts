@@ -24,9 +24,16 @@ const NOW = Date.UTC(2026, 9, 28, 3, 0)
 const claude: BuildContext = { source: 'claude', now: NOW }
 
 function sample() {
-  const n = novel(['窓から見れる景色は美しい。\n彼は｜東京《とうきょう》駅へ。', '猫が来た。猫が来た。', '第一幕の本文。\n第二幕の食べれる本文。'], {
-    subtitles: ['出発', '', '雨'],
-  })
+  const n = novel(
+    [
+      '窓から見れる景色は美しい。\n彼は｜東京《とうきょう》駅へ。',
+      '猫が来た。猫が来た。',
+      '第一幕の本文。\n第二幕の食べれる本文。',
+    ],
+    {
+      subtitles: ['出発', '', '雨'],
+    },
+  )
   const { acts } = splitEpisode(n, n.ids[2], [8])
   return { ...n, acts }
 }
@@ -55,7 +62,15 @@ describe('推敲案（novel_add_proofreading）', () => {
       claude,
     )
     expect(r.ok).toBe(true)
-    expect(r.items.map((x) => x.status)).toEqual(['created', 'created', 'created', 'ambiguous', 'not_found', 'not_found', 'invalid'])
+    expect(r.items.map((x) => x.status)).toEqual([
+      'created',
+      'created',
+      'created',
+      'ambiguous',
+      'not_found',
+      'not_found',
+      'invalid',
+    ])
     const recs = r.records.map((x) => x.record) as AppData['proofSuggestions'][string][]
     expect(r.records.map((x) => x.table)).toEqual(['proofSuggestions', 'proofSuggestions', 'proofSuggestions', 'proofBatches'])
     const [a, b, c] = recs
@@ -110,7 +125,11 @@ describe('推敲案（novel_add_proofreading）', () => {
   })
   it('知らない種類は other にして名前を残す。書き込めないタイトルはコネクタからは書けない（貼り付けは書ける）', () => {
     const n = sample()
-    const r = buildProofreading(n.data, { title_id: n.titleId, items: [{ piece: '#1', excerpt: '見れる', category: 'kanji', reason: 'x' }] }, claude)
+    const r = buildProofreading(
+      n.data,
+      { title_id: n.titleId, items: [{ piece: '#1', excerpt: '見れる', category: 'kanji', reason: 'x' }] },
+      claude,
+    )
     expect(r.records[0].record).toMatchObject({ category: 'other', categoryLabel: 'kanji' })
     expect(r.notes[0]).toContain('other')
     const ro: AppData = { ...n.data, titles: { [n.titleId]: { ...n.data.titles[n.titleId], claudeAccess: 'read' } } }
@@ -139,7 +158,16 @@ describe('推敲案（novel_add_proofreading）', () => {
       expect(enc.parts).toHaveLength(0)
       expect(enc.json!.length).toBeLessThanOrEqual(RECORD_LIMITS.recordJson)
       const back = decodeRecord(
-        { table, id: record.id, json: enc.json, hash: enc.hash, chunks: 0, deleted: false, updated: null, device: 'claude-connector' },
+        {
+          table,
+          id: record.id,
+          json: enc.json,
+          hash: enc.hash,
+          chunks: 0,
+          deleted: false,
+          updated: null,
+          device: 'claude-connector',
+        },
         () => undefined,
       )
       expect(back).toEqual(record)
@@ -164,7 +192,13 @@ describe('改稿案・戦略メモ・批評プロンプト・批評結果', () =
     )
     expect(r.items.map((x) => x.status)).toEqual(['created', 'invalid', 'invalid'])
     expect(r.items[0].hint).toContain('#99')
-    expect(r.records[0].record).toMatchObject({ heading: '冒頭を短く', checked: false, checkedAt: null, pieceIds: [n.ids[0]], order: 0 })
+    expect(r.records[0].record).toMatchObject({
+      heading: '冒頭を短く',
+      checked: false,
+      checkedAt: null,
+      pieceIds: [n.ids[0]],
+      order: 0,
+    })
   })
   it('戦略メモ: コンテストの URL は https だけ、締切は YYYY-MM-DD だけ', () => {
     const n = sample()
@@ -175,7 +209,14 @@ describe('改稿案・戦略メモ・批評プロンプト・批評結果', () =
         heading: '応募戦略',
         body: '## 狙い\n長編賞',
         contests: [
-          { name: '〇〇大賞', url: 'http://example.com', deadline: '2027-03-31', limit: { min: 80000, max: 150000, unit: 'chars' }, fit: '合う', plan: '削る' },
+          {
+            name: '〇〇大賞',
+            url: 'http://example.com',
+            deadline: '2027-03-31',
+            limit: { min: 80000, max: 150000, unit: 'chars' },
+            fit: '合う',
+            plan: '削る',
+          },
           { name: '△△賞', url: 'https://example.com/a', deadline: '3月末' },
           { organizer: '名前なし' } as never,
         ],
@@ -188,7 +229,14 @@ describe('改稿案・戦略メモ・批評プロンプト・批評結果', () =
       ['k0', '〇〇大賞', '', '2027-03-31'],
       ['k1', '△△賞', 'https://example.com/a', ''],
     ])
-    expect(note.contests[0]).toMatchObject({ minChars: 80000, maxChars: 150000, limitUnit: 'chars', fit: '合う', plan: '削る', submissionId: null })
+    expect(note.contests[0]).toMatchObject({
+      minChars: 80000,
+      maxChars: 150000,
+      limitUnit: 'chars',
+      fit: '合う',
+      plan: '削る',
+      submissionId: null,
+    })
     expect(note.runDate).toBe('2026-10-28')
     expect(r.notes).toHaveLength(3)
   })
@@ -229,7 +277,9 @@ describe('改稿案・戦略メモ・批評プロンプト・批評結果', () =
       manuscript: { pieces: 3, at: NOW },
     })
     expect(buildCritiqueResult(data, { title_id: n.titleId }, claude).items[0].status).toBe('invalid')
-    expect(buildCritiqueResult(data, { title_id: n.titleId, artifact_url: 'javascript:alert(1)' }, claude).items[0].status).toBe('invalid')
+    expect(buildCritiqueResult(data, { title_id: n.titleId, artifact_url: 'javascript:alert(1)' }, claude).items[0].status).toBe(
+      'invalid',
+    )
     expect(buildCritiqueResult(data, { title_id: n.titleId, prompt_id: 'q:zzzz', result_markdown: 'x' }, claude).ok).toBe(false)
   })
 })

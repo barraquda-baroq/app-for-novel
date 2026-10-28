@@ -60,7 +60,13 @@ describe('locateExcerpt（抜き出した箇所の場所）', () => {
     expect(r.status).toBe('found')
     if (r.status !== 'found') return
     expect(r.matchedBy).toBe('raw')
-    expect(r.anchor).toMatchObject({ offset: 3, length: 3, paragraph: 1, before: '窓から', after: '景色は\n二段落目の東京《とうきょう》' })
+    expect(r.anchor).toMatchObject({
+      offset: 3,
+      length: 3,
+      paragraph: 1,
+      before: '窓から',
+      after: '景色は\n二段落目の東京《とうきょう》',
+    })
     expect(r.occurrence).toBe(0)
   })
   it('ルビの記法を除いて見つけ、元の本文の位置（記法全体）に戻す', () => {

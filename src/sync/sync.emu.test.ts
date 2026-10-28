@@ -999,7 +999,9 @@ describe('2.3 の推敲案・改稿案などの同期（エミュレーター）
     await settle(a, b)
     const data = await a.load()
     expect(data.revisionIdeas[ideaId]).toBeUndefined()
-    const kept = Object.values(data.trashRecords).find((r) => r.table === 'revisionIdeas' && (r.record as { body: string }).body.includes('Bで足した'))
+    const kept = Object.values(data.trashRecords).find(
+      (r) => r.table === 'revisionIdeas' && (r.record as { body: string }).body.includes('Bで足した'),
+    )
     expect(kept).toBeDefined()
     expect(data.trashEntries[kept!.entryId].reason).toBe('conflict')
     // タイトルを削除すると、共通の批評プロンプト以外の 2.3 の記録も片付く

@@ -64,14 +64,7 @@ export function proofSuggestionId(p: {
   category: string
   suggestion: string
 }): ID {
-  return derivedId('proofSuggestion', [
-    p.titleId,
-    p.pieceId,
-    p.contextBefore + p.excerpt,
-    p.occurrence,
-    p.category,
-    p.suggestion,
-  ])
+  return derivedId('proofSuggestion', [p.titleId, p.pieceId, p.contextBefore + p.excerpt, p.occurrence, p.category, p.suggestion])
 }
 
 /** 推敲案の実行（同じタイトル・名前・日付の追加をまとめる） */

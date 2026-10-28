@@ -138,7 +138,12 @@ describe('推敲案', () => {
     )
     let data = addClaudeRecords(n.data, r.records).data
     tick()
-    const m = addProofSuggestion(data, n.titleId, { pieceId: n.ids[1], excerpt: '来れる', suggestion: '来られる', category: 'ra_nuki' })
+    const m = addProofSuggestion(data, n.titleId, {
+      pieceId: n.ids[1],
+      excerpt: '来れる',
+      suggestion: '来られる',
+      category: 'ra_nuki',
+    })
     data = m.data
     return { n, data, tick, ids: [r.items[0].id!, r.items[1].id!, m.result] }
   }
@@ -187,7 +192,11 @@ describe('推敲案', () => {
     const { n, data: d0, ids } = withSuggestions()
     let data = deleteProofSuggestion(d0, ids[0])
     expect(listTrash(data.trashEntries)[0]).toMatchObject({ label: '「見れる」', parentLabel: '第1話' })
-    expect(openProofSuggestionsFor(data, n.ids[1]).map((s) => s.id).sort()).toEqual([ids[1], ids[2]].sort())
+    expect(
+      openProofSuggestionsFor(data, n.ids[1])
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual([ids[1], ids[2]].sort())
     const ns = { ...n, data }
     const { acts } = splitEpisode(ns, n.ids[1], [5])
     const r = addProofSuggestion(ns.data, n.titleId, { pieceId: n.ids[1], excerpt: '来れる' })
@@ -241,7 +250,11 @@ describe('作品批評', () => {
     const p = addCritiquePrompt(n.data, n.titleId, { name: '構成', body: '構成を見て' })
     const r = addCritiqueResult(p.data, n.titleId, { promptId: p.result, resultMarkdown: '## 総評', runDate: '2026-10-28' })
     let data = r.data
-    expect(data.critiqueResults[r.result]).toMatchObject({ promptName: '構成', promptText: '構成を見て', manuscript: { chars: 5, pieces: 1 } })
+    expect(data.critiqueResults[r.result]).toMatchObject({
+      promptName: '構成',
+      promptText: '構成を見て',
+      manuscript: { chars: 5, pieces: 1 },
+    })
     data = updateCritiqueResult(data, r.result, { artifactUrl: ' https://claude.ai/public/artifacts/x ', note: 'メモ' })
     expect(data.critiqueResults[r.result]).toMatchObject({ artifactUrl: 'https://claude.ai/public/artifacts/x', note: 'メモ' })
     expect(errorOf(() => updateCritiqueResult(data, r.result, { artifactUrl: 'javascript:alert(1)' }))).toContain('https')
@@ -267,7 +280,17 @@ describe('戦略メモ', () => {
         heading: '公募の狙い',
         body: '長編賞を狙う',
         run_date: '2026-10-27',
-        contests: [{ name: '〇〇大賞', organizer: '〇〇社', url: 'https://example.com', deadline: '2027-03-31', limit: { min: 100, max: 200, unit: 'pages' }, fit: '合う', plan: '削る' }],
+        contests: [
+          {
+            name: '〇〇大賞',
+            organizer: '〇〇社',
+            url: 'https://example.com',
+            deadline: '2027-03-31',
+            limit: { min: 100, max: 200, unit: 'pages' },
+            fit: '合う',
+            plan: '削る',
+          },
+        ],
       },
       { source: 'claude', now: Date.UTC(2026, 9, 27) },
     )
@@ -342,7 +365,14 @@ describe('タイトル・ゴミ箱・バックアップ・修復', () => {
     expect(counts(data)).toEqual([0, 0, 0, 0, 1, 0])
     const entry = listTrash(data.trashEntries)[0]
     expect(trashContents(data, entry).map((r) => r.table)).toEqual(
-      expect.arrayContaining(['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults']),
+      expect.arrayContaining([
+        'proofSuggestions',
+        'proofBatches',
+        'revisionIdeas',
+        'strategyNotes',
+        'critiquePrompts',
+        'critiqueResults',
+      ]),
     )
     data = restoreTrashEntry(data, entry.id).data
     expect(counts(data)).toEqual([1, 1, 1, 1, 2, 1])
@@ -350,7 +380,12 @@ describe('タイトル・ゴミ箱・バックアップ・修復', () => {
   it('2.3 の記録はタイトルの最終更新に入れない', () => {
     const { data, titleId } = full()
     const before = titleLastEdited(data, titleId)
-    const later = { ...data, revisionIdeas: Object.fromEntries(Object.entries(data.revisionIdeas).map(([k, v]) => [k, { ...v, updatedAt: before + 10_000 }])) }
+    const later = {
+      ...data,
+      revisionIdeas: Object.fromEntries(
+        Object.entries(data.revisionIdeas).map(([k, v]) => [k, { ...v, updatedAt: before + 10_000 }]),
+      ),
+    }
     expect(titleLastEdited(later, titleId)).toBe(before)
   })
   it('バックアップは版 2 で書き出し、2.3 の記録も戻る。版 1（2.2 まで）のバックアップも読める', () => {

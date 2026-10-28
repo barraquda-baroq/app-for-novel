@@ -152,7 +152,9 @@ function outlineRow(
   if (isSplit(piece)) {
     const m = adoptedMetrics(data, piece)
     const acts = actParts(data, piece).length
-    return `${head} ${label} ${id} ${formatCount(m?.chars ?? 0)}字 ${progressRange(progress)} 幕×${acts}`.replace(/ +/g, ' ').trim()
+    return `${head} ${label} ${id} ${formatCount(m?.chars ?? 0)}字 ${progressRange(progress)} 幕×${acts}`
+      .replace(/ +/g, ' ')
+      .trim()
   }
   const v = activeVersion(data, piece)
   const all = piece.versionIds.filter((x) => data.versions[x]).length
@@ -181,14 +183,17 @@ export function outlineView(data: AppData, titleId: ID, opts: OutlineOptions = {
   let start = 0
   if (opts.cursor) {
     const c = decodeCursor(opts.cursor)
-    if (!c || c.k !== 'outline' || c.t !== titleId || typeof c.s !== 'number') return fail('cursor が読めません（目次の続きの cursor を渡してください）')
+    if (!c || c.k !== 'outline' || c.t !== titleId || typeof c.s !== 'number')
+      return fail('cursor が読めません（目次の続きの cursor を渡してください）')
     start = c.s
   }
   const maxRows = Math.max(10, opts.maxRows ?? 400)
   const includeActs = opts.includeActs !== false
   const detailed = opts.format === 'detailed'
   const progress = titleProgress(data, titleId)
-  const items = order.filter((x) => x.index >= range.from && x.index <= range.to && (chapterId === undefined || x.chapterId === chapterId))
+  const items = order.filter(
+    (x) => x.index >= range.from && x.index <= range.to && (chapterId === undefined || x.chapterId === chapterId),
+  )
   const lines: string[] = []
   if (start === 0) {
     lines.push(titleHeadline(data, title))
@@ -315,7 +320,9 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
           : `--- 第${part.number}幕（採用原稿なし）${aid} ---`
         units.push({
           header: k === 0 ? `${group}\n${head}` : head,
-          contHeader: part.version ? `--- 第${part.number}幕（続き・${part.version.name.trim() || '（名前のない稿）'}）${aid} ---` : head,
+          contHeader: part.version
+            ? `--- 第${part.number}幕（続き・${part.version.name.trim() || '（名前のない稿）'}）${aid} ---`
+            : head,
           groupHeader: groupCont,
           body: part.version ? bodyOf(part.version, ruby) : '',
           hash: part.version ? textHash(part.version.body) : '',
@@ -324,7 +331,14 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
         })
       })
       if (!parts.length)
-        units.push({ header: group, contHeader: groupCont, body: '', hash: '', index: item.index, name: `#${item.index} ${item.label}` })
+        units.push({
+          header: group,
+          contHeader: groupCont,
+          body: '',
+          hash: '',
+          index: item.index,
+          name: `#${item.index} ${item.label}`,
+        })
       return
     }
     const v = activeVersion(data, piece)
@@ -376,7 +390,8 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
     chapterId = ch.id
   }
   for (const item of order)
-    if (item.index >= range.from && item.index <= range.to && (chapterId === undefined || item.chapterId === chapterId)) pushPiece(item)
+    if (item.index >= range.from && item.index <= range.to && (chapterId === undefined || item.chapterId === chapterId))
+      pushPiece(item)
   return units
 }
 
@@ -423,7 +438,14 @@ function page(units: readonly Unit[], at: Pos, budget: number): { text: string; 
   let first = true
   while (u < units.length) {
     const unit = units[u]
-    const head = o > 0 ? (unit.groupHeader ? `${unit.groupHeader}\n${unit.contHeader}` : unit.contHeader) : first && unit.groupHeader && !unit.header.startsWith('===') ? `${unit.groupHeader}\n${unit.header}` : unit.header
+    const head =
+      o > 0
+        ? unit.groupHeader
+          ? `${unit.groupHeader}\n${unit.contHeader}`
+          : unit.contHeader
+        : first && unit.groupHeader && !unit.header.startsWith('===')
+          ? `${unit.groupHeader}\n${unit.header}`
+          : unit.header
     const rest = unit.body.length - o
     const need = head.length + 1 + rest + 1
     if (used + need <= budget || (first && rest === 0)) {
@@ -576,7 +598,10 @@ function searchUnits(data: AppData, titleId: ID, range: Range, scope: 'adopted' 
   for (const item of readingOrder(data, titleId)) {
     if (item.index < range.from || item.index > range.to) continue
     const targets: { piece: Piece; label: string }[] = isSplit(item.piece)
-      ? actParts(data, item.piece).map((a) => ({ piece: a.act, label: `${actRef(item, a.number)} ${item.label} 第${a.number}幕` }))
+      ? actParts(data, item.piece).map((a) => ({
+          piece: a.act,
+          label: `${actRef(item, a.number)} ${item.label} 第${a.number}幕`,
+        }))
       : [{ piece: item.piece, label: `#${item.index} ${item.label}` }]
     for (const t of targets) {
       const versions =
@@ -585,7 +610,10 @@ function searchUnits(data: AppData, titleId: ID, range: Range, scope: 'adopted' 
           : t.piece.versionIds.map((id) => data.versions[id]).filter((v): v is Version => Boolean(v))
       for (const v of versions) {
         out.push({
-          label: scope === 'adopted' ? t.label : `${t.label} ${v.name.trim() || '（名前のない稿）'}${t.piece.activeVersionId === v.id ? '（採用中）' : ''}`,
+          label:
+            scope === 'adopted'
+              ? t.label
+              : `${t.label} ${v.name.trim() || '（名前のない稿）'}${t.piece.activeVersionId === v.id ? '（採用中）' : ''}`,
           ids: `[${shortId('piece', t.piece.id)} ${shortId('version', v.id)}]`,
           version: v,
           index: item.index,

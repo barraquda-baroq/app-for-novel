@@ -107,7 +107,9 @@ export function proofreadingPrompt(c: PromptContext): string {
 }
 
 /** 作品批評の依頼文（批評プロンプトの本文を中に入れる） */
-export function critiqueManualPrompt(c: PromptContext & { prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'> | null; scope?: { from: string; to: string } }): string {
+export function critiqueManualPrompt(
+  c: PromptContext & { prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'> | null; scope?: { from: string; to: string } },
+): string {
   const example = JSON.stringify({
     tool: 'novel_add_critique_result',
     input: {
@@ -158,7 +160,10 @@ export function strategyPrompt(c: PromptContext): string {
         ],
       },
     },
-    { tool: 'novel_add_revision_ideas', input: { title_id: tid, items: [{ heading: '改稿案の見出し', body: '案の中身', pieces: ['#12'] }] } },
+    {
+      tool: 'novel_add_revision_ideas',
+      input: { title_id: tid, items: [{ heading: '改稿案の見出し', body: '案の中身', pieces: ['#12'] }] },
+    },
   ])
   return [
     `これから『${c.title.name}』の目次・あらすじ・全体戦略・応募計画と、採用原稿（${c.rangeLabel}）を送ります。今日は ${c.today}（日本時間）です。${partsNotice(c.parts)}`,
@@ -188,7 +193,9 @@ function strategyMaterial(data: AppData, title: Title): string {
       s.minChars !== null || s.maxChars !== null
         ? `・規定 ${s.minChars !== null ? formatCount(s.minChars) : ''}〜${s.maxChars !== null ? formatCount(s.maxChars) : ''}${s.limitUnit === 'pages' ? '枚' : '字'}`
         : ''
-    lines.push(`- ${s.contestName.trim() || '（コンテスト名未設定）'}（${submissionStatusLabel(s.status)}${s.deadline ? `・締切 ${s.deadline}` : ''}${limit}）${s.url ? ` ${s.url}` : ''}`)
+    lines.push(
+      `- ${s.contestName.trim() || '（コンテスト名未設定）'}（${submissionStatusLabel(s.status)}${s.deadline ? `・締切 ${s.deadline}` : ''}${limit}）${s.url ? ` ${s.url}` : ''}`,
+    )
   }
   return lines.join('\n')
 }
@@ -284,7 +291,9 @@ export function buildManualParts(data: AppData, titleId: ID, opts: ManualPartsOp
   const parts = bodies.map((b, i) => {
     const top = `【Novel Studio パート ${i + 1}/${total}】`
     const end =
-      i === total - 1 ? `【全 ${total} パートの終わり。依頼に取りかかってください】` : `【パート ${i + 1}/${total} の終わり。続きがあります】`
+      i === total - 1
+        ? `【全 ${total} パートの終わり。依頼に取りかかってください】`
+        : `【パート ${i + 1}/${total} の終わり。続きがあります】`
     return `${top}\n${b}\n${end}`
   })
   return { ok: true, parts, totalChars: parts.reduce((a, p) => a + p.length, 0), rangeLabel }
@@ -294,7 +303,10 @@ export function buildManualParts(data: AppData, titleId: ID, opts: ManualPartsOp
  * コネクタを使う時に Claude へ渡す批評の依頼（作品批評の「Claude 用にコピー」）。本文はコネクタで読んでもらい、
  * 結果は novel_add_critique_result で記録してもらう
  */
-export function critiqueConnectorPrompt(title: Pick<Title, 'id' | 'name'>, prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'>): string {
+export function critiqueConnectorPrompt(
+  title: Pick<Title, 'id' | 'name'>,
+  prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'>,
+): string {
   return [
     `Novel Studio コネクタで『${title.name}』[${shortId('title', title.id)}] の採用原稿を読み（novel_read_text。ruby は strip で）、次の依頼のとおりに批評してください。`,
     '',

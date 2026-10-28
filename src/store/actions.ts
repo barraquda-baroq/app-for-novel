@@ -111,8 +111,10 @@ export const actions = {
   setTitleClaudeAccess: (titleId: ID, access: ClaudeAccess) => apply((d) => C.setTitleClaudeAccess(d, titleId, access)),
 
   // 2.3: 改稿案
-  addRevisionIdea: (titleId: ID, init?: Parameters<typeof C.addRevisionIdea>[2]) => run((d) => C.addRevisionIdea(d, titleId, init)),
-  updateRevisionIdea: (id: ID, patch: Parameters<typeof C.updateRevisionIdea>[2]) => apply((d) => C.updateRevisionIdea(d, id, patch)),
+  addRevisionIdea: (titleId: ID, init?: Parameters<typeof C.addRevisionIdea>[2]) =>
+    run((d) => C.addRevisionIdea(d, titleId, init)),
+  updateRevisionIdea: (id: ID, patch: Parameters<typeof C.updateRevisionIdea>[2]) =>
+    apply((d) => C.updateRevisionIdea(d, id, patch)),
   setRevisionIdeaChecked: (id: ID, checked: boolean) => apply((d) => C.setRevisionIdeaChecked(d, id, checked)),
   moveRevisionIdeaStep: (id: ID, dir: -1 | 1) => apply((d) => C.moveRevisionIdeaStep(d, id, dir)),
   moveRevisionIdeaTo: (id: ID, index: number) => apply((d) => C.moveRevisionIdeaTo(d, id, index)),
@@ -127,7 +129,8 @@ export const actions = {
   setProofDone: (id: ID, done: boolean) => apply((d) => C.setProofDone(d, id, done)),
   deleteProofSuggestion: (id: ID) => apply((d) => C.deleteProofSuggestion(d, id)),
   /** 「チェック済みを削除」（ゴミ箱の1件にまとめる。ids を渡すとその中のチェックしたものだけ） */
-  deleteCheckedProofSuggestions: (titleId: ID, ids?: readonly ID[]) => apply((d) => C.deleteCheckedProofSuggestions(d, titleId, ids)),
+  deleteCheckedProofSuggestions: (titleId: ID, ids?: readonly ID[]) =>
+    apply((d) => C.deleteCheckedProofSuggestions(d, titleId, ids)),
 
   // 2.3: 作品批評
   addCritiquePrompt: (titleId: ID | null, init?: Parameters<typeof C.addCritiquePrompt>[2]) =>

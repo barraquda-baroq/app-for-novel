@@ -34,7 +34,15 @@ describe('推敲案の種類', () => {
 describe('内容から作る id', () => {
   it('形は c + 種類の1文字 + - + 指紋（40字以内・[a-z0-9.-] だけ）', () => {
     const ids = [
-      proofSuggestionId({ titleId: 't', pieceId: 'p', contextBefore: '', excerpt: '見れる', occurrence: 0, category: 'ra_nuki', suggestion: '見られる' }),
+      proofSuggestionId({
+        titleId: 't',
+        pieceId: 'p',
+        contextBefore: '',
+        excerpt: '見れる',
+        occurrence: 0,
+        category: 'ra_nuki',
+        suggestion: '見られる',
+      }),
       proofRunId('t', 'ワードサーチ', '2026-10-28'),
       proofBatchId('r', ['b', 'a'], ['y', 'x']),
       revisionIdeaId('t', '見出し', '本文'.repeat(10_000)),
@@ -89,7 +97,17 @@ describe('見せる範囲（claudeAccess）', () => {
       },
       critiquePrompts: {
         q1: { id: 'q1', v: 1, source: 'manual', titleId: null, name: '共通', body: '', order: 0, createdAt: 0, updatedAt: 0 },
-        q2: { id: 'q2', v: 1, source: 'manual', titleId: b.titleId, name: '隠す', body: '', order: 0, createdAt: 0, updatedAt: 0 },
+        q2: {
+          id: 'q2',
+          v: 1,
+          source: 'manual',
+          titleId: b.titleId,
+          name: '隠す',
+          body: '',
+          order: 0,
+          createdAt: 0,
+          updatedAt: 0,
+        },
       },
       snapshotTexts: { s: { id: 's', body: '控え' } },
     }
@@ -120,7 +138,13 @@ describe('話の指し方', () => {
   it('読む順（特殊ブロックも数える）', () => {
     const n = sample()
     const order = readingOrder(n.data, n.titleId)
-    expect(order.map((x) => `${x.index}:${x.fullLabel}`)).toEqual(['1:プロローグ', '2:第1話', '3:第2話　雨', '4:第3話', '5:第4話'])
+    expect(order.map((x) => `${x.index}:${x.fullLabel}`)).toEqual([
+      '1:プロローグ',
+      '2:第1話',
+      '3:第2話　雨',
+      '4:第3話',
+      '5:第4話',
+    ])
   })
   it('短い id・id・#n・#n.m・第n話・第n話 第m幕・見出し', () => {
     const n = sample()

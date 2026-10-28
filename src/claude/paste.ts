@@ -41,7 +41,10 @@ export function extractBlock(text: string): ExtractResult {
   if (open < 0) {
     const t = text.trim()
     if (t.startsWith('{') || t.startsWith('[')) return { ok: true, json: t, fenced: false }
-    return { ok: false, error: `\`\`\`${PASTE_FENCE} のコードブロックが見つかりません。Claude の答えを最後までコピーして貼り付けてください` }
+    return {
+      ok: false,
+      error: `\`\`\`${PASTE_FENCE} のコードブロックが見つかりません。Claude の答えを最後までコピーして貼り付けてください`,
+    }
   }
   const body: string[] = []
   for (let i = open + 1; i < lines.length; i++) {
@@ -65,22 +68,29 @@ export function parseCalls(json: string): ParseCallsResult {
       error: `JSON として読めません（${e instanceof Error ? e.message : String(e)}）。コードブロックが途中で切れていないか確かめてください`,
     }
   }
-  if (v && typeof v === 'object' && !Array.isArray(v) && Array.isArray((v as { calls?: unknown }).calls)) v = (v as { calls: unknown[] }).calls
+  if (v && typeof v === 'object' && !Array.isArray(v) && Array.isArray((v as { calls?: unknown }).calls))
+    v = (v as { calls: unknown[] }).calls
   const list = Array.isArray(v) ? v : [v]
   if (!list.length) return { ok: false, error: '呼び出しが1つもありません' }
   if (list.length > MAX_PASTE_CALLS) return { ok: false, error: `1回に貼り付けられるのは ${MAX_PASTE_CALLS} 個までです` }
   const calls: WriteToolCall[] = []
   for (const [i, raw] of list.entries()) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: `${i + 1}つ目の形が違います（{"tool": …, "input": {…}}）` }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+      return { ok: false, error: `${i + 1}つ目の形が違います（{"tool": …, "input": {…}}）` }
     const o = raw as Record<string, unknown>
-    if (!isWriteTool(o.tool)) return { ok: false, error: `${i + 1}つ目の tool '${String(o.tool)}' は使えません（使えるもの: ${Object.keys(WRITE_TOOL_LABELS).join(', ')}）` }
+    if (!isWriteTool(o.tool))
+      return {
+        ok: false,
+        error: `${i + 1}つ目の tool '${String(o.tool)}' は使えません（使えるもの: ${Object.keys(WRITE_TOOL_LABELS).join(', ')}）`,
+      }
     let input = o.input
     if (input === undefined) {
       const { tool: _tool, ...rest } = o
       void _tool
       input = rest
     }
-    if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: `${i + 1}つ目の input の形が違います` }
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      return { ok: false, error: `${i + 1}つ目の input の形が違います` }
     calls.push({ tool: o.tool, input } as WriteToolCall)
   }
   return { ok: true, calls }
@@ -178,7 +188,12 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
       seen.add(key)
       records.push(r)
     }
-    previews.push({ tool: call.tool, label: WRITE_TOOL_LABELS[call.tool], result, summary: result.ok ? summarizeItems(result.items) : (result.error ?? '') })
+    previews.push({
+      tool: call.tool,
+      label: WRITE_TOOL_LABELS[call.tool],
+      result,
+      summary: result.ok ? summarizeItems(result.items) : (result.error ?? ''),
+    })
   }
   const created = records.filter((r) => r.table !== 'proofBatches').length
   return { ok: true, calls: previews, records, created, plain }

@@ -51,7 +51,9 @@ async function googleUser(account: string): Promise<Owner> {
   const app = initializeApp({ projectId: PROJECT, apiKey: 'fake-api-key', authDomain: 'localhost' }, `rules-${account}-${++seq}`)
   const auth = getAuth(app)
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
-  const cred = GoogleAuthProvider.credential(JSON.stringify({ sub: account, email: `${account}@example.com`, email_verified: true }))
+  const cred = GoogleAuthProvider.credential(
+    JSON.stringify({ sub: account, email: `${account}@example.com`, email_verified: true }),
+  )
   const { user } = await signInWithCredential(auth, cred)
   const fs = initializeFirestore(app, { localCache: memoryLocalCache() })
   connectFirestoreEmulator(fs, '127.0.0.1', 8080)
@@ -292,7 +294,14 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     ]
     for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
     // 6つの表はどれも作れる
-    for (const table of ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults'])
+    for (const table of [
+      'proofSuggestions',
+      'proofBatches',
+      'revisionIdeas',
+      'strategyNotes',
+      'critiquePrompts',
+      'critiqueResults',
+    ])
       expect([table, await connectorCommit(anon, owner.uid, [connectorRecord(table, `c-${table}`)])]).toEqual([table, 200])
   })
 
@@ -316,14 +325,21 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     const model = await fetch(`${FS}/users/${owner.uid}/meta/app`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anon.token}` },
-      body: JSON.stringify({ fields: { model: v(9), appVersion: v('9'), updatedAt: { timestampValue: new Date().toISOString() } } }),
+      body: JSON.stringify({
+        fields: { model: v(9), appVersion: v('9'), updatedAt: { timestampValue: new Date().toISOString() } },
+      }),
     })
     expect(model.status).toBe(403)
     // 連携の uid に Google のアカウントを書いても、そのアカウントはコネクタにならない
     const google = await googleUser(account('google-connector'))
     await setDoc(connectorRef(), pairing(true, google.uid))
     await expect(getDoc(doc(google.fs, 'users', owner.uid, 'records', 'titles:t1'))).rejects.toThrow()
-    await expect(setDoc(doc(google.fs, 'users', owner.uid, 'records', 'revisionIdeas:cg-1'), recordDoc('revisionIdeas', 'cg-1', {}, 'claude-connector'))).rejects.toThrow()
+    await expect(
+      setDoc(
+        doc(google.fs, 'users', owner.uid, 'records', 'revisionIdeas:cg-1'),
+        recordDoc('revisionIdeas', 'cg-1', {}, 'claude-connector'),
+      ),
+    ).rejects.toThrow()
     // 元に戻す
     await setDoc(connectorRef(), pairing())
     expect(await connectorQuery(anon, owner.uid)).toBeGreaterThan(0)

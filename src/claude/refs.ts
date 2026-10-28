@@ -176,11 +176,14 @@ export function resolvePiece(data: AppData, titleId: ID, ref: string, order?: re
   }
 
   // 特殊ブロックの見出し・「第12話　題」の題まで含めた表記
-  const byLabel = list.filter((x) => normalizeRef(x.fullLabel) === n || (x.piece.kind === 'special' && normalizeRef(x.label) === n))
-  if (byLabel.length) return pick(
-    byLabel.map((x) => x.piece),
-    r,
+  const byLabel = list.filter(
+    (x) => normalizeRef(x.fullLabel) === n || (x.piece.kind === 'special' && normalizeRef(x.label) === n),
   )
+  if (byLabel.length)
+    return pick(
+      byLabel.map((x) => x.piece),
+      r,
+    )
   return fail('not_found', [], `話 '${r}' が見つかりません`)
 }
 

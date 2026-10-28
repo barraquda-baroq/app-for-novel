@@ -269,12 +269,35 @@ describe('幕（2.2）: 幕の構成を片方の端末だけが変えていた�
 })
 
 describe('2.3 の記録のマージ', () => {
-  const idea = { id: 'r', titleId: 't', heading: '案', body: '元の案', checked: false, checkedAt: null, pieceIds: ['p1'], order: 0, updatedAt: 1 }
+  const idea = {
+    id: 'r',
+    titleId: 't',
+    heading: '案',
+    body: '元の案',
+    checked: false,
+    checkedAt: null,
+    pieceIds: ['p1'],
+    order: 0,
+    updatedAt: 1,
+  }
   it('改稿案: チェックなどの短い項目は項目ごとに合わせ（両方で変えたらこの端末）、本文が両方で変わればつなぐ', () => {
     const mine = { ...idea, checked: true, checkedAt: 5, body: '元の案。こちらで足した', updatedAt: 5 }
-    const theirs = { ...idea, heading: '向こうの見出し', checked: false, body: '元の案。向こうで足した', pieceIds: ['p1', 'p2'], updatedAt: 6 }
+    const theirs = {
+      ...idea,
+      heading: '向こうの見出し',
+      checked: false,
+      body: '元の案。向こうで足した',
+      pieceIds: ['p1', 'p2'],
+      updatedAt: 6,
+    }
     const r = mergeRemote('revisionIdeas', idea, mine, theirs, D)
-    expect(r.record).toMatchObject({ heading: '向こうの見出し', checked: true, checkedAt: 5, pieceIds: ['p1', 'p2'], updatedAt: 6 })
+    expect(r.record).toMatchObject({
+      heading: '向こうの見出し',
+      checked: true,
+      checkedAt: 5,
+      pieceIds: ['p1', 'p2'],
+      updatedAt: 6,
+    })
     expect((r.record as unknown as { body: string }).body).toContain('こちらで足した')
     expect((r.record as unknown as { body: string }).body).toContain('向こうで足した')
     expect(r.joined).toEqual(['body'])

@@ -55,7 +55,13 @@ const DISPLAY_ORDER: TableName[] = [
 ]
 
 /** 2.3（Claude 連携）の表は、1件以上ある時だけ出す（使っていない人の一覧・確認文を長くしない） */
-const SHOWN_IF_ANY = new Set<TableName>(['revisionIdeas', 'proofSuggestions', 'strategyNotes', 'critiquePrompts', 'critiqueResults'])
+const SHOWN_IF_ANY = new Set<TableName>([
+  'revisionIdeas',
+  'proofSuggestions',
+  'strategyNotes',
+  'critiquePrompts',
+  'critiqueResults',
+])
 
 export interface TableCount {
   table: TableName

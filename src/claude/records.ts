@@ -282,7 +282,8 @@ function checkText(v: unknown, name: string, max: number, required: boolean): st
   if (v === undefined || v === null) return required ? `${name} がありません` : null
   if (!isStr(v)) return `${name} は文字列にしてください`
   if (required && !v.trim()) return `${name} が空です`
-  if (charLength(v) > max) return `${name} が長すぎます（${max.toLocaleString('ja-JP')}字まで。いま ${charLength(v).toLocaleString('ja-JP')}字）`
+  if (charLength(v) > max)
+    return `${name} が長すぎます（${max.toLocaleString('ja-JP')}字まで。いま ${charLength(v).toLocaleString('ja-JP')}字）`
   return null
 }
 
@@ -399,7 +400,8 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
       checkText(item.suggestion, 'suggestion', RECORD_LIMITS.suggestion, false) ??
       checkText(item.reason, 'reason', RECORD_LIMITS.reason, true)
     if (err) return bad(err, isStr(item.excerpt) ? `「${short(item.excerpt)}」` : '推敲案')
-    if (item.important !== undefined && typeof item.important !== 'boolean') return bad('important は true か false にしてください')
+    if (item.important !== undefined && typeof item.important !== 'boolean')
+      return bad('important は true か false にしてください')
 
     const resolved = resolvePiece(data, title.id, item.piece, order)
     if (!resolved.ok) {
@@ -434,7 +436,8 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
         label: proofLabel(where, null, item.excerpt),
         hint: `同じ箇所が${where}に${located.count}か所あります。context_before に直前の文字（${RECORD_LIMITS.contextBefore}字以内）を入れて区別してください`,
         candidates: located.candidates.map(
-          (c) => `${pieceLabelOf(data, data.pieces[c.pieceId] ?? piece, order)} ¶${c.paragraph} [...]${c.before}【${item.excerpt}】${c.after}[...]`,
+          (c) =>
+            `${pieceLabelOf(data, data.pieces[c.pieceId] ?? piece, order)} ¶${c.paragraph} [...]${c.before}【${item.excerpt}】${c.after}[...]`,
         ),
       })
       return
@@ -444,7 +447,8 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
     const category: ProofCategory = known ? (item.category as ProofCategory) : 'other'
     const categoryLabel =
       item.category_label?.trim() || (known ? PROOF_CATEGORY_LABELS[category] : short(item.category, RECORD_LIMITS.categoryLabel))
-    if (!known) notes.push(`category '${short(item.category, 20)}' は使えないため other にしました（使える種類: ${PROOF_CATEGORY_GUIDE}）`)
+    if (!known)
+      notes.push(`category '${short(item.category, 20)}' は使えないため other にしました（使える種類: ${PROOF_CATEGORY_GUIDE}）`)
     const suggestion = item.suggestion ?? ''
     const id = proofSuggestionId({
       titleId: title.id,
@@ -561,7 +565,8 @@ export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx
   if (!t.title) return fail(t.error!, t.candidates)
   const title = t.title
   if (!Array.isArray(input.items)) return fail('items がありません（改稿案の配列）')
-  if (input.items.length > RECORD_LIMITS.revisionItems) return fail(`items が多すぎます（1回 ${RECORD_LIMITS.revisionItems} 件まで）`)
+  if (input.items.length > RECORD_LIMITS.revisionItems)
+    return fail(`items が多すぎます（1回 ${RECORD_LIMITS.revisionItems} 件まで）`)
   const order = readingOrder(data, title.id)
   const notes: string[] = []
   const items: ItemResult[] = []
@@ -581,7 +586,12 @@ export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx
     if (err) return items.push({ index, status: 'invalid', label, hint: err })
     const refs = item.pieces ?? []
     if (!Array.isArray(refs) || refs.length > RECORD_LIMITS.revisionPieces)
-      return items.push({ index, status: 'invalid', label, hint: `pieces は話の指し方の配列（${RECORD_LIMITS.revisionPieces}件まで）にしてください` })
+      return items.push({
+        index,
+        status: 'invalid',
+        label,
+        hint: `pieces は話の指し方の配列（${RECORD_LIMITS.revisionPieces}件まで）にしてください`,
+      })
     const pieceIds: ID[] = []
     const missing: string[] = []
     for (const ref of refs) {
@@ -672,7 +682,14 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
     return {
       ok: true,
       records: [],
-      items: [{ index: 0, status: 'invalid', label, hint: `contests はコンテストの配列（${RECORD_LIMITS.contests}件まで）にしてください` }],
+      items: [
+        {
+          index: 0,
+          status: 'invalid',
+          label,
+          hint: `contests はコンテストの配列（${RECORD_LIMITS.contests}件まで）にしてください`,
+        },
+      ],
       notes: [],
     }
   const notes: string[] = []
@@ -685,7 +702,13 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
   const runDate = runDateOf(input.run_date, ctx, notes)
   const id = strategyNoteId(title.id, runDate, input.heading, input.body)
   const status = existing(data, ctx, 'strategyNotes', id, new Set())
-  if (status) return { ok: true, records: [], items: [{ index: 0, status, id, table: 'strategyNotes', label, hint: STATUS_HINTS[status] }], notes }
+  if (status)
+    return {
+      ok: true,
+      records: [],
+      items: [{ index: 0, status, id, table: 'strategyNotes', label, hint: STATUS_HINTS[status] }],
+      notes,
+    }
   const model = modelOf(input.model)
   const rec: StrategyNote = {
     id,
@@ -697,7 +720,8 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
     appliedAt: null,
     ...(model ? { model } : {}),
   }
-  if (!recordFits(rec)) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '戦略メモが大きすぎます' }], notes }
+  if (!recordFits(rec))
+    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '戦略メモが大きすぎます' }], notes }
   return {
     ok: true,
     records: [{ table: 'strategyNotes', record: rec }],
@@ -710,7 +734,8 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
 
 export function buildCritiquePrompt(data: AppData, input: CritiquePromptInput, ctx: BuildContext): BuildResult {
   if (!isObj(input)) return fail('入力の形が違います')
-  if (input.scope !== 'title' && input.scope !== 'shared') return fail("scope は 'title'（このタイトル）か 'shared'（共通）にしてください")
+  if (input.scope !== 'title' && input.scope !== 'shared')
+    return fail("scope は 'title'（このタイトル）か 'shared'（共通）にしてください")
   let titleId: ID | null = null
   if (input.scope === 'title') {
     const t = writableTitle(data, input.title_id, ctx)
@@ -724,7 +749,12 @@ export function buildCritiquePrompt(data: AppData, input: CritiquePromptInput, c
   const id = critiquePromptId(titleId, input.name, input.body)
   const status = existing(data, ctx, 'critiquePrompts', id, new Set())
   if (status)
-    return { ok: true, records: [], items: [{ index: 0, status, id, table: 'critiquePrompts', label, hint: STATUS_HINTS[status] }], notes: [] }
+    return {
+      ok: true,
+      records: [],
+      items: [{ index: 0, status, id, table: 'critiquePrompts', label, hint: STATUS_HINTS[status] }],
+      notes: [],
+    }
   const order =
     Object.values(data.critiquePrompts)
       .filter((p) => p.titleId === titleId)
@@ -780,7 +810,12 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
   let url = ''
   if (input.artifact_url !== undefined && input.artifact_url !== null && input.artifact_url !== '') {
     if (!isHttpsUrl(input.artifact_url))
-      return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: 'artifact_url は https の URL にしてください' }], notes }
+      return {
+        ok: true,
+        records: [],
+        items: [{ index: 0, status: 'invalid', label, hint: 'artifact_url は https の URL にしてください' }],
+        notes,
+      }
     url = input.artifact_url.trim()
   }
   if (!markdown.trim() && !url)
@@ -809,7 +844,13 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
   const promptText = input.prompt_text ?? prompt?.body ?? ''
   const id = critiqueResultId({ titleId: title.id, runDate, promptText, resultMarkdown: markdown, artifactUrl: url })
   const status = existing(data, ctx, 'critiqueResults', id, new Set())
-  if (status) return { ok: true, records: [], items: [{ index: 0, status, id, table: 'critiqueResults', label, hint: STATUS_HINTS[status] }], notes }
+  if (status)
+    return {
+      ok: true,
+      records: [],
+      items: [{ index: 0, status, id, table: 'critiqueResults', label, hint: STATUS_HINTS[status] }],
+      notes,
+    }
   const rec: CritiqueResult = {
     id,
     ...base(ctx, title.id),
@@ -824,7 +865,8 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
     model: modelOf(input.model) ?? '',
     note: '',
   }
-  if (!recordFits(rec)) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '批評の結果が大きすぎます' }], notes }
+  if (!recordFits(rec))
+    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '批評の結果が大きすぎます' }], notes }
   return {
     ok: true,
     records: [{ table: 'critiqueResults', record: rec }],

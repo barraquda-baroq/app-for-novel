@@ -5,9 +5,12 @@ import { shortId } from './refs'
 import { cutPoint, decodeCursor, encodeCursor, outlineView, readTextPages, readTextView, searchTextView } from './view'
 
 function sample() {
-  const n = novel(['窓から見れる景色は美しい。\n二段落目。', '猫が来た。\n猫が来た。', '第一幕の本文。\n第二幕の｜東京《とうきょう》駅。'], {
-    subtitles: ['出発', '', '雨'],
-  })
+  const n = novel(
+    ['窓から見れる景色は美しい。\n二段落目。', '猫が来た。\n猫が来た。', '第一幕の本文。\n第二幕の｜東京《とうきょう》駅。'],
+    {
+      subtitles: ['出発', '', '雨'],
+    },
+  )
   const { acts } = splitEpisode(n, n.ids[2], [8])
   return { ...n, acts }
 }
@@ -57,7 +60,9 @@ describe('採用原稿（readTextView）', () => {
     const p = (id: string) => shortId('piece', id)
     expect(r.text).toContain(`=== #1 第1話　出発（第1稿・18字・0–42%）[${p(n.ids[0])} v:`)
     expect(r.text).toContain('窓から見れる景色は美しい。\n二段落目。')
-    expect(r.text).toContain(`=== #3 第3話　雨（幕に分けた話・2幕・15字・65–100%）[${p(n.ids[2])}] ===\n--- 第1幕（第1稿・7字・65–81%）[${p(n.acts[0])} v:`)
+    expect(r.text).toContain(
+      `=== #3 第3話　雨（幕に分けた話・2幕・15字・65–100%）[${p(n.ids[2])}] ===\n--- 第1幕（第1稿・7字・65–81%）[${p(n.acts[0])} v:`,
+    )
     expect(r.text).toContain('第二幕の｜東京《とうきょう》駅。')
     expect(r.nextCursor).toBeNull()
     const strip = ok(readTextView(n.data, n.titleId, { ruby: 'strip', from: '#3' }))
@@ -81,7 +86,9 @@ describe('採用原稿（readTextView）', () => {
     let cursor: string | null = null
     let text = ''
     for (let i = 0; i < 20; i++) {
-      const r: { text: string; nextCursor: string | null } = ok(readTextView(n.data, n.titleId, { charBudget: 2_000, ...(cursor ? { cursor } : {}) }))
+      const r: { text: string; nextCursor: string | null } = ok(
+        readTextView(n.data, n.titleId, { charBudget: 2_000, ...(cursor ? { cursor } : {}) }),
+      )
       text += `${r.text.replace(/\n続き: cursor=.*$/, '')}\n`
       cursor = r.nextCursor
       if (!cursor) break

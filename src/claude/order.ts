@@ -54,7 +54,9 @@ export function openProofSuggestionsFor(data: AppData, pieceId: ID): ProofSugges
   const ids = new Set<ID>([pieceId])
   if (piece && isSplit(piece)) for (const id of piece.actIds ?? []) ids.add(id)
   return sortProofSuggestions(
-    Object.values(data.proofSuggestions).filter((s) => !s.done && (ids.has(s.pieceId) || (s.parentId !== null && ids.has(s.parentId)))),
+    Object.values(data.proofSuggestions).filter(
+      (s) => !s.done && (ids.has(s.pieceId) || (s.parentId !== null && ids.has(s.parentId))),
+    ),
   )
 }
 

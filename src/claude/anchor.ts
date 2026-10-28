@@ -271,7 +271,10 @@ function contextScore(body: string, start: number, end: number, before: string, 
  * 変わっていれば、推敲案の話（幕に分けられていれば各幕）、話が無くなっていれば属していた話（幕をつないだ・解除した後）の
  * 採用原稿で excerpt を探し、控えた前後の文字が最も合う所（同じなら控えた位置に近い所）を moved で返す。無ければ lost
  */
-export function reanchor(data: AppData, s: Pick<ProofSuggestion, 'pieceId' | 'parentId' | 'versionId' | 'anchor' | 'excerpt'>): ReanchorResult {
+export function reanchor(
+  data: AppData,
+  s: Pick<ProofSuggestion, 'pieceId' | 'parentId' | 'versionId' | 'anchor' | 'excerpt'>,
+): ReanchorResult {
   const piece = data.pieces[s.pieceId]
   const parent = s.parentId ? data.pieces[s.parentId] : undefined
   const host = piece ?? parent

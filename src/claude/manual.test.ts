@@ -9,9 +9,7 @@ import { WRITE_TOOLS } from './records'
 const NOW = Date.UTC(2026, 9, 28, 3, 0)
 
 function bigNovel(episodes = 40) {
-  return novel(
-    Array.from({ length: episodes }, (_, i) => `${'窓から見れる景色。'.repeat(300)}${i}\n${'猫が来た。'.repeat(200)}`),
-  )
+  return novel(Array.from({ length: episodes }, (_, i) => `${'窓から見れる景色。'.repeat(300)}${i}\n${'猫が来た。'.repeat(200)}`))
 }
 
 describe('依頼文とパート分け', () => {
@@ -64,11 +62,18 @@ describe('依頼文とパート分け', () => {
     expect(strat.parts[0]).toContain('=== 目次 ===')
     expect(strat.parts[0]).toContain('=== 全体戦略 ===')
     expect(strat.parts[0]).not.toContain('｜東京')
-    expect(critiqueConnectorPrompt(n.data.titles[n.titleId], p.data.critiquePrompts[p.result])).toContain('novel_add_critique_result')
+    expect(critiqueConnectorPrompt(n.data.titles[n.titleId], p.data.critiquePrompts[p.result])).toContain(
+      'novel_add_critique_result',
+    )
   })
   it('範囲を指定できる', () => {
     const n = novel(['一話', '二話', '三話'])
-    const r = buildManualParts(n.data, n.titleId, { task: 'proofreading', today: '2026-10-28', selection: { from: '#2', to: '#3' }, rangeLabel: '第2話〜第3話' })
+    const r = buildManualParts(n.data, n.titleId, {
+      task: 'proofreading',
+      today: '2026-10-28',
+      selection: { from: '#2', to: '#3' },
+      rangeLabel: '第2話〜第3話',
+    })
     if (!r.ok) throw new Error(r.error)
     expect(r.parts[0]).not.toContain('=== #1 第1話')
     expect(r.parts[0]).toContain('=== #3 第3話')
@@ -129,7 +134,10 @@ describe('貼り付け', () => {
     })
     if (!p.ok) throw new Error(p.error)
     expect(p.plain).toBe(true)
-    expect(p.records[0].record).toMatchObject({ resultMarkdown: '## 総評\nよく書けています', artifactUrl: 'https://claude.ai/public/artifacts/x' })
+    expect(p.records[0].record).toMatchObject({
+      resultMarkdown: '## 総評\nよく書けています',
+      artifactUrl: 'https://claude.ai/public/artifacts/x',
+    })
     const wrong = previewPaste(n.data, answer({ tool: 'novel_add_revision_ideas', input: { items: [] } }), {
       titleId: n.titleId,
       now: NOW,
