@@ -9,7 +9,7 @@ import { actions } from '../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../store/appStore'
 import { useToasts } from '../../store/uiStore'
 import { downloadFile } from '../../ui/browser'
-import { EpisodeExportDialog } from './EpisodeExportDialog'
+import { EpisodeExportDialog, progressAnnouncement } from './EpisodeExportDialog'
 import type { DirectoryHandleLike } from './exportLogic'
 
 vi.mock('../../ui/browser', async (importOriginal) => {
@@ -51,7 +51,8 @@ function seed(): ID {
   return titleId
 }
 
-function fakeDirectory() {
+/** 書いたファイルを覚えるフォルダの代わり。failOn のファイルは書く時に error で失敗する */
+function fakeDirectory(opts: { failOn?: string; error?: Error } = {}) {
   const files = new Map<string, string>()
   const dir: DirectoryHandleLike = {
     name: '原稿',
@@ -60,6 +61,7 @@ function fakeDirectory() {
         let buf = ''
         return {
           write: async (data: string) => {
+            if (name === opts.failOn) throw opts.error ?? new Error('ディスクがいっぱいです')
             buf += data
           },
           close: async () => {
@@ -137,6 +139,96 @@ describe('各話テキスト書き出し', () => {
     await waitFor(() => expect(toasts().at(-1)?.[0]).toBe('error'))
     expect(toasts().at(-1)?.[1]).toContain('フォルダに書き込む許可がない')
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('途中のファイルで書けなかったら、ファイル名と書けた数を知らせ、ダイアログは開いたまま書き出し直せる', async () => {
+    const user = userEvent.setup()
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const date = today()
+    const { dir, files } = fakeDirectory({ failOn: `${date}月の庭_第3話.txt` })
+    win.showDirectoryPicker = vi.fn(async () => dir)
+    const titleId = seed()
+    const onClose = vi.fn()
+    render(<EpisodeExportDialog titleId={titleId} onClose={onClose} />)
+    await user.click(screen.getByTestId('export-submit'))
+    await waitFor(() =>
+      expect(toasts().at(-1)).toEqual([
+        'error',
+        `「${date}月の庭_第3話.txt」を書き出せませんでした（1件は書き出し済みです）: ディスクがいっぱいです`,
+      ]),
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    const submit = screen.getByTestId<HTMLButtonElement>('export-submit')
+    expect(submit.textContent).toBe('書き出す')
+    expect(submit.disabled).toBe(false)
+    expect(submit.getAttribute('aria-disabled')).toBeNull()
+    expect(screen.getByTestId('export-progress-status').textContent).toBe('')
+    expect([...files.keys()]).toEqual([`${date}月の庭_第1話.txt`])
+    expect(errorLog).toHaveBeenCalledTimes(1)
+    errorLog.mockRestore()
+  })
+
+  it('途中で書き込みが中断されたら（AbortError）、「やめた」ではなく中断のエラーとして知らせる', async () => {
+    const user = userEvent.setup()
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const date = today()
+    const { dir } = fakeDirectory({
+      failOn: `${date}月の庭_第3話.txt`,
+      error: new DOMException('The operation was aborted.', 'AbortError'),
+    })
+    win.showDirectoryPicker = vi.fn(async () => dir)
+    const onClose = vi.fn()
+    render(<EpisodeExportDialog titleId={seed()} onClose={onClose} />)
+    await user.click(screen.getByTestId('export-submit'))
+    await waitFor(() => expect(toasts().at(-1)).toEqual(['error', '書き出しが中断されました（1件は書き出し済みです）']))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('export-submit').textContent).toBe('書き出す')
+    expect(errorLog).not.toHaveBeenCalled()
+    errorLog.mockRestore()
+  })
+
+  it('書き出している間もボタンはフォーカスを残し（押せない印は aria-disabled）、二度押しでは書き出さない。進み具合は読み上げる', async () => {
+    const user = userEvent.setup()
+    const { dir } = fakeDirectory()
+    let release: (d: DirectoryHandleLike) => void = () => {}
+    const picker = vi.fn(() => new Promise<DirectoryHandleLike>((resolve) => (release = resolve)))
+    win.showDirectoryPicker = picker
+    const onClose = vi.fn()
+    render(<EpisodeExportDialog titleId={seed()} onClose={onClose} />)
+    const submit = screen.getByTestId<HTMLButtonElement>('export-submit')
+    submit.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(submit.getAttribute('aria-disabled')).toBe('true'))
+    expect(submit.disabled).toBe(false)
+    expect(document.activeElement).toBe(submit)
+    expect(submit.textContent).toBe('書き出し中…（0/2）')
+    expect(screen.getByTestId('export-progress-status').textContent).toBe('書き出し中（0%）')
+    // 閉じる（×）も押せない印を付ける
+    expect(screen.getByTestId('modal-close').getAttribute('aria-disabled')).toBe('true')
+    await user.keyboard('{Enter}')
+    await user.click(submit)
+    expect(picker).toHaveBeenCalledTimes(1)
+    await act(async () => release(dir))
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(picker).toHaveBeenCalledTimes(1)
+  })
+
+  it('進み具合の読み上げは1割ずつ', () => {
+    expect(progressAnnouncement(0, 300)).toBe('書き出し中（0%）')
+    expect(progressAnnouncement(29, 300)).toBe('書き出し中（0%）')
+    expect(progressAnnouncement(30, 300)).toBe('書き出し中（10%）')
+    expect(progressAnnouncement(299, 300)).toBe('書き出し中（90%）')
+    expect(progressAnnouncement(300, 300)).toBe('書き出し中（100%）')
+  })
+
+  it('タイトル全体を書き出すことを示し、通し読みで章を選んでいる時はそのことも知らせる', () => {
+    const titleId = seed()
+    const { unmount } = render(<EpisodeExportDialog titleId={titleId} onClose={() => {}} />)
+    expect(screen.getByText(/」全体の採用原稿を、1話1ファイル/)).toBeTruthy()
+    expect(screen.queryByTestId('export-scope-note')).toBeNull()
+    unmount()
+    render(<EpisodeExportDialog titleId={titleId} scopedToChapter onClose={() => {}} />)
+    expect(screen.getByTestId('export-scope-note').textContent).toContain('タイトル全体の各話を書き出します')
   })
 
   it('フォルダを選べない環境（iPhone・Android など）: 1つの ZIP にまとめて保存する', async () => {

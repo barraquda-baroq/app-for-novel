@@ -123,20 +123,78 @@ test.describe('各話テキスト書き出し', () => {
     expect(await page.evaluate(() => (window as unknown as PickerHook).__pickerCalls)).toBe(1)
   })
 
-  test('フォルダを選ばずに閉じたら、知らせてダイアログはそのまま', async ({ page }) => {
+  test('フォルダを選ばずに閉じたら、知らせてダイアログはそのまま。フォーカスは「書き出す」に残り、Enter で選び直せる', async ({
+    page,
+  }) => {
     await page.addInitScript(() => {
-      ;(window as unknown as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => {
-        throw new DOMException('The user aborted a request.', 'AbortError')
+      const w = window as unknown as PickerHook & { showDirectoryPicker: unknown; __cancelPicker?: () => void }
+      w.__pickerCalls = 0
+      // フォルダを選ぶ画面を出したまま待ち、テストが __cancelPicker() を呼んだら「やめた」にする
+      w.showDirectoryPicker = () => {
+        w.__pickerCalls += 1
+        return new Promise((_resolve, reject) => {
+          w.__cancelPicker = () => reject(new DOMException('The user aborted a request.', 'AbortError'))
+        })
       }
     })
+    const cancelPicker = () => page.evaluate(() => (window as unknown as { __cancelPicker: () => void }).__cancelPicker())
     await openApp(page)
     const titleId = await seedNovel(page)
     await openApp(page, `/t/${titleId}`)
     await page.getByTestId('episode-export-open').click()
-    await page.getByTestId('export-submit').click()
-    await expect(page.getByRole('status').filter({ hasText: 'フォルダを選ばなかったので、書き出していません' })).toBeVisible()
+    const submit = page.getByTestId('export-submit')
+    await submit.focus()
+    await page.keyboard.press('Enter')
+    // 書き出している間も disabled にせず（フォーカスが外れないように）、押せない印は aria-disabled
+    await expect(submit).toHaveAttribute('aria-disabled', 'true')
+    await expect(submit).toBeFocused()
+    await expect(page.getByTestId('export-progress-status')).toHaveText('書き出し中（0%）')
+    await expect(page.getByTestId('modal-close')).toHaveAttribute('aria-disabled', 'true')
+    await cancelPicker()
+    const cancelToast = page.getByRole('status').filter({ hasText: 'フォルダを選ばなかったので、書き出していません' })
+    await expect(cancelToast.first()).toBeVisible()
     await expect(page.getByTestId('episode-export-dialog')).toBeVisible()
-    await expect(page.getByTestId('export-submit')).toBeEnabled()
+    await expect(submit).toBeEnabled()
+    await expect(submit).not.toHaveAttribute('aria-disabled', 'true')
+    await expect(submit).toBeFocused()
+    expect(await page.evaluate(() => (window as unknown as PickerHook).__pickerCalls)).toBe(1)
+
+    // もう一度 Enter で、フォルダを選び直せる
+    await page.keyboard.press('Enter')
+    await expect.poll(() => page.evaluate(() => (window as unknown as PickerHook).__pickerCalls)).toBe(2)
+    await expect(submit).toHaveAttribute('aria-disabled', 'true')
+    await cancelPicker()
+    await expect(cancelToast.last()).toBeVisible()
+    await expect(submit).not.toHaveAttribute('aria-disabled', 'true')
+    await expect(submit).toBeFocused()
+  })
+
+  test('通し読みで空の章を選んでいても各話テキスト書き出しは押せ、タイトル全体を書き出すと知らせる', async ({ page }) => {
+    await stubDirectoryPicker(page)
+    await openApp(page)
+    const titleId = await seedNovel(page)
+    const emptyChapter = await seed(
+      page,
+      ({ actions }, a: { titleId: string }) => {
+        actions.setChaptersEnabled(a.titleId, true)
+        return actions.addChapter(a.titleId, '空の章')
+      },
+      { titleId },
+    )
+    await openApp(page, `/t/${titleId}/read?chapter=${emptyChapter}`)
+    await expect(page.getByTestId('read-empty')).toBeVisible()
+    // 範囲に従う全文コピー・テキストで書き出しは押せないが、各話テキスト書き出しはタイトル全体なので押せる
+    await expect(page.getByTestId('export-text')).toBeDisabled()
+    const open = page.getByRole('button', { name: '各話テキスト書き出し' })
+    await expect(open).toBeEnabled()
+    if (test.info().project.name === 'desktop') {
+      // 見えている名前と読み上げる名前が同じ
+      await expect(open).toHaveText('各話テキスト書き出し')
+    }
+    await open.click()
+    await expect(page.getByTestId('export-scope-note')).toContainText('タイトル全体の各話を書き出します')
+    await expect(page.getByTestId('episode-export-dialog')).toContainText('」全体の採用原稿を')
+    await expect(page.getByTestId('export-file')).toHaveText(names(today()))
   })
 
   test('通し読みから: フォルダを選べない環境では、1つの ZIP（yyyymmddタイトル名.zip）にまとめて保存する', async ({ page }) => {

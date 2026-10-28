@@ -111,6 +111,8 @@ export function StoryTab({ titleId }: { titleId: ID }) {
                 type="button"
                 className="btn"
                 onClick={() => setExporting(true)}
+                // スマホでは「書き出し」だけが見えるので、バックアップの書き出しと区別できる名前にする
+                aria-label="各話テキスト書き出し"
                 title="採用原稿を1話1ファイルのテキストで書き出す"
                 data-testid="episode-export-open"
               >

@@ -16,7 +16,7 @@ import {
 import { flushSync } from 'react-dom'
 import { Link, useHref, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { buildReadThrough, NO_ACTIVE_MESSAGE, readThroughText, type ReadBlock } from '../../domain/readthrough'
-import { chaptersOf } from '../../domain/structure'
+import { chaptersOf, flatten } from '../../domain/structure'
 import { formatCount } from '../../domain/text'
 import type { ID } from '../../domain/types'
 import { paths } from '../../routes'
@@ -249,6 +249,8 @@ export function ReadThroughPage() {
   const blocks = useMemo(() => buildReadThrough(data, titleId, chapterId), [data, titleId, chapterId])
   const groups = useMemo(() => tocGroups(blocks), [blocks])
   const stats = useMemo(() => readStats(data, blocks), [data, blocks])
+  // 各話テキスト書き出しは範囲に関係なくタイトル全体を書き出すので、タイトル全体に話があるかで判断する
+  const titleHasPieces = useMemo(() => flatten(data, titleId).length > 0, [data, titleId])
   // 画面の外にある話の大きさの見積もりに使う、段落の形（稿ごとに1回だけ数える）
   const shapes = useMemo(() => {
     const out = new Map<ID, LineShape>()
@@ -494,13 +496,13 @@ export function ReadThroughPage() {
               type="button"
               className="btn btn-sm"
               onClick={() => setExportingEpisodes(true)}
-              disabled={isEmpty}
+              disabled={!titleHasPieces}
               aria-label="各話テキスト書き出し"
               title="タイトル全体の採用原稿を、1話1ファイルのテキストで書き出す"
               data-testid="episode-export-open"
             >
               <FilesIcon />
-              <span className="hide-mobile">各話ごとに書き出し</span>
+              <span className="hide-mobile">各話テキスト書き出し</span>
             </button>
           </div>
         </div>
@@ -546,7 +548,13 @@ export function ReadThroughPage() {
           </div>
         )}
       </main>
-      {exportingEpisodes ? <EpisodeExportDialog titleId={titleId} onClose={() => setExportingEpisodes(false)} /> : null}
+      {exportingEpisodes ? (
+        <EpisodeExportDialog
+          titleId={titleId}
+          scopedToChapter={chapter !== undefined}
+          onClose={() => setExportingEpisodes(false)}
+        />
+      ) : null}
     </div>
   )
 }

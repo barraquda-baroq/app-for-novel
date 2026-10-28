@@ -33,6 +33,18 @@
   margin: 0;
 }
 
+/* 通し読みで章を選んでいても、書き出すのはタイトル全体 */
+.ex-scope-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .ex-method {
   margin: 0;
   font-size: 13px;

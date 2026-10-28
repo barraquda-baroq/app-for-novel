@@ -10,6 +10,8 @@ export interface ModalProps {
   wide?: boolean
   /** 開いた時にフォーカスする要素のセレクタ（省略時は最初の入力欄） */
   initialFocus?: string
+  /** 今は閉じられない（処理中など）。× ボタンを押せない見た目にする（onClose 側で何もしないようにしておくこと） */
+  closeDisabled?: boolean
 }
 
 /** 開いているモーダルの重なり（いちばん上だけが Esc と Tab を扱う） */
@@ -30,7 +32,7 @@ function setBackgroundLocked(locked: boolean): void {
 }
 
 /** 汎用モーダル。Esc・背景クリックで閉じる。スマホでは下からのシートになる */
-export function Modal({ title, onClose, children, footer, wide, initialFocus }: ModalProps) {
+export function Modal({ title, onClose, children, footer, wide, initialFocus, closeDisabled }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const onCloseRef = useRef(onClose)
@@ -94,7 +96,15 @@ export function Modal({ title, onClose, children, footer, wide, initialFocus }: 
       <div ref={ref} className={`modal${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="modal-head">
           <h2 id={titleId}>{title}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="閉じる">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={onClose}
+            aria-label="閉じる"
+            // disabled にするとフォーカスが外れるので、押せないことは aria-disabled で伝える
+            aria-disabled={closeDisabled || undefined}
+            data-testid="modal-close"
+          >
             <XIcon />
           </button>
         </div>

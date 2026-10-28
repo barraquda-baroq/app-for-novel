@@ -1,7 +1,7 @@
 // 各話テキスト書き出しのダイアログ（タイトル画面の本編タブ・通し読みから開く）。
 // タイトル全体の採用原稿を1話1ファイルのテキスト（UTF-8）にする。採用原稿のない話は飛ばす。
 // フォルダを選べる環境（Edge・Chrome のデスクトップ）では選んだフォルダに直接、それ以外は1つの ZIP にまとめて保存する。
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ID } from '../../domain/types'
 import { useData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
@@ -22,7 +22,22 @@ import {
 } from './exportLogic'
 import './episodeExport.css'
 
-export function EpisodeExportDialog({ titleId, onClose }: { titleId: ID; onClose: () => void }) {
+/** 読み上げる進み具合（1割ずつ。話が多くても読み上げが続かないように） */
+export function progressAnnouncement(done: number, total: number): string {
+  const tenths = total > 0 ? Math.floor((done / total) * 10) : 0
+  return `書き出し中（${tenths * 10}%）`
+}
+
+export function EpisodeExportDialog({
+  titleId,
+  scopedToChapter = false,
+  onClose,
+}: {
+  titleId: ID
+  /** 通し読みで章を選んでいる（それでもタイトル全体を書き出すことを知らせる） */
+  scopedToChapter?: boolean
+  onClose: () => void
+}) {
   const data = useData()
   const story = useStoryData(titleId)
   const title = data.titles[titleId]
@@ -32,6 +47,8 @@ export function EpisodeExportDialog({ titleId, onClose }: { titleId: ID; onClose
   const [direct] = useState(() => canPickDirectory())
   const [withHeading, setWithHeading] = useState(true)
   const [busy, setBusy] = useState<{ done: number; total: number } | null>(null)
+  /** 書き出している間の二度押しを止める（描き直しを待たずに分かるように） */
+  const running = useRef(false)
   // 一覧は本編かタイトル名が変わった時だけ作り直す（data はその時の最新。本文はまだテキストにしないので長編でも軽い）
   const preview = useMemo(
     () => exportPreview(data, titleId, date),
@@ -43,7 +60,8 @@ export function EpisodeExportDialog({ titleId, onClose }: { titleId: ID; onClose
   const displayName = titleName.trim() || '無題のタイトル'
 
   const run = async () => {
-    if (busy || entries.length === 0) return
+    if (running.current || entries.length === 0) return
+    running.current = true
     const total = entries.length
     const progress = (done: number) => setBusy({ done, total })
     progress(0)
@@ -64,6 +82,7 @@ export function EpisodeExportDialog({ titleId, onClose }: { titleId: ID; onClose
       if (kind === 'cancel' && !(e instanceof DirectoryWriteError)) notify(exportErrorMessage(e))
       else notifyError(exportErrorMessage(e))
       if (kind === 'error') console.error(e)
+      running.current = false
       setBusy(null)
     }
   }
@@ -73,6 +92,7 @@ export function EpisodeExportDialog({ titleId, onClose }: { titleId: ID; onClose
       title="各話テキスト書き出し"
       // 書き出している間は閉じない（続けてもう一度書き出さないように）
       onClose={busy ? () => {} : onClose}
+      closeDisabled={busy !== null}
       footer={
         <>
           <button type="button" className="btn" onClick={onClose} disabled={busy !== null}>
@@ -82,7 +102,10 @@ export function EpisodeExportDialog({ titleId, onClose }: { titleId: ID; onClose
             type="button"
             className="btn btn-primary"
             onClick={() => void run()}
-            disabled={busy !== null || entries.length === 0}
+            // 書き出している間も disabled にはしない（フォーカスが外れて、やめた後に Enter で書き出し直せなくなるため。
+            // 二度押しは run() で止める）
+            disabled={entries.length === 0}
+            aria-disabled={busy !== null || undefined}
             data-testid="export-submit"
           >
             {busy ? `書き出し中…（${busy.done}/${busy.total}）` : '書き出す'}
@@ -91,10 +114,19 @@ export function EpisodeExportDialog({ titleId, onClose }: { titleId: ID; onClose
       }
     >
       <div className="ex-dialog" data-testid="episode-export-dialog" data-method={direct ? 'directory' : 'zip'}>
+        {/* 進み具合を読み上げる（ボタンの文字だけでは読み上げられないため） */}
+        <p className="visually-hidden" role="status" aria-live="polite" data-testid="export-progress-status">
+          {busy ? progressAnnouncement(busy.done, busy.total) : ''}
+        </p>
         <p className="ex-lead">
           「{displayName}
-          」の採用原稿を、1話1ファイルのテキスト（UTF-8）で書き出します。ルビ・傍点は記法（｜漢字《かんじ》）のまま入ります。
+          」全体の採用原稿を、1話1ファイルのテキスト（UTF-8）で書き出します。ルビ・傍点は記法（｜漢字《かんじ》）のまま入ります。
         </p>
+        {scopedToChapter ? (
+          <p className="ex-scope-note" data-testid="export-scope-note">
+            通し読みの範囲で章を選んでいても、タイトル全体の各話を書き出します。
+          </p>
+        ) : null}
 
         <label className="check ex-option">
           <input
