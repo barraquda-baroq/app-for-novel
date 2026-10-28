@@ -72,7 +72,7 @@ export function AppHeader({ crumbs, actions }: { crumbs?: Crumb[]; actions?: Rea
       <span className="spacer" />
       {actions}
       <SaveStatus />
-      <Link to="/settings" className="icon-btn" aria-label="アプリの設定とバックアップ" title="設定・バックアップ">
+      <Link to="/settings" className="icon-btn" aria-label="アプリの設定・バックアップ" title="アプリの設定・バックアップ">
         <GearIcon />
       </Link>
     </header>
@@ -130,7 +130,7 @@ function SaveErrorBanner() {
     <div className="banner banner-error" role="alert" data-testid="save-error-banner">
       <span className="grow">
         保存できませんでした{error ? `（${error}）` : ''}
-        。端末の空き容量を確認してください。しばらくすると自動でもう一度保存します。念のため「設定」からバックアップを書き出しておくと安心です。
+        。端末の空き容量を確認してください。しばらくすると自動でもう一度保存します。念のため「アプリの設定」からバックアップを書き出しておくと安心です。
       </span>
       <button type="button" className="btn btn-sm" onClick={() => void flushNow()}>
         再試行

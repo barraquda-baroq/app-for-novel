@@ -33,7 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="card card-pad stack" role="alert">
           <h1 style={{ fontSize: 18 }}>この画面を表示できませんでした</h1>
           <p className="muted" style={{ margin: 0 }}>
-            データの一部が読み取れない形になっている可能性があります。書いた内容は端末に保存されたままです。ホームに戻るか、再読み込みしてください。解決しない場合は、設定からバックアップを書き出してください。
+            データの一部が読み取れない形になっている可能性があります。書いた内容は端末に保存されたままです。ホームに戻るか、再読み込みしてください。解決しない場合は、アプリの設定からバックアップを書き出してください。
           </p>
           <pre className="small" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
             {this.state.error.message}
@@ -43,7 +43,7 @@ export class ErrorBoundary extends Component<Props, State> {
               ホームへ
             </a>
             <a className="btn" href="#/settings">
-              設定・バックアップ
+              アプリの設定・バックアップ
             </a>
             <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
               再読み込み

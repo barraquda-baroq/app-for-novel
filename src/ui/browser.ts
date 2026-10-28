@@ -24,8 +24,8 @@ export async function copyText(text: string, doneMessage = 'クリップボー�
   }
 }
 
-export function downloadFile(filename: string, content: string, mime = 'text/plain;charset=utf-8'): void {
-  const blob = new Blob([content], { type: mime })
+export function downloadFile(filename: string, content: string | Blob | BlobPart[], mime = 'text/plain;charset=utf-8'): void {
+  const blob = content instanceof Blob ? content : new Blob(Array.isArray(content) ? content : [content], { type: mime })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -33,7 +33,8 @@ export function downloadFile(filename: string, content: string, mime = 'text/pla
   document.body.appendChild(a)
   a.click()
   a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  // 大きなファイルは保存が始まるまで時間がかかる端末があるので、しばらく残しておく
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 /** ファイル名に使えない文字を置き換える */

@@ -660,7 +660,7 @@ test.describe('ホーム', () => {
     expect(await page.evaluate(() => window.scrollY)).toBeLessThan(before + 5)
 
     // 新しく開いた時（リンク）は先頭から
-    await page.getByRole('link', { name: 'アプリの設定とバックアップ' }).click()
+    await page.getByRole('link', { name: 'アプリの設定・バックアップ' }).click()
     await expect(page.getByTestId('app-settings')).toBeVisible()
     await goHome(page)
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)

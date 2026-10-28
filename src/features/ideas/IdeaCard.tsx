@@ -101,7 +101,7 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
   const remove = async () => {
     const ok = await confirmDialog({
       title: 'アイデアを削除しますか？',
-      message: `「${label}」を削除します。元に戻すことはできません。`,
+      message: `「${label}」を削除します。この操作は取り消せません。`,
       danger: true,
       confirmLabel: '削除',
     })

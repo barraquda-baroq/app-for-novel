@@ -82,8 +82,10 @@ export function textStats(text: string): TextStats {
   }
 }
 
+const countFormat = new Intl.NumberFormat('ja-JP')
+
 export function formatCount(n: number): string {
-  return n.toLocaleString('ja-JP')
+  return countFormat.format(n)
 }
 
 /** 本文の指紋（FNV-1a 32bit）。記録後に本文が変わったかの判定や、同じ本文の重複保存を避けるのに使う */

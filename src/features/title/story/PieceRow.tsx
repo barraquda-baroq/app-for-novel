@@ -65,7 +65,7 @@ function PieceRowView({
     }
     const ok = await confirmDialog({
       title: `「${fullLabel}」を削除しますか？`,
-      message: `この話のすべての推敲バージョン（${versionCount}稿）も削除されます。元に戻すことはできません。`,
+      message: `この話のすべての推敲バージョン（${versionCount}稿）も削除されます。この操作は取り消せません。`,
       danger: true,
       confirmLabel: '削除',
     })

@@ -71,7 +71,7 @@ export function deleteTitleMessage(info: Pick<TitleCardInfo, 'summary' | 'versio
   if (specials > 0) parts.push(`特殊ブロック${specials}件`)
   parts.push(`推敲バージョン${info.versionCount}稿`)
   const lines = [
-    `このタイトルのすべての話・推敲バージョン・設定項目・戦略・メモが削除されます（${parts.join('、')}）。元に戻すことはできません。`,
+    `このタイトルのすべての話・推敲バージョン・設定項目・戦略・メモが削除されます（${parts.join('、')}）。この操作は取り消せません。`,
   ]
   lines.push(
     info.ideaCount > 0

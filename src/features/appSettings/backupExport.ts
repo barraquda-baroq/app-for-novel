@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { toBackup } from '../../domain/backup'
 import { getData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
+import { downloadFile } from '../../ui/browser'
 import { readLocal, writeLocal } from '../ideas/storage'
 import { LOCAL_STATE_CLEARED } from './localState'
 import { COMPACT_BACKUP_CHARS, LAST_BACKUP_KEY, backupChunks, backupFileName, backupTextLength } from './settingsLogic'
@@ -74,18 +75,6 @@ async function buildBlob(chunks: Iterable<string>): Promise<Blob> {
   return new Blob(blobs, { type: 'application/json' })
 }
 
-function downloadBlob(filename: string, blob: Blob): void {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  // 大きいファイルは保存の開始に時間がかかる端末があるので、少し長めに残す
-  setTimeout(() => URL.revokeObjectURL(url), 60_000)
-}
-
 let running: Promise<boolean> | null = null
 
 /**
@@ -107,7 +96,7 @@ async function runExport(): Promise<boolean> {
     const data = getData()
     const pretty = backupTextLength(data) <= COMPACT_BACKUP_CHARS
     const blob = await buildBlob(backupChunks(toBackup(data, now), pretty))
-    downloadBlob(backupFileName(now), blob)
+    downloadFile(backupFileName(now), blob)
   } catch (e) {
     notifyError(`書き出せませんでした: ${e instanceof Error ? e.message : String(e)}`)
     return false

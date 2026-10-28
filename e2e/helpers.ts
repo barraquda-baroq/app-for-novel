@@ -6,7 +6,8 @@ import type { AppData } from '../src/domain/types'
 interface DevHook {
   actions: Actions
   getData: () => AppData
-  flushNow: () => Promise<void>
+  flushNow: () => Promise<boolean>
+  replaceAllData: (data: AppData) => Promise<void>
 }
 
 declare global {
