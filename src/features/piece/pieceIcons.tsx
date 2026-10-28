@@ -50,3 +50,19 @@ export const UnadoptIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="m6.5 17.5 11-11" />
   </Svg>
 )
+
+/** 巻き戻し（左回りの矢印） */
+export const HistoryUndoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Svg {...p}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </Svg>
+)
+
+/** 進む（右回りの矢印） */
+export const HistoryRedoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Svg {...p}>
+    <path d="m15 14 5-5-5-5" />
+    <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+  </Svg>
+)

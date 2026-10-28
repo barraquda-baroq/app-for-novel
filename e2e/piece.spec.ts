@@ -37,6 +37,20 @@ async function flush(page: Page) {
   await page.evaluate(() => window.__ns.flushNow())
 }
 
+/** 原稿画面の編集は「保存」で確定する（スマホでは保存していない編集がある時だけヘッダーに出る） */
+async function saveEdits(page: Page) {
+  await page.getByTestId('save-button').click()
+  await expect(page.getByTestId('save-button')).toBeDisabled()
+  await flush(page)
+}
+
+/** 保存していない編集があるまま採用・削除などをすると、先に保存するか聞かれる */
+async function saveAndContinue(page: Page) {
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('保存していない編集があります。保存してから続けますか？')
+  await dialog.getByRole('button', { name: '保存して続ける' }).click()
+}
+
 async function activeBodyOf(page: Page, pieceId: string): Promise<string | null> {
   return page.evaluate((pid) => {
     const d = window.__ns.getData()
@@ -162,8 +176,9 @@ test.describe('原稿画面', () => {
     await expect(page.getByTestId('active-editor')).toBeVisible()
     await expect(page.getByTestId('active-editor')).toHaveValue(BODY1)
 
-    // 採用する → 採用原稿が入れ替わり、比較対象はそれまでの採用原稿（第1稿）になる
+    // 採用する → 保存していない編集を保存してから、採用原稿が入れ替わり、比較対象はそれまでの採用原稿（第1稿）になる
     await page.getByTestId('adopt-button').click()
+    await saveAndContinue(page)
     await expect(page.getByText('第2稿（第1稿を複製）を採用しました')).toBeVisible()
     await expect(page.getByTestId('active-editor')).toHaveValue(revised)
     await expect(page.getByTestId('version-select')).toHaveValue(firstVersionId)
@@ -333,7 +348,7 @@ test.describe('原稿画面', () => {
     await expect(subtitle).toHaveAttribute('placeholder', '話の題（任意）')
     await subtitle.fill('旅立ち')
     await subtitle.press('Enter')
-    await flush(page)
+    await saveEdits(page)
     await reload(page)
     await expect(page.getByTestId('subtitle-input')).toHaveValue('旅立ち')
     await expect(page.locator('.breadcrumbs')).toContainText('第1話')
@@ -346,7 +361,9 @@ test.describe('原稿画面', () => {
     await expect(page.locator('.pw-label-special .badge-special')).toHaveText('特殊')
     await special.fill('序章')
     await special.press('Enter')
-    await flush(page)
+    // 保存するまではストアに入らない
+    expect(await page.evaluate((id) => window.__ns.getData().pieces[id].label, specialId)).toBe('プロローグ')
+    await saveEdits(page)
     expect(await page.evaluate((id) => window.__ns.getData().pieces[id].label, specialId)).toBe('序章')
     await reload(page)
     await expect(page.getByTestId('special-label-input')).toHaveValue('序章')
@@ -406,6 +423,8 @@ test.describe('原稿画面', () => {
     await expect(page.getByTestId('compare-editor')).toHaveValue('')
     await page.getByTestId('compare-editor').fill('消す予定の稿')
     await (await compareTool(page, 'delete-version')).click()
+    await saveAndContinue(page)
+    await expect(page.getByRole('dialog')).toContainText('削除しますか？')
     await expect(page.getByRole('dialog')).not.toContainText('応募時の原稿')
     await page.getByRole('dialog').getByRole('button', { name: '削除' }).click()
     await expect(page.getByTestId('versions-heading')).toHaveText('推敲バージョン（1）')
@@ -707,7 +726,7 @@ test.describe('スマホでの表示', () => {
     await expect(page.getByTestId('no-active-badge')).toHaveText('採用原稿なし')
   })
 
-  test('横持ち: 上部バーは1行で各ペインに6行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({
+  test('横持ち: 上部バーは1行で採用原稿に6行・推敲バージョンに5行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 844, height: 390 })
@@ -719,7 +738,9 @@ test.describe('スマホでの表示', () => {
     expect(b.x).toBeGreaterThanOrEqual(a.x + a.width - 2)
     expect((await page.getByTestId('piece-bar').boundingBox())!.height).toBeLessThanOrEqual(50)
     expect(await visibleLines(page, 'active-editor')).toBeGreaterThanOrEqual(6)
-    expect(await visibleLines(page, 'compare-editor')).toBeGreaterThanOrEqual(6)
+    // 推敲バージョンは、推敲メモの行と、いちばん下の記号バーの分だけ少ない
+    expect(await visibleLines(page, 'compare-editor')).toBeGreaterThanOrEqual(5)
+    await expect(page.getByTestId('symbol-bar')).toBeVisible()
 
     // 比率は「表示の設定」の中
     const slider = page.getByTestId('ratio-slider')

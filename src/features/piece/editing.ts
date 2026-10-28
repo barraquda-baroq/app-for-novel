@@ -1,58 +1,8 @@
-// 原稿画面の保存まわりの小さなヘルパー。
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type RefObject } from 'react'
-import { actions } from '../../store/actions'
-import { getData } from '../../store/appStore'
-import { attempt, notify } from '../../store/uiStore'
-import { conflictVersionName } from '../../sync/conflicts'
-import type { DraftConflictGuard, DraftHandle } from '../../ui/DraftField'
+// 原稿画面の小さなヘルパー（操作の実行・端末ごとの設定・スクロール同期・ポップオーバー・集中モード）。
+// 編集の保存は usePieceSession.ts（保存ボタンで確定する）。
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { attempt } from '../../store/uiStore'
 import { mapScrollTop } from './logic'
-
-type VersionPatch = { name?: string; body?: string; note?: string }
-
-/**
- * バージョンへの書き込み。下書きの保存が削除の後に届いた場合（削除直後のアンマウント等）は
- * 何もしない。値が変わっていなければ更新日時も動かさない。
- */
-export function commitVersion(versionId: string, patch: VersionPatch): void {
-  const v = getData().versions[versionId]
-  if (!v) return
-  const changed = (Object.keys(patch) as (keyof VersionPatch)[]).some((k) => patch[k] !== undefined && patch[k] !== v[k])
-  if (!changed) return
-  attempt(() => actions.updateVersion(versionId, patch))
-}
-
-/**
- * 本文の編集中に、同期で別の端末の編集が届いて稿の本文が書き換わっていたら、入力中の本文を上書きせずに
- * 「（競合: この端末の編集）」の新しい稿として残す（どちらの文章も消さない）。
- */
-export function versionBodyGuard(versionId: string): DraftConflictGuard {
-  return {
-    read: () => getData().versions[versionId]?.body ?? '',
-    onConflict: (draft) => {
-      const v = getData().versions[versionId]
-      if (!v) return
-      const ok = tryRun(() =>
-        actions.addVersion(v.pieceId, {
-          body: draft,
-          sourceVersionId: v.id,
-          name: conflictVersionName(v.name, 'この端末'),
-        }),
-      )
-      if (ok)
-        notify(
-          `別の端末で「${v.name}」が書き換えられたため、入力中の本文を「${conflictVersionName(v.name, 'この端末')}」として残しました`,
-        )
-    },
-  }
-}
-
-export function commitPiece(pieceId: string, patch: { subtitle?: string; label?: string }): void {
-  const p = getData().pieces[pieceId]
-  if (!p) return
-  if ((patch.subtitle === undefined || patch.subtitle === p.subtitle) && (patch.label === undefined || patch.label === p.label))
-    return
-  attempt(() => actions.updatePiece(pieceId, patch))
-}
 
 /** 成功したかどうかを返す attempt（戻り値のない操作用） */
 export function tryRun(fn: () => void): boolean {
@@ -62,39 +12,6 @@ export function tryRun(fn: () => void): boolean {
       return true
     }) === true
   )
-}
-
-export function flushEditors(...refs: RefObject<DraftHandle | null>[]): void {
-  for (const r of refs) r.current?.flush()
-}
-
-/** 原稿画面の中の下書き欄（話の題・見出し・稿の名前など）。Ctrl/Cmd+S でまとめて保存するために登録する */
-export type DraftRegistry = Set<RefObject<DraftHandle | null>>
-
-export const DraftRegistryContext = createContext<DraftRegistry | null>(null)
-
-/** DraftInput / DraftTextarea に渡す ref。原稿画面の Ctrl/Cmd+S で一緒に保存される */
-export function useRegisteredDraft(): RefObject<DraftHandle | null> {
-  const registry = useContext(DraftRegistryContext)
-  const ref = useRef<DraftHandle>(null)
-  useEffect(() => {
-    if (!registry) return
-    registry.add(ref)
-    return () => {
-      registry.delete(ref)
-    }
-  }, [registry])
-  return ref
-}
-
-/**
- * 下書き中のテキスト（文字数表示・コピー用）。id が変わったら保存済みの値に戻る。
- * onDraftChange は id ごとに同じ関数を返す（DraftTextarea の effect が回り続けないように）。
- */
-export function useLiveText(id: string, stored: string): [string, (text: string) => void] {
-  const [live, setLive] = useState<{ id: string; text: string } | null>(null)
-  const onDraftChange = useCallback((text: string) => setLive({ id, text }), [id])
-  return [live && live.id === id ? live.text : stored, onDraftChange]
 }
 
 /** 端末ごとの小さな真偽値設定（localStorage が使えなくても動く） */

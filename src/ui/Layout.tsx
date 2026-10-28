@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigationType } from 'react-router-dom'
 import { flushNow, reloadFromDisk, useApp } from '../store/appStore'
 import { flushAllDrafts } from '../store/draftRegistry'
+import { useUnsavedEdits } from '../store/unsavedEdits'
 import { notify, notifyError, resolveAppearance, THEME_COLORS, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost, cancelAllDialogs } from './dialogs'
 import { GearIcon, XIcon } from './icons'
@@ -40,8 +41,12 @@ function SaveStatus() {
   const saveStatus = useApp((s) => s.saveStatus)
   const draftsDirty = useApp((s) => s.draftsDirty)
   const error = useApp((s) => s.saveError)
+  // 保存ボタンで確定する画面に保存していない編集がある間は、その画面の「未保存」の表示に任せる
+  // （端末への保存の状態「保存済み」と並べて、保存したように見せない）。保存できない時の表示は残す
+  const unsaved = useUnsavedEdits((s) => s.dirty)
   // 入力欄にまだ反映していない文字があるうちは「保存済み」と表示しない
   const status = saveStatus === 'saved' && draftsDirty ? 'pending' : saveStatus
+  if (unsaved && status !== 'error') return null
   const label = {
     saved: '保存済み',
     pending: '編集中…',

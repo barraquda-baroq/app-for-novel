@@ -1,6 +1,7 @@
 // Promise で使える確認・入力ダイアログ。
 //   if (await confirmDialog({ title: '削除しますか？', danger: true })) { ... }
 //   const name = await promptDialog({ title: 'タイトル名', initial: '' })
+//   const choice = await choiceDialog({ title: '…', choices: [{ value: 'save', label: '保存する', primary: true }, …] })
 import { useState } from 'react'
 import { create } from 'zustand'
 import { Modal } from './Modal'
@@ -26,7 +27,30 @@ interface PromptOptions {
   selectOnOpen?: boolean
 }
 
+export interface Choice<T extends string> {
+  value: T
+  label: string
+  /** 主な選択肢（青いボタン。開いた時にここへフォーカスする） */
+  primary?: boolean
+  /** 取り消せない選択肢（赤い文字のボタン） */
+  danger?: boolean
+  testId?: string
+}
+
+interface ChoiceOptions<T extends string> {
+  title: string
+  message?: string
+  /** 左から順に並べる。Esc・背景・× で閉じた時は null になる */
+  choices: Choice<T>[]
+}
+
 type DialogRequest =
+  | {
+      id: number
+      kind: 'choice'
+      opts: ChoiceOptions<string>
+      resolve: (v: string | null) => void
+    }
   | {
       id: number
       kind: 'confirm'
@@ -63,6 +87,13 @@ export function promptDialog(opts: PromptOptions): Promise<string | null> {
   return new Promise((resolve) => enqueue({ kind: 'prompt', opts, resolve }))
 }
 
+/** 3つ以上の選択肢から選ぶダイアログ。閉じた（キャンセルした）時は null */
+export function choiceDialog<T extends string>(opts: ChoiceOptions<T>): Promise<T | null> {
+  return new Promise((resolve) =>
+    enqueue({ kind: 'choice', opts: opts as ChoiceOptions<string>, resolve: resolve as (v: string | null) => void }),
+  )
+}
+
 /** 開いている・待っているダイアログをすべてキャンセル扱いで閉じる（画面遷移時など） */
 export function cancelAllDialogs(): void {
   const { queue } = useDialogs.getState()
@@ -78,7 +109,41 @@ export function DialogHost() {
   const current = useDialogs((s) => s.queue[0])
   if (!current) return null
   if (current.kind === 'confirm') return <ConfirmView key={current.id} req={current} />
+  if (current.kind === 'choice') return <ChoiceView key={current.id} req={current} />
   return <PromptView key={current.id} req={current} />
+}
+
+function ChoiceView({ req }: { req: Extract<DialogRequest, { kind: 'choice' }> }) {
+  const { opts } = req
+  const close = (v: string | null) => {
+    dequeue()
+    req.resolve(v)
+  }
+  return (
+    <Modal
+      title={opts.title}
+      onClose={() => close(null)}
+      initialFocus="[data-autofocus]"
+      footer={
+        <div className="dialog-choices">
+          {opts.choices.map((c) => (
+            <button
+              key={c.value}
+              type="button"
+              className={`btn${c.primary ? ' btn-primary' : c.danger ? ' btn-danger' : ''}`}
+              onClick={() => close(c.value)}
+              data-autofocus={c.primary ? true : undefined}
+              data-testid={c.testId}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      {opts.message ? <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{opts.message}</p> : null}
+    </Modal>
+  )
 }
 
 function ConfirmView({ req }: { req: Extract<DialogRequest, { kind: 'confirm' }> }) {

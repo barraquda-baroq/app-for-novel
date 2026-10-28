@@ -1,4 +1,5 @@
 // 採用原稿（左／上）。アクティブなバージョンだけが章・タイトル・通し読みに反映される。
+// 本文・稿の名前の編集は「保存」を押すまで画面の中だけで持つ（usePieceSession.ts）。
 import { useDeferredValue, useId, useMemo, useRef, useState } from 'react'
 import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import type { Version } from '../../domain/types'
@@ -6,11 +7,13 @@ import { actions } from '../../store/actions'
 import { attempt } from '../../store/uiStore'
 import { copyText, formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
-import { DraftInput, DraftTextarea } from '../../ui/DraftField'
 import { CopyIcon, MoreIcon, PlusIcon } from '../../ui/icons'
-import { commitVersion, flushEditors, versionBodyGuard, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
-import { formatStats, liveStats } from './logic'
+import { tryRun, useDismiss } from './editing'
+import { useSessionValue } from './editorHub'
+import { formatStats, liveStats, withHeading } from './logic'
 import { ReviseIcon, UnadoptIcon } from './pieceIcons'
+import { versionField } from './session'
+import { SessionInput, SessionTextarea } from './SessionField'
 import type { WorkspaceApi } from './VersionsPane'
 
 export function ActivePane({ api, active }: { api: WorkspaceApi; active: Version | null }) {
@@ -19,10 +22,12 @@ export function ActivePane({ api, active }: { api: WorkspaceApi; active: Version
 }
 
 function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
-  const [live, onDraftChange] = useLiveText(active.id, active.body)
-  const nameRef = useRegisteredDraft()
+  const { hub } = api
+  const bodyKey = versionField(active.id, 'body')
+  // 保存していない編集も含めた本文（文字数用）
+  const live = useSessionValue(hub.session, bodyKey, active.body)
   const deferred = useDeferredValue(live)
-  // 保存済みの本文と同じなら稿ごとにキャッシュした値を使い、書いている間だけ数え直す
+  // 保存済みの本文と同じなら稿ごとにキャッシュした値を使い、書いている間だけ数え直す（ルビの記号と読みは数えない）
   const stats = useMemo(() => formatStats(liveStats(active, deferred)), [active, deferred])
   const updated = formatUpdated(active.updatedAt)
 
@@ -38,26 +43,28 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
   }
   useDismiss(moreOpen, headRef, closeMore)
 
-  const duplicate = () => {
-    flushEditors(api.activeEditor, nameRef)
+  const duplicate = async () => {
+    // 保存していない編集があれば、保存してから複製する（複製にも編集が入るように）
+    if (!(await api.ensureSaved())) return
     const id = attempt(() => actions.duplicateVersion(active.id))
     if (id) api.select(id)
   }
 
+  /** 見出し（第n話　題）と、保存していない編集も含めた本文をコピーする */
   const copy = () => {
     closeMore()
-    void copyText(live)
+    void copyText(withHeading(api.heading(), hub.session.display(bodyKey, active.body)))
   }
 
   const unadopt = async () => {
     closeMore()
+    if (!(await api.ensureSaved())) return
     const ok = await confirmDialog({
       title: '採用を解除しますか？',
       message: `この話には採用原稿がなくなり、章・タイトルの通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。\n\n「${active.name || '無題の稿'}」は削除されず、推敲バージョンの一覧に残ります。あとで「採用する」で戻せます。`,
       confirmLabel: '採用を解除',
     })
     if (!ok) return
-    flushEditors(api.activeEditor)
     tryRun(() => actions.setActiveVersion(api.piece.id, null))
   }
 
@@ -65,12 +72,12 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
     <div className="pw-pane pw-pane-active" data-testid="active-pane">
       <div className={`pw-head pw-ahead${moreOpen ? ' is-more-open' : ''}`} ref={headRef}>
         <span className="badge badge-active pw-head-badge">採用中</span>
-        <DraftInput
-          ref={nameRef}
+        <SessionInput
           key={active.id}
+          hub={hub}
+          fieldKey={versionField(active.id, 'name')}
+          stored={active.name}
           className="input-bare pw-vname"
-          value={active.name}
-          onCommit={(v) => commitVersion(active.id, { name: v })}
           placeholder="稿の名前"
           aria-label="採用中のバージョン名"
           data-testid="active-version-name"
@@ -79,7 +86,7 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
           <button
             type="button"
             className="btn pw-tbtn"
-            onClick={duplicate}
+            onClick={() => void duplicate()}
             title="採用原稿を複製して新しい推敲バージョンを作り、並べて編集する"
             data-testid="duplicate-active"
           >
@@ -115,7 +122,7 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
               type="button"
               className="btn pw-tbtn"
               onClick={copy}
-              title="本文をクリップボードにコピー"
+              title="見出し（第n話・題）と本文をクリップボードにコピー"
               data-testid="copy-active"
             >
               <CopyIcon />
@@ -146,14 +153,14 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
         </div>
       </div>
       <div className="pw-body">
-        <DraftTextarea
-          ref={api.activeEditor}
+        <SessionTextarea
           key={active.id}
+          hub={hub}
+          fieldKey={bodyKey}
+          stored={active.body}
+          label={active.name}
+          symbols
           className="manuscript"
-          value={active.body}
-          onCommit={(v) => commitVersion(active.id, { body: v })}
-          conflictGuard={versionBodyGuard(active.id)}
-          onDraftChange={onDraftChange}
           placeholder="ここに本文を書きます"
           aria-label="採用原稿の本文"
           spellCheck={false}
@@ -166,11 +173,12 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
 }
 
 function NoActive({ api }: { api: WorkspaceApi }) {
-  const createAndAdopt = () => {
+  const createAndAdopt = async () => {
+    if (!(await api.ensureSaved())) return
     const id = attempt(() => actions.addVersion(api.piece.id))
     if (!id) return
     if (tryRun(() => actions.setActiveVersion(api.piece.id, id))) {
-      setTimeout(() => api.activeEditor.current?.focus(), 0)
+      setTimeout(() => api.hub.focusField(versionField(id, 'body')), 0)
     }
   }
   return (
@@ -185,7 +193,7 @@ function NoActive({ api }: { api: WorkspaceApi }) {
           <p className="pw-empty-title">{NO_ACTIVE_MESSAGE}</p>
           <p className="pw-empty-text">推敲バージョンを選んで「採用する」を押すと、ここに表示されます。</p>
           <p className="pw-empty-text small faint">採用原稿がない話は、通し読みでも「{NO_ACTIVE_MESSAGE}」と表示されます。</p>
-          <button type="button" className="btn btn-primary" onClick={createAndAdopt} data-testid="create-and-adopt">
+          <button type="button" className="btn btn-primary" onClick={() => void createAndAdopt()} data-testid="create-and-adopt">
             <PlusIcon />
             白紙の稿を作って採用
           </button>

@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect } from 'react'
-import { HashRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { createHashRouter, Outlet, RouterProvider, useLocation, useRouteError, type RouteObject } from 'react-router-dom'
 import { HomePage } from './features/home/HomePage'
 import { actions } from './store/actions'
 import { useApp } from './store/appStore'
-import { ErrorBoundary } from './ui/ErrorBoundary'
+import { ErrorBoundary, ErrorScreen } from './ui/ErrorBoundary'
 import { AppFrame, AppHeader } from './ui/Layout'
 import { NotFound } from './ui/NotFound'
 
@@ -98,29 +98,51 @@ function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   return <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
 }
 
-export function App() {
+/** すべての画面の外枠。画面ごとの中身は <Outlet /> に入る */
+function RootLayout() {
   return (
-    <HashRouter>
-      <AppFrame>
-        <TrashPurge />
-        <Gate>
-          <RouteErrorBoundary>
-            <Suspense fallback={<PageLoading />}>
-              <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/settings" element={<AppSettingsPage />} />
-                <Route path="/trash" element={<TrashPage />} />
-                <Route path="/t/:titleId" element={<TitlePage />} />
-                <Route path="/t/:titleId/c/:chapterId" element={<ChapterPage />} />
-                <Route path="/t/:titleId/p/:pieceId" element={<PieceWorkspace />} />
-                <Route path="/t/:titleId/m/:memoId" element={<MemoPage />} />
-                <Route path="/t/:titleId/read" element={<ReadThroughPage />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </RouteErrorBoundary>
-        </Gate>
-      </AppFrame>
-    </HashRouter>
+    <AppFrame>
+      <TrashPurge />
+      <Gate>
+        <RouteErrorBoundary>
+          <Suspense fallback={<PageLoading />}>
+            <Outlet />
+          </Suspense>
+        </RouteErrorBoundary>
+      </Gate>
+    </AppFrame>
   )
+}
+
+/** 外枠そのものの描画に失敗した時（ふつうは各画面のエラー表示 RouteErrorBoundary が受け止める） */
+function RootError() {
+  const error = useRouteError()
+  console.error('画面の表示中にエラーが起きました', error)
+  return <ErrorScreen message={error instanceof Error ? error.message : String(error)} />
+}
+
+export const routes: RouteObject[] = [
+  {
+    element: <RootLayout />,
+    errorElement: <RootError />,
+    children: [
+      { path: '/', element: <HomePage /> },
+      { path: '/settings', element: <AppSettingsPage /> },
+      { path: '/trash', element: <TrashPage /> },
+      { path: '/t/:titleId', element: <TitlePage /> },
+      { path: '/t/:titleId/c/:chapterId', element: <ChapterPage /> },
+      { path: '/t/:titleId/p/:pieceId', element: <PieceWorkspace /> },
+      { path: '/t/:titleId/m/:memoId', element: <MemoPage /> },
+      { path: '/t/:titleId/read', element: <ReadThroughPage /> },
+      { path: '*', element: <NotFound /> },
+    ],
+  },
+]
+
+// 画面を離れる前の確認（原稿画面の保存していない編集）に useBlocker を使うので、データルーターにする
+let router: ReturnType<typeof createHashRouter> | null = null
+
+export function App() {
+  router ??= createHashRouter(routes)
+  return <RouterProvider router={router} />
 }

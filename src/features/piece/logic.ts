@@ -3,7 +3,7 @@ import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import { flatten } from '../../domain/structure'
 import { trashNotice } from '../../domain/trash'
 import { bodyMetrics, formatCount, textStats, type TextStats } from '../../domain/text'
-import type { AppData, ID, Piece, Submission, Version } from '../../domain/types'
+import type { AppData, ID, Piece, PieceKind, Submission, Version } from '../../domain/types'
 
 /** 採用中のバージョン（採用なし・参照切れなら null） */
 export function activeVersionOf(data: AppData, piece: Piece): Version | null {
@@ -66,6 +66,21 @@ export function formatStats(s: Pick<TextStats, 'chars' | 'manuscriptPages'>): { 
  */
 export function liveStats(version: Version, text: string): TextStats {
   return text === version.body ? bodyMetrics(version) : textStats(text)
+}
+
+/**
+ * コピーする時の見出し。第n話は「第3話　題」（題がなければ「第3話」）、特殊ブロックは見出し（題があれば「見出し　題」）。
+ * label は第n話なら「第3話」、特殊ブロックなら編集中の見出し。
+ */
+export function pieceHeading(kind: PieceKind, label: string, subtitle: string): string {
+  const head = kind === 'episode' ? label : label.trim()
+  const sub = subtitle.trim()
+  return [head, sub].filter(Boolean).join('　')
+}
+
+/** 見出し・空行・本文（見出しがなければ本文だけ） */
+export function withHeading(heading: string, body: string): string {
+  return heading ? `${heading}\n\n${body}` : body
 }
 
 /** 推敲メモなどの最初の空でない行 */

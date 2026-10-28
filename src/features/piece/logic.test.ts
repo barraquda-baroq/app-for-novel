@@ -10,6 +10,7 @@ import {
   liveStats,
   mapScrollTop,
   neighborPieces,
+  pieceHeading,
   ratioToSlider,
   resolveSelected,
   selectionAfterAdopt,
@@ -20,6 +21,7 @@ import {
   versionDisplayName,
   versionRows,
   versionsNewestFirst,
+  withHeading,
 } from './logic'
 
 // 本文を数え直した回数（一覧や自動保存のたびに全稿を数え直していないかを確かめる）
@@ -252,5 +254,34 @@ describe('文字数の表示', () => {
   it('文字数と原稿用紙換算を分けて返す', () => {
     expect(statsParts('あいう\nえお')).toEqual({ chars: '5字', pages: '原稿用紙1枚' })
     expect(statsLabel('あいう\nえお')).toBe('5字・原稿用紙1枚')
+  })
+
+  it('編集中の文字数はルビ・傍点の記号とルビの読みを数えない', () => {
+    let { data, p1 } = setup()
+    const v1 = firstVersion(data, p1)
+    data = updateVersion(data, v1, { body: '｜漢字《かんじ》と《《強調》》' })
+    const version = data.versions[v1]
+    // 保存済み（キャッシュ）: 漢字・と・強調 の5字
+    expect(liveStats(version, version.body).chars).toBe(5)
+    // 書いている途中の本文（省略形のルビ・｜《 の書き方も）
+    expect(liveStats(version, '｜漢字《かんじ》と《《強調》》、東京《とうきょう》').chars).toBe(8)
+    // ｜《 は《そのもの（《そのまま》の6字）
+    expect(liveStats(version, '｜《そのまま》').chars).toBe(6)
+    expect(statsParts('｜漢字《かんじ》').chars).toBe('2字')
+  })
+})
+
+describe('見出し付きのコピー', () => {
+  it('第n話は「第3話　題」、題がなければ「第3話」。特殊ブロックは見出し（題があれば並べる）', () => {
+    expect(pieceHeading('episode', '第3話', '旅立ち')).toBe('第3話　旅立ち')
+    expect(pieceHeading('episode', '第3話', '  ')).toBe('第3話')
+    expect(pieceHeading('special', ' プロローグ ', '')).toBe('プロローグ')
+    expect(pieceHeading('special', 'プロローグ', '鍵のかかった扉')).toBe('プロローグ　鍵のかかった扉')
+    expect(pieceHeading('special', '', '')).toBe('')
+  })
+
+  it('見出し・空行・本文の順につなぐ（見出しがなければ本文だけ）', () => {
+    expect(withHeading('第1話　題', '本文')).toBe('第1話　題\n\n本文')
+    expect(withHeading('', '本文')).toBe('本文')
   })
 })
