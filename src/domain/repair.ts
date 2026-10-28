@@ -107,6 +107,8 @@ export function repairData(input: AppData): RepairResult {
     settingEntries: { ...input.settingEntries },
     submissions: { ...input.submissions },
     snapshotTexts: { ...(input.snapshotTexts ?? {}) },
+    trashEntries: { ...(input.trashEntries ?? {}) },
+    trashRecords: { ...(input.trashRecords ?? {}) },
   }
   const fix = (msg: string) => fixes.push(msg)
 

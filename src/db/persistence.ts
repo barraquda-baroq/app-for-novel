@@ -20,7 +20,13 @@ class NovelDB extends Dexie {
     ]
     this.version(1).stores(Object.fromEntries(v1Tables.map((t) => [t, 'id'])))
     // v2: 応募時の原稿の本文を内容ごとにまとめて保存する表を追加
-    this.version(2).stores(Object.fromEntries(TABLE_NAMES.map((t) => [t, 'id'])))
+    this.version(2).stores(Object.fromEntries([...v1Tables, 'snapshotTexts'].map((t) => [t, 'id'])))
+    // v3（2.x）: ゴミ箱の表と、同期用の送信待ち（_outbox）・状態（_meta）を追加
+    this.version(3).stores({
+      ...Object.fromEntries(TABLE_NAMES.map((t) => [t, 'id'])),
+      _outbox: 'k',
+      _meta: 'key',
+    })
   }
 
   tableOf(name: TableName): Table<AnyRecord, string> {

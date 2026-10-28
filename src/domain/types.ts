@@ -203,6 +203,74 @@ export interface Submission {
   updatedAt: number
 }
 
+/** ゴミ箱に入れたものの種類（戻し方が変わる） */
+export type TrashKind =
+  | 'title'
+  | 'chapter'
+  | 'piece'
+  | 'version'
+  | 'memo'
+  | 'idea'
+  | 'settingCategory'
+  | 'settingEntry'
+  | 'submission'
+
+/** 削除した時点の場所。戻す時はここへ戻す（無くなっていれば近い所へ） */
+export interface TrashOrigin {
+  /** 属していたタイトル（タイトル自体と、どのタイトルにも属さないアイデアは null） */
+  titleId: ID | null
+  /** 章・話: 入っていた章（タイトル直下なら null） */
+  chapterId?: ID | null
+  /** 稿: 属していた話 */
+  pieceId?: ID
+  /** 設定エントリ: 属していた設定項目 */
+  categoryId?: ID
+  /** 並びの中の位置（structure・pieceIds・versionIds の添字、または order の値） */
+  index: number
+  /** 直前にあった要素の id（並びが変わっていても、その直後に戻せるように） */
+  prevId?: ID | null
+  /** 稿: 採用中だった */
+  wasActive?: boolean
+}
+
+/**
+ * ゴミ箱の1件（削除の単位）。話を削除したら、話とその稿がまとめて1件になる。
+ * 中身のレコードは1件ずつ trashRecords に入れる（同期の時に1つの文書が大きくなりすぎないように）。
+ * 30日たったら中身ごと消す。
+ */
+export interface TrashEntry {
+  id: ID
+  kind: TrashKind
+  /** 一覧に出す名前（削除した時点の表記。例: 「第3話　旅立ち」「第2稿」） */
+  label: string
+  /** 削除した時点のタイトル名（タイトルが後で消えても一覧に出せるように） */
+  titleName: string
+  origin: TrashOrigin
+  /** 中身（trashRecords の id）。先頭が削除したもの本体 */
+  recordIds: ID[]
+  /**
+   * deleted = 利用者が削除した。
+   * conflict = 同期の時、片方の端末で削除され、もう片方の端末で編集されていたので、編集された内容をここに残した
+   * （中身は1件だけ。戻す時に同じ id が残っていれば、新しい id の複製として戻す）
+   */
+  reason: 'deleted' | 'conflict'
+  deletedAt: number
+  createdAt: number
+  updatedAt: number
+}
+
+/** ゴミ箱の中身の1レコード（削除した時点の内容そのもの） */
+export interface TrashRecord {
+  id: ID
+  entryId: ID
+  /** 元の表 */
+  table: ContentTableName
+  /** 元のレコード（id もそのまま） */
+  record: AppData[ContentTableName][string]
+  createdAt: number
+  updatedAt: number
+}
+
 export interface AppData {
   titles: Record<ID, Title>
   chapters: Record<ID, Chapter>
@@ -214,9 +282,14 @@ export interface AppData {
   settingEntries: Record<ID, SettingEntry>
   submissions: Record<ID, Submission>
   snapshotTexts: Record<ID, SnapshotText>
+  trashEntries: Record<ID, TrashEntry>
+  trashRecords: Record<ID, TrashRecord>
 }
 
 export type TableName = keyof AppData
+
+/** ゴミ箱以外の表（ゴミ箱に入れられるレコードの表） */
+export type ContentTableName = Exclude<TableName, 'trashEntries' | 'trashRecords'>
 
 export const TABLE_NAMES: TableName[] = [
   'titles',
@@ -229,6 +302,8 @@ export const TABLE_NAMES: TableName[] = [
   'settingEntries',
   'submissions',
   'snapshotTexts',
+  'trashEntries',
+  'trashRecords',
 ]
 
 export function emptyData(): AppData {
@@ -243,6 +318,8 @@ export function emptyData(): AppData {
     settingEntries: {},
     submissions: {},
     snapshotTexts: {},
+    trashEntries: {},
+    trashRecords: {},
   }
 }
 

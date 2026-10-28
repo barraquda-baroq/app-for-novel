@@ -22,6 +22,8 @@ export const TABLE_LABELS: Record<TableName, string> = {
   settingEntries: '設定のエントリ',
   submissions: '応募計画',
   snapshotTexts: '応募時の原稿の控え',
+  trashEntries: 'ゴミ箱',
+  trashRecords: 'ゴミ箱の中身',
 }
 
 /**

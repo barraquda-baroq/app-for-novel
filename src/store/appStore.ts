@@ -259,6 +259,8 @@ interface RecoveryJournal {
 const JOURNAL_BUDGET = 2_000_000
 /** 控えきれない時に先に諦める順（後ろほど大事） */
 const JOURNAL_DROP_ORDER: TableName[] = [
+  'trashRecords',
+  'trashEntries',
   'snapshotTexts',
   'submissions',
   'settingCategories',
