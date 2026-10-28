@@ -15,13 +15,17 @@ export function useMediaQuery(query: string): boolean {
   return matches
 }
 
-/** 広い画面（デスクトップ）なら左右、スマホ幅なら上下。設定で固定もできる */
+/**
+ * 広い画面（デスクトップ）なら左右、スマホ・タブレットの縦持ちなら上下。
+ * スマホの横持ち（高さが低い横長の画面）は上下に分けると1行も見えないので左右にする。設定で固定もできる。
+ */
 export function useSplitOrientation(): 'horizontal' | 'vertical' {
   const pref = usePrefs((s) => s.splitOrientation)
   const wide = useMediaQuery('(min-width: 900px)')
+  const shortLandscape = useMediaQuery('(orientation: landscape) and (max-height: 600px)')
   if (pref === 'horizontal') return 'horizontal'
   if (pref === 'vertical') return 'vertical'
-  return wide ? 'horizontal' : 'vertical'
+  return wide || shortLandscape ? 'horizontal' : 'vertical'
 }
 
 export function useIsMobile(): boolean {

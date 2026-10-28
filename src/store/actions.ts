@@ -20,6 +20,7 @@ export const actions = {
   createTitle: (name: string) => run((d) => E.createTitle(d, name)),
   updateTitle: (titleId: ID, patch: Parameters<typeof E.updateTitle>[2]) => apply((d) => E.updateTitle(d, titleId, patch)),
   moveTitleStep: (titleId: ID, dir: -1 | 1) => apply((d) => E.moveTitleStep(d, titleId, dir)),
+  moveTitleTo: (titleId: ID, index: number) => apply((d) => E.moveTitleTo(d, titleId, index)),
   deleteTitle: (titleId: ID) => apply((d) => E.deleteTitle(d, titleId)),
 
   // アイデア
@@ -27,6 +28,7 @@ export const actions = {
   updateIdea: (ideaId: ID, patch: Parameters<typeof E.updateIdea>[2]) => apply((d) => E.updateIdea(d, ideaId, patch)),
   moveIdeaToSection: (ideaId: ID, titleId: ID | null) => apply((d) => E.moveIdeaToSection(d, ideaId, titleId)),
   moveIdeaStep: (ideaId: ID, dir: -1 | 1) => apply((d) => E.moveIdeaStep(d, ideaId, dir)),
+  moveIdeaTo: (ideaId: ID, titleId: ID | null, index: number) => apply((d) => E.moveIdeaTo(d, ideaId, titleId, index)),
   deleteIdea: (ideaId: ID) => apply((d) => E.deleteIdea(d, ideaId)),
 
   // 本編: 話数追加・特殊追加

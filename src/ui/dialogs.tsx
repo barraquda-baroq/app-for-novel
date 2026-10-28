@@ -51,6 +51,17 @@ export function promptDialog(opts: PromptOptions): Promise<string | null> {
   return new Promise((resolve) => enqueue({ kind: 'prompt', opts, resolve }))
 }
 
+/** 開いている・待っているダイアログをすべてキャンセル扱いで閉じる（画面遷移時など） */
+export function cancelAllDialogs(): void {
+  const { queue } = useDialogs.getState()
+  if (queue.length === 0) return
+  useDialogs.setState({ queue: [] })
+  for (const req of queue) {
+    if (req.kind === 'confirm') req.resolve(false)
+    else req.resolve(null)
+  }
+}
+
 export function DialogHost() {
   const current = useDialogs((s) => s.queue[0])
   if (!current) return null

@@ -76,6 +76,20 @@ export function updateTitle(data: AppData, titleId: ID, patch: Partial<Pick<Titl
   }).data
 }
 
+/** タイトル一覧の index 番目（0始まり）へ移す */
+export function moveTitleTo(data: AppData, titleId: ID, index: number): AppData {
+  return transact(data, (tx) => {
+    const list = tx.all('titles').sort(byOrder)
+    const from = list.findIndex((t) => t.id === titleId)
+    if (from < 0) return
+    const [moved] = list.splice(from, 1)
+    list.splice(Math.max(0, Math.min(index, list.length)), 0, moved)
+    list.forEach((t, i) => {
+      if (t.order !== i) tx.put('titles', { ...t, order: i })
+    })
+  }).data
+}
+
 export function moveTitleStep(data: AppData, titleId: ID, dir: -1 | 1): AppData {
   return transact(data, (tx) => putAll(tx, 'titles', stepOrder(tx.all('titles'), titleId, dir))).data
 }
@@ -208,6 +222,26 @@ export function moveIdeaToSection(data: AppData, ideaId: ID, titleId: ID | null)
     if (i.titleId === titleId) return
     const order = nextOrder(tx.all('ideas').filter((x) => x.titleId === titleId))
     tx.put('ideas', { ...i, titleId, order, updatedAt: now() })
+  }).data
+}
+
+/** アイデアを指定の仕切り（null = どのタイトルにも属さない）の index 番目（0始まり）へ移す */
+export function moveIdeaTo(data: AppData, ideaId: ID, titleId: ID | null, index: number): AppData {
+  return transact(data, (tx) => {
+    const idea = tx.get('ideas', ideaId)
+    if (!idea) throw new DomainError('アイデアが見つかりません')
+    if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
+    const list = tx
+      .all('ideas')
+      .filter((i) => i.titleId === titleId && i.id !== ideaId)
+      .sort(byOrder)
+    list.splice(Math.max(0, Math.min(index, list.length)), 0, { ...idea, titleId })
+    const ts = now()
+    list.forEach((it, i) => {
+      if (it.id === ideaId) {
+        if (it.order !== i || idea.titleId !== titleId) tx.put('ideas', { ...it, order: i, updatedAt: ts })
+      } else if (it.order !== i) tx.put('ideas', { ...it, order: i })
+    })
   }).data
 }
 

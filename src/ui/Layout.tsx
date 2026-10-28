@@ -1,9 +1,9 @@
 // アプリの外枠: ヘッダー（パンくず・保存状態・設定）、トースト、ダイアログ
 import { useEffect, type ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigationType } from 'react-router-dom'
 import { reloadFromDisk, useApp } from '../store/appStore'
 import { notify, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
-import { DialogHost } from './dialogs'
+import { DialogHost, cancelAllDialogs } from './dialogs'
 import { GearIcon, XIcon } from './icons'
 
 export interface Crumb {
@@ -137,19 +137,75 @@ function PrefsEffect() {
   return null
 }
 
-/** 画面（パス）が変わったら先頭から表示する。?tab= などのクエリだけの変更ではスクロールしない */
-function ScrollToTopOnNavigate() {
-  const { pathname } = useLocation()
+const SCROLL_KEY = 'novel-studio:scroll'
+
+function readScrollMemory(): Record<string, number> {
+  try {
+    return JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? '{}') as Record<string, number>
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 画面（パス）が変わったら先頭から表示する。?tab= などのクエリだけの変更ではスクロールしない。
+ * ブラウザの「戻る／進む」では、その画面を離れた時のスクロール位置に戻す。
+ */
+function ScrollOnNavigate() {
+  const location = useLocation()
+  const navType = useNavigationType()
+  const pathKey = location.pathname
+  const entryKey = location.key
+
+  // 離れる時の位置を履歴の項目ごとに覚えておく
   useEffect(() => {
+    let frame = 0
+    const onScroll = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const memory = readScrollMemory()
+        memory[entryKey] = window.scrollY
+        try {
+          sessionStorage.setItem(SCROLL_KEY, JSON.stringify(memory))
+        } catch {
+          /* noop */
+        }
+      })
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', onScroll)
+    }
+  }, [entryKey])
+
+  useEffect(() => {
+    if (navType === 'POP') {
+      const y = readScrollMemory()[entryKey]
+      if (typeof y === 'number') {
+        // 描画が終わってから戻す
+        requestAnimationFrame(() => window.scrollTo(0, y))
+        return
+      }
+    }
     window.scrollTo(0, 0)
-  }, [pathname])
+    // パスが変わった時だけ（クエリだけの変更では動かさない）
+  }, [pathKey])
+  return null
+}
+
+/** 画面が変わったら、開いたままの確認・入力ダイアログはキャンセル扱いで閉じる */
+function CloseDialogsOnNavigate() {
+  const { pathname } = useLocation()
+  useEffect(() => cancelAllDialogs, [pathname])
   return null
 }
 
 export function AppFrame({ children }: { children: ReactNode }) {
   return (
     <div className="app">
-      <ScrollToTopOnNavigate />
+      <ScrollOnNavigate />
+      <CloseDialogsOnNavigate />
       <PrefsEffect />
       <RecoveryNotice />
       <UpdateBanner />

@@ -16,10 +16,13 @@ import {
   memosOf,
   missingActiveLabel,
   moveIdeaStep,
+  moveIdeaTo,
   moveIdeaToSection,
   moveSubmissionStep,
+  moveTitleTo,
   recordSubmissionSnapshot,
   snapshotText,
+  sortedTitles,
   submissionsReferencingVersion,
   submissionsOf,
   titleLastEdited,
@@ -207,5 +210,26 @@ describe('応募時の原稿の記録', () => {
     expect(missingActiveLabel(2, 0)).toBe('採用原稿なし 2話')
     expect(missingActiveLabel(1, 1)).toBe('採用原稿なし 1話＋特殊1')
     expect(missingActiveLabel(0, 1)).toBe('採用原稿なし 特殊1')
+  })
+})
+
+describe('位置を指定した並べ替え', () => {
+  it('アイデアを別の仕切りの任意の位置へ、タイトルを任意の位置へ移せる', () => {
+    let data = emptyData()
+    const t = createTitle(data, 'A')
+    data = createTitle(t.data, 'B').data
+    const ids: string[] = []
+    for (const h of ['1', '2', '3']) {
+      const r = addIdea(data, null, h)
+      data = r.data
+      ids.push(r.result)
+    }
+    data = moveIdeaTo(data, ids[2], null, 0)
+    expect(ideaSections(data).at(-1)!.ideas.map((i) => i.heading)).toEqual(['3', '1', '2'])
+    data = moveIdeaTo(data, ids[0], t.result, 0)
+    expect(ideaSections(data)[0].ideas.map((i) => i.heading)).toEqual(['1'])
+    expect(ideaSections(data).at(-1)!.ideas.map((i) => i.heading)).toEqual(['3', '2'])
+    data = moveTitleTo(data, t.result, 5)
+    expect(sortedTitles(data).map((x) => x.name)).toEqual(['B', 'A'])
   })
 })
