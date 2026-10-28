@@ -17,6 +17,17 @@ export interface EpisodeExportOptions {
   date: Date
 }
 
+/** 書き出す1話分（本文はまだテキストファイルの形にしていない） */
+export interface EpisodeEntry {
+  pieceId: ID
+  /** ファイル名（.txt まで） */
+  name: string
+  /** 「第1話　旅立ち」のような見出し */
+  heading: string
+  /** 採用原稿の本文（記法のまま） */
+  body: string
+}
+
 /** ファイル名に使えない文字を置き換える（Windows・iPhone・Android のどれでも使える名前にする） */
 export function fileSafe(name: string, fallback = '無題'): string {
   const cleaned = name
@@ -34,13 +45,17 @@ export function yyyymmdd(d: Date): string {
 /** 改行は CRLF（Windows のメモ帳でもそのまま読める） */
 const toCrlf = (s: string) => s.replace(/\r\n|\r|\n/g, '\r\n')
 
-export function episodeFiles(data: AppData, titleId: ID, opts: EpisodeExportOptions): EpisodeFile[] {
+/**
+ * 書き出す話（読む順）とファイル名。本文の変換はしないので、ファイル名の一覧を出すだけなら長編でも軽い。
+ * テキストにするのは episodeFileText（書き出す時に1話ずつ）。
+ */
+export function episodeEntries(data: AppData, titleId: ID, date: Date): EpisodeEntry[] {
   const title = data.titles[titleId]
   if (!title) return []
   const numbers = episodeNumbers(data, titleId)
-  const prefix = `${yyyymmdd(opts.date)}${fileSafe(title.name, '無題のタイトル')}_`
+  const prefix = `${yyyymmdd(date)}${fileSafe(title.name, '無題のタイトル')}_`
   const used = new Map<string, number>()
-  const files: EpisodeFile[] = []
+  const entries: EpisodeEntry[] = []
   for (const item of flatten(data, titleId)) {
     const piece = data.pieces[item.pieceId]
     const v = activeVersion(data, piece)
@@ -52,8 +67,20 @@ export function episodeFiles(data: AppData, titleId: ID, opts: EpisodeExportOpti
     used.set(base, seen + 1)
     if (seen > 0) base = `${base}(${seen + 1})`
     const heading = piece.subtitle.trim() ? `${label}　${piece.subtitle.trim()}` : label
-    const text = opts.withHeading ? `${heading}\n\n${v.body}` : v.body
-    files.push({ pieceId: piece.id, name: `${base}.txt`, text: toCrlf(text) })
+    entries.push({ pieceId: piece.id, name: `${base}.txt`, heading, body: v.body })
   }
-  return files
+  return entries
+}
+
+/** 1話分のテキストファイルの中身（見出しを入れるなら先頭に見出しと空行） */
+export function episodeFileText(entry: Pick<EpisodeEntry, 'heading' | 'body'>, withHeading: boolean): string {
+  return toCrlf(withHeading ? `${entry.heading}\n\n${entry.body}` : entry.body)
+}
+
+export function episodeFiles(data: AppData, titleId: ID, opts: EpisodeExportOptions): EpisodeFile[] {
+  return episodeEntries(data, titleId, opts.date).map((e) => ({
+    pieceId: e.pieceId,
+    name: e.name,
+    text: episodeFileText(e, opts.withHeading),
+  }))
 }
