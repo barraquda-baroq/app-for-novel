@@ -5,6 +5,7 @@ import type { InsertOption } from '../../../domain/storyOps'
 import {
   activeBody,
   effectiveNumbering,
+  episodeLabel,
   episodeNumbers,
   flatten,
   locatePiece,
@@ -22,6 +23,8 @@ export interface EpisodePreview {
   chapterId: ID | null
   /** 「第4話」や「「第2章」の第1話」のような説明 */
   description: string
+  /** どこに入るかの説明（「「第2話」の後（「エピローグ」の前）に入ります。」）。前後に何もなければ null */
+  placement: string | null
 }
 
 /**
@@ -40,10 +43,58 @@ export function previewEpisode(data: AppData, titleId: ID, target?: ID | null): 
     if (effectiveNumbering(title) === 'perChapter') {
       description = chapterId ? `「${chapterName(data.chapters[chapterId])}」の${label}` : `タイトル直下の${label}`
     }
-    return { number, chapterId, description }
+    return { number, chapterId, description, placement: describePlacement(data, r.data, titleId, r.result) }
   } catch {
     return null
   }
+}
+
+/**
+ * 新しい話（sim 上の newId。planEpisodeSlot の位置に入っている）の前後の並びから、入る位置を説明する。
+ * 章が有効なら同じ章（またはタイトル直下）の中の前後、無効なら読む順の前後。表記は追加前の data で数える。
+ */
+function describePlacement(data: AppData, sim: AppData, titleId: ID, newId: ID): string | null {
+  const title = sim.titles[titleId]
+  if (!title) return null
+  const numbers = episodeNumbers(data, titleId)
+  const pieceName = (id: ID | undefined) => {
+    const p = id ? data.pieces[id] : undefined
+    return p ? `「${pieceLabel(data, p, numbers)}」` : null
+  }
+  let prev: string | null = null
+  let next: string | null = null
+  let where = ''
+  if (!title.chaptersEnabled) {
+    const flat = flatten(sim, titleId)
+    const i = flat.findIndex((f) => f.pieceId === newId)
+    if (i < 0) return null
+    prev = pieceName(flat[i - 1]?.pieceId)
+    next = pieceName(flat[i + 1]?.pieceId)
+  } else {
+    const slot = locatePiece(sim, newId)
+    if (!slot) return null
+    if (slot.chapterId) {
+      const ids = sim.chapters[slot.chapterId]?.pieceIds ?? []
+      const chName = `「${chapterName(data.chapters[slot.chapterId])}」`
+      prev = pieceName(ids[slot.index - 1])
+      next = pieceName(ids[slot.index + 1])
+      if (!prev && !next) return `${chName}に入ります。`
+      where = `${chName}の中の`
+    } else {
+      const nodeName = (i: number) => {
+        const node = title.structure[i]
+        if (!node) return null
+        return node.type === 'piece' ? pieceName(node.id) : `「${chapterName(data.chapters[node.id])}」`
+      }
+      prev = nodeName(slot.index - 1)
+      next = nodeName(slot.index + 1)
+      where = 'タイトル直下の'
+    }
+  }
+  if (prev && next) return `${where}${prev}の後（${next}の前）に入ります。`
+  if (prev) return `${where}${prev}の後に入ります。`
+  if (next) return `${where}先頭（${next}の前）に入ります。`
+  return null
 }
 
 export function chapterName(chapter: Chapter | undefined): string {
@@ -144,6 +195,51 @@ export function chapterStepAvailability(data: AppData, chapterId: ID): { up: boo
   return { up: i > 0, down: i >= 0 && i < title.structure.length - 1 }
 }
 
+// ---------- 章の解除 ----------
+
+export interface Renumbered {
+  pieceId: ID
+  /** 解除前の表記（第n話） */
+  before: string
+  /** 解除後の表記（第n話） */
+  after: string
+  subtitle: string
+}
+
+/**
+ * 章を解除したら話数が変わる話（読む順）。章ごとに第1話から数えている時は、
+ * 中の話が章の外の話として数え直されるので話数が変わる。通し番号なら変わらない（空配列）。
+ */
+export function renumberingOnRelease(data: AppData, chapterId: ID): Renumbered[] {
+  const ch = data.chapters[chapterId]
+  if (!ch) return []
+  let sim: AppData
+  try {
+    sim = S.removeChapter(data, chapterId)
+  } catch {
+    return []
+  }
+  const before = episodeNumbers(data, ch.titleId)
+  const after = episodeNumbers(sim, ch.titleId)
+  const out: Renumbered[] = []
+  for (const f of flatten(sim, ch.titleId)) {
+    const p = sim.pieces[f.pieceId]
+    if (p.kind !== 'episode' || !before[p.id] || !after[p.id] || before[p.id] === after[p.id]) continue
+    out.push({ pieceId: p.id, before: episodeLabel(before[p.id]), after: episodeLabel(after[p.id]), subtitle: p.subtitle.trim() })
+  }
+  return out
+}
+
+/** 「第1話「旅立ち」→第2話、第2話→第3話 ほか2話」のような説明 */
+export function formatRenumbering(items: Renumbered[], max = 5): string {
+  const shown = items
+    .slice(0, max)
+    .map((r) => `${r.before}${r.subtitle ? `「${r.subtitle}」` : ''}→${r.after}`)
+    .join('、')
+  const rest = items.length - Math.min(items.length, max)
+  return rest > 0 ? `${shown} ほか${rest}話` : shown
+}
+
 // ---------- 一覧の表示用の要約 ----------
 
 export interface PieceSummary {
@@ -183,7 +279,12 @@ export interface PieceGroupStats {
   pieces: number
   episodes: number
   specials: number
+  /** 採用原稿のない話・特殊ブロックの合計 */
   missingActive: number
+  /** 採用原稿のない第n話の数 */
+  missingEpisodes: number
+  /** 採用原稿のない特殊ブロックの数 */
+  missingSpecials: number
   /** 採用原稿の文字数（空白・改行除く） */
   chars: number
   /** 400字詰め原稿用紙換算（各話を新しいページから書き始めた場合） */
@@ -191,7 +292,16 @@ export interface PieceGroupStats {
 }
 
 export function statsOfPieces(data: AppData, pieceIds: ID[]): PieceGroupStats {
-  const s: PieceGroupStats = { pieces: 0, episodes: 0, specials: 0, missingActive: 0, chars: 0, pages: 0 }
+  const s: PieceGroupStats = {
+    pieces: 0,
+    episodes: 0,
+    specials: 0,
+    missingActive: 0,
+    missingEpisodes: 0,
+    missingSpecials: 0,
+    chars: 0,
+    pages: 0,
+  }
   for (const id of pieceIds) {
     const p = data.pieces[id]
     if (!p) continue
@@ -201,6 +311,8 @@ export function statsOfPieces(data: AppData, pieceIds: ID[]): PieceGroupStats {
     const body = activeBody(data, p)
     if (body === null) {
       s.missingActive += 1
+      if (p.kind === 'episode') s.missingEpisodes += 1
+      else s.missingSpecials += 1
       continue
     }
     s.chars += countChars(body)

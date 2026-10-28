@@ -1,6 +1,7 @@
 // 章ページ: タイトル → 章 → 第n話 の真ん中の階層。章の名前・メモ・中の話の一覧。
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { missingActiveLabel } from '../../domain/entityOps'
 import { episodeTargets } from '../../domain/storyOps'
 import { chaptersOf, episodeNumbers, locatePiece, pieceFullLabel } from '../../domain/structure'
 import { formatCount } from '../../domain/text'
@@ -135,7 +136,11 @@ export function ChapterPage() {
               採用原稿 {formatCount(stats.chars)}字
               {stats.chars > 0 ? <span className="tpage-chip-sub">（原稿用紙 約{formatCount(stats.pages)}枚）</span> : null}
             </li>
-            {stats.missingActive > 0 ? <li className="tpage-chip is-warn">採用原稿なし {stats.missingActive}話</li> : null}
+            {stats.missingActive > 0 ? (
+              <li className="tpage-chip is-warn" data-testid="chapter-stat-missing">
+                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials)}
+              </li>
+            ) : null}
           </ul>
           <label className="field chpage-note">
             <span>章のメモ</span>
@@ -215,7 +220,9 @@ export function ChapterPage() {
                   edit={edit}
                   canUp={steps[p.id]?.up ?? false}
                   canDown={steps[p.id]?.down ?? false}
-                  onStepped={onStepped}
+                  onMoved={(id, via) => {
+                    if (via === 'step') onStepped(id)
+                  }}
                 />
               ))}
             </ol>

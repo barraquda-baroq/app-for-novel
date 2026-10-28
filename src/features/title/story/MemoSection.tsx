@@ -1,5 +1,5 @@
 // タイトル内のメモ（付箋）。表示優先度が最も低く、常に本編の一番下に置く。
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { memosOf } from '../../../domain/entityOps'
 import type { ID, Memo } from '../../../domain/types'
@@ -20,9 +20,12 @@ export async function addMemoFlow(titleId: ID): Promise<ID | undefined> {
   return id
 }
 
-export function MemoSection({ titleId, edit, onToggleEdit }: { titleId: ID; edit: boolean; onToggleEdit: () => void }) {
+export function MemoSection({ titleId }: { titleId: ID }) {
   const data = useData()
   const memos = useMemo(() => memosOf(data, titleId), [data, titleId])
+  // 本編の編集モードとは別に切り替える（本編の行が広がってメモの位置がずれないように）
+  const [edit, setEdit] = useState(false)
+  const editing = edit && memos.length > 0
 
   return (
     <section className="section story-memos" aria-labelledby="story-memos-heading" data-testid="memo-section">
@@ -32,8 +35,14 @@ export function MemoSection({ titleId, edit, onToggleEdit }: { titleId: ID; edit
         <span className="badge badge-memo">{memos.length}</span>
         <span className="grow" />
         {memos.length > 0 ? (
-          <button type="button" className={`btn btn-sm${edit ? ' story-toggle-on' : ' btn-ghost'}`} aria-pressed={edit} onClick={onToggleEdit}>
-            {edit ? '編集を終える' : '並べ替え・削除'}
+          <button
+            type="button"
+            className={`btn btn-sm${editing ? ' story-toggle-on' : ' btn-ghost'}`}
+            aria-pressed={editing}
+            onClick={() => setEdit(!editing)}
+            data-testid="memo-edit-toggle"
+          >
+            {editing ? '編集を終える' : '並べ替え・削除'}
           </button>
         ) : null}
         <button type="button" className="btn btn-sm" onClick={() => void addMemoFlow(titleId)} data-testid="add-memo">
@@ -48,7 +57,7 @@ export function MemoSection({ titleId, edit, onToggleEdit }: { titleId: ID; edit
       ) : (
         <ul className="story-memo-grid">
           {memos.map((m, i) => (
-            <MemoCard key={m.id} memo={m} edit={edit} first={i === 0} last={i === memos.length - 1} />
+            <MemoCard key={m.id} memo={m} edit={editing} first={i === 0} last={i === memos.length - 1} />
           ))}
         </ul>
       )}

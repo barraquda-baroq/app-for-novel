@@ -20,11 +20,14 @@ export interface PieceRowProps {
   edit: boolean
   canUp: boolean
   canDown: boolean
-  /** 1つ上/下へ動かした後に呼ばれる（章ページで章の外へ出たことを知らせる等） */
-  onStepped?: (pieceId: ID) => void
+  /**
+   * ↑↓（step）または「移動…」（dialog）で動かした後に呼ばれる
+   * （章ページで章の外へ出たことを知らせる・折りたたんだ章に入ったら開く等）
+   */
+  onMoved?: (pieceId: ID, via: 'step' | 'dialog') => void
 }
 
-export function PieceRow({ data, piece, numbers, edit, canUp, canDown, onStepped }: PieceRowProps) {
+export function PieceRow({ data, piece, numbers, edit, canUp, canDown, onMoved }: PieceRowProps) {
   const [moving, setMoving] = useState(false)
   const summary = pieceSummary(data, piece)
   const label = pieceLabel(data, piece, numbers)
@@ -34,7 +37,13 @@ export function PieceRow({ data, piece, numbers, edit, canUp, canDown, onStepped
 
   const step = (dir: -1 | 1) => {
     attempt(() => actions.movePieceStep(piece.id, dir))
-    onStepped?.(piece.id)
+    onMoved?.(piece.id, 'step')
+    // 章に出入りすると行が作り直されてフォーカスが外れるので、動かした行の同じボタンに戻す
+    const id = piece.id
+    requestAnimationFrame(() => {
+      if (document.activeElement && document.activeElement !== document.body) return
+      document.querySelector<HTMLElement>(`[data-piece-id="${id}"] [data-testid="piece-${dir < 0 ? 'up' : 'down'}"]`)?.focus()
+    })
   }
 
   const remove = async () => {
@@ -58,6 +67,7 @@ export function PieceRow({ data, piece, numbers, edit, canUp, canDown, onStepped
       className={`story-row${special ? ' is-special' : ''}${summary.active ? '' : ' is-missing'}${edit ? ' is-editing' : ''}`}
       data-testid="piece-row"
       data-kind={piece.kind}
+      data-piece-id={piece.id}
     >
       <Link to={paths.piece(piece.titleId, piece.id)} className="story-row-link">
         <span className="story-row-head">
@@ -131,7 +141,9 @@ export function PieceRow({ data, piece, numbers, edit, canUp, canDown, onStepped
           </button>
         </div>
       ) : null}
-      {moving ? <MoveDialog pieceId={piece.id} onClose={() => setMoving(false)} /> : null}
+      {moving ? (
+        <MoveDialog pieceId={piece.id} onClose={() => setMoving(false)} onMoved={() => onMoved?.(piece.id, 'dialog')} />
+      ) : null}
     </li>
   )
 }
