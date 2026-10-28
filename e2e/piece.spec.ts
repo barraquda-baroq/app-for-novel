@@ -59,6 +59,13 @@ async function compareTool(page: Page, testId: string): Promise<Locator> {
   return page.getByTestId(testId)
 }
 
+/** 狭いペインでは、採用原稿のコピー・採用を解除は「…」のメニューの中にある */
+async function activeTool(page: Page, testId: string): Promise<Locator> {
+  const more = page.getByTestId('active-more-button')
+  if ((await more.isVisible()) && (await more.getAttribute('aria-expanded')) !== 'true') await more.click()
+  return page.getByTestId(testId)
+}
+
 /** n 行の本文の話と、その複製（推敲バージョン）を作る */
 async function seedLines(page: Page, lines: number) {
   await openApp(page)
@@ -239,12 +246,15 @@ test.describe('原稿画面', () => {
     const pid = pieceIds[0]
     await openPiece(page, titleId, pid)
 
-    await page.getByTestId('unadopt-button').click()
+    await (await activeTool(page, 'unadopt-button')).click()
     const dialog = page.getByRole('dialog')
     await expect(dialog).toContainText('採用原稿がありません。')
     await dialog.getByRole('button', { name: '採用を解除' }).click()
 
     await expect(page.getByTestId('no-active')).toContainText('採用原稿がありません。')
+    // ヘッダーのバッジは「採用原稿なし」（「未採用」と見出し「採用原稿」を並べない）
+    await expect(page.getByTestId('no-active-badge')).toHaveText('採用原稿なし')
+    await expect(page.getByTestId('active-pane')).not.toContainText('未採用')
     await expect(page.getByTestId('active-editor')).toHaveCount(0)
     await expect.poll(() => activeBodyOf(page, pid)).toBeNull()
     await expect(page.getByTestId('duplicate-active-list')).toBeDisabled()
@@ -257,11 +267,50 @@ test.describe('原稿画面', () => {
     await expect.poll(() => activeBodyOf(page, pid)).toBe(BODY1)
 
     // 解除してから「白紙の稿を作って採用」
-    await page.getByTestId('unadopt-button').click()
+    await (await activeTool(page, 'unadopt-button')).click()
     await page.getByRole('dialog').getByRole('button', { name: '採用を解除' }).click()
     await page.getByTestId('create-and-adopt').click()
     await expect(page.getByTestId('active-editor')).toHaveValue('')
     await expect(page.getByTestId('versions-heading')).toHaveText('推敲バージョン（2）')
+  })
+
+  test('操作の名前は両ペインで「複製して推敲」に揃い、狭いペインでも短い文字（推敲・白紙）が見える。更新日時は「たった今更新」', async ({
+    page,
+  }, info) => {
+    const { titleId, pieceIds } = await seedBasic(page)
+    await openPiece(page, titleId, pieceIds[0])
+    const wide = isDesktop(info)
+    // 見えている文字（狭いペインでは「複製して」「の稿」を省く）
+    const visibleText = (testId: string) => page.getByTestId(testId).evaluate((el) => (el as HTMLElement).innerText.trim())
+    expect(await visibleText('duplicate-active')).toBe(wide ? '複製して推敲' : '推敲')
+    expect(await visibleText('duplicate-active-list')).toBe(wide ? '複製して推敲' : '推敲')
+    expect(await visibleText('add-blank-version')).toBe(wide ? '白紙の稿' : '白紙')
+    // 文字は見た目の上でも隠していない（幅がある）
+    for (const id of ['duplicate-active', 'duplicate-active-list', 'add-blank-version']) {
+      const label = page.getByTestId(id).locator('.pw-tlabel')
+      expect((await label.boundingBox())!.width).toBeGreaterThan(20)
+    }
+    await expect(page.getByText('採用原稿を複製', { exact: true })).toHaveCount(0)
+
+    // 更新日時（狭いペインでは「…」のメニューの中）
+    if (wide) {
+      await expect(page.getByTestId('copy-active')).toBeVisible()
+      await expect(page.getByTestId('unadopt-button')).toBeVisible()
+      await expect(page.getByTestId('active-more-button')).toBeHidden()
+      await expect(page.getByTestId('active-pane').locator('.pw-meta')).toContainText('たった今更新')
+    } else {
+      await page.getByTestId('active-more-button').click()
+      await expect(page.locator('.pw-amore')).toContainText('たった今更新')
+      await expect(page.locator('.pw-amore')).toContainText('原稿用紙')
+      await page.keyboard.press('Escape')
+    }
+    await expect(page.locator('body')).not.toContainText('たった今に更新')
+
+    // 比較: 稿の名前・文字数・更新日時（狭いペインでは「…」の中）
+    await page.getByTestId('duplicate-active').click()
+    await expect(page.getByTestId('compare-editor')).toBeVisible()
+    await compareTool(page, 'selected-version-name')
+    await expect(page.getByTestId('compare-pane').locator('.pw-updated')).toHaveText('たった今更新')
   })
 
   test('第n話の表記は編集できず、特殊ブロックの見出しは編集できる。話の題は読み込み直しても残る', async ({ page }) => {
@@ -599,6 +648,65 @@ test.describe('スマホでの表示', () => {
     expect((await page.getByTestId('subtitle-input').boundingBox())!.width).toBeGreaterThan(150)
   })
 
+  test('縦持ち: 採用原稿の「…」にコピー・採用を解除が文字付きで入る。Esc・外側で閉じ、閉じた後は「…」にフォーカスが戻る', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    const { titleId, pieceIds } = await seedBasic(page)
+    await openPiece(page, titleId, pieceIds[0])
+    const more = page.getByTestId('active-more-button')
+    const copy = page.getByTestId('copy-active')
+    const unadopt = page.getByTestId('unadopt-button')
+
+    // ヘッダーは1行: 採用中・稿の名前・文字数・推敲・「…」
+    const head = await page.getByTestId('active-pane').locator('.pw-head').boundingBox()
+    expect(head!.height).toBeLessThanOrEqual(50)
+    await expect(page.getByRole('button', { name: '推敲', exact: true })).toHaveCount(2)
+    await expect(copy).toBeHidden()
+    await expect(unadopt).toBeHidden()
+
+    // 開くと文字付きのボタンが並ぶ（指で操作する端末ではツールチップが出ないので）
+    await more.click()
+    await expect(more).toHaveAttribute('aria-expanded', 'true')
+    await expect(copy).toBeVisible()
+    await expect(unadopt).toBeVisible()
+    expect(await copy.innerText()).toBe('コピー')
+    expect(await unadopt.innerText()).toBe('採用を解除')
+    for (const b of [copy, unadopt]) expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(34)
+    // ページは横にスクロールしない
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    ).toBeLessThanOrEqual(0)
+
+    // Esc で閉じる（メニュー内のボタンにいたら「…」に戻る）
+    await unadopt.focus()
+    await page.keyboard.press('Escape')
+    await expect(unadopt).toBeHidden()
+    await expect(more).toBeFocused()
+
+    // 外側を押しても閉じる
+    await more.click()
+    await expect(copy).toBeVisible()
+    await page.getByTestId('versions-heading').click()
+    await expect(copy).toBeHidden()
+
+    // 採用を解除 → キャンセルすると「…」にフォーカスが戻る
+    await more.click()
+    await unadopt.click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toContainText('採用を解除しますか？')
+    await expect(unadopt).toBeHidden()
+    await dialog.getByRole('button', { name: 'キャンセル' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(more).toBeFocused()
+
+    // 採用を解除 → 確定すると採用原稿なしになる
+    await more.click()
+    await unadopt.click()
+    await page.getByRole('dialog').getByRole('button', { name: '採用を解除' }).click()
+    await expect(page.getByTestId('no-active-badge')).toHaveText('採用原稿なし')
+  })
+
   test('横持ち: 上部バーは1行で各ペインに6行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({
     page,
   }) => {
@@ -699,6 +807,11 @@ test.describe('スマホでの表示', () => {
       await page.setViewportSize(size)
       await openPiece(page, titleId, pieceId)
       expect(await overlapped()).toEqual([])
+      // 採用原稿の「…」のメニュー（コピー・採用を解除）も
+      await page.getByTestId('active-more-button').click()
+      await expect(page.getByTestId('unadopt-button')).toBeVisible()
+      expect(await overlapped()).toEqual([])
+      await page.keyboard.press('Escape')
       await openPiece(page, titleId, pieceId, v2)
       expect(await overlapped()).toEqual([])
     }
@@ -742,10 +855,13 @@ test.describe('メモ', () => {
     await expect(page.getByTestId('memo-name')).toHaveValue('伏線と小道具')
     await expect(page.getByTestId('memo-body')).toHaveValue('懐中時計は第3話で再登場させる。')
     await expect(page.locator('.breadcrumbs')).toContainText('メモ: 伏線と小道具')
+    await expect(page.getByTestId('memo-sheet')).toContainText('たった今更新')
+    await expect(page.getByTestId('memo-sheet')).not.toContainText('に更新')
 
     // 編集中のまま削除しても、削除後に保存エラーが出ない
     await page.getByTestId('memo-body').fill('削除直前の追記')
     await page.getByTestId('memo-delete').click()
+    await expect(page.getByRole('dialog')).toContainText('この操作は取り消せません。')
     await page.getByRole('dialog').getByRole('button', { name: '削除' }).click()
     await expect(page).toHaveURL(new RegExp(`#/t/${titleId}$`))
     await expect(page.locator('.toast.error')).toHaveCount(0)
@@ -824,6 +940,9 @@ test.describe('スクリーンショット', () => {
         await page.getByTestId('compare-more-button').click()
         await shot('compare-more')
         await page.keyboard.press('Escape')
+        await page.getByTestId('active-more-button').click()
+        await shot('active-more')
+        await page.keyboard.press('Escape')
         // 編集中（集中モード）
         await page.getByTestId('compare-editor').tap()
         await shot('focus')
@@ -848,7 +967,7 @@ test.describe('スクリーンショット', () => {
       await page.getByTestId('ratio-slider').fill('50')
       await openPiece(page, ids.titleId, ids.specialId)
       await shot('special')
-      await page.getByTestId('unadopt-button').click()
+      await (await activeTool(page, 'unadopt-button')).click()
       await shot('unadopt-dialog')
       await page.getByRole('dialog').getByRole('button', { name: '採用を解除' }).click()
       await shot('empty')

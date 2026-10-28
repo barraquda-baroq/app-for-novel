@@ -1,13 +1,13 @@
 // メモ: タイトル内で管理する付箋。タイトル画面では本編より下（一番下）に並ぶ。
-import { useDeferredValue } from 'react'
+import { useDeferredValue, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { countChars, formatCount } from '../../domain/text'
+import { bodyMetrics, countChars, formatCount } from '../../domain/text'
 import type { Memo, Title } from '../../domain/types'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
 import { getData, useData } from '../../store/appStore'
 import { attempt } from '../../store/uiStore'
-import { formatDateTime, formatRelative } from '../../ui/browser'
+import { formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea } from '../../ui/DraftField'
 import { useDocumentTitle } from '../../ui/hooks'
@@ -39,7 +39,9 @@ function commitMemo(memoId: string, patch: { name?: string; body?: string }): vo
 function MemoEditor({ title, memo }: { title: Title; memo: Memo }) {
   const navigate = useNavigate()
   const [live, onDraftChange] = useLiveMemoText(memo.id, memo.body)
-  const chars = countChars(useDeferredValue(live))
+  const deferred = useDeferredValue(live)
+  // 保存済みの本文と同じならメモごとにキャッシュした値を使い、書いている間だけ数え直す
+  const chars = useMemo(() => (deferred === memo.body ? bodyMetrics(memo).chars : countChars(deferred)), [memo, deferred])
   const name = memo.name.trim() || '無題のメモ'
   useDocumentTitle(`メモ: ${name} — ${title.name}`)
 
@@ -86,7 +88,7 @@ function MemoEditor({ title, memo }: { title: Title; memo: Memo }) {
           />
           <div className="memo-foot">
             <span className="memo-meta">
-              <span title={formatDateTime(memo.updatedAt)}>{formatRelative(memo.updatedAt)}に更新</span>
+              <span title={formatDateTime(memo.updatedAt)}>{formatUpdated(memo.updatedAt)}</span>
               <span aria-hidden="true">・</span>
               <span>{formatCount(chars)}字</span>
             </span>

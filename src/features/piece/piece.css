@@ -361,6 +361,16 @@
   display: contents;
 }
 
+/* 採用原稿の「…」も同じ: 広いペインではコピー・採用を解除をそのまま並べる
+   （比較ヘッダーと同じく 複製して推敲・コピー・採用を解除 の順。見た目の順とフォーカスの順を揃える） */
+.pw-root .pw-amore {
+  display: contents;
+}
+
+.pw-root .pw-amore-meta {
+  display: none;
+}
+
 .pw-root .pw-body {
   position: relative;
   flex: 1;
@@ -769,6 +779,23 @@
     padding: 4px 8px;
   }
 
+  /* よく使う操作は短い文字を残す（指で操作する端末ではツールチップが出ないので、アイコンだけにしない） */
+  .pw-root .pw-tools .pw-tlabel-keep {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+
+  .pw-root .pw-tools .pw-tlabel-long {
+    display: none;
+  }
+
+  .pw-root .pw-tools .pw-tbtn:has(.pw-tlabel-keep) {
+    padding-inline: 8px 10px;
+  }
+
   .pw-root .pw-head {
     flex-wrap: nowrap;
     gap: 6px;
@@ -800,6 +827,61 @@
     flex: none;
     flex-wrap: nowrap;
     margin-left: 0;
+  }
+
+  /* 採用原稿の「…」: コピー・採用を解除（文字付き）と、ヘッダーに出しきれない枚数・更新日時 */
+  .pw-root .pw-ahead {
+    position: relative;
+  }
+
+  .pw-root .pw-amore {
+    display: none;
+  }
+
+  .pw-root .pw-ahead.is-more-open .pw-amore {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 8px;
+    z-index: 25;
+    width: min(260px, calc(100% - 16px));
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* 左右に分けた時は、境界の当たり判定（右隣）にメニューが重ならないようにする */
+  .pw-root .pw-split.horizontal > .split-pane:first-child .pw-ahead.is-more-open .pw-amore {
+    right: 20px;
+  }
+
+  .pw-root .pw-amore .pw-tbtn {
+    justify-content: flex-start;
+    min-height: 40px;
+    padding-inline: 12px;
+  }
+
+  .pw-root .pw-amore .pw-tlabel {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+
+  .pw-root .pw-amore-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    margin: 0 2px 2px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
   }
 
   /* 比較: 一覧・選ぶ・採用する・「…」（稿の名前・文字数・操作は「…」で開くパネルに） */
@@ -927,6 +1009,19 @@
 @container pw-pane (max-width: 300px) {
   .pw-root .pw-ahead {
     flex-wrap: wrap;
+  }
+
+  /* 推敲バージョンの見出しを削らず、操作（＋白紙・推敲）は2行目に出す */
+  .pw-root .pw-pane-versions .pw-head {
+    flex-wrap: wrap;
+  }
+
+  .pw-root .pw-pane-versions .pw-head-title {
+    flex-basis: 100%;
+  }
+
+  .pw-root .pw-pane-versions .pw-tools {
+    margin-left: 0;
   }
 
   .pw-root .pw-vrow-side {

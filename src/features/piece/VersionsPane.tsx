@@ -1,13 +1,13 @@
 // 推敲バージョン（右／下）。一覧から選ぶと、採用原稿と並べて比較・編集できる。
-import { useDeferredValue, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { memo, useCallback, useDeferredValue, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { diffSummary } from '../../domain/diff'
 import { submissionsReferencingVersion } from '../../domain/entityOps'
-import { countChars, formatCount } from '../../domain/text'
+import { bodyMetrics, formatCount } from '../../domain/text'
 import type { ID, Piece, Version } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
-import { copyText, formatDateTime, formatRelative } from '../../ui/browser'
+import { copyText, formatDateTime, formatRelative, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea, type DraftHandle } from '../../ui/DraftField'
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, MoreIcon, NoteIcon, PlusIcon, TrashIcon } from '../../ui/icons'
@@ -16,8 +16,9 @@ import { commitVersion, flushEditors, tryRun, useDismiss, useLiveText, useRegist
 import {
   firstLine,
   formatCharDelta,
+  formatStats,
+  liveStats,
   selectionAfterAdopt,
-  statsParts,
   versionDeleteMessage,
   versionDisplayName,
   versionRows,
@@ -60,6 +61,7 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
   const data = useData()
   const { piece } = api
   const rows = useMemo(() => versionRows(data, piece), [data, piece])
+  const minute = Math.floor(Date.now() / 60_000)
 
   const addBlank = () => {
     const id = attempt(() => actions.addVersion(piece.id))
@@ -73,10 +75,15 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
     if (id) api.select(id)
   }
 
-  const adopt = (v: Version) => {
-    flushEditors(api.activeEditor)
-    if (tryRun(() => actions.setActiveVersion(piece.id, v.id))) notify(`${versionDisplayName(v)}を採用しました`)
-  }
+  const { activeEditor } = api
+  const pieceId = piece.id
+  const adopt = useCallback(
+    (v: Version) => {
+      flushEditors(activeEditor)
+      if (tryRun(() => actions.setActiveVersion(pieceId, v.id))) notify(`${versionDisplayName(v)}を採用しました`)
+    },
+    [activeEditor, pieceId],
+  )
 
   return (
     <div className="pw-pane pw-pane-versions" data-testid="versions-pane">
@@ -84,6 +91,7 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
         <h2 className="pw-head-title" data-testid="versions-heading">
           推敲バージョン（{rows.length}）
         </h2>
+        {/* 狭いペインでは「＋白紙」「推敲」と短く出す（指で操作する端末ではツールチップが出ないので文字は消さない） */}
         <div className="pw-tools" role="group" aria-label="推敲バージョンの追加">
           <button
             type="button"
@@ -93,18 +101,22 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
             data-testid="add-blank-version"
           >
             <PlusIcon />
-            <span className="pw-tlabel">白紙の稿</span>
+            <span className="pw-tlabel pw-tlabel-keep">
+              白紙<span className="pw-tlabel-long">の稿</span>
+            </span>
           </button>
           <button
             type="button"
             className="btn pw-tbtn"
             onClick={duplicateActive}
             disabled={!active}
-            title={active ? '採用原稿を複製して新しい推敲バージョンを作る' : '採用原稿がありません'}
+            title={active ? '採用原稿を複製して新しい推敲バージョンを作り、並べて編集する' : '採用原稿がありません'}
             data-testid="duplicate-active-list"
           >
             <ReviseIcon />
-            <span className="pw-tlabel">採用原稿を複製</span>
+            <span className="pw-tlabel pw-tlabel-keep">
+              <span className="pw-tlabel-long">複製して</span>推敲
+            </span>
           </button>
         </div>
       </div>
@@ -120,50 +132,17 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
             <p className="pw-hint">バージョンを選ぶと、採用原稿と並べて比較できます。</p>
             <ul className="pw-vlist">
               {rows.map((r) => (
-                <li key={r.version.id} className={`pw-vrow${r.isActive ? ' is-active' : ''}`} data-testid="version-row">
-                  <button
-                    type="button"
-                    className="pw-vrow-main"
-                    onClick={() => api.select(r.version.id)}
-                    aria-label={`${versionDisplayName(r.version)}${r.isActive ? '（採用中）' : ''}を開いて比較する`}
-                  >
-                    <span className="pw-vrow-top">
-                      <span className="pw-vrow-name">{versionDisplayName(r.version)}</span>
-                      {r.isActive ? <span className="badge badge-active">採用中</span> : null}
-                    </span>
-                    <span className="pw-vrow-meta">
-                      <span title={formatDateTime(r.version.updatedAt)}>{formatRelative(r.version.updatedAt)}</span>
-                      <span aria-hidden="true">・</span>
-                      <span>{formatCount(r.chars)}字</span>
-                      {r.delta !== null ? (
-                        <span className={deltaClass(r.delta)} title="採用原稿との文字数の差">
-                          {formatCharDelta(r.delta)}
-                        </span>
-                      ) : null}
-                    </span>
-                    {r.note ? (
-                      <span className="pw-vrow-note">
-                        <NoteIcon />
-                        <span className="ellipsis">{r.note}</span>
-                      </span>
-                    ) : null}
-                  </button>
-                  <span className="pw-vrow-side">
-                    {r.isActive ? null : (
-                      <button
-                        type="button"
-                        className="btn pw-tbtn pw-row-adopt"
-                        onClick={() => adopt(r.version)}
-                        aria-label={`${versionDisplayName(r.version)}を採用する`}
-                        data-testid="row-adopt-button"
-                      >
-                        <CheckIcon />
-                        <span className="pw-tlabel">採用する</span>
-                      </button>
-                    )}
-                    <ChevronRightIcon className="icon pw-vrow-chev" />
-                  </span>
-                </li>
+                <VersionRow
+                  key={r.version.id}
+                  version={r.version}
+                  isActive={r.isActive}
+                  chars={r.chars}
+                  delta={r.delta}
+                  note={r.note}
+                  minute={minute}
+                  onOpen={api.select}
+                  onAdopt={adopt}
+                />
               ))}
             </ul>
           </>
@@ -172,6 +151,69 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
     </div>
   )
 }
+
+interface VersionRowProps {
+  version: Version
+  isActive: boolean
+  chars: number
+  delta: number | null
+  note: string
+  /** 「3分前」などの表記を描き直すきっかけ（分が変わった後に一覧を描き直す時だけ行も描き直す） */
+  minute: number
+  onOpen: (versionId: ID) => void
+  onAdopt: (version: Version) => void
+}
+
+/** 一覧の1行。自動保存で描き直す時は、変わった稿の行だけを描き直す */
+const VersionRow = memo(function VersionRow({ version, isActive, chars, delta, note, onOpen, onAdopt }: VersionRowProps) {
+  const name = versionDisplayName(version)
+  return (
+    <li className={`pw-vrow${isActive ? ' is-active' : ''}`} data-testid="version-row">
+      <button
+        type="button"
+        className="pw-vrow-main"
+        onClick={() => onOpen(version.id)}
+        aria-label={`${name}${isActive ? '（採用中）' : ''}を開いて比較する`}
+      >
+        <span className="pw-vrow-top">
+          <span className="pw-vrow-name">{name}</span>
+          {isActive ? <span className="badge badge-active">採用中</span> : null}
+        </span>
+        <span className="pw-vrow-meta">
+          <span title={formatDateTime(version.updatedAt)}>{formatRelative(version.updatedAt)}</span>
+          <span aria-hidden="true">・</span>
+          <span>{formatCount(chars)}字</span>
+          {delta !== null ? (
+            <span className={deltaClass(delta)} title="採用原稿との文字数の差">
+              {formatCharDelta(delta)}
+            </span>
+          ) : null}
+        </span>
+        {note ? (
+          <span className="pw-vrow-note">
+            <NoteIcon />
+            <span className="ellipsis">{note}</span>
+          </span>
+        ) : null}
+      </button>
+      <span className="pw-vrow-side">
+        {isActive ? null : (
+          <button
+            type="button"
+            className="btn pw-tbtn pw-row-adopt"
+            onClick={() => onAdopt(version)}
+            aria-label={`${name}を採用する`}
+            data-testid="row-adopt-button"
+          >
+            <CheckIcon />
+            <span className="pw-tlabel">採用する</span>
+          </button>
+        )}
+        <ChevronRightIcon className="icon pw-vrow-chev" />
+      </span>
+    </li>
+  )
+})
 
 // ---------- 比較 ----------
 
@@ -182,10 +224,12 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
   const versions = useMemo(() => versionsNewestFirst(data, piece), [data, piece])
   const [live, onDraftChange] = useLiveText(selected.id, selected.body)
   const deferred = useDeferredValue(live)
-  const stats = useMemo(() => statsParts(deferred), [deferred])
+  // 保存済みの本文と同じなら稿ごとにキャッシュした値を使い、書いている間だけ数え直す（入力のたびには数えない）
+  const counts = useMemo(() => liveStats(selected, deferred), [selected, deferred])
+  const stats = useMemo(() => formatStats(counts), [counts])
   const activeBody = active?.body ?? null
-  const activeChars = useMemo(() => (activeBody === null ? 0 : countChars(activeBody)), [activeBody])
-  const delta = active && !isActive ? countChars(deferred) - activeChars : null
+  const delta = active && !isActive ? counts.chars - bodyMetrics(active).chars : null
+  const deltaLabel = useMemo(() => (delta === null ? null : formatCharDelta(delta)), [delta])
   const [noteOpen, setNoteOpen] = useState(false)
   // 狭いペインでは稿の名前・文字数・操作を「…」の中にしまう
   const [moreFor, setMoreFor] = useState<ID | null>(null)
@@ -350,11 +394,11 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
             </span>
             {delta !== null ? (
               <span className={deltaClass(delta)} title="採用原稿との文字数の差">
-                採用原稿より{formatCharDelta(delta)}
+                採用原稿より{deltaLabel}
               </span>
             ) : null}
             <span className="faint pw-updated" title={formatDateTime(selected.updatedAt)}>
-              {formatRelative(selected.updatedAt)}に更新
+              {formatUpdated(selected.updatedAt)}
             </span>
           </span>
         </div>
@@ -436,7 +480,7 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           {/* 狭いペインではヘッダーに文字数を出さないので、ここに出す */}
           <span className="pw-note-count" aria-hidden="true">
             {stats.chars}
-            {delta !== null ? <span className={deltaClass(delta)}>{formatCharDelta(delta)}</span> : null}
+            {delta !== null ? <span className={deltaClass(delta)}>{deltaLabel}</span> : null}
           </span>
         </summary>
         <DraftTextarea
