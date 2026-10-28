@@ -2,9 +2,31 @@ rules_version = '2';
 
 // テスト（Firebase エミュレーター）用のアクセスルール。本番の firestore.rules から持ち主の制限だけを外したもの。
 // 同期のテストは、テストごとに別のアカウントを使って互いのデータが混ざらないようにしているため。
-// 持ち主の制限そのものは src/sync/sync.emu.test.ts で本番のルールを読み込んで確かめる。
+// 持ち主の制限そのものは src/sync/sync.emu.test.ts・src/claude/rules.emu.test.ts で本番のルールを読み込んで確かめる。
+// 2.3 のコネクタ（匿名のアカウント）の決まりは本番と同じ（config/owner の持ち主と config/connector の連携を見る）。
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownerUid() {
+      return get(/databases/$(database)/documents/config/owner).data.uid;
+    }
+
+    function connectorPath() {
+      return /databases/$(database)/documents/config/connector;
+    }
+
+    function isConnector(uid) {
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == 'anonymous'
+        && request.auth.uid != uid
+        && ownerUid() == uid
+        && exists(connectorPath())
+        && get(connectorPath()).data.uid == request.auth.uid;
+    }
+
     function validRecord() {
       let d = request.resource.data;
       return d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device', 'parent', 'index', 'reset'])
@@ -13,9 +35,56 @@ service cloud.firestore {
         && d.updated == request.time;
     }
 
+    function connectorCreate(docId) {
+      let d = request.resource.data;
+      return get(connectorPath()).data.writes == true
+        && d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
+        && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
+        && d.table in ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults']
+        && d.id is string && d.id.size() > 0 && d.id.size() <= 64
+        && docId == d.table + ':' + d.id
+        && d.device == 'claude-connector'
+        && d.chunks == 0
+        && d.deleted == false
+        && d.json is string && d.json.size() <= 200000
+        && d.hash is string && d.hash.size() <= 64;
+    }
+
+    match /config/owner {
+      allow get: if signedIn();
+      allow create: if signedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid;
+    }
+
+    function validConnector() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v'])
+        && d.keys().hasAll(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v'])
+        && d.uid is string && d.uid.size() > 0 && d.uid.size() <= 128 && d.uid != request.auth.uid
+        && d.pairing is string && d.pairing.size() <= 128
+        && d.approvedOn is string && d.approvedOn.size() <= 100
+        && d.writes is bool
+        && d.v is int;
+    }
+
+    match /config/connector {
+      allow get: if signedIn() && (request.auth.uid == ownerUid() || resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && request.auth.uid == ownerUid() && validConnector()
+        && request.resource.data.pairedAt == request.time;
+      allow update: if signedIn() && request.auth.uid == ownerUid() && validConnector()
+        && (request.resource.data.pairedAt == request.time
+          || (request.resource.data.pairing == resource.data.pairing && request.resource.data.pairedAt == resource.data.pairedAt));
+      allow delete: if signedIn() && request.auth.uid == ownerUid();
+    }
+
     match /users/{uid}/records/{docId} {
-      allow read, delete: if request.auth != null && request.auth.uid == uid;
-      allow create, update: if request.auth != null && request.auth.uid == uid && validRecord();
+      allow read: if (request.auth != null && request.auth.uid == uid) || isConnector(uid);
+      allow create: if (request.auth != null && request.auth.uid == uid && validRecord())
+        || (isConnector(uid) && validRecord() && connectorCreate(docId));
+      allow update: if request.auth != null && request.auth.uid == uid && validRecord();
+      allow delete: if request.auth != null && request.auth.uid == uid;
     }
 
     function validAppModel() {
@@ -28,7 +97,7 @@ service cloud.firestore {
     }
 
     match /users/{uid}/meta/app {
-      allow get: if request.auth != null && request.auth.uid == uid;
+      allow get: if (request.auth != null && request.auth.uid == uid) || isConnector(uid);
       allow create: if request.auth != null && request.auth.uid == uid && validAppModel();
       allow update: if request.auth != null && request.auth.uid == uid && validAppModel()
         && request.resource.data.model >= resource.data.model;
