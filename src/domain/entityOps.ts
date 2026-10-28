@@ -3,6 +3,7 @@ import { activeVersion, episodeNumbers, flatten, pieceLabel } from './structure'
 import { bodyMetrics, textHash } from './text'
 
 export { textHash }
+import { orderOrigin, putInTrash, trashLabel, type TrashSpec } from './trash'
 import { Tx, transact } from './tx'
 import {
   DomainError,
@@ -14,6 +15,7 @@ import {
   type SettingEntry,
   type SettingField,
   type SnapshotPiece,
+  type SnapshotText,
   type Submission,
   type SubmissionSnapshot,
   type Title,
@@ -103,24 +105,52 @@ export function moveTitleStep(data: AppData, titleId: ID, dir: -1 | 1): AppData 
   return transact(data, (tx) => putAll(tx, 'titles', stepOrder(tx.all('titles'), titleId, dir))).data
 }
 
-/** タイトルと配下をすべて削除する。タイトルに紐づくアイデアは「どのタイトルにも属さない」へ移す */
+/**
+ * タイトルと配下（章・話・稿・メモ・設定項目・応募計画と、その応募時の原稿の控え）をまとめてゴミ箱へ移す。
+ * タイトルに紐づくアイデアは「どのタイトルにも属さない」へ移す（ゴミ箱から戻してもアイデアは戻らない）
+ */
 export function deleteTitle(data: AppData, titleId: ID): AppData {
   return transact(data, (tx) => {
-    if (!tx.get('titles', titleId)) return
+    const title = tx.get('titles', titleId)
+    if (!title) return
     const belongs = (r: { titleId: ID | null }) => r.titleId === titleId
-    for (const c of tx.all('chapters').filter(belongs)) tx.delete('chapters', c.id)
-    for (const p of tx.all('pieces').filter(belongs)) tx.delete('pieces', p.id)
-    for (const v of tx.all('versions').filter(belongs)) tx.delete('versions', v.id)
-    for (const m of tx.all('memos').filter(belongs)) tx.delete('memos', m.id)
-    for (const c of tx.all('settingCategories').filter(belongs)) tx.delete('settingCategories', c.id)
-    for (const e of tx.all('settingEntries').filter(belongs)) tx.delete('settingEntries', e.id)
-    for (const s of tx.all('submissions').filter(belongs)) tx.delete('submissions', s.id)
+    const submissions = tx.all('submissions').filter(belongs).sort(byOrder)
+    const records: TrashSpec['records'] = [
+      { table: 'titles', record: title },
+      ...tx
+        .all('chapters')
+        .filter(belongs)
+        .map((record) => ({ table: 'chapters' as const, record })),
+      ...tx
+        .all('pieces')
+        .filter(belongs)
+        .map((record) => ({ table: 'pieces' as const, record })),
+      ...tx
+        .all('versions')
+        .filter(belongs)
+        .map((record) => ({ table: 'versions' as const, record })),
+      ...memosOf(tx.data, titleId).map((record) => ({ table: 'memos' as const, record })),
+      ...categoriesOf(tx.data, titleId).map((record) => ({ table: 'settingCategories' as const, record })),
+      ...tx
+        .all('settingEntries')
+        .filter(belongs)
+        .sort(byOrder)
+        .map((record) => ({ table: 'settingEntries' as const, record })),
+      ...submissions.map((record) => ({ table: 'submissions' as const, record })),
+      ...usedSnapshotTexts(tx, submissions).map((record) => ({ table: 'snapshotTexts' as const, record })),
+    ]
+    putInTrash(tx, {
+      kind: 'title',
+      label: trashLabel.title(title),
+      titleName: title.name,
+      origin: { titleId: null, ...orderOrigin(tx.all('titles'), titleId) },
+      records,
+    })
     collectSnapshotTexts(tx)
     let order = nextOrder(tx.all('ideas').filter((i) => i.titleId === null))
     for (const idea of tx.all('ideas').filter(belongs).sort(byOrder)) {
       tx.put('ideas', { ...idea, titleId: null, order: order++, updatedAt: now() })
     }
-    tx.delete('titles', titleId)
   }).data
 }
 
@@ -278,8 +308,25 @@ export function moveIdeaStep(data: AppData, ideaId: ID, dir: -1 | 1): AppData {
   }).data
 }
 
+/** アイデアをゴミ箱へ移す */
 export function deleteIdea(data: AppData, ideaId: ID): AppData {
-  return transact(data, (tx) => tx.delete('ideas', ideaId)).data
+  return transact(data, (tx) => {
+    const idea = tx.get('ideas', ideaId)
+    if (!idea) return
+    // 存在しないタイトルを指すアイデアは「どのタイトルにも属さない」に表示されているので、そこにあったものとして控える
+    const title = idea.titleId === null ? undefined : tx.get('titles', idea.titleId)
+    const sectionId = title ? title.id : null
+    const peers = tx
+      .all('ideas')
+      .filter((i) => (i.titleId !== null && tx.get('titles', i.titleId) ? i.titleId : null) === sectionId)
+    putInTrash(tx, {
+      kind: 'idea',
+      label: trashLabel.idea(idea),
+      titleName: title?.name ?? '',
+      origin: { titleId: sectionId, ...orderOrigin(peers, ideaId) },
+      records: [{ table: 'ideas', record: idea }],
+    })
+  }).data
 }
 
 // ---------- メモ（付箋。タイトル内で常に一番下に表示） ----------
@@ -332,8 +379,19 @@ export function moveMemoStep(data: AppData, memoId: ID, dir: -1 | 1): AppData {
   }).data
 }
 
+/** メモをゴミ箱へ移す */
 export function deleteMemo(data: AppData, memoId: ID): AppData {
-  return transact(data, (tx) => tx.delete('memos', memoId)).data
+  return transact(data, (tx) => {
+    const memo = tx.get('memos', memoId)
+    if (!memo) return
+    putInTrash(tx, {
+      kind: 'memo',
+      label: trashLabel.memo(memo),
+      titleName: tx.get('titles', memo.titleId)?.name ?? '',
+      origin: { titleId: memo.titleId, ...orderOrigin(memosOf(tx.data, memo.titleId), memoId) },
+      records: [{ table: 'memos', record: memo }],
+    })
+  }).data
 }
 
 // ---------- 設定項目 ----------
@@ -401,11 +459,21 @@ export function moveCategoryStep(data: AppData, categoryId: ID, dir: -1 | 1): Ap
   }).data
 }
 
-/** 設定項目と、その中のエントリをすべて削除する */
+/** 設定項目と、その中のエントリをまとめてゴミ箱へ移す */
 export function deleteCategory(data: AppData, categoryId: ID): AppData {
   return transact(data, (tx) => {
-    for (const e of tx.all('settingEntries').filter((x) => x.categoryId === categoryId)) tx.delete('settingEntries', e.id)
-    tx.delete('settingCategories', categoryId)
+    const cat = tx.get('settingCategories', categoryId)
+    if (!cat) return
+    putInTrash(tx, {
+      kind: 'settingCategory',
+      label: trashLabel.category(cat),
+      titleName: tx.get('titles', cat.titleId)?.name ?? '',
+      origin: { titleId: cat.titleId, ...orderOrigin(categoriesOf(tx.data, cat.titleId), categoryId) },
+      records: [
+        { table: 'settingCategories', record: cat },
+        ...entriesOf(tx.data, categoryId).map((record) => ({ table: 'settingEntries' as const, record })),
+      ],
+    })
   }).data
 }
 
@@ -466,8 +534,25 @@ export function moveEntryToCategory(data: AppData, entryId: ID, categoryId: ID):
   }).data
 }
 
+/** 設定エントリをゴミ箱へ移す */
 export function deleteEntry(data: AppData, entryId: ID): AppData {
-  return transact(data, (tx) => tx.delete('settingEntries', entryId)).data
+  return transact(data, (tx) => {
+    const entry = tx.get('settingEntries', entryId)
+    if (!entry) return
+    const cat = tx.get('settingCategories', entry.categoryId)
+    putInTrash(tx, {
+      kind: 'settingEntry',
+      label: trashLabel.entry(entry),
+      titleName: tx.get('titles', entry.titleId)?.name ?? '',
+      parentLabel: cat ? trashLabel.category(cat) : undefined,
+      origin: {
+        titleId: entry.titleId,
+        categoryId: entry.categoryId,
+        ...orderOrigin(entriesOf(tx.data, entry.categoryId), entryId),
+      },
+      records: [{ table: 'settingEntries', record: entry }],
+    })
+  }).data
 }
 
 // ---------- 戦略（応募計画・結果・改稿/再応募方針） ----------
@@ -551,11 +636,35 @@ export function moveSubmissionStep(data: AppData, submissionId: ID, dir: -1 | 1)
   }).data
 }
 
+/** 応募計画をゴミ箱へ移す。応募時の原稿の控えも写しを入れるので、戻せば応募した原稿もまた読める */
 export function deleteSubmission(data: AppData, submissionId: ID): AppData {
   return transact(data, (tx) => {
-    tx.delete('submissions', submissionId)
+    const s = tx.get('submissions', submissionId)
+    if (!s) return
+    putInTrash(tx, {
+      kind: 'submission',
+      label: trashLabel.submission(s),
+      titleName: tx.get('titles', s.titleId)?.name ?? '',
+      origin: { titleId: s.titleId, ...orderOrigin(submissionsOf(tx.data, s.titleId), submissionId) },
+      records: [
+        { table: 'submissions', record: s },
+        ...usedSnapshotTexts(tx, [s]).map((record) => ({ table: 'snapshotTexts' as const, record })),
+      ],
+    })
     collectSnapshotTexts(tx)
   }).data
+}
+
+/** 応募記録が使っている本文の控え（重複なし） */
+function usedSnapshotTexts(tx: Tx, submissions: Submission[]): SnapshotText[] {
+  const out = new Map<ID, SnapshotText>()
+  for (const s of submissions) {
+    for (const p of Object.values(s.snapshot?.pieces ?? {})) {
+      const text = p.textKey ? tx.get('snapshotTexts', p.textKey) : undefined
+      if (text) out.set(text.id, text)
+    }
+  }
+  return [...out.values()]
 }
 
 /** 本文の控えの保存キー。指紋と長さを組み合わせ、万一衝突したら連番を付ける */

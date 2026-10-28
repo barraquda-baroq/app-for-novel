@@ -37,12 +37,14 @@ describe('自動保存', () => {
     expect(data.titles[titleId].name).toBe('保存テスト')
     expect(data.versions[versionId].body).toBe('本文です')
 
-    // 削除も反映される
+    // 削除（ゴミ箱へ移す）も反映される
     actions.deleteTitle(titleId)
     await flushNow()
     resetStoreForTests()
     await initStore(createPersistence(name))
-    expect(useApp.getState().data).toEqual(emptyData())
+    const after = useApp.getState().data
+    expect({ ...after, trashEntries: {}, trashRecords: {} }).toEqual(emptyData())
+    expect(Object.values(after.trashEntries).map((e) => e.label)).toEqual(['保存テスト'])
   })
 
   it('バックアップの読み込みで全データを置き換える', async () => {

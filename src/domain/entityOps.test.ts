@@ -86,7 +86,7 @@ describe('タイトル配下', () => {
     expect(memosOf(data, t.result).map((m) => m.name)).toEqual(['伏線メモ'])
   })
 
-  it('タイトルを削除すると配下のデータがすべて消える', () => {
+  it('タイトルを削除すると配下のデータがすべてゴミ箱の1件にまとめて移る', () => {
     let data = emptyData()
     const t = createTitle(data, '作品A')
     data = t.data
@@ -94,7 +94,13 @@ describe('タイトル配下', () => {
     data = addMemo(data, t.result).data
     data = addSubmission(data, t.result, '新人賞').data
     data = deleteTitle(data, t.result)
-    expect(data).toEqual({ ...emptyData() })
+    expect({ ...data, trashEntries: {}, trashRecords: {} }).toEqual(emptyData())
+    const entries = Object.values(data.trashEntries)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ kind: 'title', label: '作品A', titleName: '作品A', reason: 'deleted' })
+    // タイトル・設定項目2・話・稿・メモ・応募計画
+    expect(entries[0].recordIds).toHaveLength(7)
+    expect(data.trashRecords[entries[0].recordIds[0]]).toMatchObject({ table: 'titles', record: { id: t.result } })
   })
 
   it('最終編集日時には原稿の編集も含まれる', () => {

@@ -2,6 +2,7 @@
 // 仕様違反は DomainError を投げるので、UI 側では attempt() で受けてトースト表示する。
 import * as E from '../domain/entityOps'
 import * as S from '../domain/storyOps'
+import * as T from '../domain/trash'
 import type { AppData, ID, NumberingMode, SettingEntry, Slot } from '../domain/types'
 import { commit, getData } from './appStore'
 
@@ -81,6 +82,13 @@ export const actions = {
   moveSubmissionStep: (submissionId: ID, dir: -1 | 1) => apply((d) => E.moveSubmissionStep(d, submissionId, dir)),
   deleteSubmission: (submissionId: ID) => apply((d) => E.deleteSubmission(d, submissionId)),
   recordSubmissionSnapshot: (submissionId: ID) => apply((d) => E.recordSubmissionSnapshot(d, submissionId)),
+
+  // ゴミ箱（削除の操作は上の各 delete… がゴミ箱へ移す）
+  restoreTrashEntry: (entryId: ID) => run((d) => T.restoreTrashEntry(d, entryId)),
+  deleteTrashEntry: (entryId: ID) => apply((d) => T.deleteTrashEntry(d, entryId)),
+  emptyTrash: () => apply((d) => T.emptyTrash(d)),
+  /** 削除してから30日たったものを完全に削除する（起動時と1時間ごとに呼ぶ） */
+  purgeExpiredTrash: (nowTs: number = Date.now()) => apply((d) => T.purgeExpiredTrash(d, nowTs)),
 }
 
 export type Actions = typeof actions

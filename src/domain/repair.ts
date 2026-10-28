@@ -1,6 +1,7 @@
 // 読み込んだデータの整合性を直す。壊れたバックアップや、別タブとの競合で参照が切れたデータでも
 // 画面が落ちないよう、起動時とバックアップ復元時に通す。直せないものは安全側（削除・未分類）に倒す。
 import { textHash } from './text'
+import { TRASH_KIND_LABELS, isContentTable, isTrashKind } from './trash'
 import {
   type AppData,
   type Chapter,
@@ -17,6 +18,9 @@ import {
   type SubmissionSnapshot,
   type SubmissionStatus,
   type Title,
+  type TrashEntry,
+  type TrashOrigin,
+  type TrashRecord,
   type Version,
 } from './types'
 
@@ -400,5 +404,94 @@ export function repairData(input: AppData): RepairResult {
     }
   }
 
+  repairTrash(d, fix)
+
   return { data: fixes.length ? d : input, fixes }
+}
+
+/** 削除した時点の場所の形を整える（項目の順番は変えない。知らない項目は残す） */
+function normalizeOrigin(raw: unknown): TrashOrigin {
+  const o = isObj(raw) ? raw : {}
+  const out: Record<string, unknown> = {}
+  for (const [key, v] of Object.entries(o)) {
+    if (key === 'titleId' || key === 'chapterId' || key === 'prevId') out[key] = strOrNull(v)
+    // 位置が分からない時は -1（戻す時は末尾、order で並ぶものは元の order の値の位置へ）
+    else if (key === 'index') out[key] = num(v, -1)
+    else if (key === 'pieceId' || key === 'categoryId') {
+      if (typeof v === 'string') out[key] = v
+    } else if (key === 'wasActive') {
+      if (typeof v === 'boolean') out[key] = v
+    } else out[key] = v
+  }
+  if (!('titleId' in out)) out.titleId = null
+  if (!('index' in out)) out.index = -1
+  return out as unknown as TrashOrigin
+}
+
+/** ゴミ箱: 種類の分からない件・形の壊れた中身・件のない中身・中身のない件を取り除き、項目を補う */
+function repairTrash(d: AppData, fix: (m: string) => void): void {
+  for (const e of Object.values(d.trashEntries)) {
+    if (!isTrashKind(e.kind)) {
+      delete d.trashEntries[e.id]
+      fix('種類の分からないゴミ箱の項目を取り除きました')
+      continue
+    }
+    const next: TrashEntry = {
+      ...e,
+      label: str(e.label, TRASH_KIND_LABELS[e.kind]),
+      titleName: str(e.titleName),
+      origin: normalizeOrigin(e.origin),
+      recordIds: Array.isArray(e.recordIds) ? e.recordIds.filter((x): x is string => typeof x === 'string') : [],
+      reason: e.reason === 'conflict' ? 'conflict' : 'deleted',
+      deletedAt: num(e.deletedAt, num(e.createdAt, num(e.updatedAt))),
+      createdAt: num(e.createdAt),
+      updatedAt: num(e.updatedAt),
+    }
+    if ('parentLabel' in next && typeof next.parentLabel !== 'string') delete next.parentLabel
+    if (!same(next, e)) {
+      d.trashEntries[e.id] = next
+      fix('ゴミ箱の項目を補いました')
+    }
+  }
+
+  const byEntry = new Map<ID, ID[]>()
+  for (const r of Object.values(d.trashRecords)) {
+    const rec: unknown = r.record
+    if (!isContentTable(r.table) || !isObj(rec) || typeof rec.id !== 'string') {
+      delete d.trashRecords[r.id]
+      fix('形の壊れたゴミ箱の中身を取り除きました')
+      continue
+    }
+    if (typeof r.entryId !== 'string' || !d.trashEntries[r.entryId]) {
+      delete d.trashRecords[r.id]
+      fix('ゴミ箱の項目のない中身を取り除きました')
+      continue
+    }
+    const next: TrashRecord = { ...r, createdAt: num(r.createdAt), updatedAt: num(r.updatedAt) }
+    if (!same(next, r)) {
+      d.trashRecords[r.id] = next
+      fix('ゴミ箱の中身の項目を補いました')
+    }
+    const list = byEntry.get(r.entryId) ?? []
+    list.push(r.id)
+    byEntry.set(r.entryId, list)
+  }
+
+  for (const e of Object.values(d.trashEntries)) {
+    const owned = byEntry.get(e.id) ?? []
+    if (owned.length === 0) {
+      delete d.trashEntries[e.id]
+      fix('中身のないゴミ箱の項目を取り除きました')
+      continue
+    }
+    // 載っている順（先頭が本体）を保ち、載っていない中身は後ろに足す
+    const ownedSet = new Set(owned)
+    const listed = [...new Set(e.recordIds.filter((id) => ownedSet.has(id)))]
+    const listedSet = new Set(listed)
+    const recordIds = [...listed, ...owned.filter((id) => !listedSet.has(id))]
+    if (!same(recordIds, e.recordIds)) {
+      d.trashEntries[e.id] = { ...e, recordIds }
+      fix('ゴミ箱の項目の中身の一覧を直しました')
+    }
+  }
 }
