@@ -2,6 +2,7 @@
 import { Link } from 'react-router-dom'
 import { useUnsavedEdits } from '../store/unsavedEdits'
 import { useSync, type SyncState } from '../sync/controller'
+import type { SyncStatus } from '../sync/engine'
 import './sync.css'
 
 export type SyncBadge = { tone: 'ok' | 'busy' | 'warn' | 'error' | 'off'; label: string; detail: string }
@@ -16,6 +17,16 @@ export function outdatedMessage(appVersion: string, pending: number): string {
     ...(pending > 0 ? [`この端末の変更 ${pending} 件は送らずに残しています`] : []),
   ]
   return `新しいバージョンのアプリで保存されたデータがあります。アプリを更新してください${notes.length ? `（${notes.join('。')}）` : ''}`
+}
+
+/** 「今すぐ同期」の後の知らせ（error = 失敗として出す）。送り終えていなければ、同期できたとは言わない */
+export function manualSyncNotice(st: SyncStatus | null): { error: boolean; message: string } {
+  if (st?.outdated) return { error: true, message: outdatedMessage(st.outdated.appVersion, st.pending) }
+  if (st?.phase === 'error' || st?.phase === 'offline') return { error: true, message: st.error ?? '同期できませんでした' }
+  // データの形の版をまだ確かめられていない時など
+  if (st && st.pending > 0)
+    return { error: false, message: `送信待ちの変更が ${st.pending} 件あります（クラウドの確認が済むと送ります）` }
+  return { error: false, message: 'クラウドと同期しました' }
 }
 
 /** 同期の状態を、ヘッダー・設定で使う短い言葉にする */

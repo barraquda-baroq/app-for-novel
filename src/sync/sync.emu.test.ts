@@ -868,6 +868,54 @@ describe('データの形の版（エミュレーター）', () => {
     expect((await b.load()).ideas[ideaId]).toBeDefined()
   })
 
+  it('送っている途中で新しい版のアプリで書かれたデータに気付いたら、残りは送らない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who, { appModel: APP })
+    await a.edit((d) => {
+      let data = E.createTitle(d, '作品').data
+      const titleId = Object.keys(data.titles)[0]
+      for (let i = 0; i < 250; i++) data = E.addMemo(data, titleId, `メモ${i}`).data
+      return data
+    })
+    const ref = appModelRef(a.fs, a.uid)
+    // 1回目を送った後、2回目を読む時に、新しい版のアプリが記録を上げた（古い版の端末が気付くまで待つ）
+    let reads = 0
+    const realRead = a.p.readOutbox.bind(a.p)
+    a.p.readOutbox = async (n) => {
+      reads += 1
+      if (reads === 2) {
+        await setDoc(ref, { model: 3, appVersion: '2.3', updatedAt: serverTimestamp() })
+        await waitFor(async () => a.engine?.status.outdated?.model === 3, '古い版の端末が気付く')
+      }
+      return realRead(n)
+    }
+    await a.online()
+    await waitFor(async () => reads >= 2 && a.engine?.status.outdated, '2回目を読む')
+    await new Promise((r) => setTimeout(r, 1500))
+    await a.engine?.idle()
+    const cloudMemos = (await getDocs(collection(a.fs, 'users', a.uid, 'records'))).docs.filter((x) => x.id.startsWith('memos:'))
+    // 1回目（100件まで）だけ。残りは送信待ちに残る
+    expect(cloudMemos.length).toBeGreaterThan(0)
+    expect(cloudMemos.length).toBeLessThanOrEqual(100)
+    expect(await a.p.outboxCount()).toBeGreaterThanOrEqual(150)
+  })
+
+  it('いますぐ同期は、データの形の版を確かめ終わるのを待ってから送る', async () => {
+    const who = account()
+    const a = await makeDevice('a', who, { appModel: APP })
+    let titleId = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '作品')
+      titleId = t.result
+      return t.data
+    })
+    await a.online()
+    // 同期を始めた直後（まだ確かめていない）に押した
+    await a.engine?.flush()
+    expect(await a.p.outboxCount()).toBe(0)
+    expect((await getDoc(doc(a.fs, 'users', a.uid, 'records', `titles:${titleId}`))).exists()).toBe(true)
+  })
+
   it('本番のアクセスルール: 持ち主だけが読み書きでき、形の違う記録・下げる書き込みは拒む', async () => {
     await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
       rules: { files: [{ name: 'firestore.rules', content: prodRules }] },

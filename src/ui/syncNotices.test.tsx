@@ -12,7 +12,7 @@ import { useAppUpdate } from '../store/uiStore'
 import { useSync } from '../sync/controller'
 import type { SyncStatus } from '../sync/engine'
 import { AppFrame } from './Layout'
-import { syncBadge } from './SyncIndicator'
+import { manualSyncNotice, syncBadge } from './SyncIndicator'
 
 afterEach(() => {
   cleanup()
@@ -26,6 +26,21 @@ const status = (over: Partial<SyncStatus> = {}): SyncStatus => ({
   lastSyncedAt: null,
   error: null,
   ...over,
+})
+
+describe('今すぐ同期の後の知らせ', () => {
+  it('送り終えた時だけ「同期しました」。送信待ちが残っていれば、その件数を出す（データの形の版をまだ確かめていない時など）', () => {
+    expect(manualSyncNotice(status({ phase: 'synced', pending: 0 }))).toEqual({ error: false, message: 'クラウドと同期しました' })
+    expect(manualSyncNotice(status({ phase: 'downloading', pending: 2 }))).toEqual({
+      error: false,
+      message: '送信待ちの変更が 2 件あります（クラウドの確認が済むと送ります）',
+    })
+    expect(manualSyncNotice(status({ phase: 'offline', pending: 2, error: 'オフラインです' }))).toEqual({
+      error: true,
+      message: 'オフラインです',
+    })
+    expect(manualSyncNotice(status({ outdated: { model: 3, appVersion: '2.3' } })).error).toBe(true)
+  })
 })
 
 describe('新しい版のアプリで書かれたデータがある時', () => {

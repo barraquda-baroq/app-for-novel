@@ -118,6 +118,8 @@ const BATCH_RECORDS = 100
 const BATCH_CHARS = 1_500_000
 const BATCH_DOCS = 400
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000]
+/** データの形の版を確かめるまで、送るのを待つ長さの上限（いますぐ同期・ログアウトの前の送信） */
+const MODEL_WAIT_MS = 10_000
 /** この端末が送った版の指紋を、文書ごとにいくつまで覚えておくか */
 const SENT_MEMORY = 20
 
@@ -177,6 +179,9 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   /** データの形の版: unknown = まだサーバーから確かめていない、newer = 新しい版のアプリで書かれている（どちらも送らない） */
   let modelState: 'unknown' | 'ok' | 'newer' = opts.appModel ? 'unknown' : 'ok'
   let modelUnsub: Unsubscribe | null = null
+  /** データの形の版を初めて確かめた（または同期をやめた） */
+  let modelKnown: () => void = () => undefined
+  const modelReady = new Promise<void>((resolve) => (modelKnown = resolve))
 
   // 送受信を1つずつ行うための鎖
   let lock: Promise<unknown> = Promise.resolve()
@@ -461,6 +466,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (idle.length) await target.completeUpload(idle.map((it) => ({ table: it.table, id: it.id, record: it.local })))
     const batch = selectBatch(items, { chunkSize, maxChars: BATCH_CHARS, maxDocs: BATCH_DOCS })
     if (!batch.length) return { done: false, progressed: idle.length, conflicts: [] }
+    // 送っている途中で、新しい版のアプリで書かれたデータに気付いた（順番を待っている間も含む）: 書かずに戻る（送信待ちは残す）
+    if (modelState !== 'ok') return { done: false, progressed: idle.length, conflicts: [] }
 
     const result = await runTransaction(fs, async (tx) => {
       const snaps = await Promise.all(batch.map((b) => tx.get(doc(col, docIdOf(b.it.table, b.it.id)))))
@@ -607,7 +614,18 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       uploadSince = null
     }
     // データの形の版をまだ確かめていない・新しい版のアプリで書かれたデータがある間は送らない
-    // （送信待ちはそのまま残し、確かめられた・アプリを更新した時に送る）
+    // （送信待ちはそのまま残し、確かめられた・アプリを更新した時に送る）。
+    // まだ確かめていなければ、確かめ終わるまで待ってから送る（いますぐ同期・ログアウトの前の送信が、送らずに終わらないように）。
+    // 長く確かめられない時は、送らずに終わる（送信待ちは残る。確かめられたら送る）
+    if (modelState === 'unknown')
+      return new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, MODEL_WAIT_MS)
+        void modelReady.then(async () => {
+          clearTimeout(t)
+          if (modelState === 'ok' && !stopped) await uploadAll()
+          resolve()
+        })
+      })
     if (modelState !== 'ok') return Promise.resolve()
     uploading = (async () => {
       try {
@@ -621,7 +639,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         await exclusive(pushAuthoritative)
         let stuck = 0
         for (;;) {
-          if (stopped) return
+          // 新しい版のアプリで書かれたデータに気付いた: ここで送るのをやめる（送信待ちは残す。ok に戻ったら送り直す）
+          if (stopped || modelState !== 'ok') return
           const r = await exclusive(uploadBatch)
           if (r.done) break
           if (status.phase !== 'uploading') setStatus({ phase: 'uploading', error: null })
@@ -730,6 +749,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         if (stopped) return
         const was = modelState
         modelState = s.state
+        modelKnown()
         if (s.state === 'newer') setStatus({ outdated: s.cloud })
         else if (status.outdated) setStatus({ outdated: null })
         // 送ってよいと分かった: 待たせていた送信待ちを送る
@@ -768,6 +788,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       unsub = null
       modelUnsub?.()
       modelUnsub = null
+      // データの形の版を待っている送信（いますぐ同期・ログアウト）を終わらせる
+      modelKnown()
       for (const t of [uploadTimer, retryTimer, resubscribeTimer, beginRetry]) if (t) clearTimeout(t)
       if (typeof window !== 'undefined') window.removeEventListener('online', onOnline)
     },
