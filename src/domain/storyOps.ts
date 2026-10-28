@@ -121,7 +121,10 @@ function slotAfterLastEpisodeIn(data: AppData, titleId: ID, chapterId: ID | null
   return { chapterId: null, index: idx >= 0 ? idx + 1 : rootEndBeforeTrailingSpecials(data, title) }
 }
 
-/** タイトル直下の末尾に並ぶ特殊ブロック（エピローグ・あとがき等）の手前の位置 */
+/**
+ * タイトル直下の末尾に並ぶ特殊ブロック（エピローグ・あとがき等）の手前の位置。
+ * 話や章より後ろにある特殊ブロックだけを「末尾」とみなす（話がまだない時の特殊ブロックはプロローグの可能性が高いので、その後ろ）。
+ */
 function rootEndBeforeTrailingSpecials(data: AppData, title: Title): number {
   let i = title.structure.length
   while (i > 0) {
@@ -129,7 +132,7 @@ function rootEndBeforeTrailingSpecials(data: AppData, title: Title): number {
     if (node.type !== 'piece' || data.pieces[node.id]?.kind !== 'special') break
     i -= 1
   }
-  return i
+  return i === 0 ? title.structure.length : i
 }
 
 // ---------- 話数追加 ----------
@@ -153,7 +156,8 @@ export function planEpisodeSlot(data: AppData, titleId: ID, target?: ID | null):
         return { chapterId: flat[i].chapterId, index: flat[i].index + 1 }
       }
     }
-    return { chapterId: null, index: title.structure.length }
+    // まだ話がない: 末尾のエピローグ等より前
+    return { chapterId: null, index: rootEndBeforeTrailingSpecials(data, title) }
   }
 
   if (target === undefined) {

@@ -97,13 +97,13 @@ describe('previewEpisode', () => {
     expect(previewEpisode(onlyPrologue, empty.titleId)?.placement).toBe('「プロローグ」の後に入ります。')
   })
 
-  it('後ろにしか何もなければ「先頭（…の前）」と説明する', () => {
+  it('前にしか何もなければ「…の後」と説明する（話がまだない時の特殊ブロックはプロローグとして扱われる）', () => {
     const empty = setup()
     let d = addSpecial(empty.data, empty.titleId, { chapterId: null, index: 0 }, 'エピローグ').data
     d = setChaptersEnabled(d, empty.titleId, true)
     // 章を解除して [エピローグ]（章管理はオン・章なし）にする
     d = removeChapter(d, d.titles[empty.titleId].structure[0].id)
-    expect(previewEpisode(d, empty.titleId)?.placement).toBe('タイトル直下の先頭（「エピローグ」の前）に入ります。')
+    expect(previewEpisode(d, empty.titleId)?.placement).toBe('タイトル直下の「エピローグ」の後に入ります。')
   })
 
   it('章ありでは、章の中（またはタイトル直下）の前後で説明する', () => {

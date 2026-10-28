@@ -200,3 +200,12 @@ describe('章の追加位置・名前、複製名、削除理由', () => {
     expect(reason).not.toContain('この章')
   })
 })
+
+it('話より後ろの特殊ブロックだけを末尾とみなす（話がまだない時の特殊ブロックはプロローグとして扱う）', () => {
+  const t = createTitle(emptyData(), 't')
+  let data = addSpecial(t.data, t.result, { chapterId: null, index: 0 }, 'プロローグ').data
+  data = addEpisode(data, t.result).data
+  data = addSpecial(data, t.result, { chapterId: null, index: 2 }, 'エピローグ').data
+  data = addEpisode(data, t.result).data
+  expect(labels(data, t.result)).toEqual(['プロローグ', '第1話', '第2話', 'エピローグ'])
+})

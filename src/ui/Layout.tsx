@@ -1,57 +1,84 @@
 // アプリの外枠: ヘッダー（パンくず・保存状態・設定）、トースト、ダイアログ
-import { useEffect, type ReactNode } from 'react'
-import { Link, useLocation, useNavigationType } from 'react-router-dom'
-import { reloadFromDisk, useApp } from '../store/appStore'
-import { notify, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
-import { DialogHost, cancelAllDialogs } from './dialogs'
-import { GearIcon, XIcon } from './icons'
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Link, useLocation, useNavigationType } from "react-router-dom";
+import { reloadFromDisk, useApp } from "../store/appStore";
+import { notify, useAppUpdate, usePrefs, useToasts } from "../store/uiStore";
+import { DialogHost, cancelAllDialogs } from "./dialogs";
+import { GearIcon, XIcon } from "./icons";
 
 export interface Crumb {
-  label: string
-  to?: string
+  label: string;
+  to?: string;
 }
 
 export function Breadcrumbs({ items }: { items: Crumb[] }) {
   return (
     <nav className="breadcrumbs" aria-label="現在地">
       {items.map((c, i) => (
-        <span key={i} style={{ display: 'contents' }}>
+        <span key={i} style={{ display: "contents" }}>
           {i > 0 ? <span className="sep">›</span> : null}
           {c.to && i < items.length - 1 ? (
             <Link to={c.to}>{c.label}</Link>
           ) : (
-            <span className={i === items.length - 1 ? 'current' : undefined} aria-current={i === items.length - 1 ? 'page' : undefined}>
+            <span
+              className={i === items.length - 1 ? "current" : undefined}
+              aria-current={i === items.length - 1 ? "page" : undefined}
+            >
               {c.label}
             </span>
           )}
         </span>
       ))}
     </nav>
-  )
+  );
 }
 
 function SaveStatus() {
-  const saveStatus = useApp((s) => s.saveStatus)
-  const draftsDirty = useApp((s) => s.draftsDirty)
-  const error = useApp((s) => s.saveError)
+  const saveStatus = useApp((s) => s.saveStatus);
+  const draftsDirty = useApp((s) => s.draftsDirty);
+  const error = useApp((s) => s.saveError);
   // 入力欄にまだ反映していない文字があるうちは「保存済み」と表示しない
-  const status = saveStatus === 'saved' && draftsDirty ? 'pending' : saveStatus
-  const label = { saved: '保存済み', pending: '編集中…', saving: '保存中…', error: '保存できませんでした' }[status]
+  const status = saveStatus === "saved" && draftsDirty ? "pending" : saveStatus;
+  const label = {
+    saved: "保存済み",
+    pending: "編集中…",
+    saving: "保存中…",
+    error: "保存できませんでした",
+  }[status];
   return (
-    <span className={`save-status ${status}`} title={error ?? undefined} role="status" aria-live="polite">
+    <span
+      className={`save-status ${status}`}
+      title={error ?? undefined}
+      role="status"
+      aria-live="polite"
+    >
       <span className="dot" aria-hidden="true" />
       <span className="hide-mobile">{label}</span>
     </span>
-  )
+  );
 }
 
 /** 各画面のヘッダー。crumbs にパンくず、actions に右側のボタンを渡す */
-export function AppHeader({ crumbs, actions }: { crumbs?: Crumb[]; actions?: ReactNode }) {
+export function AppHeader({
+  crumbs,
+  actions,
+}: {
+  crumbs?: Crumb[];
+  actions?: ReactNode;
+}) {
   return (
     <header className="app-header">
-      <Link to="/" className="brand" aria-label="ホーム（アイデアとタイトル一覧）">
+      <Link
+        to="/"
+        className="brand"
+        aria-label="ホーム（アイデアとタイトル一覧）"
+      >
         <img src="./icon.svg" alt="" />
-        <span className={crumbs && crumbs.length > 0 ? 'hide-mobile' : undefined}>Novel Studio</span>
+        <span
+          className={crumbs && crumbs.length > 0 ? "hide-mobile" : undefined}
+        >
+          Novel Studio
+        </span>
       </Link>
       {crumbs && crumbs.length > 0 ? (
         <>
@@ -62,88 +89,136 @@ export function AppHeader({ crumbs, actions }: { crumbs?: Crumb[]; actions?: Rea
       <span className="spacer" />
       {actions}
       <SaveStatus />
-      <Link to="/settings" className="icon-btn" aria-label="アプリの設定とバックアップ" title="設定・バックアップ">
+      <Link
+        to="/settings"
+        className="icon-btn"
+        aria-label="アプリの設定とバックアップ"
+        title="設定・バックアップ"
+      >
         <GearIcon />
       </Link>
     </header>
-  )
+  );
 }
 
 function Toasts() {
-  const toasts = useToasts((s) => s.toasts)
-  const dismiss = useToasts((s) => s.dismiss)
+  const toasts = useToasts((s) => s.toasts);
+  const dismiss = useToasts((s) => s.dismiss);
   return (
     <div className="toasts" aria-live="assertive">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind}`} role={t.kind === 'error' ? 'alert' : 'status'}>
+        <div
+          key={t.id}
+          className={`toast ${t.kind}`}
+          role={t.kind === "error" ? "alert" : "status"}
+        >
           <p>{t.message}</p>
-          <button type="button" onClick={() => dismiss(t.id)} aria-label="閉じる">
+          <button
+            type="button"
+            onClick={() => dismiss(t.id)}
+            aria-label="閉じる"
+          >
             <XIcon />
           </button>
         </div>
       ))}
     </div>
-  )
+  );
 }
 
 function ExternalChangeBanner() {
-  const external = useApp((s) => s.externalChange)
-  if (!external) return null
+  const external = useApp((s) => s.externalChange);
+  if (!external) return null;
   return (
     <div className="banner" role="alert">
-      <span className="grow">別のタブ・ウィンドウでデータが変更されました。最新の内容を読み込んでください（同時に編集すると上書きされることがあります）。</span>
-      <button type="button" className="btn btn-sm" onClick={() => void reloadFromDisk()}>
+      <span className="grow">
+        別のタブ・ウィンドウでデータが変更されました。最新の内容を読み込んでください（同時に編集すると上書きされることがあります）。
+      </span>
+      <button
+        type="button"
+        className="btn btn-sm"
+        onClick={() => void reloadFromDisk()}
+      >
         最新を読み込む
       </button>
     </div>
-  )
+  );
 }
 
 function UpdateBanner() {
-  const ready = useAppUpdate((s) => s.ready)
-  const apply = useAppUpdate((s) => s.apply)
-  if (!ready || !apply) return null
+  const ready = useAppUpdate((s) => s.ready);
+  const apply = useAppUpdate((s) => s.apply);
+  if (!ready || !apply) return null;
   return (
     <div className="banner banner-info" role="status">
-      <span className="grow">新しいバージョンのアプリがあります。書いた内容を保存してから更新します。</span>
+      <span className="grow">
+        新しいバージョンのアプリがあります。書いた内容を保存してから更新します。
+      </span>
       <button type="button" className="btn btn-sm" onClick={() => void apply()}>
         更新する
       </button>
     </div>
-  )
+  );
 }
 
 /** 前回の終了時に保存しきれなかった変更を復元したら知らせる */
 function RecoveryNotice() {
-  const count = useApp((s) => s.recoveredCount)
+  const count = useApp((s) => s.recoveredCount);
   useEffect(() => {
-    if (count > 0) notify(`前回の終了時に保存しきれなかった変更（${count}件）を復元しました`)
-  }, [count])
-  return null
+    if (count > 0)
+      notify(
+        `前回の終了時に保存しきれなかった変更（${count}件）を復元しました`,
+      );
+  }, [count]);
+  return null;
 }
 
 /** テーマ・エディタフォントを <html> に反映する */
 function PrefsEffect() {
-  const theme = usePrefs((s) => s.theme)
-  const font = usePrefs((s) => s.editorFont)
-  const size = usePrefs((s) => s.editorFontSize)
+  const theme = usePrefs((s) => s.theme);
+  const font = usePrefs((s) => s.editorFont);
+  const size = usePrefs((s) => s.editorFontSize);
   useEffect(() => {
-    const root = document.documentElement
-    if (theme === 'system') root.removeAttribute('data-theme')
-    else root.setAttribute('data-theme', theme)
-    root.style.setProperty('--editor-font', font === 'mincho' ? 'var(--font-mincho)' : 'var(--font-ui)')
-    root.style.setProperty('--editor-size', `${size}px`)
-  }, [theme, font, size])
-  return null
+    const root = document.documentElement;
+    if (theme === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+    root.style.setProperty(
+      "--editor-font",
+      font === "mincho" ? "var(--font-mincho)" : "var(--font-ui)",
+    );
+    root.style.setProperty("--editor-size", `${size}px`);
+  }, [theme, font, size]);
+  return null;
 }
 
-const SCROLL_KEY = 'novel-studio:scroll'
+const SCROLL_KEY = "novel-studio:scroll";
+/** 控えておく履歴の項目の数（古いものから捨てる） */
+const SCROLL_MEMORY_MAX = 50;
 
 function readScrollMemory(): Record<string, number> {
   try {
-    return JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? '{}') as Record<string, number>
+    const parsed: unknown = JSON.parse(
+      sessionStorage.getItem(SCROLL_KEY) ?? "{}",
+    );
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, number>)
+      : {};
   } catch {
-    return {}
+    return {};
+  }
+}
+
+function writeScrollMemory(entryKey: string, y: number): void {
+  try {
+    const memory = readScrollMemory();
+    delete memory[entryKey];
+    memory[entryKey] = Math.max(0, Math.round(y));
+    const keys = Object.keys(memory);
+    for (const k of keys.slice(0, Math.max(0, keys.length - SCROLL_MEMORY_MAX)))
+      delete memory[k];
+    sessionStorage.setItem(SCROLL_KEY, JSON.stringify(memory));
+  } catch {
+    /* noop */
   }
 }
 
@@ -152,53 +227,69 @@ function readScrollMemory(): Record<string, number> {
  * ブラウザの「戻る／進む」では、その画面を離れた時のスクロール位置に戻す。
  */
 function ScrollOnNavigate() {
-  const location = useLocation()
-  const navType = useNavigationType()
-  const pathKey = location.pathname
-  const entryKey = location.key
+  const location = useLocation();
+  const navType = useNavigationType();
+  const pathKey = location.pathname;
+  const entryKey = location.key;
+  const restoring = useRef(false);
 
-  // 離れる時の位置を履歴の項目ごとに覚えておく
-  useEffect(() => {
-    let frame = 0
+  // 離れる時の位置を履歴の項目ごとに覚えておく。
+  // 画面が切り替わる瞬間にページが縮んで位置が 0 に詰められると、その 0 を前の画面の位置として
+  // 記録してしまうので、リスナーは DOM の入れ替えと同じタイミング（layout effect）で付け外しする。
+  useLayoutEffect(() => {
+    let frame = 0;
     const onScroll = () => {
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => {
-        const memory = readScrollMemory()
-        memory[entryKey] = window.scrollY
-        try {
-          sessionStorage.setItem(SCROLL_KEY, JSON.stringify(memory))
-        } catch {
-          /* noop */
-        }
-      })
-    }
-    window.addEventListener('scroll', onScroll, { passive: true })
+      if (restoring.current) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() =>
+        writeScrollMemory(entryKey, window.scrollY),
+      );
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
-      cancelAnimationFrame(frame)
-      window.removeEventListener('scroll', onScroll)
-    }
-  }, [entryKey])
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, [entryKey]);
 
-  useEffect(() => {
-    if (navType === 'POP') {
-      const y = readScrollMemory()[entryKey]
-      if (typeof y === 'number') {
-        // 描画が終わってから戻す
-        requestAnimationFrame(() => window.scrollTo(0, y))
-        return
+  useLayoutEffect(() => {
+    if (navType === "POP") {
+      // 位置はスクロールイベントで上書きされる前に読む
+      const y = readScrollMemory()[entryKey];
+      if (typeof y === "number" && y > 0) {
+        restoring.current = true;
+        let tries = 0;
+        let frame = 0;
+        // 遅れて読み込まれる画面もあるので、目的の位置までスクロールできる高さになるまで少し待つ
+        const step = () => {
+          const max =
+            document.documentElement.scrollHeight - window.innerHeight;
+          if (max >= y || tries >= 60) {
+            window.scrollTo(0, Math.min(y, Math.max(0, max)));
+            restoring.current = false;
+            return;
+          }
+          tries += 1;
+          frame = requestAnimationFrame(step);
+        };
+        frame = requestAnimationFrame(step);
+        return () => {
+          cancelAnimationFrame(frame);
+          restoring.current = false;
+        };
       }
     }
-    window.scrollTo(0, 0)
+    window.scrollTo(0, 0);
     // パスが変わった時だけ（クエリだけの変更では動かさない）
-  }, [pathKey])
-  return null
+  }, [pathKey]);
+  return null;
 }
 
 /** 画面が変わったら、開いたままの確認・入力ダイアログはキャンセル扱いで閉じる */
 function CloseDialogsOnNavigate() {
-  const { pathname } = useLocation()
-  useEffect(() => cancelAllDialogs, [pathname])
-  return null
+  const { pathname } = useLocation();
+  useEffect(() => cancelAllDialogs, [pathname]);
+  return null;
 }
 
 export function AppFrame({ children }: { children: ReactNode }) {
@@ -214,5 +305,5 @@ export function AppFrame({ children }: { children: ReactNode }) {
       <Toasts />
       <DialogHost />
     </div>
-  )
+  );
 }

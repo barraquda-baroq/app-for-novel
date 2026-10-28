@@ -534,7 +534,7 @@ export function takeSnapshot(data: AppData, titleId: ID): SubmissionSnapshot {
 }
 
 export interface SnapshotDiff {
-  /** 採用する稿が変わった話（追加・削除された話も含む） */
+  /** 採用する稿が変わった話（追加・削除された話は added / removed に入る） */
   switched: ID[]
   /** 同じ稿のまま本文が変わった話 */
   edited: ID[]
