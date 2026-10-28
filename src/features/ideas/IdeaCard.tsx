@@ -1,5 +1,5 @@
 // アイデア1件のカード。見出し（任意）＋内容（長い場合は6行で折りたたみ）と、編集・移動・並べ替え・削除。
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Idea } from '../../domain/types'
 import { paths } from '../../routes'
@@ -11,9 +11,11 @@ import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { DownIcon, EditIcon, MoveIcon, TrashIcon, UpIcon } from '../../ui/icons'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { IdeaMoveDialog } from './IdeaMoveDialog'
-import { scrollToTop } from '../home/scroll'
 import { SparkIcon } from './ideaIcons'
-import { ideaShortLabel, titleNameFromIdea } from './ideaLogic'
+import { ideaModalDraftKey, ideaShortLabel, titleNameFromIdea } from './ideaLogic'
+import { useKeepInPlace } from './keepInPlace'
+import { REVEAL_MS, useReveal } from './reveal'
+import { writeLocal } from './storage'
 
 export interface IdeaCardProps {
   idea: Idea
@@ -45,6 +47,48 @@ function useOverflow(text: string, expanded: boolean) {
   return [ref, overflow] as const
 }
 
+/** 入力ダイアログが開いたら、候補の文字を選択しておく（そのまま打てば置き換えられる） */
+function selectPromptText(expected: string) {
+  let tries = 0
+  const tick = () => {
+    const input = document.querySelector<HTMLInputElement>('[role="dialog"] input.input')
+    if (input && input.value === expected && document.activeElement === input) {
+      input.select()
+      return
+    }
+    if (++tries < 20) requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+}
+
+/** quick capture などで「表示」を押した時に、このカードまでスクロールして少しの間目立たせる */
+function useRevealed(ideaId: string, ref: RefObject<HTMLLIElement | null>): boolean {
+  // 同じアイデアをもう一度見せる時も反応させる（seq が変わる）
+  const seq = useReveal((s) => (s.id === ideaId ? s.seq : 0))
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    if (!seq) return
+    setOn(true)
+    let raf = 0
+    if (useReveal.getState().scroll) {
+      raf = requestAnimationFrame(() => {
+        const el = ref.current
+        if (!el) return
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+        el.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' })
+        el.focus({ preventScroll: true })
+      })
+    }
+    const timer = setTimeout(() => setOn(false), REVEAL_MS)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+      setOn(false)
+    }
+  }, [seq, ref])
+  return on
+}
+
 export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCardProps) {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
@@ -54,6 +98,16 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
   const body = idea.body
   const [bodyRef, overflow] = useOverflow(body, expanded)
   const label = ideaShortLabel(idea)
+  const editDraftKey = ideaModalDraftKey({ mode: 'edit', ideaId: idea.id })
+  const { ref: cardRef, move } = useKeepInPlace<HTMLLIElement>()
+  const revealed = useRevealed(idea.id, cardRef)
+
+  // 動かしたカードが押した指の下に残るように（続けて押すとそのまま動かし続けられる）
+  const step = (dir: -1 | 1) => {
+    const same = dir < 0 ? '[data-testid="idea-up"]' : '[data-testid="idea-down"]'
+    const other = dir < 0 ? '[data-testid="idea-down"]' : '[data-testid="idea-up"]'
+    move(() => attempt(() => (actions.moveIdeaStep(idea.id, dir), true)), [same, other])
+  }
 
   const remove = async () => {
     const ok = await confirmDialog({
@@ -63,17 +117,20 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
       confirmLabel: '削除',
     })
     if (!ok) return
-    attempt(() => actions.deleteIdea(idea.id))
+    if (attempt(() => (actions.deleteIdea(idea.id), true))) writeLocal(editDraftKey, null)
   }
 
   const makeTitle = async () => {
-    const name = await promptDialog({
+    const suggestion = titleNameFromIdea(idea)
+    const asked = promptDialog({
       title: 'この案でタイトルを作る',
       label: 'タイトル名（このアイデアは新しいタイトルの仕切りへ移ります）',
-      initial: titleNameFromIdea(idea),
+      initial: suggestion,
       placeholder: '例: 星の海の図書館',
       confirmLabel: '作成',
     })
+    if (suggestion) selectPromptText(suggestion)
+    const name = await asked
     if (name === null) return
     const titleId = attempt(() => {
       const id = actions.createTitle(name.trim())
@@ -82,12 +139,17 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
     })
     if (!titleId) return
     notify(`タイトル「${getData().titles[titleId]?.name ?? name.trim()}」を作成し、アイデアを移しました`)
-    scrollToTop()
     navigate(paths.title(titleId))
   }
 
   return (
-    <li className="idea-card" data-testid="idea-card" data-idea-id={idea.id}>
+    <li
+      ref={cardRef}
+      className={`idea-card${revealed ? ' is-revealed' : ''}`}
+      tabIndex={-1}
+      data-testid="idea-card"
+      data-idea-id={idea.id}
+    >
       <div className="idea-card-main">
         {heading ? (
           <h4 className="idea-card-heading" data-testid="idea-heading">
@@ -116,7 +178,7 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
         <button
           type="button"
           className="icon-btn"
-          onClick={() => attempt(() => actions.moveIdeaStep(idea.id, -1))}
+          onClick={() => step(-1)}
           disabled={first}
           aria-label="上へ"
           title="1つ上へ"
@@ -127,7 +189,7 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
         <button
           type="button"
           className="icon-btn"
-          onClick={() => attempt(() => actions.moveIdeaStep(idea.id, 1))}
+          onClick={() => step(1)}
           disabled={last}
           aria-label="下へ"
           title="1つ下へ"
@@ -173,6 +235,7 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
           sectionName={sectionName}
           initialHeading={idea.heading}
           initialBody={idea.body}
+          draftKey={editDraftKey}
           onClose={() => setEditing(false)}
           onSave={(h, b) => {
             attempt(() => actions.updateIdea(idea.id, { heading: h, body: b }))

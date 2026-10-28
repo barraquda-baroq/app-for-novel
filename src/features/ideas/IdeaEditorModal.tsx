@@ -1,8 +1,10 @@
 // アイデアの追加・編集ダイアログ。見出し（任意）と内容。Ctrl/⌘+Enter で保存。
+// 入力中の内容はこの端末に下書きとして残し、戻る操作やアプリを閉じても、次に同じダイアログを開いた時に戻せる。
 import { useId, useRef, useState } from 'react'
 import { confirmDialog } from '../../ui/dialogs'
 import { Modal } from '../../ui/Modal'
-import { canSaveIdea, isSubmitShortcut, submitShortcutLabel } from './ideaLogic'
+import { canSaveIdea, isSubmitShortcut, parseIdeaModalDraft, submitShortcutLabel } from './ideaLogic'
+import { readLocal, writeLocal } from './storage'
 
 export interface IdeaEditorModalProps {
   mode: 'add' | 'edit'
@@ -10,27 +12,63 @@ export interface IdeaEditorModalProps {
   sectionName: string
   initialHeading?: string
   initialBody?: string
+  /** 書きかけを保存するキー（ideaModalDraftKey）。省略すると保存しない */
+  draftKey?: string
   onSave: (heading: string, body: string) => void
   onClose: () => void
 }
 
-export function IdeaEditorModal({ mode, sectionName, initialHeading = '', initialBody = '', onSave, onClose }: IdeaEditorModalProps) {
+export function IdeaEditorModal({
+  mode,
+  sectionName,
+  initialHeading = '',
+  initialBody = '',
+  draftKey,
+  onSave,
+  onClose,
+}: IdeaEditorModalProps) {
   const formId = useId()
-  const [heading, setHeading] = useState(initialHeading)
-  const [body, setBody] = useState(initialBody)
+  // 前回閉じた時の書きかけがあれば、そこから続ける
+  const [restored] = useState(() => {
+    const draft = draftKey ? parseIdeaModalDraft(readLocal(draftKey)) : null
+    return draft && (draft.heading !== initialHeading || draft.body !== initialBody) ? draft : null
+  })
+  const [heading, setHeading] = useState(restored?.heading ?? initialHeading)
+  const [body, setBody] = useState(restored?.body ?? initialBody)
+  const [restoredNotice, setRestoredNotice] = useState(restored !== null)
+  // 見出しが空で内容がある時は内容から書き始める（開いた時に一度だけ決める）
+  const [focusBody] = useState(() => mode === 'edit' && (restored?.heading ?? initialHeading) === '' && (restored?.body ?? initialBody) !== '')
   const confirming = useRef(false)
   const canSave = canSaveIdea(heading, body)
   const dirty = heading !== initialHeading || body !== initialBody
 
+  /** 入力のたびにすぐ控える（閉じる・戻る・アプリの終了で失わないように） */
+  const persist = (h: string, b: string) => {
+    if (!draftKey) return
+    writeLocal(draftKey, h !== initialHeading || b !== initialBody ? JSON.stringify({ heading: h, body: b }) : null)
+  }
+  const clearDraft = () => {
+    if (draftKey) writeLocal(draftKey, null)
+  }
+
   const save = () => {
     if (!canSave) return
+    clearDraft()
     onSave(heading.trim(), body.replace(/\s+$/u, ''))
+  }
+
+  const discardRestored = () => {
+    setHeading(initialHeading)
+    setBody(initialBody)
+    setRestoredNotice(false)
+    clearDraft()
   }
 
   // 書きかけの内容をうっかり閉じて失わないようにする
   const requestClose = async () => {
     if (confirming.current) return
     if (!dirty) {
+      clearDraft()
       onClose()
       return
     }
@@ -43,14 +81,16 @@ export function IdeaEditorModal({ mode, sectionName, initialHeading = '', initia
       danger: true,
     })
     confirming.current = false
-    if (ok) onClose()
+    if (!ok) return
+    clearDraft()
+    onClose()
   }
 
   return (
     <Modal
       title={mode === 'add' ? 'アイデアを追加' : 'アイデアを編集'}
       onClose={() => void requestClose()}
-      initialFocus={mode === 'edit' && initialHeading === '' && initialBody !== '' ? 'textarea' : undefined}
+      initialFocus={focusBody ? 'textarea' : undefined}
       footer={
         <>
           <span className="idea-editor-hint hide-mobile">{submitShortcutLabel()} で保存</span>
@@ -82,12 +122,23 @@ export function IdeaEditorModal({ mode, sectionName, initialHeading = '', initia
           <span className="idea-editor-place-label">{mode === 'add' ? '追加先' : '場所'}</span>
           <span className="idea-editor-place-name">{sectionName}</span>
         </p>
+        {restoredNotice ? (
+          <p className="idea-editor-restored" role="status" data-testid="idea-draft-restored">
+            <span>下書きを復元しました</span>
+            <button type="button" className="idea-editor-restored-discard" onClick={discardRestored} data-testid="idea-draft-discard">
+              {mode === 'add' ? '下書きを破棄' : '下書きを破棄して元に戻す'}
+            </button>
+          </p>
+        ) : null}
         <label className="field">
           <span>見出し（任意）</span>
           <input
             className="input"
             value={heading}
-            onChange={(e) => setHeading(e.target.value)}
+            onChange={(e) => {
+              setHeading(e.target.value)
+              persist(e.target.value, body)
+            }}
             placeholder="例: 記憶を売る古書店"
             data-testid="idea-heading-input"
           />
@@ -98,7 +149,10 @@ export function IdeaEditorModal({ mode, sectionName, initialHeading = '', initia
             className="textarea idea-editor-body"
             rows={8}
             value={body}
-            onChange={(e) => setBody(e.target.value)}
+            onChange={(e) => {
+              setBody(e.target.value)
+              persist(heading, e.target.value)
+            }}
             placeholder="思いついたこと、場面、台詞、設定の種など"
             data-testid="idea-body-input"
           />

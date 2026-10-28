@@ -1,13 +1,17 @@
 // 思いついたことをすぐに書きとめる入力欄。追加先の仕切りを選べる（既定は「どのタイトルにも属さない」）。
-// 書きかけの内容はこの端末に一時保存しておく。
+// 書きかけの内容はこの端末に一時保存しておく。追加すると「表示」で追加したカードへ移れる（入力欄はそのまま使い続けられる）。
 import { useEffect, useId, useRef, useState } from 'react'
 import type { IdeaSection } from '../../domain/entityOps'
 import type { ID } from '../../domain/types'
 import { actions } from '../../store/actions'
-import { attempt, notify } from '../../store/uiStore'
-import { PlusIcon } from '../../ui/icons'
+import { attempt } from '../../store/uiStore'
+import { CheckIcon, PlusIcon } from '../../ui/icons'
 import { isSubmitShortcut, sectionDisplayName, sectionKey, submitShortcutLabel, titleIdFromKey, UNASSIGNED_KEY } from './ideaLogic'
+import { revealIdea } from './reveal'
 import { readLocal, writeLocal } from './storage'
+
+/** 追加したことの表示を出しておく時間（ミリ秒） */
+const ADDED_NOTICE_MS = 10000
 import './ideas.css'
 
 export interface QuickCaptureProps {
@@ -19,9 +23,11 @@ export interface QuickCaptureProps {
   fixedName?: string
   /** 書きかけを保存するキー（画面ごとに分ける） */
   draftKey: string
+  /** 「表示」を押した時（折りたたんだ仕切りを開くなど）。省略時はカードまでスクロールする */
+  onReveal?: (ideaId: ID, titleId: ID | null) => void
 }
 
-export function QuickCapture({ sections = [], fixedTitleId, fixedName, draftKey }: QuickCaptureProps) {
+export function QuickCapture({ sections = [], fixedTitleId, fixedName, draftKey, onReveal }: QuickCaptureProps) {
   const inputId = useId()
   const selectId = useId()
   const storageKey = `novel-studio:idea-draft:${draftKey}`
@@ -29,6 +35,13 @@ export function QuickCapture({ sections = [], fixedTitleId, fixedName, draftKey 
   const [target, setTarget] = useState<string>(UNASSIGNED_KEY)
   const ref = useRef<HTMLTextAreaElement>(null)
   const fixed = fixedTitleId !== undefined
+  const [added, setAdded] = useState<{ id: ID; titleId: ID | null; name: string; seq: number } | null>(null)
+
+  useEffect(() => {
+    if (!added) return
+    const timer = setTimeout(() => setAdded(null), ADDED_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [added])
 
   // 選んでいたタイトルが削除されたら「どのタイトルにも属さない」に戻す
   const validTarget = fixed || sections.some((s) => sectionKey(s.titleId) === target) ? target : UNASSIGNED_KEY
@@ -48,8 +61,17 @@ export function QuickCapture({ sections = [], fixedTitleId, fixedName, draftKey 
     const id = attempt(() => actions.addIdea(titleId, '', text.replace(/\s+$/u, '')))
     if (!id) return
     setText('')
-    notify(`「${targetName}」にアイデアを追加しました`)
-    ref.current?.focus()
+    setAdded((prev) => ({ id, titleId, name: targetName, seq: (prev?.seq ?? 0) + 1 }))
+    // 追加したカードが見えていれば少しの間目立たせる（スクロールはしない）
+    revealIdea(id, false)
+    ref.current?.focus({ preventScroll: true })
+  }
+
+  const show = () => {
+    if (!added) return
+    if (onReveal) onReveal(added.id, added.titleId)
+    else revealIdea(added.id, true)
+    setAdded(null)
   }
 
   return (
@@ -111,6 +133,17 @@ export function QuickCapture({ sections = [], fixedTitleId, fixedName, draftKey 
           <PlusIcon />
           追加
         </button>
+      </div>
+      <div className="idea-capture-status" role="status" data-testid="quick-idea-status">
+        {added ? (
+          <p key={added.seq} className="idea-capture-added">
+            <CheckIcon />
+            <span className="idea-capture-added-text">「{added.name}」に追加しました</span>
+            <button type="button" className="btn btn-sm btn-ghost idea-capture-show" onClick={show} data-testid="quick-idea-show">
+              表示
+            </button>
+          </p>
+        ) : null}
       </div>
     </form>
   )

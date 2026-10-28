@@ -1,12 +1,11 @@
 // ホーム画面（タイトル群・アイデア領域）で使う、表示用の純粋な計算。データは変更しない。
-import { titleLastEdited, titleSummary, type TitleSummary } from '../../domain/entityOps'
+import { missingActiveLabel, titleLastEdited, titleSummary, type TitleSummary } from '../../domain/entityOps'
 import { formatCount } from '../../domain/text'
 import type { AppData, ID } from '../../domain/types'
 
 export type HomeView = 'titles' | 'ideas'
 
-export const HOME_VIEW_KEY = 'novel-studio:home-view'
-
+/** リンクの ?view= の値（titles / ideas 以外は null） */
 export function parseHomeView(raw: string | null | undefined): HomeView | null {
   return raw === 'titles' || raw === 'ideas' ? raw : null
 }
@@ -54,6 +53,11 @@ export function episodesLabel(summary: Pick<TitleSummary, 'episodes' | 'specials
     main: `全${summary.episodes}話`,
     sub: summary.specials > 0 ? `特殊${summary.specials}` : null,
   }
+}
+
+/** 「採用原稿なし 2話＋特殊1」（特殊ブロックは話数に数えない）。なければ空文字 */
+export function missingLabel(summary: Pick<TitleSummary, 'missingEpisodes' | 'missingSpecials'>): string {
+  return missingActiveLabel(summary.missingEpisodes, summary.missingSpecials)
 }
 
 export function charsLabel(chars: number): string {

@@ -10,6 +10,8 @@ import {
   detectPlatform,
   formatBytes,
   isEmptyData,
+  LAST_BACKUP_KEY,
+  localKeysToClear,
   readExportedAt,
 } from './settingsLogic'
 
@@ -92,5 +94,43 @@ describe('すべて削除の確認入力', () => {
     expect(confirmsDeleteAll('さくじょ')).toBe(false)
     expect(confirmsDeleteAll('')).toBe(false)
     expect(confirmsDeleteAll(null)).toBe(false)
+  })
+})
+
+describe('すべて削除・復元で消す、この端末の状態', () => {
+  const keys = [
+    'novel-studio:prefs',
+    'novel-studio:piece-scroll-sync',
+    'novel-studio:last-backup',
+    'novel-studio:idea-draft:home',
+    'novel-studio:idea-draft:title:t1',
+    'novel-studio:idea-modal-draft:new:none',
+    'novel-studio:idea-modal-draft:edit:i1',
+    'novel-studio:idea-collapsed',
+    'novel-studio:collapsed-chapters:t1',
+    'novel-studio:recovery:abc',
+    'novel-studio:home-view',
+    'other-app:setting',
+  ]
+
+  it('表示の設定以外のこのアプリのキーを消す（ほかのサイトのキーには触れない）', () => {
+    expect(localKeysToClear(keys)).toEqual([
+      'novel-studio:last-backup',
+      'novel-studio:idea-draft:home',
+      'novel-studio:idea-draft:title:t1',
+      'novel-studio:idea-modal-draft:new:none',
+      'novel-studio:idea-modal-draft:edit:i1',
+      'novel-studio:idea-collapsed',
+      'novel-studio:collapsed-chapters:t1',
+      'novel-studio:recovery:abc',
+      'novel-studio:home-view',
+    ])
+  })
+
+  it('残すキーを足せる（復元では最後に書き出した日時を残す）', () => {
+    const cleared = localKeysToClear(keys, ['novel-studio:prefs', 'novel-studio:piece-scroll-sync', LAST_BACKUP_KEY])
+    expect(cleared).not.toContain(LAST_BACKUP_KEY)
+    expect(cleared).not.toContain('novel-studio:prefs')
+    expect(cleared).toContain('novel-studio:recovery:abc')
   })
 })

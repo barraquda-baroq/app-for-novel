@@ -32,21 +32,61 @@ export function truncate(text: string, max: number): string {
   return chars.length > max ? `${chars.slice(0, max).join('')}…` : text
 }
 
-/** 「この案でタイトルを作る」ときのタイトル名の候補。見出し、なければ内容の最初の行 */
-export function titleNameFromIdea(idea: Pick<Idea, 'heading' | 'body'>, max = 40): string {
+/** 見出し、なければ内容の最初の空でない行 */
+export function ideaFirstLine(idea: Pick<Idea, 'heading' | 'body'>): string {
   const heading = idea.heading.trim()
-  if (heading) return truncate(heading, max)
-  const firstLine =
+  if (heading) return heading
+  return (
     idea.body
       .split(/\r\n?|\n/)
       .map((l) => l.trim())
       .find((l) => l.length > 0) ?? ''
-  return truncate(firstLine, max)
+  )
+}
+
+const SENTENCE_END = /[。！？!?．]/u
+const CLAUSE_END = /[、，,；;：:・…‥\s]/u
+/** 名前の末尾に残すと不自然な句読点 */
+const TRAILING_PUNCT = /[\s、，,。．]+$/u
+/** 途中で切った時に末尾に残すと不自然な記号（句読点・開きかっこ・空白・省略記号） */
+const TRAILING_JUNK = /[\s、，,。．.・…‥「『（(【〈《［[]+$/u
+
+/**
+ * 長い文を名前に使える長さにする。省略記号（…）は付けない。
+ * max 文字に収まらない時は、その範囲内の最後の文の区切り（。！？）、なければ読点などの区切りで切り、
+ * どちらもなければ max 文字で切る。
+ */
+export function cutAtBoundary(text: string, max = 40): string {
+  const chars = Array.from(text.trim())
+  if (chars.length <= max) return chars.join('').replace(TRAILING_PUNCT, '')
+  const finish = (cs: string[]) => cs.join('').replace(TRAILING_JUNK, '')
+  // 短すぎる切れ端にはしない
+  const min = Math.min(4, max)
+  // ちょうど max 文字の直後にある区切りも使う
+  const head = chars.slice(0, max + 1)
+  const lastIndex = (re: RegExp) => {
+    for (let i = head.length - 1; i >= min; i--) if (re.test(head[i])) return i
+    return -1
+  }
+  const sentence = lastIndex(SENTENCE_END)
+  if (sentence >= 0) {
+    // ！？ は題名の一部として残す（max を超える場合は除く）
+    const keep = /[！？!?]/u.test(head[sentence]) && sentence < max ? sentence + 1 : sentence
+    return finish(chars.slice(0, keep))
+  }
+  const clause = lastIndex(CLAUSE_END)
+  if (clause >= 0) return finish(chars.slice(0, clause))
+  return finish(chars.slice(0, max))
+}
+
+/** 「この案でタイトルを作る」ときのタイトル名の候補。見出し、なければ内容の最初の行（省略記号なし） */
+export function titleNameFromIdea(idea: Pick<Idea, 'heading' | 'body'>, max = 40): string {
+  return cutAtBoundary(ideaFirstLine(idea), max)
 }
 
 /** 確認ダイアログやトーストに出す、アイデアの短い呼び名 */
 export function ideaShortLabel(idea: Pick<Idea, 'heading' | 'body'>, max = 24): string {
-  return titleNameFromIdea(idea, max) || '（空のアイデア）'
+  return truncate(ideaFirstLine(idea), max) || '（空のアイデア）'
 }
 
 /** Ctrl+Enter / ⌘+Enter（変換中の Enter は除く） */
@@ -86,5 +126,57 @@ export function parseCollapsed(raw: string | null): string[] {
     return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
   } catch {
     return []
+  }
+}
+
+// ---------- 位置を選んで移動 ----------
+
+export interface PositionOption {
+  /** 移動後の位置（移動するもの自身を除いた並びでの 0 始まりの位置） */
+  index: number
+  label: string
+}
+
+/**
+ * 「位置を選んで移動」の候補。names は移動するもの自身を除いた並び（表示名）。
+ * 先頭（「A」の前）／「A」の後／…／末尾（「Z」の後）。同じ表記が並ぶ時は何番目かを添える。
+ */
+export function positionOptions(names: string[], nameMax = 16): PositionOption[] {
+  const q = (n: string) => `「${truncate(n, nameMax)}」`
+  const n = names.length
+  if (n === 0) return [{ index: 0, label: '先頭' }]
+  const opts: PositionOption[] = []
+  for (let k = 0; k <= n; k++) {
+    const label = k === 0 ? `先頭（${q(names[0])}の前）` : k === n ? `末尾（${q(names[n - 1])}の後）` : `${q(names[k - 1])}の後`
+    opts.push({ index: k, label })
+  }
+  const seen = new Map<string, number>()
+  for (const o of opts) seen.set(o.label, (seen.get(o.label) ?? 0) + 1)
+  return opts.map((o) => ((seen.get(o.label) ?? 0) > 1 ? { ...o, label: `${o.label}（${o.index + 1}番目）` } : o))
+}
+
+// ---------- 追加・編集ダイアログの下書き ----------
+
+const MODAL_DRAFT_PREFIX = 'novel-studio:idea-modal-draft:'
+
+/** 追加は仕切りごと、編集はアイデアごとに下書きを分ける */
+export function ideaModalDraftKey(target: { mode: 'add'; section: string } | { mode: 'edit'; ideaId: ID }): string {
+  return target.mode === 'add' ? `${MODAL_DRAFT_PREFIX}new:${target.section}` : `${MODAL_DRAFT_PREFIX}edit:${target.ideaId}`
+}
+
+export interface IdeaModalDraft {
+  heading: string
+  body: string
+}
+
+/** 保存した下書きを読む（壊れた値は null） */
+export function parseIdeaModalDraft(raw: string | null): IdeaModalDraft | null {
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw) as Partial<IdeaModalDraft> | null
+    if (!v || typeof v.heading !== 'string' || typeof v.body !== 'string') return null
+    return { heading: v.heading, body: v.body }
+  } catch {
+    return null
   }
 }

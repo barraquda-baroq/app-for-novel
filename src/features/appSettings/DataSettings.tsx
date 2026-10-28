@@ -8,9 +8,8 @@ import { downloadFile, formatDateTime, pickTextFile } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DownloadIcon, UploadIcon } from '../../ui/icons'
 import { readLocal, writeLocal } from '../ideas/storage'
-import { backupFileName, countsSummary, dataCounts, formatBytes, readExportedAt } from './settingsLogic'
-
-const LAST_BACKUP_KEY = 'novel-studio:last-backup'
+import { clearLocalState, LOCAL_STATE_CLEARED } from './localState'
+import { LAST_BACKUP_KEY, backupFileName, countsSummary, dataCounts, formatBytes, readExportedAt } from './settingsLogic'
 
 interface StorageInfo {
   usage?: number
@@ -58,6 +57,13 @@ export function DataSettings() {
   const [lastBackup, setLastBackup] = useState<number | null>(readLastBackup)
   const [busy, setBusy] = useState(false)
 
+  // すべてのデータを削除すると「最後に書き出した日時」も消えるので読み直す
+  useEffect(() => {
+    const reread = () => setLastBackup(readLastBackup())
+    window.addEventListener(LOCAL_STATE_CLEARED, reread)
+    return () => window.removeEventListener(LOCAL_STATE_CLEARED, reread)
+  }, [])
+
   const exportBackup = () => {
     const now = new Date()
     try {
@@ -87,6 +93,8 @@ export function DataSettings() {
       '',
       exportedAt ? `書き出し日時: ${formatDateTime(exportedAt)}` : null,
       `バックアップの内容: ${countsSummary(dataCounts(next))}`,
+      '',
+      'この端末の書きかけ（アイデアの入力欄など）や折りたたみの状態も消えます。表示の設定（テーマ・文字サイズなど）は残ります。',
     ].filter((l): l is string => l !== null)
     const ok = await confirmDialog({
       title: 'バックアップから復元しますか？',
@@ -98,6 +106,8 @@ export function DataSettings() {
     setBusy(true)
     try {
       await replaceAllData(next)
+      // 以前のデータ向けの書きかけ・折りたたみ・復旧用の控えが、復元したデータに混ざらないようにする
+      clearLocalState({ keepLastBackup: true })
       notify('バックアップから復元しました')
     } catch (e) {
       notifyError(`復元できませんでした: ${e instanceof Error ? e.message : String(e)}`)

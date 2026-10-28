@@ -5,6 +5,7 @@ import { getData, replaceAllData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { TrashIcon } from '../../ui/icons'
+import { clearLocalState } from './localState'
 import { DELETE_ALL_WORD, confirmsDeleteAll, countsSummary, dataCounts, isEmptyData } from './settingsLogic'
 
 export function DangerZone() {
@@ -17,6 +18,7 @@ export function DangerZone() {
       title: 'すべてのデータを削除しますか？',
       message: [
         'この端末に保存されているタイトル・原稿・推敲バージョン・設定・戦略・メモ・アイデアをすべて削除します。元に戻すことはできません。',
+        'この端末の書きかけ（アイデアの入力欄など）や折りたたみの状態も消えます。表示の設定（テーマ・文字サイズなど）は残ります。',
         '必要なら、先に「バックアップを書き出す」で保存してください。',
         '',
         isEmptyData(current) ? '（いまは保存されているデータがありません）' : `削除される内容: ${countsSummary(dataCounts(current))}`,
@@ -39,6 +41,8 @@ export function DangerZone() {
     setBusy(true)
     try {
       await replaceAllData(emptyData())
+      // 書きかけ・折りたたみ・復旧用の控えなども消す（控えが残ると次回の起動で消したデータが戻ってしまう）
+      clearLocalState({ keepLastBackup: false })
       notify('すべてのデータを削除しました')
     } catch (e) {
       notifyError(`削除できませんでした: ${e instanceof Error ? e.message : String(e)}`)
@@ -56,7 +60,7 @@ export function DangerZone() {
         <div className="aset-row-label">
           <span>すべてのデータを削除</span>
           <span className="aset-row-desc">
-            この端末のタイトル・原稿・アイデアなどをすべて削除して、最初の状態に戻します。表示の設定は残ります。
+            この端末のタイトル・原稿・アイデア・書きかけなどをすべて削除して、最初の状態に戻します。表示の設定（テーマ・文字サイズなど）は残ります。
           </span>
         </div>
         <div className="aset-row-control">

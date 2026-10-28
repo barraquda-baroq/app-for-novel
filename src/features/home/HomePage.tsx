@@ -1,116 +1,125 @@
 // ホーム: 起動するとタイトル群とアイデア領域が表示される。
-// 広い画面では左右に並べ、スマホでは上部の切り替え（タイトル／アイデア）でどちらも1タップで行き来できる。
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react'
+// 広い画面（721px〜）では左右に並べ、スマホでは上下に積む（タイトルを先に、その下にアイデア）。
+// スマホでは上部の切り替えで、どちらの先頭へも1タップで移れる（どちらかを隠すことはしない）。
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useData } from '../../store/appStore'
 import { useDocumentTitle, useMediaQuery } from '../../ui/hooks'
 import { AppHeader } from '../../ui/Layout'
-import { readLocal, writeLocal } from '../ideas/storage'
-import { HOME_VIEW_KEY, parseHomeView, type HomeView } from './homeLogic'
+import { parseHomeView, type HomeView } from './homeLogic'
 import { IdeaArea } from './IdeaArea'
-import { useScrollTopOnMount } from './scroll'
+import { useHomeScrollMemory } from './scrollMemory'
 import { TitleGroup } from './TitleGroup'
 import './home.css'
 
-const VIEWS: { id: HomeView; label: string }[] = [
+const AREAS: { id: HomeView; label: string }[] = [
   { id: 'titles', label: 'タイトル' },
   { id: 'ideas', label: 'アイデア' },
 ]
 
+/** スマホの上下表示で、アイデア領域の先頭が画面のこの割合より上に来たら「アイデア」を表示中とみなす */
+const SPY_RATIO = 0.5
+
 export function HomePage() {
   useDocumentTitle(undefined)
+  useHomeScrollMemory()
   const data = useData()
-  const wide = useMediaQuery('(min-width: 900px)')
+  const twoColumns = useMediaQuery('(min-width: 721px)')
   const [params, setParams] = useSearchParams()
   // ?view=ideas&focus=<titleId>（タイトルのアイデアタブの「すべてのアイデアを見る」から）は一度だけ使う
   const [focus, setFocus] = useState<string | null>(() => params.get('focus'))
-  const [view, setViewState] = useState<HomeView>(() => {
-    const linked = parseHomeView(params.get('view'))
-    if (linked) {
-      writeLocal(HOME_VIEW_KEY, linked)
-      return linked
-    }
-    return parseHomeView(readLocal(HOME_VIEW_KEY)) ?? 'titles'
-  })
-  useScrollTopOnMount(Boolean(focus))
+  const [linkedView, setLinkedView] = useState<HomeView | null>(() => parseHomeView(params.get('view')))
+  const [current, setCurrent] = useState<HomeView>('titles')
   const baseId = useId()
   const titleHeadingId = `${baseId}-titles-heading`
   const ideaHeadingId = `${baseId}-ideas-heading`
+  const paneIds: Record<HomeView, string> = { titles: `${baseId}-pane-titles`, ideas: `${baseId}-pane-ideas` }
+  const ideasPane = useRef<HTMLElement>(null)
   const titleCount = Object.keys(data.titles).length
   const ideaCount = useMemo(() => Object.keys(data.ideas).length, [data.ideas])
+  const counts: Record<HomeView, number> = { titles: titleCount, ideas: ideaCount }
 
-  const setView = (next: HomeView) => {
-    setViewState(next)
-    writeLocal(HOME_VIEW_KEY, next)
-  }
-
-  // リンクの指定を反映したら URL からは消す（再読み込みで前回の表示に戻れるように）
+  // リンクの指定を反映したら URL からは消す（再読み込みや「戻る」で同じ場所へ飛ばし直さないように）
   useEffect(() => {
     if (!params.has('view') && !params.has('focus')) return
-    const linked = parseHomeView(params.get('view'))
-    if (linked) {
-      setViewState(linked)
-      writeLocal(HOME_VIEW_KEY, linked)
-    }
     setFocus(params.get('focus'))
+    setLinkedView(parseHomeView(params.get('view')))
     setParams(new URLSearchParams(), { replace: true })
   }, [params, setParams])
 
-  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return
-    e.preventDefault()
-    const next: HomeView = e.key === 'Home' ? 'titles' : e.key === 'End' ? 'ideas' : view === 'titles' ? 'ideas' : 'titles'
-    setView(next)
-    document.getElementById(`${baseId}-tab-${next}`)?.focus()
-  }
+  // ?view=ideas だけの時は、アイデア領域の先頭を見せる（仕切りの指定があればアイデア領域がその仕切りを見せる）
+  useEffect(() => {
+    if (linkedView !== 'ideas' || focus || twoColumns) return
+    const raf = requestAnimationFrame(() => ideasPane.current?.scrollIntoView({ block: 'start' }))
+    return () => cancelAnimationFrame(raf)
+  }, [linkedView, focus, twoColumns])
 
-  const counts: Record<HomeView, number> = { titles: titleCount, ideas: ideaCount }
+  // 上下に積んでいる時、いまどちらの領域を見ているかを切り替えに表示する
+  useEffect(() => {
+    if (twoColumns) return
+    let raf = 0
+    const update = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        // 一番上にいる時は「タイトル」。下へ進んでアイデア領域が画面の上半分に来たら（または最後まで来たら）「アイデア」
+        const top = ideasPane.current?.getBoundingClientRect().top ?? Infinity
+        const scrolled = window.scrollY > 0
+        const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2
+        setCurrent(scrolled && (top <= window.innerHeight * SPY_RATIO || atBottom) ? 'ideas' : 'titles')
+      })
+    }
+    update()
+    window.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [twoColumns])
+
+  const jumpTo = (area: HomeView) => {
+    const pane = document.getElementById(paneIds[area])
+    if (!pane) return
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    pane.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
+    // 読み上げ・キーボードでも移った先から続けられるように、領域の見出しへフォーカスを移す
+    document.getElementById(area === 'titles' ? titleHeadingId : ideaHeadingId)?.focus({ preventScroll: true })
+  }
 
   return (
     <>
       <AppHeader />
       <main className="page home-page" data-testid="home">
-        {!wide ? (
-          <div className="home-switch" data-testid="home-switch">
-            <div className="segmented home-switch-seg" role="tablist" aria-label="表示する内容">
-              {VIEWS.map((v) => (
+        {!twoColumns ? (
+          <nav className="home-jump" aria-label="ホームの領域へ移動" data-testid="home-jump">
+            <div className="segmented home-jump-seg">
+              {AREAS.map((a) => (
                 <button
-                  key={v.id}
-                  id={`${baseId}-tab-${v.id}`}
+                  key={a.id}
                   type="button"
-                  role="tab"
-                  aria-selected={view === v.id}
-                  aria-controls={`${baseId}-pane-${v.id}`}
-                  tabIndex={view === v.id ? 0 : -1}
-                  onClick={() => setView(v.id)}
-                  onKeyDown={onTabKey}
-                  data-testid={`home-tab-${v.id}`}
+                  aria-current={current === a.id ? 'true' : undefined}
+                  aria-controls={paneIds[a.id]}
+                  onClick={() => jumpTo(a.id)}
+                  data-testid={`home-jump-${a.id}`}
                 >
-                  {v.label}
-                  <span className="home-switch-count">{counts[v.id]}</span>
+                  {a.label}
+                  <span className="home-jump-count">{counts[a.id]}</span>
                 </button>
               ))}
             </div>
-          </div>
+          </nav>
         ) : null}
 
         <div className="home-grid">
-          <section
-            id={`${baseId}-pane-titles`}
-            className="home-pane home-titles"
-            aria-labelledby={wide ? titleHeadingId : `${baseId}-tab-titles`}
-            role={wide ? undefined : 'tabpanel'}
-            hidden={!wide && view !== 'titles'}
-            data-testid="title-group"
-          >
+          <section id={paneIds.titles} className="home-pane home-titles" aria-labelledby={titleHeadingId} data-testid="title-group">
             <TitleGroup headingId={titleHeadingId} />
           </section>
           <section
-            id={`${baseId}-pane-ideas`}
+            ref={ideasPane}
+            id={paneIds.ideas}
             className="home-pane home-ideas"
-            aria-labelledby={wide ? ideaHeadingId : `${baseId}-tab-ideas`}
-            role={wide ? undefined : 'tabpanel'}
-            hidden={!wide && view !== 'ideas'}
+            aria-labelledby={ideaHeadingId}
             data-testid="idea-area"
           >
             <IdeaArea headingId={ideaHeadingId} focusSection={focus} />
