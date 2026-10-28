@@ -8,6 +8,7 @@
 // - 端末内の保存・3者マージは本物（src/db/persistence.ts。fake-indexeddb）
 import { createPersistence, type Change, type ConflictNote, type OutboxItem, type Persistence } from '../db/persistence'
 import { repairData } from '../domain/repair'
+import { conflictMessage } from '../store/appStore'
 import type { AppData } from '../domain/types'
 import { newId } from '../domain/util'
 import { decideBatch, nothingToSend, selectBatch } from '../sync/batch'
@@ -42,6 +43,8 @@ export class FakeDevice {
   /** オフラインから戻った後、まだまとめて受け取っていない */
   catchingUp = false
   notes: ConflictNote[] = []
+  /** 幕の知らせがあった反映ごとの知らせの文（ストアと同じく、反映する前・後の表示用の内容で話を示す） */
+  messages: string[] = []
   private sent = new Map<string, string[]>()
 
   constructor(
@@ -156,13 +159,22 @@ export class FakeDevice {
   private async apply(changes: Change[], cursor: number | undefined, direct = false): Promise<Change[] | null> {
     // 控えの表記は、反映する前の表示用の内容で作る（ストアと同じ）
     const before = repairData(await this.p.load()).data
+    const notes: ConflictNote[] = []
     const hooks = createConflictHooks({
       device: this.name,
       data: () => before,
       newId,
-      report: (n) => this.notes.push(n),
+      report: (n) => {
+        this.notes.push(n)
+        notes.push(n)
+      },
     })
-    return this.p.applyRemote(changes, { cursor, ...hooks, ...(direct ? { direct: true } : {}) })
+    const r = await this.p.applyRemote(changes, { cursor, ...hooks, ...(direct ? { direct: true } : {}) })
+    if (notes.some((n) => n.kind === 'acts')) {
+      const message = conflictMessage(notes, [before, repairData(await this.p.load()).data])
+      if (message) this.messages.push(message)
+    }
+    return r
   }
 
   /** 受け取っていない書き込みを反映する。戻った最初はまとめて、その後は書き込みごとに */

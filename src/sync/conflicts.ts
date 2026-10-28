@@ -52,6 +52,25 @@ export function conflictVersionCopy(mine: Version, device: string, id: ID, now: 
   }
 }
 
+/**
+ * ゴミ箱に入れた話の表記（削除した時の「第n話　題」。見つからなければ null）。削除した話は構成から外れているので、
+ * 話の番号はゴミ箱の件の名前にだけ残っている
+ */
+export function trashedPieceLabel(data: AppData, pieceId: ID): string | null {
+  for (const e of Object.values(data.trashEntries)) {
+    if (e.kind !== 'piece') continue
+    const first = e.recordIds[0] ? data.trashRecords[e.recordIds[0]] : undefined
+    if (first?.table === 'pieces' && first.record.id === pieceId) return e.label
+  }
+  return null
+}
+
+/** 話の表記（話があればいまの番号、ゴミ箱に入れた話ならその件の名前。見つからなければ null） */
+function episodeLabel(data: AppData, pieceId: ID): string | null {
+  const p = data.pieces[pieceId]
+  return p ? pieceFullLabel(data, p) : trashedPieceLabel(data, pieceId)
+}
+
 /** 幕のレコードか（古い版の端末が第n話として書いた幕も、属する話 parentId を持つ） */
 const isActPiece = (p: Pick<Piece, 'kind' | 'parentId'> | undefined): p is Piece =>
   Boolean(p) && (p!.kind === 'act' || (p!.kind !== 'special' && typeof p!.parentId === 'string'))
@@ -112,12 +131,14 @@ export function actsConflictTrash(
     updatedAt: opts.now,
   }))
   const n = records.length
+  // 話がこの端末で削除されていれば、その話のゴミ箱の件の名前（第n話）
+  const parentLabel = episodeLabel(data, info.episodeId)
   const entry: TrashEntry = {
     id: entryId,
     kind: 'version',
     label: info.deleted ? `削除された話の幕の稿（${n}稿）` : `幕の分け方の競合で残した稿（${n}稿）`,
     titleName: titleId ? (data.titles[titleId]?.name ?? '') : '',
-    ...(known ? { parentLabel: pieceFullLabel(data, known) } : {}),
+    ...(parentLabel ? { parentLabel } : {}),
     origin: {
       titleId,
       pieceId: info.target?.id ?? info.episodeId,
@@ -186,8 +207,8 @@ export function conflictTrash(
       origin.prevId = known.versionIds[known.versionIds.length - 1] ?? null
     } else if (piece) {
       // 稿の幕がもう無い: 戻す時は戻し先の末尾へ
-      const episode = parent ? data.pieces[parent] : undefined
-      parentLabel = episode ? `${pieceFullLabel(data, episode)}の幕` : ''
+      const episode = parent ? episodeLabel(data, parent) : null
+      parentLabel = episode ? `${episode}の幕` : ''
       origin.index = -1
     } else {
       origin.index = 0

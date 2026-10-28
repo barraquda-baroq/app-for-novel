@@ -22,7 +22,7 @@ import { repairData } from '../domain/repair'
 import { pieceFullLabel } from '../domain/structure'
 import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../domain/types'
 import { newId } from '../domain/util'
-import { createConflictHooks, deviceLabel } from '../sync/conflicts'
+import { createConflictHooks, deviceLabel, trashedPieceLabel } from '../sync/conflicts'
 import { mergeRemote, TEXT_TABLES } from '../sync/merge'
 import { notify } from './uiStore'
 
@@ -273,6 +273,11 @@ export function conflictMessage(notes: readonly ConflictNote[], views: readonly 
     for (const v of views) {
       const p = v.pieces[id]
       if (p) return pieceFullLabel(v, p)
+    }
+    // この端末で削除した話: 番号はゴミ箱の件の名前にだけ残っている
+    for (const v of views) {
+      const l = trashedPieceLabel(v, id)
+      if (l) return l
     }
     return '幕に分けた話'
   }

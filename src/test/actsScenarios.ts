@@ -665,6 +665,10 @@ export function scenarioProblems(
   for (const t of new Set(seen)) if (!all.some((q) => q.includes(t))) out.push(`I1 文章が消えた: ${JSON.stringify(t)}`)
   out.push(...lostVersions(seenV, d))
   out.push(...structureProblems(d).map((m) => `I3 ${m}`))
+  // 稿のゴミ箱の件は、どの話の稿か分かる（話を削除していても）
+  for (const e of Object.values(d.trashEntries))
+    if (e.kind === 'version' && !(e.parentLabel ?? '').includes('第1話'))
+      out.push(`I4 ゴミ箱の「${e.label}」に話の表記が無い（${e.parentLabel ?? 'なし'}）`)
   const v = view(d)
   const episode = v.pieces[ep]
   const text = episode ? activeBody(v, episode) : null

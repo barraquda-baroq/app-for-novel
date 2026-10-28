@@ -2,11 +2,19 @@
 import { describe, expect, it } from 'vitest'
 import { joinActWithNext, separatePiece, unseparatePiece } from '../domain/acts'
 import { addMemo, addSubmission, createTitle, recordSubmissionSnapshot } from '../domain/entityOps'
-import { addEpisode, setActiveVersion, updateVersion } from '../domain/storyOps'
+import { addEpisode, deletePiece, setActiveVersion, updatePiece, updateVersion } from '../domain/storyOps'
 import { restoreTrashEntry } from '../domain/trash'
 import { emptyData, type AppData, type ID, type TrashEntry, type TrashRecord, type Version } from '../domain/types'
 import { newId } from '../domain/util'
-import { actsConflictTrash, actsVersionCopy, actsVersionName, conflictTrash, conflictVersionCopy } from './conflicts'
+import { conflictMessage } from '../store/appStore'
+import {
+  actsConflictTrash,
+  actsVersionCopy,
+  actsVersionName,
+  conflictTrash,
+  conflictVersionCopy,
+  trashedPieceLabel,
+} from './conflicts'
 
 function putTrash(data: AppData, r: { entry: TrashEntry; records: TrashRecord[] }): AppData {
   return {
@@ -143,6 +151,31 @@ describe('幕（2.2）の稿の同期の競合の控え', () => {
     )
     expect(d.entry.label).toBe('削除された話の幕の稿（1稿）')
     expect(d.entry.origin).toMatchObject({ pieceId: ep, parentId: ep })
+  })
+
+  it('この端末で削除した話の幕の稿の件・知らせは、話のゴミ箱の件の名前（第n話）で話を示す', () => {
+    const { data, ep, acts } = splitSample()
+    const v = data.versions[data.pieces[acts[1]].activeVersionId!]
+    // 話を削除した（構成から外れ、番号はゴミ箱の件の名前にだけ残る）
+    const deleted = deletePiece(updatePiece(data, ep, { subtitle: '始まり' }), ep)
+    expect(trashedPieceLabel(deleted, ep)).toBe('第1話　始まり')
+    expect(trashedPieceLabel(deleted, 'unknown')).toBeNull()
+    const r = actsConflictTrash(
+      deleted,
+      [{ record: { ...v, id: newId() }, actNumber: 2 }],
+      { episodeId: ep, episode: null, target: null, deleted: true },
+      { now: 1, newId },
+    )
+    expect(r.entry.parentLabel).toBe('第1話　始まり')
+    // 2.1 の削除と編集が重なった幕の稿（幕も話も無い）
+    const c = conflictTrash(deleted, 'versions', { ...v, body: '書き換えた' } as never, {
+      now: 1,
+      newId,
+      piece: data.pieces[acts[1]],
+    })!
+    expect(c.entry.parentLabel).toBe('第1話　始まりの幕')
+    const message = conflictMessage([{ kind: 'acts', table: 'pieces', id: ep, detail: 'deletedHere' }], [deleted])
+    expect(message).toContain('第1話　始まりを削除したため')
   })
 
   it('控えの稿の名前と、分けた・つないだ時の本文の指紋を引き継がないこと', () => {

@@ -34,6 +34,8 @@ async function run(s: ActsScenario, order: Order, mode: Mode): Promise<string[]>
   await settle(x, y)
   x.notes = []
   y.notes = []
+  x.messages = []
+  y.messages = []
   const [first, second] = order === 'x-first' ? [x, y] : [y, x]
   second.offline()
   if (mode === '両方がオフライン') first.offline()
@@ -52,6 +54,9 @@ async function run(s: ActsScenario, order: Order, mode: Mode): Promise<string[]>
   await settle(x, y)
   const problems: string[] = []
   if (!(await sameData(x, y))) problems.push('I2 両方の端末の内容が違う')
+  // I4: 幕の知らせは、話の番号で話を示す（この端末で削除した話も）
+  for (const dev of [x, y])
+    for (const m of dev.messages) if (!m.includes('第1話')) problems.push(`I4 ${dev.name} の知らせに話の番号が無い: ${m}`)
   problems.push(...scenarioProblems(s, order, await x.load(), ep, seen, seenV, { x: x.notes as never, y: y.notes as never }))
   if (problems.length) problems.push(`---\n${cloud.log.join('\n')}`)
   return problems
