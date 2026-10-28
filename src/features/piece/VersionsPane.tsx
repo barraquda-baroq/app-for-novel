@@ -285,7 +285,7 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
     // 保留中の下書きを先に書き込んでおく（削除後に保存が走らないように）
     flushEditors(api.compareEditor, api.noteEditor, nameRef)
     if (tryRun(() => actions.deleteVersion(selected.id))) {
-      notify(`${name}を削除しました`)
+      notify(`${name}をゴミ箱に移しました`)
       api.select(null)
     }
   }

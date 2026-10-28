@@ -1,6 +1,7 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { HashRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { HomePage } from './features/home/HomePage'
+import { actions } from './store/actions'
 import { useApp } from './store/appStore'
 import { ErrorBoundary } from './ui/ErrorBoundary'
 import { AppFrame, AppHeader } from './ui/Layout'
@@ -29,6 +30,28 @@ const ReadThroughPage = lazy(() =>
   })),
 )
 const TitlePage = lazy(() => import('./features/title/TitlePage').then((m) => ({ default: m.TitlePage })))
+const TrashPage = lazy(() => import('./features/trash/TrashPage').then((m) => ({ default: m.TrashPage })))
+
+const TRASH_PURGE_INTERVAL_MS = 60 * 60 * 1000
+
+/** 読み込みが終わったら、削除してから30日たったゴミ箱の中身を完全に削除する（開いている間は1時間ごとにも） */
+function TrashPurge() {
+  const ready = useApp((s) => s.status === 'ready')
+  useEffect(() => {
+    if (!ready) return
+    const purge = () => {
+      try {
+        actions.purgeExpiredTrash()
+      } catch (e) {
+        console.warn('ゴミ箱の古いものを削除できませんでした', e)
+      }
+    }
+    purge()
+    const timer = window.setInterval(purge, TRASH_PURGE_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [ready])
+  return null
+}
 
 function PageLoading() {
   return (
@@ -79,12 +102,14 @@ export function App() {
   return (
     <HashRouter>
       <AppFrame>
+        <TrashPurge />
         <Gate>
           <RouteErrorBoundary>
             <Suspense fallback={<PageLoading />}>
               <Routes>
                 <Route path="/" element={<HomePage />} />
                 <Route path="/settings" element={<AppSettingsPage />} />
+                <Route path="/trash" element={<TrashPage />} />
                 <Route path="/t/:titleId" element={<TitlePage />} />
                 <Route path="/t/:titleId/c/:chapterId" element={<ChapterPage />} />
                 <Route path="/t/:titleId/p/:pieceId" element={<PieceWorkspace />} />

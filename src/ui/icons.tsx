@@ -53,6 +53,13 @@ export const TrashIcon = (p: IconProps) => (
     <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
   </Svg>
 )
+/** 元に戻す（ゴミ箱から戻す） */
+export const UndoIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </Svg>
+)
 export const EditIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4" />

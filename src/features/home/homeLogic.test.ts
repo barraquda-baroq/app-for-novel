@@ -102,14 +102,16 @@ describe('タイトルカードの情報', () => {
 })
 
 describe('タイトル削除の確認文', () => {
-  it('削除されるものと、アイデアが「どのタイトルにも属さない」へ移ることを書く', () => {
+  it('ゴミ箱へ移るものと、アイデアが「どのタイトルにも属さない」へ移ることを書く', () => {
     const msg = deleteTitleMessage({
       summary: { episodes: 4, specials: 1, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 },
       versionCount: 7,
       ideaCount: 2,
     })
-    expect(msg).toContain('すべての話・推敲バージョン・設定項目・戦略・メモが削除されます')
-    expect(msg).toContain('全4話、特殊ブロック1件、推敲バージョン7稿')
+    expect(msg).toContain(
+      'すべての話・推敲バージョン・設定項目・戦略・メモ（全4話、特殊ブロック1件、推敲バージョン7稿）をまとめてゴミ箱に移します。',
+    )
+    expect(msg).toContain('30日後に完全に削除されます（それまではゴミ箱から元に戻せます）。')
     expect(msg).toContain('アイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります')
   })
 

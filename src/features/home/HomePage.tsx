@@ -4,6 +4,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useData } from '../../store/appStore'
+import { TrashLink } from '../trash/TrashLink'
 import { useDocumentTitle, useMediaQuery } from '../../ui/hooks'
 import { AppHeader } from '../../ui/Layout'
 import { BackupReminder } from './BackupReminder'
@@ -90,7 +91,7 @@ export function HomePage() {
 
   return (
     <>
-      <AppHeader />
+      <AppHeader actions={<TrashLink />} />
       <main className="page home-page" data-testid="home">
         {!twoColumns ? (
           <nav className="home-jump" aria-label="ホームの領域へ移動" data-testid="home-jump">

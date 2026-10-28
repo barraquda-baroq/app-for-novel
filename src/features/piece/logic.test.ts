@@ -223,7 +223,9 @@ describe('推敲バージョンの削除の確認文', () => {
 
   it('応募の記録に使われていなければ、通常の確認文', () => {
     const text = versionDeleteMessage(version, false, [])
-    expect(text).toContain('この推敲バージョンの本文と推敲メモを削除します。')
+    expect(text).toBe(
+      'この推敲バージョン（本文と推敲メモ）をゴミ箱に移します。30日後に完全に削除されます（それまではゴミ箱から元に戻せます）。',
+    )
     expect(text).not.toContain('応募')
     expect(versionDeleteMessage(version, true, [])).toContain('採用原稿がありません。')
   })
@@ -232,7 +234,7 @@ describe('推敲バージョンの削除の確認文', () => {
     const text = versionDeleteMessage(version, true, [{ contestName: '星降る文学賞', snapshot: snapshotWithCopy }])
     expect(text).toContain('この稿は「星降る文学賞」の応募時の原稿として記録されています。')
     expect(text).toContain('記録には本文の控えがあるので、削除しても応募時の原稿は残ります。')
-    expect(text).toContain('この操作は取り消せません。')
+    expect(text).toContain('ゴミ箱に移します。30日後に完全に削除されます')
   })
 
   it('古い記録（本文の控えなし）なら、読めなくなると知らせる。名前のない応募も示す', () => {
@@ -242,7 +244,7 @@ describe('推敲バージョンの削除の確認文', () => {
       { contestName: '星降る文学賞', snapshot: snapshotWithCopy },
     ])
     expect(text).toContain('「（コンテスト名未設定）」「星降る文学賞」の応募時の原稿')
-    expect(text).toContain('削除すると応募時の原稿は読めなくなります。')
+    expect(text).toContain('削除すると応募時の原稿は読めなくなります（ゴミ箱から戻せばまた読めます）。')
   })
 })
 

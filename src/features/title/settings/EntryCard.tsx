@@ -1,5 +1,6 @@
 // 設定エントリ1件のカード。畳んでいる時は名前と要約、開くと名前・フィールド・自由記述を編集できる。
 import { useRef, useState } from 'react'
+import { trashNotice } from '../../../domain/trash'
 import type { SettingCategory, SettingEntry, SettingField } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData } from '../../../store/appStore'
@@ -95,7 +96,7 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
     const latest = getData().settingEntries[entry.id] ?? entry
     const ok = await confirmDialog({
       title: `「${entryDisplayName(latest.name)}」を削除しますか？`,
-      message: 'このエントリのフィールドと自由記述も削除されます。この操作は取り消せません。',
+      message: trashNotice('このエントリのフィールドと自由記述もいっしょに'),
       confirmLabel: '削除',
       danger: true,
     })

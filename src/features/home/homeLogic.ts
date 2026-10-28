@@ -1,6 +1,7 @@
 // ホーム画面（タイトル群・アイデア領域）で使う、表示用の純粋な計算。データは変更しない。
 import { missingActiveLabel, titleLastEdited, titleSummary, type TitleSummary } from '../../domain/entityOps'
 import { formatCount } from '../../domain/text'
+import { trashNotice } from '../../domain/trash'
 import type { AppData, ID } from '../../domain/types'
 
 export type HomeView = 'titles' | 'ideas'
@@ -70,9 +71,7 @@ export function deleteTitleMessage(info: Pick<TitleCardInfo, 'summary' | 'versio
   const parts = [`全${episodes}話`]
   if (specials > 0) parts.push(`特殊ブロック${specials}件`)
   parts.push(`推敲バージョン${info.versionCount}稿`)
-  const lines = [
-    `このタイトルのすべての話・推敲バージョン・設定項目・戦略・メモが削除されます（${parts.join('、')}）。この操作は取り消せません。`,
-  ]
+  const lines = [trashNotice(`このタイトルのすべての話・推敲バージョン・設定項目・戦略・メモ（${parts.join('、')}）をまとめて`)]
   lines.push(
     info.ideaCount > 0
       ? `このタイトルのアイデア（${info.ideaCount}件）は削除されず、「どのタイトルにも属さない」へ移ります。`
