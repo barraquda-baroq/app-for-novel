@@ -3,7 +3,7 @@ import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import { flatten } from '../../domain/structure'
 import { trashNotice } from '../../domain/trash'
 import { bodyMetrics, formatCount, textStats, type TextStats } from '../../domain/text'
-import type { AppData, ID, Piece, Submission, Version } from '../../domain/types'
+import type { AppData, ID, Piece, PieceKind, Submission, Version } from '../../domain/types'
 
 /** 採用中のバージョン（採用なし・参照切れなら null） */
 export function activeVersionOf(data: AppData, piece: Piece): Version | null {
@@ -65,7 +65,32 @@ export function formatStats(s: Pick<TextStats, 'chars' | 'manuscriptPages'>): { 
  * 稿ごとにキャッシュした値（bodyMetrics）を使い、書いている間の下書きだけを数え直す。
  */
 export function liveStats(version: Version, text: string): TextStats {
-  return text === version.body ? bodyMetrics(version) : textStats(text)
+  if (text === version.body) return bodyMetrics(version)
+  // 書いている間の本文は、採用原稿・比較・一覧の文字数で同じ本文を何度も数えないよう、直近の数件を控えて使う
+  const hit = recentStats.find((r) => r.text === text)
+  if (hit) return hit.stats
+  const stats = textStats(text)
+  recentStats.unshift({ text, stats })
+  if (recentStats.length > RECENT_STATS) recentStats.pop()
+  return stats
+}
+
+const RECENT_STATS = 4
+const recentStats: { text: string; stats: TextStats }[] = []
+
+/**
+ * コピーする時の見出し。第n話は「第3話　題」（題がなければ「第3話」）、特殊ブロックは見出し（題があれば「見出し　題」）。
+ * label は第n話なら「第3話」、特殊ブロックなら編集中の見出し。
+ */
+export function pieceHeading(kind: PieceKind, label: string, subtitle: string): string {
+  const head = kind === 'episode' ? label : label.trim()
+  const sub = subtitle.trim()
+  return [head, sub].filter(Boolean).join('　')
+}
+
+/** 見出し・空行・本文（見出しがなければ本文だけ） */
+export function withHeading(heading: string, body: string): string {
+  return heading ? `${heading}\n\n${body}` : body
 }
 
 /** 推敲メモなどの最初の空でない行 */

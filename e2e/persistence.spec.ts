@@ -1,40 +1,57 @@
-// 入力した直後に再読み込み・画面を閉じても原稿が消えないこと
-import { expect, test } from '@playwright/test'
-import { openApp, seedTitleWithEpisodes } from './helpers'
+// 入力した直後に再読み込み・画面を閉じても、書いた内容が消えないこと
+import { expect, test, type Dialog, type Page } from '@playwright/test'
+import { openApp, seed, seedTitleWithEpisodes } from './helpers'
+
+/** 再読み込みする。出たブラウザの確認（dialog の種類）を返す（原稿画面に保存していない編集がある間だけ beforeunload が出る） */
+async function reloadApp(page: Page): Promise<string[]> {
+  const types: string[] = []
+  const onDialog = (d: Dialog) => {
+    types.push(d.type())
+    void d.accept()
+  }
+  page.on('dialog', onDialog)
+  await page.reload()
+  await page.waitForFunction(() => Boolean(window.__ns))
+  page.off('dialog', onDialog)
+  return types
+}
 
 test.describe('入力直後の保存', () => {
-  test('原稿を打った直後に再読み込みしても消えない', async ({ page }) => {
+  test('原稿を打った直後に再読み込みしても、保存していない編集を端末内の控えから復元できる', async ({ page }) => {
     await openApp(page)
     const { titleId, pieceIds } = await seedTitleWithEpisodes(page, '保存の確認', ['始まり。'])
     await openApp(page, `/t/${titleId}/p/${pieceIds[0]}`)
     const editor = page.getByTestId('active-editor')
     await editor.click()
-    await page.keyboard.press('End')
     await editor.press('Control+End')
     await page.keyboard.type('直後に閉じても残る一文。')
-    // 待たずに再読み込み
-    await page.reload()
-    await page.waitForFunction(() => Boolean(window.__ns))
+    // 待たずに再読み込み（閉じる時に端末内に控える）。保存していない編集があるので、ブラウザの確認が出る
+    expect(await reloadApp(page)).toEqual(['beforeunload'])
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toContainText('前回保存されなかった編集があります')
+    await dialog.getByRole('button', { name: '復元' }).click()
     await expect(page.getByTestId('active-editor')).toHaveValue('始まり。直後に閉じても残る一文。')
   })
 
-  test('打ち続けている途中でも一定時間ごとに反映され、保存状態は「保存済み」にならない', async ({ page }) => {
+  test('自動保存の画面（メモ）: 打ち続けている途中でも一定時間ごとに反映され、保存状態は「保存済み」にならない', async ({
+    page,
+  }) => {
     await openApp(page)
-    const { titleId, pieceIds } = await seedTitleWithEpisodes(page, '連続入力', [''])
-    await openApp(page, `/t/${titleId}/p/${pieceIds[0]}`)
-    await page.getByTestId('active-editor').click()
+    const { titleId, memoId } = await seed(page, ({ actions }) => {
+      const titleId = actions.createTitle('連続入力')
+      const memoId = actions.addMemo(titleId, '構想メモ')
+      return { titleId, memoId }
+    })
+    await openApp(page, `/t/${titleId}/m/${memoId}`)
+    await page.getByTestId('memo-body').click()
     await page.keyboard.type('あいうえおかきくけこさしすせそ', { delay: 150 })
     // 打ち終わった直後（まだ下書きが残っている間）は「保存済み」と表示しない
     await expect(page.locator('.save-status')).not.toHaveClass(/\bsaved\b/)
-    const stored = await page.evaluate((id) => {
-      const d = window.__ns.getData()
-      const p = d.pieces[id]
-      return d.versions[p.activeVersionId!].body
-    }, pieceIds[0])
+    const stored = await page.evaluate((id) => window.__ns.getData().memos[id].body, memoId)
     // 1.5 秒ごとには反映されるので、途中までは必ずストアに入っている
     expect(stored.length).toBeGreaterThan(0)
-    await page.reload()
-    await page.waitForFunction(() => Boolean(window.__ns))
-    await expect(page.getByTestId('active-editor')).toHaveValue('あいうえおかきくけこさしすせそ')
+    // メモは自動保存なので、再読み込みの確認は出ない
+    expect(await reloadApp(page)).toEqual([])
+    await expect(page.getByTestId('memo-body')).toHaveValue('あいうえおかきくけこさしすせそ')
   })
 })

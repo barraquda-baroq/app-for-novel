@@ -35,7 +35,7 @@
 - **設定項目**: `SettingCategory`（任意に追加できる項目。既定はキャラクター・世界観）と `SettingEntry`（項目内の各エントリ。任意のフィールド＋本文）。項目ごとにフィールドのテンプレートを持てる。
 - **戦略**: タイトルの全体方針メモ（`Title.strategyNote`）と、応募計画 `Submission` の並び（応募順）。各応募はコンテスト名・主催・URL・締切・応募日・結果発表日・状態・選考段階・概要・規定（文字数または400字詰め原稿用紙換算の枚数: `limitUnit`）・結果・改稿方針・再応募方針、応募時点の採用原稿スナップショットを持つ。スナップショットには話ごとの採用稿名・文字数・**本文の控え**・本文の指紋が入り、稿が後で編集・削除されても応募した原稿を読める・書き出せる。記録後の変化は本文の指紋で判定する（稿の名前やメモの変更は数えない）。
 - **文字数**: 空白・改行を除いた文字数を基本とし、400字詰め原稿用紙換算も出す（`src/domain/text.ts`）。「採用原稿なし」は第n話と特殊ブロックを分けて数える（`missingActiveLabel`）。
-- **保存**: 入力欄の下書きは最大 1.5 秒でストアへ反映し、ストアは最大 2 秒で IndexedDB に保存する。画面を閉じる・裏に回る時は下書きをすべて反映してから、未保存の変更を localStorage にタブごとの控えとして同期的に書き、次回起動時に読み込んだデータより新しいものだけを書き戻す（`src/store/lifecycle.ts`）。起動時とバックアップ復元時に参照切れなどの不整合を修復する（`src/domain/repair.ts`）。
+- **保存**: 入力欄の下書きは最大 1.5 秒でストアへ反映し、ストアは最大 2 秒で IndexedDB に保存する。画面を閉じる・裏に回る時は下書きをすべて反映してから、未保存の変更を localStorage にタブごとの控えとして同期的に書き、次回起動時に読み込んだデータより新しいものだけを書き戻す（`src/store/lifecycle.ts`）。起動時とバックアップ復元時に参照切れなどの不整合を修復する（`src/domain/repair.ts`）。2.1 から原稿画面だけは保存ボタンで確定する（[SPEC-2.md](SPEC-2.md) の 5.）。
 - **アプリの更新**: 執筆中に勝手に再読み込みしないよう、新しいバージョンは「更新する」を押した時に保存してから適用する。
 
 ## 3. コード構成
@@ -65,7 +65,7 @@ src/routes.ts    パス生成（HashRouter）
 - 画面は `<AppHeader crumbs={[...]} actions={...} />` ＋ `<main className="page">` で作る（原稿画面のような全面レイアウトは `page` を使わない）。
 - 操作は `attempt(() => actions.xxx(...))` で呼ぶ（DomainError はトーストで表示される）。
 - 削除などは `await confirmDialog({ title, message, danger: true, confirmLabel: '削除' })`、名前入力は `await promptDialog(...)`。
-- テキスト入力は `DraftInput` / `DraftTextarea`（下書きを保持して遅延保存）。**別レコードを表示するときは `key={record.id}` を必ず付ける**。
+- テキスト入力は `DraftInput` / `DraftTextarea`（下書きを保持して遅延保存）。**別レコードを表示するときは `key={record.id}` を必ず付ける**。原稿画面（本文・稿の名前・推敲メモ・話の題・見出し）だけは `SessionTextarea` / `SessionInput`（`src/features/piece/SessionField.tsx`）で編集セッションに持ち、「保存」で確定する。
 - データの読み取りは `const data = useData()` ＋ `useMemo(() => 導出(data, ...), [data, ...])`。セレクタで毎回新しい配列を返さない（無限再描画になる）。単一レコードは `useRecord('versions', id)`。
 - 長編（数百話・数百万字）でも重くならないよう、原稿全体をなめる重い導出（文字数・枚数・指紋）は `bodyMetrics(version)`（稿ごとのキャッシュ）を使い、`useMemo` の依存は `data` 全体ではなく実際に使う表（`data.pieces`・`data.versions`・`data.chapters`・`title.structure` など）に絞る。一覧の行は `React.memo` でレコード単位の props にする（例: `src/features/title/story/useStoryData.ts`）。
 - スタイルは `src/styles.css` の既存クラス（`btn`, `btn-primary`, `btn-active`, `btn-danger`, `btn-ghost`, `btn-sm`, `icon-btn`, `card`, `card-pad`, `section`, `section-head`, `list`, `empty`, `badge-*`, `tabs`, `segmented`, `switch`, `field`, `input`, `textarea`, `select`, `input-bare`, `row`, `stack`, `muted`, `small`, `hide-mobile`, `show-mobile`）と CSS 変数を使う。機能固有のスタイルは各機能ディレクトリの CSS ファイル（例: `src/features/piece/piece.css`）に書き、コンポーネントから import する。

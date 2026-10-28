@@ -2,12 +2,14 @@
 import { useId, useRef, useState } from 'react'
 import type { ID, Piece } from '../../domain/types'
 import { usePrefs, type SplitOrientation } from '../../store/uiStore'
-import { DraftInput } from '../../ui/DraftField'
 import { useMediaQuery } from '../../ui/hooks'
 import { ChevronLeftIcon, ChevronRightIcon } from '../../ui/icons'
-import { commitPiece, useDismiss, useRegisteredDraft } from './editing'
+import { useDismiss } from './editing'
+import type { EditorHub } from './editorHub'
 import { COMPACT_QUERY, RATIO_MAX, RATIO_MIN, ratioToSlider, sliderToRatio } from './logic'
 import { LockIcon, SlidersIcon } from './pieceIcons'
+import { pieceField } from './session'
+import { SessionInput } from './SessionField'
 
 const LOCK_HINT = '話数は並び順で自動的に決まり、変更できません'
 
@@ -24,6 +26,8 @@ interface NavTarget {
 
 export interface PieceBarProps {
   piece: Piece
+  /** 話の題・見出しの編集（保存ボタンで確定する） */
+  hub: EditorHub
   label: string
   prev: NavTarget | null
   next: NavTarget | null
@@ -37,6 +41,7 @@ export interface PieceBarProps {
 
 export function PieceBar({
   piece,
+  hub,
   label,
   prev,
   next,
@@ -53,8 +58,6 @@ export function PieceBar({
   const [menuOpen, setMenuOpen] = useState(false)
   const viewRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
-  const labelRef = useRegisteredDraft()
-  const subtitleRef = useRegisteredDraft()
   useDismiss(menuOpen, viewRef, () => setMenuOpen(false))
 
   // 高さの低い画面（スマホの横持ちなど）では上部バーを1行にし、比率も「表示の設定」の中に入れる
@@ -108,12 +111,12 @@ export function PieceBar({
         ) : (
           <span className="pw-label pw-label-special">
             <span className="badge badge-special">特殊</span>
-            <DraftInput
-              ref={labelRef}
+            <SessionInput
               key={piece.id}
+              hub={hub}
+              fieldKey={pieceField(piece.id, 'label')}
+              stored={piece.label}
               className="input-bare pw-label-input"
-              value={piece.label}
-              onCommit={(v) => commitPiece(piece.id, { label: v })}
               placeholder="見出し（例：プロローグ）"
               aria-label="見出し（特殊ブロック）"
               data-testid="special-label-input"
@@ -121,12 +124,12 @@ export function PieceBar({
             />
           </span>
         )}
-        <DraftInput
-          ref={subtitleRef}
+        <SessionInput
           key={piece.id}
+          hub={hub}
+          fieldKey={pieceField(piece.id, 'subtitle')}
+          stored={piece.subtitle}
           className="input pw-subtitle"
-          value={piece.subtitle}
-          onCommit={(v) => commitPiece(piece.id, { subtitle: v })}
           placeholder="話の題（任意）"
           aria-label="話の題"
           data-testid="subtitle-input"

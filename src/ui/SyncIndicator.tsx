@@ -1,5 +1,6 @@
 // ヘッダーの同期の状態（ログインしたことのある端末だけに出す）。押すとアプリの設定の「同期」へ。
 import { Link } from 'react-router-dom'
+import { useUnsavedEdits } from '../store/unsavedEdits'
 import { useSync, type SyncState } from '../sync/controller'
 import './sync.css'
 
@@ -39,13 +40,22 @@ export function syncBadge(
   return { tone: 'ok', label: '同期済み', detail: 'ほかの端末と同じ内容です' }
 }
 
+/** 保存していない編集がある間の「同期済み」の説明 */
+export function unsavedSyncBadge(badge: SyncBadge | null, unsaved: boolean): SyncBadge | null {
+  if (!badge || !unsaved || badge.tone !== 'ok' || badge.label !== '同期済み') return badge
+  return { ...badge, detail: '保存した内容はほかの端末と同じです（保存していない編集は、保存すると送ります）' }
+}
+
 export function SyncIndicator() {
   const auth = useSync((s) => s.auth)
   const status = useSync((s) => s.status)
   const leader = useSync((s) => s.leader)
   const everSignedIn = useSync((s) => s.everSignedIn)
   const accountMismatch = useSync((s) => s.accountMismatch)
-  const badge = syncBadge({ auth, status, leader, everSignedIn, accountMismatch })
+  // 保存ボタンで確定する画面に保存していない編集がある間は、「ほかの端末と同じ内容」と言い切らない
+  // （保存していない編集は、まだどこにも送っていない）
+  const unsaved = useUnsavedEdits((s) => s.dirty)
+  const badge = unsavedSyncBadge(syncBadge({ auth, status, leader, everSignedIn, accountMismatch }), unsaved)
   if (!badge) return null
   return (
     <Link

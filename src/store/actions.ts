@@ -1,6 +1,7 @@
 // UI から呼ぶ操作。ドメインの純粋関数を現在のデータに適用して保存する。
 // 仕様違反は DomainError を投げるので、UI 側では attempt() で受けてトースト表示する。
 import * as E from '../domain/entityOps'
+import { applyPieceEdits, type PieceEdit, type PieceEditOptions } from '../domain/pieceEdits'
 import * as S from '../domain/storyOps'
 import * as T from '../domain/trash'
 import type { AppData, ID, NumberingMode, SettingEntry, Slot } from '../domain/types'
@@ -55,6 +56,9 @@ export const actions = {
     apply((d) => S.updateVersion(d, versionId, patch)),
   deleteVersion: (versionId: ID) => apply((d) => S.deleteVersion(d, versionId)),
   setActiveVersion: (pieceId: ID, versionId: ID | null) => apply((d) => S.setActiveVersion(d, pieceId, versionId)),
+  /** 原稿画面の「保存」: 画面の中で持っていた編集をまとめて書き込む（本文が競合したら別の稿として残す） */
+  savePieceEdits: (pieceId: ID, edits: readonly PieceEdit[], opts: PieceEditOptions) =>
+    run((d) => applyPieceEdits(d, pieceId, edits, opts)),
 
   // メモ
   addMemo: (titleId: ID, name?: string) => run((d) => E.addMemo(d, titleId, name)),

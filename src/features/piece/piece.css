@@ -3,9 +3,11 @@
    すべて .pw-root を前に付けて詳細度を上げている。 */
 
 /* 全面レイアウト: ページ自体はスクロールさせず、エディタの中だけをスクロールさせる。
-   clip はキャレット追従などのプログラムによるスクロールでも動かない（先頭行やヘッダーが隠れない） */
+   clip はキャレット追従などのプログラムによるスクロールでも動かない（先頭行やヘッダーが隠れない）。
+   --kb-inset は iOS の画面キーボードに隠れる高さ（keyboardInset.ts）。その分だけ詰めて、
+   いちばん下の記号バーをキーボードのすぐ上に出す（Android は画面そのものが縮むので 0） */
 .app:has(> .pw-root) {
-  height: 100dvh;
+  height: calc(100dvh - var(--kb-inset, 0px));
   min-height: 0;
   overflow: hidden;
   overflow: clip;
@@ -22,9 +24,98 @@
 
 @supports not selector(:has(*)) {
   .pw-root {
-    height: 100dvh;
+    height: calc(100dvh - var(--kb-inset, 0px));
     flex: none;
   }
+}
+
+/* ---------- 保存（ヘッダー） ---------- */
+.pw-root .pw-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.pw-root .pw-save .btn {
+  min-height: 34px;
+}
+
+.pw-root .pw-save-btn {
+  min-width: 56px;
+}
+
+.pw-root .badge-unsaved {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+/* ---------- 記号バー（巻き戻し／進む・記号）: 編集画面のいちばん下 ---------- */
+.pw-root .pw-symbols {
+  position: relative;
+  z-index: 15;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 12px;
+  /* キーボードが閉じている時は、ホームインジケーターの分を空ける */
+  padding-bottom: max(4px, calc(var(--safe-bottom) - var(--kb-inset, 0px)));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.pw-root .pw-symbols::-webkit-scrollbar {
+  display: none;
+}
+
+.pw-root .pw-sym {
+  flex: none;
+  min-width: 40px;
+  min-height: 34px;
+  padding: 2px 10px;
+  font-size: 14px;
+}
+
+.pw-root .pw-sym-dash,
+.pw-root .pw-sym-ellipsis {
+  font-family: var(--editor-font);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.pw-root .pw-sym-icon {
+  padding-inline: 8px;
+}
+
+.pw-root .pw-sym-icon .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.pw-root .pw-sym-sep {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 5px 4px;
+  background: var(--border);
+}
+
+.pw-root .pw-sym-fill {
+  flex: 1;
+  min-width: 4px;
+}
+
+/* 記号バーの保存ボタンは、スマホで書いている間（画面上部を畳んでいる間）だけ出す */
+.pw-root .pw-sym-save {
+  display: none;
 }
 
 /* ---------- 上部バー ---------- */
@@ -518,6 +609,19 @@
   white-space: nowrap;
   font-weight: 700;
   font-size: 14px;
+}
+
+/* 保存していない編集のある稿の印（行の幅を広げないよう、名前より先には縮まない小さな札） */
+.pw-root .pw-vrow-dirty {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
 }
 
 .pw-root .pw-vrow-meta {
@@ -1087,10 +1191,80 @@
   .pw-root.is-focus-mode .pw-note:not([open]) {
     display: none;
   }
+
+  .pw-root.is-focus-mode .pw-sym-save {
+    display: inline-flex;
+    min-width: 52px;
+  }
+
+  .pw-root .pw-symbols {
+    padding-top: 2px;
+    padding-inline: 8px;
+    gap: 3px;
+  }
+
+  .pw-root .pw-sym {
+    min-width: 38px;
+    padding-inline: 7px;
+  }
+}
+
+/* 幅 360〜420px のスマホ: 8つのボタン（巻き戻し・進む・記号5つ・保存）を1行に収める */
+@media (max-width: 420px) {
+  .pw-root .pw-symbols {
+    gap: 2px;
+    padding-inline: 6px;
+  }
+
+  .pw-root .pw-sym {
+    min-width: 34px;
+    padding-inline: 4px;
+    font-size: 13px;
+  }
+
+  .pw-root .pw-sym-dash,
+  .pw-root .pw-sym-ellipsis {
+    font-size: 14px;
+  }
+
+  .pw-root .pw-sym-sep {
+    margin-inline: 2px;
+  }
+
+  .pw-root.is-focus-mode .pw-sym-save {
+    min-width: 46px;
+  }
 }
 
 /* ---------- スマホ ---------- */
 @media (max-width: 720px) {
+  /* ヘッダーが狭いので、保存していない編集がある時だけ「破棄」「保存」を出す（「未保存」は保存ボタンの印で示す） */
+  .pw-root .pw-save:not(.is-dirty),
+  .pw-root .pw-unsaved {
+    display: none;
+  }
+
+  .pw-root .pw-save .btn {
+    padding-inline: 10px;
+  }
+
+  .pw-root .pw-save-btn {
+    position: relative;
+    min-width: 0;
+  }
+
+  .pw-root .pw-save.is-dirty .pw-save-btn::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--warn);
+    box-shadow: 0 0 0 2px var(--surface);
+  }
+
   .pw-root .pw-bar {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
@@ -1212,6 +1386,12 @@
 @media (max-height: 500px) {
   .pw-root > .app-header {
     min-height: calc(44px + var(--safe-top));
+  }
+
+  /* 記号バーも上下の余白を詰める（ボタンの高さ 34px は保つ） */
+  .pw-root .pw-symbols {
+    padding-top: 1px;
+    padding-bottom: max(1px, calc(var(--safe-bottom) - var(--kb-inset, 0px)));
   }
 
   .pw-root .pw-head {

@@ -1,18 +1,19 @@
 // 推敲バージョン（右／下）。一覧から選ぶと、採用原稿と並べて比較・編集できる。
-import { memo, useCallback, useDeferredValue, useId, useMemo, useRef, useState, type RefObject } from 'react'
+// 本文・稿の名前・推敲メモの編集は「保存」を押すまで画面の中だけで持つ（usePieceSession.ts）。
+import { memo, useCallback, useDeferredValue, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { diffSummary } from '../../domain/diff'
 import { submissionsReferencingVersion } from '../../domain/entityOps'
-import { bodyMetrics, formatCount } from '../../domain/text'
+import { formatCount } from '../../domain/text'
 import type { ID, Piece, Version } from '../../domain/types'
 import { actions } from '../../store/actions'
-import { useData } from '../../store/appStore'
+import { getData, useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { copyText, formatDateTime, formatRelative, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
-import { DraftInput, DraftTextarea, type DraftHandle } from '../../ui/DraftField'
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, MoreIcon, NoteIcon, PlusIcon, TrashIcon } from '../../ui/icons'
 import { DiffView } from './DiffView'
-import { commitVersion, flushEditors, versionBodyGuard, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
+import { tryRun, useDismiss } from './editing'
+import { useNamesRevision, useSessionField, useSessionValue, type EditorHub } from './editorHub'
 import {
   firstLine,
   formatCharDelta,
@@ -23,8 +24,11 @@ import {
   versionDisplayName,
   versionRows,
   versionsNewestFirst,
+  withHeading,
 } from './logic'
 import { ReviseIcon } from './pieceIcons'
+import { versionField, type EditSession } from './session'
+import { SessionInput, SessionTextarea } from './SessionField'
 import { useDiff } from './useDiff'
 
 /** 原稿画面の各ペインが共有するもの */
@@ -32,11 +36,14 @@ export interface WorkspaceApi {
   piece: Piece
   titleId: ID
   orientation: 'horizontal' | 'vertical'
-  activeEditor: RefObject<DraftHandle | null>
-  compareEditor: RefObject<DraftHandle | null>
-  noteEditor: RefObject<DraftHandle | null>
+  /** 入力欄と編集セッション */
+  hub: EditorHub
   /** 比較する推敲バージョンを選ぶ（null で一覧に戻る） */
   select: (versionId: ID | null) => void
+  /** 話の構成を変える操作の前に呼ぶ（保存していない編集があれば保存するか聞く。続けてよければ true） */
+  ensureSaved: () => Promise<boolean>
+  /** コピーの見出し（「第3話　題」など。編集中の見出し・話の題を使う） */
+  heading: () => string
 }
 
 interface PaneProps {
@@ -59,30 +66,36 @@ function deltaClass(delta: number): string {
 
 function VersionList({ api, active }: { api: WorkspaceApi; active: Version | null }) {
   const data = useData()
-  const { piece } = api
+  const { piece, ensureSaved, select, hub } = api
+  const { session } = hub
   const rows = useMemo(() => versionRows(data, piece), [data, piece])
   const minute = Math.floor(Date.now() / 60_000)
+  // 採用原稿の文字数（保存していない編集も含む）。各行の「採用原稿との差」に使う
+  const activeBody = useSessionValue(session, active ? versionField(active.id, 'body') : null, active?.body ?? '')
+  const deferredActive = useDeferredValue(activeBody)
+  const activeChars = useMemo(() => (active ? liveStats(active, deferredActive).chars : null), [active, deferredActive])
 
-  const addBlank = () => {
+  const addBlank = async () => {
+    if (!(await ensureSaved())) return
     const id = attempt(() => actions.addVersion(piece.id))
-    if (id) api.select(id)
+    if (id) select(id)
   }
 
-  const duplicateActive = () => {
-    if (!active) return
-    flushEditors(api.activeEditor)
+  const duplicateActive = async () => {
+    if (!active || !(await ensureSaved())) return
     const id = attempt(() => actions.duplicateVersion(active.id))
-    if (id) api.select(id)
+    if (id) select(id)
   }
 
-  const { activeEditor } = api
   const pieceId = piece.id
   const adopt = useCallback(
-    (v: Version) => {
-      flushEditors(activeEditor)
-      if (tryRun(() => actions.setActiveVersion(pieceId, v.id))) notify(`${versionDisplayName(v)}を採用しました`)
+    async (v: Version) => {
+      if (!(await ensureSaved())) return
+      // 保存した後の名前（保存していなかった稿の名前の編集も入っている）
+      const name = versionDisplayName(getData().versions[v.id] ?? v)
+      if (tryRun(() => actions.setActiveVersion(pieceId, v.id))) notify(`${name}を採用しました`)
     },
-    [activeEditor, pieceId],
+    [ensureSaved, pieceId],
   )
 
   return (
@@ -96,7 +109,7 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
           <button
             type="button"
             className="btn pw-tbtn"
-            onClick={addBlank}
+            onClick={() => void addBlank()}
             title="白紙の推敲バージョンを追加する"
             data-testid="add-blank-version"
           >
@@ -108,7 +121,7 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
           <button
             type="button"
             className="btn pw-tbtn"
-            onClick={duplicateActive}
+            onClick={() => void duplicateActive()}
             disabled={!active}
             title={active ? '採用原稿を複製して新しい推敲バージョンを作り、並べて編集する' : '採用原稿がありません'}
             data-testid="duplicate-active-list"
@@ -134,13 +147,12 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
               {rows.map((r) => (
                 <VersionRow
                   key={r.version.id}
+                  session={session}
                   version={r.version}
                   isActive={r.isActive}
-                  chars={r.chars}
-                  delta={r.delta}
-                  note={r.note}
+                  activeChars={activeChars}
                   minute={minute}
-                  onOpen={api.select}
+                  onOpen={select}
                   onAdopt={adopt}
                 />
               ))}
@@ -153,36 +165,55 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
 }
 
 interface VersionRowProps {
+  session: EditSession
   version: Version
   isActive: boolean
-  chars: number
-  delta: number | null
-  note: string
+  /** 採用原稿の文字数（保存していない編集も含む）。採用原稿がなければ null */
+  activeChars: number | null
   /** 「3分前」などの表記を描き直すきっかけ（分が変わった後に一覧を描き直す時だけ行も描き直す） */
   minute: number
   onOpen: (versionId: ID) => void
-  onAdopt: (version: Version) => void
+  onAdopt: (version: Version) => Promise<void>
 }
 
-/** 一覧の1行。自動保存で描き直す時は、変わった稿の行だけを描き直す */
-const VersionRow = memo(function VersionRow({ version, isActive, chars, delta, note, onOpen, onAdopt }: VersionRowProps) {
-  const name = versionDisplayName(version)
+/**
+ * 一覧の1行。名前・文字数・推敲メモは保存していない編集も含めて出し、編集のある稿には「未保存」の印を付ける。
+ * 保存・編集で描き直す時は、変わった稿の行だけを描き直す
+ */
+const VersionRow = memo(function VersionRow({ session, version, isActive, activeChars, onOpen, onAdopt }: VersionRowProps) {
+  const nameState = useSessionField(session, versionField(version.id, 'name'))
+  const bodyState = useSessionField(session, versionField(version.id, 'body'))
+  const noteState = useSessionField(session, versionField(version.id, 'note'))
+  const name = versionDisplayName({ name: nameState?.edit?.value ?? version.name })
+  const body = useDeferredValue(bodyState?.edit?.value ?? version.body)
+  // 保存済みの本文と同じなら稿ごとにキャッシュした値を使う
+  const chars = useMemo(() => liveStats(version, body).chars, [version, body])
+  const delta = isActive || activeChars === null ? null : chars - activeChars
+  const note = firstLine(noteState?.edit?.value ?? version.note)
+  const dirty = Boolean(nameState?.edit || bodyState?.edit || noteState?.edit)
   return (
-    <li className={`pw-vrow${isActive ? ' is-active' : ''}`} data-testid="version-row">
+    <li className={`pw-vrow${isActive ? ' is-active' : ''}${dirty ? ' is-dirty' : ''}`} data-testid="version-row">
       <button
         type="button"
         className="pw-vrow-main"
         onClick={() => onOpen(version.id)}
-        aria-label={`${name}${isActive ? '（採用中）' : ''}を開いて比較する`}
+        aria-label={`${name}${isActive ? '（採用中）' : ''}${dirty ? '（未保存の編集あり）' : ''}を開いて比較する`}
       >
         <span className="pw-vrow-top">
-          <span className="pw-vrow-name">{name}</span>
+          <span className="pw-vrow-name" data-testid="version-row-name">
+            {name}
+          </span>
+          {dirty ? (
+            <span className="pw-vrow-dirty" title="保存していない編集があります" data-testid="version-row-dirty">
+              未保存
+            </span>
+          ) : null}
           {isActive ? <span className="badge badge-active">採用中</span> : null}
         </span>
         <span className="pw-vrow-meta">
           <span title={formatDateTime(version.updatedAt)}>{formatRelative(version.updatedAt)}</span>
           <span aria-hidden="true">・</span>
-          <span>{formatCount(chars)}字</span>
+          <span data-testid="version-row-count">{formatCount(chars)}字</span>
           {delta !== null ? (
             <span className={deltaClass(delta)} title="採用原稿との文字数の差">
               {formatCharDelta(delta)}
@@ -201,7 +232,7 @@ const VersionRow = memo(function VersionRow({ version, isActive, chars, delta, n
           <button
             type="button"
             className="btn pw-tbtn pw-row-adopt"
-            onClick={() => onAdopt(version)}
+            onClick={() => void onAdopt(version)}
             aria-label={`${name}を採用する`}
             data-testid="row-adopt-button"
           >
@@ -219,16 +250,29 @@ const VersionRow = memo(function VersionRow({ version, isActive, chars, delta, n
 
 function CompareView({ api, active, selected, showDiff }: PaneProps & { selected: Version }) {
   const data = useData()
-  const { piece } = api
+  const { piece, hub } = api
+  const { session } = hub
   const isActive = active?.id === selected.id
   const versions = useMemo(() => versionsNewestFirst(data, piece), [data, piece])
-  const [live, onDraftChange] = useLiveText(selected.id, selected.body)
+  const bodyKey = versionField(selected.id, 'body')
+  const noteKey = versionField(selected.id, 'note')
+  // 保存していない編集も含めた本文・推敲メモ
+  const live = useSessionValue(session, bodyKey, selected.body)
+  const note = useSessionValue(session, noteKey, selected.note)
   const deferred = useDeferredValue(live)
   // 保存済みの本文と同じなら稿ごとにキャッシュした値を使い、書いている間だけ数え直す（入力のたびには数えない）
   const counts = useMemo(() => liveStats(selected, deferred), [selected, deferred])
   const stats = useMemo(() => formatStats(counts), [counts])
-  const activeBody = active?.body ?? null
-  const delta = active && !isActive ? counts.chars - bodyMetrics(active).chars : null
+  const diffMode = showDiff && !isActive
+  // 採用原稿（保存していない編集も含む）。「採用原稿より±n字」と差分に使う
+  const activeBody = useSessionValue(session, active && !isActive ? versionField(active.id, 'body') : null, active?.body ?? '')
+  const deferredActive = useDeferredValue(activeBody)
+  // 保存済みの本文と同じならキャッシュした値を使う（採用原稿のペインと同じ数え方）
+  const activeChars = useMemo(
+    () => (active && !isActive ? liveStats(active, deferredActive).chars : null),
+    [active, isActive, deferredActive],
+  )
+  const delta = activeChars === null ? null : counts.chars - activeChars
   const deltaLabel = useMemo(() => (delta === null ? null : formatCharDelta(delta)), [delta])
   const [noteOpen, setNoteOpen] = useState(false)
   // 狭いペインでは稿の名前・文字数・操作を「…」の中にしまう
@@ -238,52 +282,72 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
   const moreToggleRef = useRef<HTMLButtonElement>(null)
   const moreId = useId()
   const closeMore = () => {
-    // 閉じたパネルの中にフォーカスを残さない（稿の名前の入力はここで確定する）
+    // 閉じたパネルの中にフォーカスを残さない
     if (document.activeElement?.closest('.pw-cmore')) moreToggleRef.current?.focus()
     setMoreFor(null)
   }
   useDismiss(moreOpen, headRef, closeMore)
-  const nameRef = useRegisteredDraft()
+  // しまった「…」の中の稿の名前に、記号バーの巻き戻しを働かせない（広いペインでは見えたままなので外さない）
+  useLayoutEffect(() => {
+    if (!moreOpen) hub.releaseHidden()
+  }, [moreOpen, hub])
 
-  const diffMode = showDiff && !isActive
-  // 保存済みの本文どうしを、描画とは別に（少し待ってから別スレッドで）比べる
-  const diff = useDiff(selected.id, activeBody, selected.body, diffMode)
+  // 比較する稿の選択肢には、編集中の稿の名前を出す
+  const namesRev = useNamesRevision(session)
+  const options = useMemo(
+    () =>
+      versions.map((v) => ({
+        id: v.id,
+        label: `${versionDisplayName({ name: session.display(versionField(v.id, 'name'), v.name) })}${v.id === active?.id ? '（採用中）' : ''}`,
+      })),
+    // namesRev が変わったら（稿の名前を編集したら）作り直す
+    [versions, active?.id, session, namesRev],
+  )
+
+  // 採用原稿（保存していない編集も含む）と比べる。少し待ってから別スレッドで計算する
+  const diff = useDiff(selected.id, active ? activeBody : null, live, diffMode)
   const summary = useMemo(() => (diff.segments ? diffSummary(diff.segments) : null), [diff.segments])
 
   const side = api.orientation === 'horizontal' ? '左' : '上'
 
-  const adopt = () => {
-    flushEditors(api.compareEditor, api.noteEditor, api.activeEditor, nameRef)
+  const adopt = async () => {
+    if (!(await api.ensureSaved())) return
+    // 保存した後の名前（保存していなかった名前の編集も入っている）
+    const name = versionDisplayName(getData().versions[selected.id] ?? selected)
     const previous = active?.id ?? null
     if (!tryRun(() => actions.setActiveVersion(piece.id, selected.id))) return
-    notify(`${versionDisplayName(selected)}を採用しました`)
+    notify(`${name}を採用しました`)
     api.select(selectionAfterAdopt(previous, selected.id, piece.versionIds))
   }
 
-  const duplicate = () => {
+  const duplicate = async () => {
     closeMore()
-    flushEditors(api.compareEditor, api.activeEditor, nameRef)
+    if (!(await api.ensureSaved())) return
     const id = attempt(() => actions.duplicateVersion(selected.id))
     if (id) api.select(id)
   }
 
+  /** 見出し（第n話　題）と、保存していない編集も含めた本文をコピーする */
   const copy = () => {
     closeMore()
-    void copyText(live)
+    void copyText(withHeading(api.heading(), session.display(bodyKey, selected.body)))
   }
 
   const remove = async () => {
     closeMore()
-    const name = versionDisplayName(selected)
+    // 保存していない編集は先に保存する（削除した稿はゴミ箱から編集ごと戻せる）
+    if (!(await api.ensureSaved())) return
+    // 保存した後の内容で聞く（描いた時の data は保存する前のもの）
+    const latest = getData()
+    const current = latest.versions[selected.id] ?? selected
+    const name = versionDisplayName(current)
     const ok = await confirmDialog({
       title: `「${name}」を削除しますか？`,
-      message: versionDeleteMessage(selected, isActive, submissionsReferencingVersion(data, selected.id)),
+      message: versionDeleteMessage(current, isActive, submissionsReferencingVersion(latest, selected.id)),
       confirmLabel: '削除',
       danger: true,
     })
     if (!ok) return
-    // 保留中の下書きを先に書き込んでおく（削除後に保存が走らないように）
-    flushEditors(api.compareEditor, api.noteEditor, nameRef)
     if (tryRun(() => actions.deleteVersion(selected.id))) {
       notify(`${name}をゴミ箱に移しました`)
       api.select(null)
@@ -310,16 +374,16 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           aria-label="比較するバージョン"
           data-testid="version-select"
         >
-          {versions.map((v) => (
-            <option key={v.id} value={v.id}>
-              {`${versionDisplayName(v)}${v.id === active?.id ? '（採用中）' : ''}`}
+          {options.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
             </option>
           ))}
         </select>
         <button
           type="button"
           className="btn btn-active pw-tbtn pw-adopt"
-          onClick={adopt}
+          onClick={() => void adopt()}
           disabled={isActive}
           title={isActive ? 'このバージョンは採用中です' : 'このバージョンを採用原稿にする'}
           data-testid="adopt-button"
@@ -346,14 +410,20 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
             <button
               type="button"
               className="btn pw-tbtn"
-              onClick={duplicate}
+              onClick={() => void duplicate()}
               title="このバージョンを複製する"
               data-testid="duplicate-selected"
             >
               <ReviseIcon />
               <span className="pw-tlabel">複製</span>
             </button>
-            <button type="button" className="btn pw-tbtn" onClick={copy} title="本文をクリップボードにコピー">
+            <button
+              type="button"
+              className="btn pw-tbtn"
+              onClick={copy}
+              title="見出し（第n話・題）と本文をクリップボードにコピー"
+              data-testid="copy-selected"
+            >
               <CopyIcon />
               <span className="pw-tlabel">コピー</span>
             </button>
@@ -372,15 +442,17 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           {isActive ? (
             <span className="pw-vname pw-vname-static">
               <span className="badge badge-active">採用中</span>
-              <span className="ellipsis">{versionDisplayName(selected)}</span>
+              <span className="ellipsis">
+                {versionDisplayName({ name: session.display(versionField(selected.id, 'name'), selected.name) })}
+              </span>
             </span>
           ) : (
-            <DraftInput
-              ref={nameRef}
+            <SessionInput
               key={selected.id}
+              hub={hub}
+              fieldKey={versionField(selected.id, 'name')}
+              stored={selected.name}
               className="input-bare pw-vname"
-              value={selected.name}
-              onCommit={(v) => commitVersion(selected.id, { name: v })}
               placeholder="稿の名前"
               aria-label="バージョン名"
               data-testid="selected-version-name"
@@ -393,7 +465,7 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
               <span className="pw-pages">・{stats.pages}</span>
             </span>
             {delta !== null ? (
-              <span className={deltaClass(delta)} title="採用原稿との文字数の差">
+              <span className={deltaClass(delta)} title="採用原稿との文字数の差" data-testid="compare-delta">
                 採用原稿より{deltaLabel}
               </span>
             ) : null}
@@ -435,7 +507,7 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           <textarea
             key={selected.id}
             className="manuscript"
-            value={selected.body}
+            value={live}
             readOnly
             aria-label="採用中のバージョンの本文（読み取り専用）"
             data-testid="compare-readonly"
@@ -447,21 +519,21 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           <textarea
             key={selected.id}
             className="manuscript"
-            value={selected.body}
+            value={live}
             readOnly
             aria-label="推敲バージョンの本文（読み取り専用）"
             data-testid="compare-readonly"
             data-scroll-sync="compare"
           />
         ) : (
-          <DraftTextarea
-            ref={api.compareEditor}
+          <SessionTextarea
             key={selected.id}
+            hub={hub}
+            fieldKey={bodyKey}
+            stored={selected.body}
+            label={selected.name}
+            symbols
             className="manuscript"
-            value={selected.body}
-            onCommit={(v) => commitVersion(selected.id, { body: v })}
-            conflictGuard={versionBodyGuard(selected.id)}
-            onDraftChange={onDraftChange}
             placeholder="推敲中の本文"
             aria-label="推敲バージョンの本文"
             spellCheck={false}
@@ -471,25 +543,34 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
         )}
       </div>
 
-      <details className="pw-note" open={noteOpen} onToggle={(e) => setNoteOpen(e.currentTarget.open)}>
+      <details
+        className="pw-note"
+        open={noteOpen}
+        onToggle={(e) => {
+          const open = e.currentTarget.open
+          setNoteOpen(open)
+          // 畳んだ推敲メモに、記号バーの記号・巻き戻しが働かないようにする
+          if (!open) hub.release(noteKey)
+        }}
+      >
         <summary data-testid="note-toggle">
           <NoteIcon />
           <span className="pw-note-label">推敲メモ</span>
-          {!noteOpen && selected.note.trim() ? (
-            <span className="pw-note-preview ellipsis">{firstLine(selected.note)}</span>
-          ) : null}
+          {!noteOpen && note.trim() ? <span className="pw-note-preview ellipsis">{firstLine(note)}</span> : null}
           {/* 狭いペインではヘッダーに文字数を出さないので、ここに出す */}
           <span className="pw-note-count" aria-hidden="true">
             {stats.chars}
             {delta !== null ? <span className={deltaClass(delta)}>{deltaLabel}</span> : null}
           </span>
         </summary>
-        <DraftTextarea
-          ref={api.noteEditor}
+        <SessionTextarea
           key={selected.id}
+          hub={hub}
+          fieldKey={noteKey}
+          stored={selected.note}
+          label={selected.name}
+          symbols
           className="textarea pw-note-input"
-          value={selected.note}
-          onCommit={(v) => commitVersion(selected.id, { note: v })}
           placeholder="この稿で変えたこと・狙い・気になる点など"
           aria-label="推敲メモ"
           rows={4}

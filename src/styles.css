@@ -956,6 +956,25 @@ h4 {
   flex-wrap: wrap;
 }
 
+/* 3つ以上の選択肢（choiceDialog）。主な選択肢を右端に置く。スマホでは縦に並べ、主な選択肢を上にする */
+.dialog-choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .dialog-choices {
+    flex-direction: column-reverse;
+  }
+
+  .dialog-choices .btn {
+    width: 100%;
+  }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;

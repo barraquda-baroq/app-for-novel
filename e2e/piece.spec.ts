@@ -37,6 +37,20 @@ async function flush(page: Page) {
   await page.evaluate(() => window.__ns.flushNow())
 }
 
+/** 原稿画面の編集は「保存」で確定する（スマホでは保存していない編集がある時だけヘッダーに出る） */
+async function saveEdits(page: Page) {
+  await page.getByTestId('save-button').click()
+  await expect(page.getByTestId('save-button')).toBeDisabled()
+  await flush(page)
+}
+
+/** 保存していない編集があるまま採用・削除などをすると、先に保存するか聞かれる */
+async function saveAndContinue(page: Page) {
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('保存していない編集があります。保存してから続けますか？')
+  await dialog.getByRole('button', { name: '保存して続ける' }).click()
+}
+
 async function activeBodyOf(page: Page, pieceId: string): Promise<string | null> {
   return page.evaluate((pid) => {
     const d = window.__ns.getData()
@@ -162,8 +176,9 @@ test.describe('原稿画面', () => {
     await expect(page.getByTestId('active-editor')).toBeVisible()
     await expect(page.getByTestId('active-editor')).toHaveValue(BODY1)
 
-    // 採用する → 採用原稿が入れ替わり、比較対象はそれまでの採用原稿（第1稿）になる
+    // 採用する → 保存していない編集を保存してから、採用原稿が入れ替わり、比較対象はそれまでの採用原稿（第1稿）になる
     await page.getByTestId('adopt-button').click()
+    await saveAndContinue(page)
     await expect(page.getByText('第2稿（第1稿を複製）を採用しました')).toBeVisible()
     await expect(page.getByTestId('active-editor')).toHaveValue(revised)
     await expect(page.getByTestId('version-select')).toHaveValue(firstVersionId)
@@ -333,7 +348,7 @@ test.describe('原稿画面', () => {
     await expect(subtitle).toHaveAttribute('placeholder', '話の題（任意）')
     await subtitle.fill('旅立ち')
     await subtitle.press('Enter')
-    await flush(page)
+    await saveEdits(page)
     await reload(page)
     await expect(page.getByTestId('subtitle-input')).toHaveValue('旅立ち')
     await expect(page.locator('.breadcrumbs')).toContainText('第1話')
@@ -346,7 +361,9 @@ test.describe('原稿画面', () => {
     await expect(page.locator('.pw-label-special .badge-special')).toHaveText('特殊')
     await special.fill('序章')
     await special.press('Enter')
-    await flush(page)
+    // 保存するまではストアに入らない
+    expect(await page.evaluate((id) => window.__ns.getData().pieces[id].label, specialId)).toBe('プロローグ')
+    await saveEdits(page)
     expect(await page.evaluate((id) => window.__ns.getData().pieces[id].label, specialId)).toBe('序章')
     await reload(page)
     await expect(page.getByTestId('special-label-input')).toHaveValue('序章')
@@ -406,6 +423,8 @@ test.describe('原稿画面', () => {
     await expect(page.getByTestId('compare-editor')).toHaveValue('')
     await page.getByTestId('compare-editor').fill('消す予定の稿')
     await (await compareTool(page, 'delete-version')).click()
+    await saveAndContinue(page)
+    await expect(page.getByRole('dialog')).toContainText('削除しますか？')
     await expect(page.getByRole('dialog')).not.toContainText('応募時の原稿')
     await page.getByRole('dialog').getByRole('button', { name: '削除' }).click()
     await expect(page.getByTestId('versions-heading')).toHaveText('推敲バージョン（1）')
@@ -583,6 +602,117 @@ test.describe('原稿画面', () => {
     const longTasks = await page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks)
     expect(Math.max(0, ...longTasks)).toBeLessThan(200)
   })
+
+  test('長い原稿でも、記号・巻き戻し・進むのたびに全文を組み直さない（カーソルの行は段落ごとの高さを控えて測る）', async ({
+    page,
+  }, info) => {
+    test.skip(!isDesktop(info), '計測はデスクトップだけで行う')
+    await openApp(page)
+    const { titleId, pieceId } = await seed(page, ({ actions, getData }) => {
+      const sentences = [
+        '朝の光が書架の隙間から差し込み、埃がゆっくりと舞っていた。',
+        '司書の澪は、誰もいない閲覧室で一冊の古い本を開いた。',
+        '「また、ここに戻ってきたのね」',
+        'ページをめくるたびに、紙の匂いと一緒に、遠い夏の記憶がよみがえる。',
+      ]
+      const lines: string[] = []
+      for (let i = 0; lines.join('\n').length < 15000; i++)
+        lines.push(i % 9 === 4 ? '' : sentences[(i * 7) % 4] + sentences[(i * 3 + 1) % 4])
+      const titleId = actions.createTitle('長編')
+      const pieceId = actions.addEpisode(titleId)
+      actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body: lines.join('\n') })
+      return { titleId, pieceId }
+    })
+    await openPiece(page, titleId, pieceId)
+    const editor = page.getByTestId('active-editor')
+    await editor.click()
+    await page.keyboard.press('ControlOrMeta+End')
+
+    // 段落ごとに測った位置が、全文を組んで測った位置（前の測り方）と同じこと。2回目からは速いこと
+    const r = await editor.evaluate(async (el: HTMLTextAreaElement, url: string) => {
+      const { caretLine } = (await import(/* @vite-ignore */ url)) as typeof import('../src/features/piece/caret')
+      const props = [
+        'boxSizing',
+        'paddingTop',
+        'paddingRight',
+        'paddingBottom',
+        'paddingLeft',
+        'fontFamily',
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'fontVariant',
+        'fontFeatureSettings',
+        'letterSpacing',
+        'lineHeight',
+        'textTransform',
+        'wordSpacing',
+        'textIndent',
+        'tabSize',
+        'wordBreak',
+        'lineBreak',
+      ] as const
+      const full = (pos: number) => {
+        const cs = getComputedStyle(el)
+        const m = document.createElement('div')
+        for (const p of props) m.style[p] = cs[p]
+        Object.assign(m.style, {
+          position: 'absolute',
+          visibility: 'hidden',
+          top: '0',
+          left: '-99999px',
+          boxSizing: 'border-box',
+          border: '0',
+          width: `${el.clientWidth}px`,
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'break-word',
+        })
+        m.textContent = el.value.slice(0, pos)
+        const mark = document.createElement('span')
+        mark.textContent = el.value.slice(pos, pos + 1).replace('\n', '') || '\u200b'
+        m.appendChild(mark)
+        document.body.appendChild(m)
+        const top = m.getBoundingClientRect().top
+        const t = mark.getBoundingClientRect().top - top
+        m.remove()
+        return t
+      }
+      const v = el.value
+      const end = v.length
+      caretLine(el, end)
+      const times: number[] = []
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now()
+        caretLine(el, end)
+        times.push(performance.now() - t0)
+      }
+      times.sort((a, b) => a - b)
+      const samples = [0, 1, end]
+      for (let i = 397; i < end; i += 997) samples.push(i)
+      for (let i = v.indexOf('\n'); i >= 0 && samples.length < 40; i = v.indexOf('\n', i + 400)) samples.push(i + 1)
+      const diffs = samples.map((pos) => Math.abs(caretLine(el, pos).top - full(pos)))
+      return { median: times[2], maxDiff: Math.max(...diffs), length: end }
+    }, '/src/features/piece/caret.ts')
+    expect(r.length).toBeGreaterThan(15000)
+    expect(r.maxDiff).toBeLessThanOrEqual(1)
+    expect(r.median).toBeLessThan(10)
+
+    // 記号・巻き戻し・進むを続けて押しても、画面が止まらない
+    await page.evaluate(() => {
+      const w = window as unknown as { __longTasks: number[] }
+      w.__longTasks = []
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) w.__longTasks.push(Math.round(e.duration))
+      }).observe({ type: 'longtask' })
+    })
+    for (let i = 0; i < 10; i++) await page.getByTestId('symbol-dash').click()
+    for (let i = 0; i < 10; i++) await page.getByTestId('undo-button').click()
+    for (let i = 0; i < 10; i++) await page.getByTestId('redo-button').click()
+    await expect(editor).toHaveValue(/(――){10}$/)
+    await expect(editor).toBeFocused()
+    const longTasks = await page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks)
+    expect(Math.max(0, ...longTasks)).toBeLessThan(200)
+  })
 })
 
 test.describe('スマホでの表示', () => {
@@ -707,7 +837,7 @@ test.describe('スマホでの表示', () => {
     await expect(page.getByTestId('no-active-badge')).toHaveText('採用原稿なし')
   })
 
-  test('横持ち: 上部バーは1行で各ペインに6行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({
+  test('横持ち: 上部バーは1行で採用原稿に6行・推敲バージョンに5行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 844, height: 390 })
@@ -719,7 +849,9 @@ test.describe('スマホでの表示', () => {
     expect(b.x).toBeGreaterThanOrEqual(a.x + a.width - 2)
     expect((await page.getByTestId('piece-bar').boundingBox())!.height).toBeLessThanOrEqual(50)
     expect(await visibleLines(page, 'active-editor')).toBeGreaterThanOrEqual(6)
-    expect(await visibleLines(page, 'compare-editor')).toBeGreaterThanOrEqual(6)
+    // 推敲バージョンは、推敲メモの行と、いちばん下の記号バーの分だけ少ない
+    expect(await visibleLines(page, 'compare-editor')).toBeGreaterThanOrEqual(5)
+    await expect(page.getByTestId('symbol-bar')).toBeVisible()
 
     // 比率は「表示の設定」の中
     const slider = page.getByTestId('ratio-slider')
