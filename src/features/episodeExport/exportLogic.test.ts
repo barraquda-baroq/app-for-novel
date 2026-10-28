@@ -133,6 +133,27 @@ describe('ZIP にまとめる（スマホなど）', () => {
     expect(progress).toEqual([1, 2, 3])
   })
 
+  it('同じ見出しの特殊ブロックが続いても、ZIP の中の名前は重ならない（どれも消えない）', async () => {
+    const t = createTitle(emptyData(), '星')
+    let d = t.data
+    for (const label of ['幕間', '幕間', '幕間(2)', 'Extra', 'extra']) {
+      const r = addSpecial(d, t.result, { chapterId: null, index: d.titles[t.result].structure.length }, label)
+      d = updateVersion(r.data, r.data.pieces[r.result].versionIds[0], { body: `${label}の本文` })
+    }
+    const { entries } = exportPreview(d, t.result, DATE)
+    const files = unzipSync(concat(await buildZip(outFiles(entries, false))))
+    expect(Object.keys(files)).toHaveLength(5)
+    // Windows・Mac で同じファイルになる名前（大文字・小文字の違いだけ）もない
+    expect(new Set(Object.keys(files).map((n) => n.normalize('NFC').toLowerCase())).size).toBe(5)
+    expect(Object.values(files).map((f) => strFromU8(f))).toEqual([
+      '幕間の本文',
+      '幕間の本文',
+      '幕間(2)の本文',
+      'Extraの本文',
+      'extraの本文',
+    ])
+  })
+
   it('長い原稿でも途中で処理を譲りながら作れる', async () => {
     const body = '　夜明け前の港には、まだ誰の足音もなかった。\n'.repeat(4000)
     const files = Array.from({ length: 40 }, (_, i) => ({ name: `第${i + 1}話.txt`, text: body }))
