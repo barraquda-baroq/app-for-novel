@@ -2,6 +2,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { missingActiveLabel } from '../../domain/entityOps'
+import { titleProgress } from '../../domain/progress'
 import { episodeTargets } from '../../domain/storyOps'
 import { chaptersOf, locatePiece, pieceFullLabel } from '../../domain/structure'
 import { formatCount } from '../../domain/text'
@@ -36,13 +37,16 @@ export function ChapterPage() {
 
   // 一覧・集計は本編に関わるデータが変わった時だけ作り直す（章のメモの入力などでは数え直さない）
   const story = useStoryData(titleId)
+  // 進捗はタイトル全体（採用原稿）の中の位置。本編が変わった時だけ数える
+  const progress = useMemo(() => titleProgress(story, titleId), [story, titleId])
   const allRows = useMemo(
     () =>
       pieceRows(story, titleId, {
         steps: edit ? stepAvailability(story, titleId) : null,
         deletable: edit ? deletePermissions(story, titleId) : null,
+        progress,
       }),
-    [story, titleId, edit],
+    [story, titleId, edit, progress],
   )
   const pieceIds = chapter?.pieceIds
   const rows = useMemo(() => rowsFor(allRows, pieceIds ?? []), [allRows, pieceIds])

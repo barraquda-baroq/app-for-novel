@@ -24,6 +24,7 @@ import {
   deletePermissions,
   entryCounts,
   excerptOf,
+  excerptSegments,
   findSlotIndex,
   formatRenumbering,
   memoExcerpt,
@@ -32,6 +33,9 @@ import {
   pieceSummary,
   previewEpisode,
   previewMoveLabel,
+  progressDescription,
+  progressLabel,
+  progressPercent,
   renumberingOnRelease,
   rowsFor,
   sameRows,
@@ -281,7 +285,7 @@ describe('要約と集計', () => {
     expect(pieceSummary(d, d.pieces[ids[0]])).toEqual({
       versionCount: 2,
       active: { name: '第2稿', chars: 4 },
-      excerpt: '別案です',
+      excerpt: [{ type: 'text', text: '別案です' }],
     })
     d = setActiveVersion(d, ids[1], null)
     expect(pieceSummary(d, d.pieces[ids[1]]).active).toBeNull()
@@ -430,5 +434,97 @@ describe('一覧の各行', () => {
     d = updateVersion(d, d.pieces[ids[0]].versionIds[0], { body: 'あ' })
     expect(statsOfPieces(d, ids).chars).toBe(451)
     expect(titleStats(d, titleId).chars).toBe(451)
+  })
+})
+
+describe('ルビ・傍点を含む原稿', () => {
+  it('文字数は記号とルビの読みを除いて数える（一覧の行・章・タイトル全体）', () => {
+    const { data, titleId, ids } = setup(2)
+    let d = updateVersion(data, data.pieces[ids[0]].versionIds[0], { body: '｜魔法使い《ウィザード》が《《来た》》。' })
+    d = updateVersion(d, d.pieces[ids[1]].versionIds[0], { body: '東京《とうきょう》へ' })
+    expect(pieceSummary(d, d.pieces[ids[0]]).active?.chars).toBe(8)
+    expect(pieceSummary(d, d.pieces[ids[1]]).active?.chars).toBe(3)
+    expect(titleStats(d, titleId).chars).toBe(11)
+    d = setChaptersEnabled(d, titleId, true)
+    expect(chapterStats(d, d.titles[titleId].structure[0].id).chars).toBe(11)
+  })
+
+  it('抜粋はルビ・傍点を分け、見える文字で数えて切り詰める（記法の途中では切らない）', () => {
+    expect(excerptSegments('')).toEqual([])
+    expect(excerptSegments('　記法のない\n本文')).toEqual([{ type: 'text', text: '記法のない 本文' }])
+    expect(excerptSegments('　彼は｜魔法使い《ウィザード》だった。\n\n《《大事》》な話')).toEqual([
+      { type: 'text', text: '彼は' },
+      { type: 'ruby', base: '魔法使い', reading: 'ウィザード' },
+      { type: 'text', text: 'だった。 ' },
+      { type: 'bouten', text: '大事' },
+      { type: 'text', text: 'な話' },
+    ])
+    // 上限はルビの親文字・傍点の文字も数える
+    expect(excerptSegments('東京《とうきょう》から大阪《おおさか》まで', 4)).toEqual([
+      { type: 'ruby', base: '東京', reading: 'とうきょう' },
+      { type: 'text', text: 'から…' },
+    ])
+    expect(excerptSegments('あ《《いうえお》》か', 3)).toEqual([
+      { type: 'text', text: 'あ' },
+      { type: 'bouten', text: 'いう' },
+      { type: 'text', text: '…' },
+    ])
+    // 傍点の中の空白も詰める（詰めた空白は地の文にして、空白に点を付けない）
+    expect(excerptSegments('《《ゆっくり　　と》》', 10)).toEqual([
+      { type: 'bouten', text: 'ゆっくり' },
+      { type: 'text', text: ' ' },
+      { type: 'bouten', text: 'と' },
+    ])
+    // 改行をまたいだ《》は記法にならない（本文全体を分けた時と同じ）
+    expect(excerptSegments('｜途中《で改行\nした》')).toEqual([{ type: 'text', text: '｜途中《で改行 した》' }])
+  })
+
+  it('記法のない本文の抜粋は excerptOf と同じ', () => {
+    for (const t of ['　月の光が\n\n差し込む。　', 'あ'.repeat(95), '𠮷'.repeat(95)]) {
+      expect(
+        excerptSegments(t)
+          .map((s) => (s.type === 'ruby' ? s.base : s.text))
+          .join(''),
+      ).toBe(excerptOf(t))
+    }
+  })
+})
+
+describe('各話の進捗（一覧の行）', () => {
+  it('行の終わりの位置を % の整数で持つ（採用原稿のない話も位置を出す）', () => {
+    const { data, titleId, ids } = setup(4)
+    let d = data
+    const bodies = ['あ'.repeat(100), '｜長い《ながい》' + 'い'.repeat(298), '', 'う'.repeat(600)]
+    bodies.forEach((body, i) => (d = updateVersion(d, d.pieces[ids[i]].versionIds[0], { body })))
+    d = setActiveVersion(d, ids[2], null)
+    const rows = pieceRows(d, titleId)
+    // ルビの記号と読みは数えない（第2話は 300字）
+    expect(ids.map((id) => rows[id].progress)).toEqual([10, 40, 40, 100])
+    expect(progressLabel(rows[ids[1]].progress)).toBe('40%')
+    expect(progressDescription(40, true)).toBe('この話の終わりは、タイトル全体（採用原稿）の 40% の位置です')
+    expect(progressDescription(40, false)).toContain('採用原稿がないので0字として数えています')
+  })
+
+  it('全体が0字なら位置は出さない（「—」）', () => {
+    const { data, titleId, ids } = setup(2)
+    const rows = pieceRows(data, titleId)
+    expect(rows[ids[0]].progress).toBeNull()
+    expect(progressLabel(null)).toBe('—')
+    expect(progressDescription(null, true)).toContain('0字')
+    expect(progressPercent(undefined)).toBeNull()
+    expect(progressPercent(0.344)).toBe(34)
+    expect(progressPercent(0.345)).toBe(35)
+  })
+
+  it('並べ替えでは、位置が変わった行だけが変わる', () => {
+    const { data, titleId, ids } = setup(4)
+    let d = data
+    ids.forEach((id, i) => (d = updateVersion(d, d.pieces[id].versionIds[0], { body: 'あ'.repeat((i + 1) * 100) })))
+    const before = pieceRows(d, titleId)
+    const after = pieceRows(movePieceStep(d, ids[2], -1), titleId)
+    // 100・200・300・400字 → 100・300・200・400字の順
+    expect(after[ids[2]].progress).toBe(40)
+    expect(after[ids[1]].progress).toBe(60)
+    expect(sameRows(rowsFor(before, [ids[0], ids[3]]), rowsFor(after, [ids[0], ids[3]]))).toBe(true)
   })
 })
