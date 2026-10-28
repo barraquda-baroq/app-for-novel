@@ -6,7 +6,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type SyntheticEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { actLabel, actNumber, episodeNumbers, isSplit, locatePiece, parentOf, pieceLabel } from '../../domain/structure'
-import { formatCount } from '../../domain/text'
+import { bodyMetrics, formatCount } from '../../domain/text'
 import type { Piece, Title, Version } from '../../domain/types'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
@@ -90,7 +90,8 @@ function SeparateView({ title, piece }: { title: Title; piece: Piece }) {
 
   return (
     <SplitEditor
-      key={version.id}
+      // 本文が変わったら（同期で別の端末の編集が届いた等）、置いた分割点は捨てて置き直してもらう
+      key={`${version.id}:${bodyMetrics(version).hash}:${version.body.length}`}
       title={title}
       piece={piece}
       version={version}
