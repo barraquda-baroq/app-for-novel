@@ -148,3 +148,117 @@ export function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, cl
     }
   }, [open, ref])
 }
+
+/** 文字を入力する欄か（読み取り専用の本文・ボタン・チェックボックス・スライダーなどは除く） */
+export function isTextEntry(el: Element | null): boolean {
+  if (el instanceof HTMLTextAreaElement) return !el.readOnly && !el.disabled
+  if (el instanceof HTMLInputElement) return !el.readOnly && !el.disabled && (el.type === 'text' || el.type === 'search')
+  return false
+}
+
+/** いま selector の中の入力欄で入力中か（描画中に読む。フォーカスの変化をすぐに反映したい時に使う） */
+export function isTypingWithin(selector: string): boolean {
+  const a = typeof document === 'undefined' ? null : document.activeElement
+  return a !== null && isTextEntry(a) && a.closest(selector) !== null
+}
+
+/** フォーカスが外れてから集中モードを解くまでの時間（タップの途中でレイアウトが動いて押し間違えないように） */
+const FOCUS_EXIT_DELAY = 150
+/** 画面の下からこれ以上の高さが隠れていれば、仮想キーボードが出ているとみなす */
+const KEYBOARD_MIN_HEIGHT = 120
+
+/** 入力中の欄がどこにあるか（area = 指定した範囲の中、elsewhere = それ以外、null = 入力していない） */
+export type TypingPlace = 'area' | 'elsewhere' | null
+
+/**
+ * root の中の入力欄で文字を入力している間、その欄が area（セレクタ）の中か外かを返す。
+ * 原稿画面では、スマホで本文・推敲メモ・稿の名前（ペインの中）を編集中に画面上部（ヘッダー・上部バー）を
+ * 畳んで本文を広く見せる（集中モード）。
+ * - ポインターを押している間は切り替えない（押した所と離した所で別の物を押したことにならないように）。
+ * - フォーカスを残したまま仮想キーボードだけを閉じた（Android の戻るボタン等）時は、入力欄から
+ *   フォーカスを外して元の表示に戻す。
+ * - recheckKey が変わったら（編集中の欄が作り直される時など）判定し直す。
+ */
+export function useTypingFocus(root: RefObject<HTMLElement | null>, area: string, recheckKey: string): TypingPlace {
+  const [place, setPlace] = useState<TypingPlace>(null)
+  const recheck = useRef<() => void>(() => {})
+
+  useEffect(() => {
+    const el = root.current
+    if (!el) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let pointerDown = false
+    let waitingPointer = false
+    const editing = (): TypingPlace => {
+      const a = document.activeElement
+      if (!a || !el.contains(a) || !isTextEntry(a)) return null
+      return a.closest(area) ? 'area' : 'elsewhere'
+    }
+    const apply = () => {
+      if (pointerDown) {
+        waitingPointer = true
+        return
+      }
+      setPlace(editing())
+    }
+    const schedule = (delay: number) => {
+      clearTimeout(timer)
+      timer = setTimeout(apply, delay)
+    }
+    const onFocusIn = () => schedule(0)
+    const onFocusOut = () => schedule(FOCUS_EXIT_DELAY)
+    const onPointerDown = () => {
+      pointerDown = true
+    }
+    const onPointerUp = () => {
+      pointerDown = false
+      // click が届いた後で切り替える
+      if (waitingPointer) {
+        waitingPointer = false
+        schedule(0)
+      }
+    }
+    recheck.current = () => schedule(0)
+
+    const vv = window.visualViewport
+    let keyboard = false
+    const onViewport = () => {
+      if (!vv) return
+      const open = window.innerHeight - vv.height * vv.scale > KEYBOARD_MIN_HEIGHT
+      if (keyboard && !open && editing() !== null) (document.activeElement as HTMLElement).blur()
+      keyboard = open
+    }
+
+    el.addEventListener('focusin', onFocusIn)
+    el.addEventListener('focusout', onFocusOut)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('pointerup', onPointerUp, true)
+    document.addEventListener('pointercancel', onPointerUp, true)
+    vv?.addEventListener('resize', onViewport)
+    onViewport()
+    apply()
+    return () => {
+      clearTimeout(timer)
+      recheck.current = () => {}
+      el.removeEventListener('focusin', onFocusIn)
+      el.removeEventListener('focusout', onFocusOut)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('pointerup', onPointerUp, true)
+      document.removeEventListener('pointercancel', onPointerUp, true)
+      vv?.removeEventListener('resize', onViewport)
+    }
+  }, [root, area])
+
+  useEffect(() => {
+    recheck.current()
+  }, [recheckKey])
+
+  return place
+}
+
+/** hold の間は、hold になる直前の値を返し続ける（キーボードの開閉で分割の向きが変わらないように） */
+export function useHeldWhile<T>(value: T, hold: boolean): T {
+  const [held, setHeld] = useState(value)
+  if (!hold && held !== value) setHeld(value)
+  return hold ? held : value
+}

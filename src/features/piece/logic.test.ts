@@ -13,6 +13,8 @@ import {
   selectionAfterAdopt,
   sliderToRatio,
   statsLabel,
+  statsParts,
+  versionDeleteMessage,
   versionDisplayName,
   versionRows,
   versionsNewestFirst,
@@ -143,5 +145,49 @@ describe('比率とスクロール同期', () => {
     expect(mapScrollTop(150, 100, 400)).toBe(400)
     expect(mapScrollTop(10, 0, 400)).toBe(0)
     expect(mapScrollTop(10, 100, 0)).toBe(0)
+  })
+})
+
+describe('推敲バージョンの削除の確認文', () => {
+  const version = { id: 'v1', pieceId: 'p1' }
+  const snapshotWithCopy = {
+    at: 0,
+    charCount: 3,
+    activeVersions: { p1: 'v1' },
+    order: ['p1'],
+    pieces: {
+      p1: { kind: 'episode' as const, label: '第1話', subtitle: '', versionId: 'v1', versionName: '第1稿', chars: 3, body: '本文。', hash: 'x' },
+    },
+  }
+
+  it('応募の記録に使われていなければ、通常の確認文', () => {
+    const text = versionDeleteMessage(version, false, [])
+    expect(text).toContain('この推敲バージョンの本文と推敲メモを削除します。')
+    expect(text).not.toContain('応募')
+    expect(versionDeleteMessage(version, true, [])).toContain('採用原稿がありません。')
+  })
+
+  it('記録に本文の控えがあれば、削除しても応募時の原稿は残ると知らせる', () => {
+    const text = versionDeleteMessage(version, true, [{ contestName: '星降る文学賞', snapshot: snapshotWithCopy }])
+    expect(text).toContain('この稿は「星降る文学賞」の応募時の原稿として記録されています。')
+    expect(text).toContain('記録には本文の控えがあるので、削除しても応募時の原稿は残ります。')
+    expect(text).toContain('この操作は取り消せません。')
+  })
+
+  it('古い記録（本文の控えなし）なら、読めなくなると知らせる。名前のない応募も示す', () => {
+    const old = { at: 0, charCount: 3, activeVersions: { p1: 'v1' } }
+    const text = versionDeleteMessage(version, false, [
+      { contestName: '', snapshot: old },
+      { contestName: '星降る文学賞', snapshot: snapshotWithCopy },
+    ])
+    expect(text).toContain('「（コンテスト名未設定）」「星降る文学賞」の応募時の原稿')
+    expect(text).toContain('削除すると応募時の原稿は読めなくなります。')
+  })
+})
+
+describe('文字数の表示', () => {
+  it('文字数と原稿用紙換算を分けて返す', () => {
+    expect(statsParts('あいう\nえお')).toEqual({ chars: '5字', pages: '原稿用紙1枚' })
+    expect(statsLabel('あいう\nえお')).toBe('5字・原稿用紙1枚')
   })
 })

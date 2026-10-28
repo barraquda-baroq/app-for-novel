@@ -1,12 +1,14 @@
 /* ===== 原稿画面（pw = piece workspace） =====
-   styles.css はこのファイルより後に読み込まれるため、共通クラス（.btn / .input など）を
-   上書きするルールはすべて .pw-root を前に付けて詳細度を上げている。 */
+   共通クラス（.btn / .input など）を上書きするルールは、読み込み順に頼らないよう
+   すべて .pw-root を前に付けて詳細度を上げている。 */
 
-/* 全面レイアウト: ページ自体はスクロールさせず、エディタの中だけをスクロールさせる */
+/* 全面レイアウト: ページ自体はスクロールさせず、エディタの中だけをスクロールさせる。
+   clip はキャレット追従などのプログラムによるスクロールでも動かない（先頭行やヘッダーが隠れない） */
 .app:has(> .pw-root) {
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
+  overflow: clip;
 }
 
 .pw-root {
@@ -342,6 +344,23 @@
   flex: none;
 }
 
+/* 比較ヘッダーの「…」: 広いペインでは使わず、中身（名前・操作・文字数）をそのままヘッダーに並べる */
+.pw-root .pw-more-toggle {
+  display: none;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+}
+
+.pw-root .pw-more-toggle[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pw-root .pw-cmore {
+  display: contents;
+}
+
 .pw-root .pw-body {
   position: relative;
   flex: 1;
@@ -617,6 +636,27 @@
   color: var(--diff-del-text);
 }
 
+/* 差分の計算し直し中。すぐ終わる時はちらつかないよう、少し経ってから表示する */
+.pw-root .pw-diff-stale {
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.pw-root .pw-diff-stale.is-on {
+  visibility: visible;
+  animation: pw-fade-in 0.2s ease-out 0.4s both;
+}
+
+@keyframes pw-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 .pw-root .pw-diff {
   overflow: auto;
   outline: none;
@@ -689,6 +729,19 @@
   color: var(--text-faint);
 }
 
+/* 推敲バージョンの文字数（狭いペインだけ。ヘッダーに出せないので） */
+.pw-root .pw-note-count {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .pw-root .pw-note-input {
   display: block;
   width: calc(100% - 24px);
@@ -700,7 +753,7 @@
   resize: vertical;
 }
 
-/* ---------- ペインが狭いとき（比率を小さくした時・スマホ） ---------- */
+/* ---------- ペインが狭いとき（比率を小さくした時・スマホ）: ヘッダーを1行にする ---------- */
 @container pw-pane (max-width: 560px) {
   .pw-root .pw-tools .pw-tlabel {
     position: absolute;
@@ -717,6 +770,9 @@
   }
 
   .pw-root .pw-head {
+    flex-wrap: nowrap;
+    gap: 6px;
+    min-height: 46px;
     padding: 6px 10px 5px;
   }
 
@@ -724,48 +780,155 @@
     padding-inline: 10px;
   }
 
-  .pw-root .pw-meta-hint {
+  .pw-root .pw-break,
+  .pw-root .pw-meta .pw-pages,
+  .pw-root .pw-meta .pw-updated,
+  .pw-root .pw-meta-hint,
+  .pw-root .pw-diff-hint {
     display: none;
   }
 
-  /* 比較ヘッダー: 1行目 = 一覧・選択・採用する / 2行目 = 名前・操作 / 3行目 = 文字数 */
-  .pw-root .pw-chead > .pw-back {
+  /* 採用原稿: 採用中・稿の名前・文字数・操作 */
+  .pw-root .pw-ahead > .pw-meta {
     order: 1;
+    flex: none;
+    min-height: 0;
   }
 
-  .pw-root .pw-chead > .pw-vselect {
+  .pw-root .pw-ahead > .pw-tools {
     order: 2;
+    flex: none;
+    flex-wrap: nowrap;
+    margin-left: 0;
   }
 
-  .pw-root .pw-chead > .pw-adopt {
-    order: 3;
+  /* 比較: 一覧・選ぶ・採用する・「…」（稿の名前・文字数・操作は「…」で開くパネルに） */
+  .pw-root .pw-chead {
+    position: relative;
   }
 
-  .pw-root .pw-chead > .pw-break-a {
-    order: 4;
+  .pw-root .pw-more-toggle {
+    display: inline-flex;
   }
 
-  .pw-root .pw-chead > .pw-vname {
-    order: 5;
+  .pw-root .pw-cmore {
+    display: none;
   }
 
-  .pw-root .pw-chead > .pw-tools {
-    order: 6;
+  .pw-root .pw-chead.is-more-open .pw-cmore {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 8px;
+    z-index: 25;
+    width: min(320px, calc(100% - 16px));
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
   }
 
-  .pw-root .pw-chead > .pw-break-b {
-    display: block;
-    order: 7;
+  .pw-root .pw-cmore > .pw-vname {
+    order: 1;
+    flex: none;
+    width: 100%;
+    margin: 0;
+    min-height: 38px;
+    padding: 4px 10px;
+    border-color: var(--border-strong);
+    background: var(--surface);
   }
 
-  .pw-root .pw-chead > .pw-meta {
-    order: 8;
+  .pw-root .pw-cmore > .pw-vname-static {
+    padding: 0;
+    border: 0;
+  }
+
+  .pw-root .pw-cmore > .pw-meta {
+    order: 2;
     margin-left: 0;
     justify-content: flex-start;
+    gap: 2px 10px;
+  }
+
+  .pw-root .pw-cmore .pw-meta .pw-pages,
+  .pw-root .pw-cmore .pw-meta .pw-updated {
+    display: inline;
+  }
+
+  .pw-root .pw-cmore > .pw-tools {
+    order: 3;
+    margin-left: 0;
+    flex-wrap: nowrap;
+  }
+
+  .pw-root .pw-cmore .pw-tools .pw-tbtn {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .pw-root .pw-cmore .pw-tools .pw-tlabel {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+
+  .pw-root .pw-note-count {
+    display: inline-flex;
+  }
+
+  .pw-root .pw-note summary::after {
+    margin-left: 4px;
+  }
+}
+
+@container pw-pane (max-width: 420px) {
+  .pw-root .pw-back {
+    padding: 4px;
+    min-width: 36px;
+  }
+
+  .pw-root .pw-back-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+@container pw-pane (max-width: 340px) {
+  .pw-root .pw-ahead > .pw-meta {
+    display: none;
+  }
+
+  .pw-root .pw-adopt {
+    min-width: 36px;
+    padding: 4px 8px;
+  }
+
+  .pw-root .pw-adopt-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 
 @container pw-pane (max-width: 300px) {
+  .pw-root .pw-ahead {
+    flex-wrap: wrap;
+  }
+
   .pw-root .pw-vrow-side {
     padding-right: 6px;
   }
@@ -773,14 +936,62 @@
   .pw-root .pw-vrow-chev {
     display: none;
   }
+}
 
-  .pw-root .pw-back > span {
+/* ---------- スマホ・高さの低い画面: 表示の設定をポップオーバーにする ---------- */
+@media (max-width: 720px), (max-height: 500px) {
+  .pw-root .pw-view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+  }
+
+  .pw-root .pw-view-more {
+    display: none;
     position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
+    top: calc(100% + 4px);
+    right: 10px;
+    z-index: 30;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    width: min(300px, calc(100vw - 20px));
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .pw-root .pw-view.is-open .pw-view-more {
+    display: flex;
+  }
+
+  .pw-root .pw-view-more .segmented {
+    display: flex;
+  }
+
+  .pw-root .pw-view-more .segmented button {
+    flex: 1;
+    min-height: 34px;
+  }
+
+  /* 高さの低い画面では比率もここに入る */
+  .pw-root .pw-view-more .pw-ratio input[type='range'] {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+
+  /* 編集中は画面上部を畳んで本文を広く見せる（集中モード）。採用中の表示と稿の名前はペインのヘッダーに残る */
+  .pw-root.is-focus-mode {
+    padding-top: var(--safe-top);
+  }
+
+  .pw-root.is-focus-mode > .app-header,
+  .pw-root.is-focus-mode > .pw-bar,
+  .pw-root.is-focus-mode .pw-note:not([open]) {
+    display: none;
   }
 }
 
@@ -846,65 +1057,27 @@
     justify-content: flex-end;
   }
 
-  .pw-root .pw-ratio {
+  .pw-root .pw-view > .pw-ratio {
     flex: 1;
     min-width: 0;
   }
 
-  .pw-root .pw-ratio-label,
-  .pw-root .pw-ratio-value {
+  .pw-root .pw-view > .pw-ratio .pw-ratio-label,
+  .pw-root .pw-view > .pw-ratio .pw-ratio-value {
     display: none;
   }
 
-  .pw-root .pw-ratio input[type='range'] {
+  .pw-root .pw-view > .pw-ratio input[type='range'] {
     width: 100%;
     min-width: 60px;
-  }
-
-  .pw-root .pw-view-toggle {
-    display: inline-flex;
-    border: 1px solid var(--border-strong);
-    background: var(--surface);
-  }
-
-  .pw-root .pw-view-more {
-    display: none;
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 10px;
-    z-index: 30;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-    width: min(300px, calc(100vw - 20px));
-    padding: 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-lg);
-  }
-
-  .pw-root .pw-view.is-open .pw-view-more {
-    display: flex;
-  }
-
-  .pw-root .pw-view-more .segmented {
-    display: flex;
-  }
-
-  .pw-root .pw-view-more .segmented button {
-    flex: 1;
-    min-height: 34px;
-  }
-
-  .pw-root .pw-head {
-    min-height: 46px;
   }
 
   .pw-root .pw-body > .manuscript {
     padding: 14px 16px 3em;
   }
 
+  /* iOS で入力欄にフォーカスした時に拡大されないよう 16px 以上にする */
+  .pw-root .pw-vname,
   .pw-root .pw-vselect,
   .pw-root .pw-note-input {
     font-size: 16px;
@@ -913,5 +1086,91 @@
   .pw-root .pw-note-input {
     height: 64px;
     max-height: 20dvh;
+  }
+}
+
+/* ---------- 高さの低い画面（スマホの横持ち・キーボード表示中）: 上部を詰めて本文の行数を確保する ---------- */
+/* 上部バーは1行（前後の話・見出し・話の題・差分・表示の設定）。比率は「表示の設定」の中に入る。
+   縦持ちでキーボードが出た時（幅が狭い）は、話の題の入力欄が狭くなりすぎないよう2行のまま。
+   PieceBar.tsx の COMPACT_QUERY と揃える */
+@media (max-height: 500px) and (min-width: 481px) {
+  .pw-root .pw-bar {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 4px 10px;
+  }
+
+  .pw-root .pw-ident {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .pw-root .pw-view {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: 10px;
+    margin-left: 0;
+  }
+}
+
+@media (max-height: 500px) {
+  .pw-root > .app-header {
+    min-height: calc(44px + var(--safe-top));
+  }
+
+  .pw-root .pw-head {
+    min-height: 42px;
+    padding-top: 4px;
+    padding-bottom: 3px;
+  }
+
+  .pw-root .pw-body > .manuscript {
+    padding-top: 8px;
+  }
+
+  .pw-root .pw-notice {
+    padding-block: 3px;
+  }
+
+  .pw-root .pw-note summary {
+    min-height: 34px;
+    padding-block: 4px;
+  }
+
+  .pw-root .pw-hint {
+    margin-top: 8px;
+  }
+
+  .pw-root .pw-vlist {
+    padding-top: 8px;
+  }
+}
+
+/* ---------- 指で操作する端末: 境界の広い当たり判定（共通 CSS）がボタンに重ならないようにする ---------- */
+@media (pointer: coarse) {
+  /* 上下に分けた時: 下（推敲バージョンのヘッダー）にはほとんど広げず、上（本文の下余白）に広げる */
+  .pw-root .pw-split.vertical > .split-divider::before {
+    inset: -22px 0 -3px;
+  }
+
+  /* 左右に分けた時: 境界の両側の余白を当たり判定より広くする */
+  .pw-root .pw-split.horizontal > .split-pane:first-child .pw-head {
+    padding-right: 20px;
+  }
+
+  .pw-root .pw-split.horizontal > .split-pane:last-child .pw-head,
+  .pw-root .pw-split.horizontal > .split-pane:last-child .pw-notice,
+  .pw-root .pw-split.horizontal > .split-pane:last-child .pw-note summary {
+    padding-left: 20px;
+  }
+
+  .pw-root .pw-split.horizontal > .split-pane:last-child .pw-vlist {
+    padding-left: 20px;
+  }
+
+  .pw-root .pw-split.horizontal > .split-pane:last-child .pw-hint {
+    margin-left: 20px;
   }
 }

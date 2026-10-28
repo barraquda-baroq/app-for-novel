@@ -51,6 +51,54 @@ async function reload(page: Page) {
   await expect(page.getByText('読み込み中…')).toHaveCount(0)
 }
 
+/** 狭いペインでは、比較中のバージョンの操作（複製・コピー・削除・名前）は「…」の中にある */
+async function compareTool(page: Page, testId: string): Promise<Locator> {
+  const more = page.getByTestId('compare-more-button')
+  if ((await more.isVisible()) && (await more.getAttribute('aria-expanded')) !== 'true') await more.click()
+  return page.getByTestId(testId)
+}
+
+/** n 行の本文の話と、その複製（推敲バージョン）を作る */
+async function seedLines(page: Page, lines: number) {
+  await openApp(page)
+  return seed(
+    page,
+    ({ actions, getData }, n: number) => {
+      const body = Array.from({ length: n }, (_, i) => `${i + 1}行目の文章です。`).join('\n')
+      const titleId = actions.createTitle('長い作品')
+      const pieceId = actions.addEpisode(titleId)
+      const v1 = getData().pieces[pieceId].versionIds[0]
+      actions.updateVersion(v1, { body })
+      const v2 = actions.duplicateVersion(v1)
+      return { titleId, pieceId, v1, v2 }
+    },
+    lines,
+  )
+}
+
+/** 本文欄のうち画面に見えている行数（上の余白を除く） */
+async function visibleLines(page: Page, testId: string): Promise<number> {
+  return page.getByTestId(testId).evaluate((el) => {
+    const cs = getComputedStyle(el)
+    const r = el.getBoundingClientRect()
+    const top = Math.max(r.top + parseFloat(cs.paddingTop), 0)
+    const bottom = Math.min(r.bottom, window.innerHeight)
+    return (bottom - top) / parseFloat(cs.lineHeight)
+  })
+}
+
+/** 本文欄の外側（ペイン・画面全体）がスクロールしていないか */
+async function outerScrolls(page: Page, testId: string): Promise<string[]> {
+  return page.getByTestId(testId).evaluate((editor) => {
+    const out: string[] = []
+    for (let el = editor.parentElement; el; el = el.parentElement) {
+      if (el.scrollTop !== 0 || el.scrollLeft !== 0) out.push(`${el.className}: ${el.scrollTop}`)
+    }
+    if (window.scrollY !== 0) out.push(`window: ${window.scrollY}`)
+    return out
+  })
+}
+
 test.describe('原稿画面', () => {
   test('採用原稿が表示され、推敲バージョンの一覧で第1稿が採用中になっている', async ({ page }) => {
     const { titleId, pieceIds } = await seedBasic(page)
@@ -307,7 +355,8 @@ test.describe('原稿画面', () => {
     await page.getByTestId('add-blank-version').click()
     await expect(page.getByTestId('compare-editor')).toHaveValue('')
     await page.getByTestId('compare-editor').fill('消す予定の稿')
-    await page.getByTestId('delete-version').click()
+    await (await compareTool(page, 'delete-version')).click()
+    await expect(page.getByRole('dialog')).not.toContainText('応募時の原稿')
     await page.getByRole('dialog').getByRole('button', { name: '削除' }).click()
     await expect(page.getByTestId('versions-heading')).toHaveText('推敲バージョン（1）')
     await expect(page.locator('.toast.error')).toHaveCount(0)
@@ -373,6 +422,8 @@ test.describe('原稿画面', () => {
     await expect.poll(() => activeBodyOf(page, pieceIds[0])).toContain('追記。')
 
     // 話の題を入力中（自動保存の待ち時間内）でもすぐに保存される
+    // （スマホでは本文の編集中は上部バーを畳んでいるので、本文から離れてから）
+    await editor.blur()
     await page.getByTestId('subtitle-input').click()
     await page.keyboard.type('はじまり')
     await page.keyboard.press('ControlOrMeta+s')
@@ -391,6 +442,268 @@ test.describe('原稿画面', () => {
     await expect(crumbs).toContainText('第1章')
     await expect(crumbs).toContainText('第2話')
     await expect(crumbs.getByRole('link', { name: '第1章' })).toHaveAttribute('href', /#\/t\/[^/]+\/c\/[^/]+$/)
+  })
+
+  test('一覧から開いた比較は、ブラウザの「戻る」で一覧に戻る（バージョンの切り替えは履歴に積まない）', async ({ page }) => {
+    const { titleId, pieceId, v1, v2 } = await seedLines(page, 3)
+    await openPiece(page, titleId, pieceId)
+    await page.getByTestId('version-row').first().getByRole('button', { name: /を開いて比較する/ }).click()
+    await expect(page).toHaveURL(new RegExp(`\\?v=${v2}$`))
+    await page.getByTestId('version-select').selectOption(v1)
+    await expect(page).toHaveURL(new RegExp(`\\?v=${v1}$`))
+
+    await page.goBack()
+    await expect(page).toHaveURL(new RegExp(`/p/${pieceId}$`))
+    await expect(page.getByTestId('versions-heading')).toBeVisible()
+    await page.goForward()
+    await expect(page.getByTestId('compare-pane')).toBeVisible()
+
+    // 「一覧」ボタンも同じ履歴を戻るので、もう一度戻ると話を離れる
+    await page.getByTestId('back-to-list').click()
+    await expect(page).toHaveURL(new RegExp(`/p/${pieceId}$`))
+    await page.goBack()
+    await expect(page).not.toHaveURL(/\/p\//)
+  })
+
+  test('応募の記録に使われている稿を削除する時は、確認文でそのことを知らせる', async ({ page }) => {
+    const { titleId, pieceId, v1 } = await seedLines(page, 3)
+    await seed(
+      page,
+      ({ actions }, id: string) => {
+        const s = actions.addSubmission(id, '星降る文学賞')
+        actions.recordSubmissionSnapshot(s)
+      },
+      titleId,
+    )
+    await openPiece(page, titleId, pieceId, v1)
+    await (await compareTool(page, 'delete-version')).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toContainText('この稿は「星降る文学賞」の応募時の原稿として記録されています。')
+    await expect(dialog).toContainText('削除しても応募時の原稿は残ります。')
+    await dialog.getByRole('button', { name: 'キャンセル' }).click()
+  })
+
+  test('差分表示中に採用原稿を書いても、差分の計算で入力が止まらない', async ({ page }, info) => {
+    test.skip(!isDesktop(info), '計測はデスクトップだけで行う')
+    await openApp(page)
+    const { titleId, pieceId, v2 } = await seed(page, ({ actions, getData }) => {
+      // 1万5千字の原稿と、すべての行に手を入れた推敲バージョン（差分の計算が重い）
+      const sentences = [
+        '朝の光が書架の隙間から差し込み、埃がゆっくりと舞っていた。',
+        '司書の澪は、誰もいない閲覧室で一冊の古い本を開いた。',
+        '「また、ここに戻ってきたのね」',
+        'ページをめくるたびに、紙の匂いと一緒に、遠い夏の記憶がよみがえる。',
+      ]
+      const lines: string[] = []
+      for (let i = 0; lines.join('\n').length < 15000; i++) lines.push(sentences[(i * 7) % 4] + sentences[(i * 3 + 1) % 4])
+      const a = lines.join('\n')
+      const b = lines.map((l, i) => l.replace('の', i % 2 ? 'が' : 'を').replace('、', '。')).join('\n')
+      const titleId = actions.createTitle('長編')
+      const pieceId = actions.addEpisode(titleId)
+      actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body: a })
+      const v2 = actions.addVersion(pieceId, { body: b })
+      return { titleId, pieceId, v2 }
+    })
+    await openPiece(page, titleId, pieceId, v2)
+    await page.locator('label:has([data-testid="diff-toggle"])').click()
+    await expect(page.getByTestId('diff-view').locator('.diff-add').first()).toBeVisible()
+
+    await page.evaluate(() => {
+      const w = window as unknown as { __longTasks: number[] }
+      w.__longTasks = []
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) w.__longTasks.push(Math.round(e.duration))
+      }).observe({ type: 'longtask' })
+    })
+    await page.getByTestId('active-editor').click()
+    await page.keyboard.press('ControlOrMeta+End')
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.type('書き足しています。', { delay: 50 })
+      await page.waitForTimeout(700)
+    }
+    // 書き足した分も、少し待てば差分に出る
+    await expect(page.getByTestId('diff-view')).toContainText('書き足しています。書き足しています。書き足しています。')
+    await expect(page.getByTestId('diff-stale')).toHaveText('')
+    const longTasks = await page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks)
+    expect(Math.max(0, ...longTasks)).toBeLessThan(200)
+  })
+})
+
+test.describe('スマホでの表示', () => {
+  test.skip(({ isMobile }) => !isMobile, 'スマホ（タッチ操作）のみ')
+
+  test('縦持ち: ペインのヘッダーは1行。編集中は画面上部を畳み（集中モード）、キーボードが出ても上下に分けたまま', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 664 })
+    const { titleId, pieceId, v2 } = await seedLines(page, 60)
+    await openPiece(page, titleId, pieceId, v2)
+
+    for (const pane of ['active-pane', 'compare-pane']) {
+      const head = await page.getByTestId(pane).locator('.pw-head').first().boundingBox()
+      expect(head!.height).toBeLessThanOrEqual(50)
+    }
+    // 採用原稿の1行目が画面の上から 210px 以内（以前は 238px）
+    const firstLine = await page.getByTestId('active-editor').evaluate((el) => el.getBoundingClientRect().top + parseFloat(getComputedStyle(el).paddingTop))
+    expect(firstLine).toBeLessThan(210)
+    expect(await page.getByTestId('active-count').textContent()).toContain('字')
+
+    // 本文を触ると、ヘッダーと上部バーを畳む。採用中の表示と稿の名前は残る
+    const root = page.getByTestId('piece-workspace')
+    await page.getByTestId('active-editor').tap()
+    await expect(root).toHaveClass(/is-focus-mode/)
+    await expect(page.locator('.app-header')).toBeHidden()
+    await expect(page.getByTestId('piece-bar')).toBeHidden()
+    await expect(page.getByTestId('active-pane').locator('.badge-active')).toBeVisible()
+    await expect(page.getByTestId('active-version-name')).toBeVisible()
+    expect(await visibleLines(page, 'active-editor')).toBeGreaterThan(7)
+
+    // キーボード（約300px）が出て画面が低くなっても、上下に分けたまま各ペインに3行以上
+    await page.setViewportSize({ width: 390, height: 364 })
+    {
+      const { a, b } = await boxes(page)
+      expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 2)
+    }
+    expect(await visibleLines(page, 'active-editor')).toBeGreaterThanOrEqual(3)
+    expect(await visibleLines(page, 'compare-editor')).toBeGreaterThanOrEqual(3)
+
+    // 推敲バージョン側でも同じ
+    await page.getByTestId('compare-editor').tap()
+    await expect(root).toHaveClass(/is-focus-mode/)
+
+    // 本文以外を触ると元に戻る
+    await page.setViewportSize({ width: 390, height: 664 })
+    await page.getByTestId('active-pane').locator('.badge-active').tap()
+    await expect(root).not.toHaveClass(/is-focus-mode/)
+    await expect(page.locator('.app-header')).toBeVisible()
+    await expect(page.getByTestId('piece-bar')).toBeVisible()
+
+    // 話の題の入力中にキーボードが出ても、上部バーは畳まず、分割の向きも変えない
+    await page.getByTestId('subtitle-input').tap()
+    await page.setViewportSize({ width: 390, height: 364 })
+    await expect(page.getByTestId('subtitle-input')).toBeVisible()
+    await expect(root).not.toHaveClass(/is-focus-mode/)
+    {
+      const { a, b } = await boxes(page)
+      expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 2)
+    }
+    expect((await page.getByTestId('subtitle-input').boundingBox())!.width).toBeGreaterThan(150)
+  })
+
+  test('横持ち: 上部バーは1行で各ペインに6行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({ page }) => {
+    await page.setViewportSize({ width: 844, height: 390 })
+    const { titleId, pieceId, v2 } = await seedLines(page, 60)
+    await openPiece(page, titleId, pieceId, v2)
+
+    // 左右に並ぶ
+    const { a, b } = await boxes(page)
+    expect(b.x).toBeGreaterThanOrEqual(a.x + a.width - 2)
+    expect((await page.getByTestId('piece-bar').boundingBox())!.height).toBeLessThanOrEqual(50)
+    expect(await visibleLines(page, 'active-editor')).toBeGreaterThanOrEqual(6)
+    expect(await visibleLines(page, 'compare-editor')).toBeGreaterThanOrEqual(6)
+
+    // 比率は「表示の設定」の中
+    const slider = page.getByTestId('ratio-slider')
+    await expect(slider).toBeHidden()
+    await page.getByTestId('view-menu-button').click()
+    await slider.fill('30')
+    await page.keyboard.press('Escape')
+    await expect(slider).toBeHidden()
+    await expect
+      .poll(async () => {
+        const { a, b } = await boxes(page)
+        return a.width / (a.width + b.width)
+      })
+      .toBeCloseTo(0.3, 1)
+    await page.getByTestId('view-menu-button').click()
+    await slider.fill('50')
+    await page.keyboard.press('Escape')
+
+    // 稿の名前・文字数・操作は「…」の中
+    await expect(page.getByTestId('selected-version-name')).toBeHidden()
+    await (await compareTool(page, 'selected-version-name')).fill('朝の場面を削った稿')
+    await expect(page.getByTestId('compare-count')).toContainText('原稿用紙')
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('selected-version-name')).toBeHidden()
+    await expect(page.getByTestId('version-select')).toContainText('朝の場面を削った稿')
+
+    // キーボード（約200px）が出ても、各ペインに3行以上
+    await page.getByTestId('active-editor').tap()
+    await page.setViewportSize({ width: 844, height: 190 })
+    await expect(page.locator('.app-header')).toBeHidden()
+    expect(await visibleLines(page, 'active-editor')).toBeGreaterThanOrEqual(3)
+    expect(await visibleLines(page, 'compare-editor')).toBeGreaterThanOrEqual(3)
+    expect(await outerScrolls(page, 'active-editor')).toEqual([])
+  })
+
+  for (const [name, size] of [
+    ['縦持ち', { width: 390, height: 664 }],
+    ['横持ち', { width: 844, height: 390 }],
+  ] as const) {
+    test(`${name}: 末尾で改行を打ち続けても、ペインや画面がスクロールしてヘッダーや先頭が隠れない`, async ({ page }) => {
+      await page.setViewportSize(size)
+      const { titleId, pieceId, v2 } = await seedLines(page, 60)
+      await openPiece(page, titleId, pieceId, v2)
+      for (const editor of ['active-editor', 'compare-editor']) {
+        await page.getByTestId(editor).tap()
+        await page.keyboard.press('ControlOrMeta+End')
+        for (let i = 0; i < 6; i++) {
+          await page.keyboard.press('Enter')
+          await page.keyboard.type(`追加${i}`)
+        }
+        expect(await outerScrolls(page, editor)).toEqual([])
+        // 本文欄の中はスクロールして末尾が見えている
+        expect(await page.getByTestId(editor).evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+        // ペインのヘッダーは画面内に全部見えている
+        const pane = page.getByTestId(editor === 'active-editor' ? 'active-pane' : 'compare-pane')
+        const head = await pane.locator('.pw-head').first().boundingBox()
+        const region = await (editor === 'active-editor' ? activeRegion(page) : versionsRegion(page)).boundingBox()
+        expect(head!.y).toBeGreaterThanOrEqual(0)
+        expect(Math.abs(head!.y - region!.y)).toBeLessThan(1)
+      }
+    })
+  }
+
+  test('境界の広い当たり判定が、すぐ上下・左右のボタンや入力欄に重ならない', async ({ page }) => {
+    const { titleId, pieceId, v2 } = await seedLines(page, 3)
+    const overlapped = () =>
+      page.evaluate(() => {
+        const bad: string[] = []
+        for (const el of document.querySelectorAll<HTMLElement>('.pw-split .pw-head :is(button, select, input)')) {
+          const r = el.getBoundingClientRect()
+          if (!r.width || !r.height) continue
+          for (const fx of [0.05, 0.5, 0.95]) {
+            for (const fy of [0.05, 0.5, 0.95]) {
+              const hit = document.elementFromPoint(r.left + r.width * fx, r.top + r.height * fy)
+              if (hit?.closest('[data-testid="split-divider"]')) bad.push(el.dataset.testid ?? el.className)
+            }
+          }
+        }
+        return [...new Set(bad)]
+      })
+    for (const size of [
+      { width: 390, height: 844 },
+      { width: 844, height: 390 },
+    ]) {
+      await page.setViewportSize(size)
+      await openPiece(page, titleId, pieceId)
+      expect(await overlapped()).toEqual([])
+      await openPiece(page, titleId, pieceId, v2)
+      expect(await overlapped()).toEqual([])
+    }
+    // 境界はドラッグできる（縦持ち: 上下）
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openPiece(page, titleId, pieceId, v2)
+    const d = (await page.getByTestId('split-divider').boundingBox())!
+    const split = (await page.locator('.pw-split').boundingBox())!
+    await page.mouse.move(d.x + d.width / 2 + 60, d.y - 12)
+    await page.mouse.down()
+    await page.mouse.move(d.x + d.width / 2 + 60, split.y + split.height * 0.35, { steps: 6 })
+    await page.mouse.up()
+    await expect
+      .poll(async () => {
+        const { a, b } = await boxes(page)
+        return a.height / (a.height + b.height)
+      })
+      .toBeLessThan(0.4)
   })
 })
 
@@ -484,7 +797,7 @@ test.describe('スクリーンショット', () => {
       await expect(page.getByTestId('compare-editor')).toBeVisible()
       await shot('compare')
       await page.locator('label:has([data-testid="diff-toggle"])').click()
-      await expect(page.getByTestId('diff-view')).toBeVisible()
+      await expect(page.getByTestId('diff-view').locator('.diff-add').first()).toBeVisible()
       await page.getByTestId('note-toggle').click()
       await shot('diff')
       await page.getByTestId('note-toggle').click()
@@ -492,6 +805,27 @@ test.describe('スクリーンショット', () => {
       if (project !== 'desktop') {
         await page.getByTestId('view-menu-button').click()
         await shot('view-menu')
+        await page.keyboard.press('Escape')
+        await page.getByTestId('compare-more-button').click()
+        await shot('compare-more')
+        await page.keyboard.press('Escape')
+        // 編集中（集中モード）
+        await page.getByTestId('compare-editor').tap()
+        await shot('focus')
+        await page.getByTestId('compare-editor').blur()
+        // 横持ち
+        await page.setViewportSize({ width: 844, height: 390 })
+        await shot('landscape-compare')
+        await page.getByTestId('view-menu-button').click()
+        await shot('landscape-view-menu')
+        await page.keyboard.press('Escape')
+        await page.getByTestId('active-editor').tap()
+        await page.setViewportSize({ width: 844, height: 190 })
+        await shot('landscape-keyboard')
+        await page.getByTestId('active-editor').blur()
+        await page.setViewportSize({ width: 390, height: 844 })
+        await page.getByTestId('view-menu-button').click()
+        await expect(page.getByTestId('ratio-slider')).toBeVisible()
         await page.keyboard.press('Escape')
       }
       await page.getByTestId('ratio-slider').fill('28')

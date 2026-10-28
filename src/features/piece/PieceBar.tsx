@@ -3,9 +3,10 @@ import { useId, useRef, useState } from 'react'
 import type { ID, Piece } from '../../domain/types'
 import { usePrefs, type SplitOrientation } from '../../store/uiStore'
 import { DraftInput } from '../../ui/DraftField'
+import { useMediaQuery } from '../../ui/hooks'
 import { ChevronLeftIcon, ChevronRightIcon } from '../../ui/icons'
 import { commitPiece, useDismiss, useRegisteredDraft } from './editing'
-import { RATIO_MAX, RATIO_MIN, ratioToSlider, sliderToRatio } from './logic'
+import { COMPACT_QUERY, RATIO_MAX, RATIO_MIN, ratioToSlider, sliderToRatio } from './logic'
 import { LockIcon, SlidersIcon } from './pieceIcons'
 
 const LOCK_HINT = '話数は並び順で自動的に決まり、変更できません'
@@ -56,8 +57,31 @@ export function PieceBar({
   const subtitleRef = useRegisteredDraft()
   useDismiss(menuOpen, viewRef, () => setMenuOpen(false))
 
+  // 高さの低い画面（スマホの横持ちなど）では上部バーを1行にし、比率も「表示の設定」の中に入れる
+  const compact = useMediaQuery(COMPACT_QUERY)
+
   const sliderValue = ratioToSlider(ratio)
   const compareHint = comparing ? undefined : '推敲バージョンを選んで比較するときに使えます'
+
+  const ratioControl = (
+    <label className="pw-ratio" title="採用原稿と推敲バージョンの表示比率">
+      <span className="pw-ratio-label">比率</span>
+      <input
+        type="range"
+        min={RATIO_MIN}
+        max={RATIO_MAX}
+        step={1}
+        value={sliderValue}
+        onChange={(e) => setPrefs({ splitRatio: sliderToRatio(Number(e.target.value)) })}
+        aria-label="表示比率"
+        aria-valuetext={`採用原稿 ${sliderValue}%・推敲バージョン ${100 - sliderValue}%`}
+        data-testid="ratio-slider"
+      />
+      <span className="pw-ratio-value" aria-hidden="true">
+        {sliderValue}:{100 - sliderValue}
+      </span>
+    </label>
+  )
 
   return (
     <div className="pw-bar" data-testid="piece-bar">
@@ -123,23 +147,7 @@ export function PieceBar({
       </button>
 
       <div className={`pw-view${menuOpen ? ' is-open' : ''}`} ref={viewRef}>
-        <label className="pw-ratio" title="採用原稿と推敲バージョンの表示比率">
-          <span className="pw-ratio-label">比率</span>
-          <input
-            type="range"
-            min={RATIO_MIN}
-            max={RATIO_MAX}
-            step={1}
-            value={sliderValue}
-            onChange={(e) => setPrefs({ splitRatio: sliderToRatio(Number(e.target.value)) })}
-            aria-label="表示比率"
-            aria-valuetext={`採用原稿 ${sliderValue}%・推敲バージョン ${100 - sliderValue}%`}
-            data-testid="ratio-slider"
-          />
-          <span className="pw-ratio-value" aria-hidden="true">
-            {sliderValue}:{100 - sliderValue}
-          </span>
-        </label>
+        {compact ? null : ratioControl}
 
         <label className={`switch pw-switch${comparing ? '' : ' is-disabled'}`} title={compareHint ?? '採用原稿との違いを色分けして表示します'}>
           <input
@@ -158,7 +166,7 @@ export function PieceBar({
           className="icon-btn pw-view-toggle"
           aria-expanded={menuOpen}
           aria-controls={menuId}
-          aria-label="表示の設定（分割の向き・スクロール同期）"
+          aria-label={compact ? '表示の設定（比率・分割の向き・スクロール同期）' : '表示の設定（分割の向き・スクロール同期）'}
           title="表示の設定"
           onClick={() => setMenuOpen((o) => !o)}
           data-testid="view-menu-button"
@@ -167,6 +175,7 @@ export function PieceBar({
         </button>
 
         <div className="pw-view-more" id={menuId}>
+          {compact ? ratioControl : null}
           <div className="segmented" role="group" aria-label="分割の向き">
             {ORIENTATIONS.map((o) => (
               <button

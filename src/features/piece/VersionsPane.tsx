@@ -1,7 +1,7 @@
 // 推敲バージョン（右／下）。一覧から選ぶと、採用原稿と並べて比較・編集できる。
-import { useDeferredValue, useMemo, useState, type RefObject } from 'react'
-import { diffSummary, diffTexts } from '../../domain/diff'
-import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
+import { useDeferredValue, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { diffSummary } from '../../domain/diff'
+import { submissionsReferencingVersion } from '../../domain/entityOps'
 import { countChars, formatCount } from '../../domain/text'
 import type { ID, Piece, Version } from '../../domain/types'
 import { actions } from '../../store/actions'
@@ -10,11 +10,21 @@ import { attempt, notify } from '../../store/uiStore'
 import { copyText, formatDateTime, formatRelative } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea, type DraftHandle } from '../../ui/DraftField'
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, NoteIcon, PlusIcon, TrashIcon } from '../../ui/icons'
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, MoreIcon, NoteIcon, PlusIcon, TrashIcon } from '../../ui/icons'
 import { DiffView } from './DiffView'
-import { commitVersion, flushEditors, tryRun, useLiveText, useRegisteredDraft } from './editing'
-import { firstLine, formatCharDelta, selectionAfterAdopt, statsLabel, versionDisplayName, versionRows, versionsNewestFirst } from './logic'
+import { commitVersion, flushEditors, tryRun, useDismiss, useLiveText, useRegisteredDraft } from './editing'
+import {
+  firstLine,
+  formatCharDelta,
+  selectionAfterAdopt,
+  statsParts,
+  versionDeleteMessage,
+  versionDisplayName,
+  versionRows,
+  versionsNewestFirst,
+} from './logic'
 import { ReviseIcon } from './pieceIcons'
+import { useDiff } from './useDiff'
 
 /** 原稿画面の各ペインが共有するもの */
 export interface WorkspaceApi {
@@ -166,18 +176,29 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
   const versions = useMemo(() => versionsNewestFirst(data, piece), [data, piece])
   const [live, onDraftChange] = useLiveText(selected.id, selected.body)
   const deferred = useDeferredValue(live)
-  const stats = useMemo(() => statsLabel(deferred), [deferred])
-  const activeChars = useMemo(() => (active ? countChars(active.body) : 0), [active])
+  const stats = useMemo(() => statsParts(deferred), [deferred])
+  const activeBody = active?.body ?? null
+  const activeChars = useMemo(() => (activeBody === null ? 0 : countChars(activeBody)), [activeBody])
   const delta = active && !isActive ? countChars(deferred) - activeChars : null
   const [noteOpen, setNoteOpen] = useState(false)
+  // 狭いペインでは稿の名前・文字数・操作を「…」の中にしまう
+  const [moreFor, setMoreFor] = useState<ID | null>(null)
+  const moreOpen = moreFor === selected.id
+  const headRef = useRef<HTMLDivElement>(null)
+  const moreToggleRef = useRef<HTMLButtonElement>(null)
+  const moreId = useId()
+  const closeMore = () => {
+    // 閉じたパネルの中にフォーカスを残さない（稿の名前の入力はここで確定する）
+    if (document.activeElement?.closest('.pw-cmore')) moreToggleRef.current?.focus()
+    setMoreFor(null)
+  }
+  useDismiss(moreOpen, headRef, closeMore)
   const nameRef = useRegisteredDraft()
 
   const diffMode = showDiff && !isActive
-  const segments = useMemo(
-    () => (diffMode && active ? diffTexts(active.body, selected.body) : null),
-    [diffMode, active, selected.body],
-  )
-  const summary = useMemo(() => (segments ? diffSummary(segments) : null), [segments])
+  // 保存済みの本文どうしを、描画とは別に（少し待ってから別スレッドで）比べる
+  const diff = useDiff(selected.id, activeBody, selected.body, diffMode)
+  const summary = useMemo(() => (diff.segments ? diffSummary(diff.segments) : null), [diff.segments])
 
   const side = api.orientation === 'horizontal' ? '左' : '上'
 
@@ -190,18 +211,23 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
   }
 
   const duplicate = () => {
+    closeMore()
     flushEditors(api.compareEditor, api.activeEditor, nameRef)
     const id = attempt(() => actions.duplicateVersion(selected.id))
     if (id) api.select(id)
   }
 
+  const copy = () => {
+    closeMore()
+    void copyText(live)
+  }
+
   const remove = async () => {
+    closeMore()
     const name = versionDisplayName(selected)
     const ok = await confirmDialog({
       title: `「${name}」を削除しますか？`,
-      message: isActive
-        ? `このバージョンは採用中です。削除すると、この話には採用原稿がなくなり、通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。\n\nこの操作は取り消せません。`
-        : 'この推敲バージョンの本文と推敲メモを削除します。この操作は取り消せません。',
+      message: versionDeleteMessage(selected, isActive, submissionsReferencingVersion(data, selected.id)),
       confirmLabel: '削除',
       danger: true,
     })
@@ -216,10 +242,16 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
 
   return (
     <div className={`pw-pane pw-pane-compare${isActive ? ' is-active-selected' : ''}`} data-testid="compare-pane">
-      <div className="pw-head pw-chead">
-        <button type="button" className="btn btn-ghost pw-tbtn pw-back" onClick={() => api.select(null)} data-testid="back-to-list">
+      <div className={`pw-head pw-chead${moreOpen ? ' is-more-open' : ''}`} ref={headRef}>
+        <button
+          type="button"
+          className="btn btn-ghost pw-tbtn pw-back"
+          onClick={() => api.select(null)}
+          title="推敲バージョンの一覧に戻る"
+          data-testid="back-to-list"
+        >
           <ChevronLeftIcon />
-          <span>一覧</span>
+          <span className="pw-back-label">一覧</span>
         </button>
         <select
           className="select pw-vselect"
@@ -243,52 +275,71 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           data-testid="adopt-button"
         >
           <CheckIcon />
-          <span>{isActive ? '採用中' : '採用する'}</span>
+          <span className="pw-adopt-label">{isActive ? '採用中' : '採用する'}</span>
         </button>
-        <div className="pw-tools" role="group" aria-label="推敲バージョンの操作">
-          <button type="button" className="btn pw-tbtn" onClick={duplicate} title="このバージョンを複製する" data-testid="duplicate-selected">
-            <ReviseIcon />
-            <span className="pw-tlabel">複製</span>
-          </button>
-          <button type="button" className="btn pw-tbtn" onClick={() => void copyText(live)} title="本文をクリップボードにコピー">
-            <CopyIcon />
-            <span className="pw-tlabel">コピー</span>
-          </button>
-          <button type="button" className="btn btn-danger pw-tbtn" onClick={() => void remove()} title="このバージョンを削除する" data-testid="delete-version">
-            <TrashIcon />
-            <span className="pw-tlabel">削除</span>
-          </button>
-        </div>
-        <span className="pw-break pw-break-a" aria-hidden="true" />
-        {isActive ? (
-          <span className="pw-vname pw-vname-static">
-            <span className="badge badge-active">採用中</span>
-            <span className="ellipsis">{versionDisplayName(selected)}</span>
-          </span>
-        ) : (
-          <DraftInput
-            ref={nameRef}
-            key={selected.id}
-            className="input-bare pw-vname"
-            value={selected.name}
-            onCommit={(v) => commitVersion(selected.id, { name: v })}
-            placeholder="稿の名前"
-            aria-label="バージョン名"
-            data-testid="selected-version-name"
-          />
-        )}
-        <span className="pw-break pw-break-b" aria-hidden="true" />
-        <span className="pw-meta">
-          <span data-testid="compare-count">{stats}</span>
-          {delta !== null ? (
-            <span className={deltaClass(delta)} title="採用原稿との文字数の差">
-              採用原稿より{formatCharDelta(delta)}
+        <button
+          ref={moreToggleRef}
+          type="button"
+          className="icon-btn pw-more-toggle"
+          aria-expanded={moreOpen}
+          aria-controls={moreId}
+          aria-label="稿の名前・文字数・操作"
+          title="稿の名前・文字数・操作"
+          onClick={() => (moreOpen ? closeMore() : setMoreFor(selected.id))}
+          data-testid="compare-more-button"
+        >
+          <MoreIcon />
+        </button>
+        {/* 広いペインではヘッダーにそのまま並び、狭いペインでは「…」で開くパネルになる */}
+        <div className="pw-cmore" id={moreId}>
+          <div className="pw-tools" role="group" aria-label="推敲バージョンの操作">
+            <button type="button" className="btn pw-tbtn" onClick={duplicate} title="このバージョンを複製する" data-testid="duplicate-selected">
+              <ReviseIcon />
+              <span className="pw-tlabel">複製</span>
+            </button>
+            <button type="button" className="btn pw-tbtn" onClick={copy} title="本文をクリップボードにコピー">
+              <CopyIcon />
+              <span className="pw-tlabel">コピー</span>
+            </button>
+            <button type="button" className="btn btn-danger pw-tbtn" onClick={() => void remove()} title="このバージョンを削除する" data-testid="delete-version">
+              <TrashIcon />
+              <span className="pw-tlabel">削除</span>
+            </button>
+          </div>
+          <span className="pw-break pw-break-a" aria-hidden="true" />
+          {isActive ? (
+            <span className="pw-vname pw-vname-static">
+              <span className="badge badge-active">採用中</span>
+              <span className="ellipsis">{versionDisplayName(selected)}</span>
             </span>
-          ) : null}
-          <span className="faint" title={formatDateTime(selected.updatedAt)}>
-            {formatRelative(selected.updatedAt)}に更新
+          ) : (
+            <DraftInput
+              ref={nameRef}
+              key={selected.id}
+              className="input-bare pw-vname"
+              value={selected.name}
+              onCommit={(v) => commitVersion(selected.id, { name: v })}
+              placeholder="稿の名前"
+              aria-label="バージョン名"
+              data-testid="selected-version-name"
+            />
+          )}
+          <span className="pw-break pw-break-b" aria-hidden="true" />
+          <span className="pw-meta">
+            <span data-testid="compare-count">
+              {stats.chars}
+              <span className="pw-pages">・{stats.pages}</span>
+            </span>
+            {delta !== null ? (
+              <span className={deltaClass(delta)} title="採用原稿との文字数の差">
+                採用原稿より{formatCharDelta(delta)}
+              </span>
+            ) : null}
+            <span className="faint pw-updated" title={formatDateTime(selected.updatedAt)}>
+              {formatRelative(selected.updatedAt)}に更新
+            </span>
           </span>
-        </span>
+        </div>
       </div>
 
       {isActive ? (
@@ -297,11 +348,19 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
         </div>
       ) : diffMode ? (
         <div className="pw-notice pw-notice-diff" role="note" data-testid="diff-summary">
-          {summary ? (
+          {active ? (
             <>
-              <span className="pw-legend add">追加 +{formatCount(summary.added)}字</span>
-              <span className="pw-legend del">削除 −{formatCount(summary.removed)}字</span>
-              <span className="faint">差分表示中は編集できません</span>
+              {summary ? (
+                <>
+                  <span className="pw-legend add">追加 +{formatCount(summary.added)}字</span>
+                  <span className="pw-legend del">削除 −{formatCount(summary.removed)}字</span>
+                </>
+              ) : null}
+              <span className="faint pw-diff-hint">差分表示中は編集できません</span>
+              {/* 採用原稿を書いている間は前回の差分を出しておき、少し待ってから計算し直す */}
+              <span className={`faint pw-diff-stale${diff.stale ? ' is-on' : ''}`} data-testid="diff-stale">
+                {diff.stale ? '差分を計算中…' : ''}
+              </span>
             </>
           ) : (
             <span>差分を表示するには採用原稿が必要です。いまは本文だけを表示しています。</span>
@@ -320,8 +379,8 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
             data-testid="compare-readonly"
             data-scroll-sync="compare"
           />
-        ) : segments ? (
-          <DiffView segments={segments} />
+        ) : diffMode && active ? (
+          <DiffView segments={diff.segments} />
         ) : diffMode ? (
           <textarea
             key={selected.id}
@@ -354,6 +413,11 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           <NoteIcon />
           <span className="pw-note-label">推敲メモ</span>
           {!noteOpen && selected.note.trim() ? <span className="pw-note-preview ellipsis">{firstLine(selected.note)}</span> : null}
+          {/* 狭いペインではヘッダーに文字数を出さないので、ここに出す */}
+          <span className="pw-note-count" aria-hidden="true">
+            {stats.chars}
+            {delta !== null ? <span className={deltaClass(delta)}>{formatCharDelta(delta)}</span> : null}
+          </span>
         </summary>
         <DraftTextarea
           ref={api.noteEditor}

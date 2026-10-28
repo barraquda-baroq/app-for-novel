@@ -1,25 +1,39 @@
 // 原稿画面（このアプリの肝）。
 // 採用原稿（左／上）と推敲バージョン（右／下）を同じ画面に並べ、比率はスライダーと境界のドラッグで変えられる。
 // ?v=<versionId> で比較する推敲バージョンを選ぶ。
+// スマホ（狭い画面・高さの低い画面）では、本文などを編集している間は画面上部を畳む（集中モード）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { episodeNumbers, locatePiece, pieceLabel } from '../../domain/structure'
 import type { ID, Piece, Title } from '../../domain/types'
 import { paths } from '../../routes'
 import { flushNow, useData } from '../../store/appStore'
 import { notify, usePrefs } from '../../store/uiStore'
 import type { DraftHandle } from '../../ui/DraftField'
-import { useDocumentTitle, useSplitOrientation } from '../../ui/hooks'
+import { useDocumentTitle, useMediaQuery, useSplitOrientation } from '../../ui/hooks'
 import { BookIcon } from '../../ui/icons'
 import { AppHeader, type Crumb } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
 import { SplitPane } from '../../ui/SplitPane'
 import { ActivePane } from './ActivePane'
-import { DraftRegistryContext, flushEditors, useLocalFlag, useScrollSync, type DraftRegistry } from './editing'
+import {
+  DraftRegistryContext,
+  flushEditors,
+  isTypingWithin,
+  useHeldWhile,
+  useLocalFlag,
+  useScrollSync,
+  useTypingFocus,
+  type DraftRegistry,
+} from './editing'
 import { activeVersionOf, neighborPieces, resolveSelected } from './logic'
 import { PieceBar } from './PieceBar'
 import './piece.css'
 import { VersionsPane, type WorkspaceApi } from './VersionsPane'
+
+/** 一覧から比較を開いた履歴の印（history.state に入れる） */
+const COMPARE_FROM_LIST = 'pwCompareFromList'
+type CompareHistoryState = { [COMPARE_FROM_LIST]?: boolean }
 
 export function PieceWorkspace() {
   const { titleId = '', pieceId = '' } = useParams()
@@ -36,8 +50,10 @@ export function PieceWorkspace() {
 function Workspace({ title, piece }: { title: Title; piece: Piece }) {
   const data = useData()
   const navigate = useNavigate()
+  const location = useLocation()
   const [params, setParams] = useSearchParams()
-  const orientation = useSplitOrientation()
+  const autoOrientation = useSplitOrientation()
+  const orientationPref = usePrefs((s) => s.splitOrientation)
   const splitRatio = usePrefs((s) => s.splitRatio)
   const showDiff = usePrefs((s) => s.showDiff)
   const setPrefs = usePrefs((s) => s.setPrefs)
@@ -59,6 +75,15 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
   const requested = params.get('v')
   const selected = resolveSelected(data, piece, requested)
 
+  // 入力中の欄（ペインの中なら、スマホでは集中モード）。編集中の欄が作り直される時は判定し直す
+  const typing = useTypingFocus(rootRef, '.pw-split', `${active?.id ?? ''}|${selected?.id ?? ''}|${showDiff ? 1 : 0}`)
+  const writing = typing === 'area'
+  // 指で操作する端末では、仮想キーボードの開閉で画面の縦横比が変わっても、入力中は分割の向きを変えない
+  // （キーボードはフォーカスの直後に出るので、typing の反映を待たずに今のフォーカスも見る）
+  const touch = useMediaQuery('(pointer: coarse)')
+  const holdOrientation = touch && orientationPref === 'auto' && (typing !== null || isTypingWithin('.pw-root'))
+  const orientation = useHeldWhile(autoOrientation, holdOrientation)
+
   useDocumentTitle(`${label}${piece.subtitle.trim() ? ` ${piece.subtitle.trim()}` : ''} — ${title.name}`)
 
   // 削除済み・別の話のバージョンを指す ?v は落として一覧表示にする
@@ -75,8 +100,17 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
     }
   }, [requested, selected, setParams])
 
+  // 一覧から比較を開いた時は履歴に積む（ブラウザ・Android の「戻る」で一覧に戻れるように）。
+  // 比較中にバージョンを切り替える時は積まない。一覧に戻る時は、積んだ履歴があればそれを戻る。
+  const historyState = location.state as CompareHistoryState | null
+  const openedFromList = historyState?.[COMPARE_FROM_LIST] === true
   const select = useCallback(
     (versionId: ID | null) => {
+      if (!versionId && requested && openedFromList) {
+        navigate(-1)
+        return
+      }
+      const entering = Boolean(versionId) && !requested
       setParams(
         (prev) => {
           const next = new URLSearchParams(prev)
@@ -84,10 +118,10 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
           else next.delete('v')
           return next
         },
-        { replace: true },
+        entering ? { state: { [COMPARE_FROM_LIST]: true } } : { replace: true, state: versionId ? historyState : null },
       )
     },
-    [setParams],
+    [setParams, navigate, requested, openedFromList, historyState],
   )
 
   // Ctrl/Cmd+S: 入力中の下書きも含めてすぐに保存する
@@ -132,7 +166,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
 
   return (
     <DraftRegistryContext.Provider value={drafts}>
-      <div className="pw-root" ref={rootRef} data-testid="piece-workspace">
+      <div className={`pw-root${writing ? ' is-focus-mode' : ''}`} ref={rootRef} data-testid="piece-workspace">
         <AppHeader
           crumbs={crumbs}
           actions={

@@ -1,7 +1,8 @@
 // 原稿画面（採用原稿と推敲バージョンの比較）で使う純粋な計算。
+import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import { flatten } from '../../domain/structure'
 import { countChars, formatCount, textStats } from '../../domain/text'
-import type { AppData, ID, Piece, Version } from '../../domain/types'
+import type { AppData, ID, Piece, Submission, Version } from '../../domain/types'
 
 /** 採用中のバージョン（採用なし・参照切れなら null） */
 export function activeVersionOf(data: AppData, piece: Piece): Version | null {
@@ -45,8 +46,14 @@ export function formatCharDelta(delta: number): string {
 
 /** 「3,214字・原稿用紙9枚」 */
 export function statsLabel(text: string): string {
+  const s = statsParts(text)
+  return `${s.chars}・${s.pages}`
+}
+
+/** 文字数と原稿用紙換算を別々に（狭いヘッダーでは文字数だけを出す） */
+export function statsParts(text: string): { chars: string; pages: string } {
   const s = textStats(text)
-  return `${formatCount(s.chars)}字・原稿用紙${formatCount(s.manuscriptPages)}枚`
+  return { chars: `${formatCount(s.chars)}字`, pages: `原稿用紙${formatCount(s.manuscriptPages)}枚` }
 }
 
 /** 推敲メモなどの最初の空でない行 */
@@ -100,6 +107,9 @@ export function mapScrollTop(srcTop: number, srcMax: number, dstMax: number): nu
   return Math.round(ratio * dstMax)
 }
 
+/** 上部バーを1行にする画面（スマホの横持ちなど、高さが低く幅のある画面）。piece.css と揃える */
+export const COMPACT_QUERY = '(max-height: 500px) and (min-width: 481px)'
+
 /** スライダー（15〜85）と比率（0.15〜0.85）の変換 */
 export const RATIO_MIN = 15
 export const RATIO_MAX = 85
@@ -115,4 +125,35 @@ export function sliderToRatio(value: number): number {
 
 export function versionDisplayName(v: Pick<Version, 'name'>): string {
   return v.name.trim() || '（無題の稿）'
+}
+
+/**
+ * 推敲バージョンを削除する時の確認文。
+ * 応募の記録（応募時の原稿）として参照されている稿なら、そのことと、削除しても控えが残るかを添える。
+ */
+export function versionDeleteMessage(
+  version: Pick<Version, 'id' | 'pieceId'>,
+  isActive: boolean,
+  referencedBy: Pick<Submission, 'contestName' | 'snapshot'>[],
+): string {
+  const parts = [
+    isActive
+      ? `このバージョンは採用中です。削除すると、この話には採用原稿がなくなり、通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。`
+      : 'この推敲バージョンの本文と推敲メモを削除します。',
+  ]
+  if (referencedBy.length > 0) {
+    const names = referencedBy.map((s) => `「${s.contestName.trim() || '（コンテスト名未設定）'}」`).join('')
+    // 古い記録には本文の控えがない
+    const hasCopy = referencedBy.every((s) => {
+      const p = s.snapshot?.pieces?.[version.pieceId]
+      return Boolean(p && p.versionId === version.id && p.body !== null)
+    })
+    parts.push(
+      hasCopy
+        ? `この稿は${names}の応募時の原稿として記録されています。記録には本文の控えがあるので、削除しても応募時の原稿は残ります。`
+        : `この稿は${names}の応募時の原稿として記録されています。記録に本文の控えがないため、削除すると応募時の原稿は読めなくなります。`,
+    )
+  }
+  parts.push('この操作は取り消せません。')
+  return parts.join('\n\n')
 }

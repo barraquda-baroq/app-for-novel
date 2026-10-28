@@ -9,7 +9,7 @@ import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea } from '../../ui/DraftField'
 import { CopyIcon, PlusIcon } from '../../ui/icons'
 import { commitVersion, flushEditors, tryRun, useLiveText, useRegisteredDraft } from './editing'
-import { statsLabel } from './logic'
+import { statsParts } from './logic'
 import { ReviseIcon, UnadoptIcon } from './pieceIcons'
 import type { WorkspaceApi } from './VersionsPane'
 
@@ -22,7 +22,7 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
   const [live, onDraftChange] = useLiveText(active.id, active.body)
   const nameRef = useRegisteredDraft()
   const deferred = useDeferredValue(live)
-  const stats = useMemo(() => statsLabel(deferred), [deferred])
+  const stats = useMemo(() => statsParts(deferred), [deferred])
 
   const duplicate = () => {
     flushEditors(api.activeEditor, nameRef)
@@ -83,8 +83,11 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
         </div>
         <span className="pw-break" aria-hidden="true" />
         <div className="pw-meta">
-          <span data-testid="active-count">{stats}</span>
-          <span className="faint" title={formatDateTime(active.updatedAt)}>
+          <span data-testid="active-count">
+            {stats.chars}
+            <span className="pw-pages">・{stats.pages}</span>
+          </span>
+          <span className="faint pw-updated" title={formatDateTime(active.updatedAt)}>
             {formatRelative(active.updatedAt)}に更新
           </span>
           <span className="faint pw-meta-hint">通し読みに反映されます</span>
