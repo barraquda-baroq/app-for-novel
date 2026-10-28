@@ -260,17 +260,33 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     unsub?.()
     const gen = ++listenerGen
     subscribedFrom = cursor
+    // 「以上」で購読する: 別々の書き込みが同じ時刻になることがあり、「より後」だと、記録した位置と同じ時刻の
+    // まだ受け取っていない変更を取りこぼすため（同じ時刻の受け取り済みの変更が届き直すのは、反映しても変わらない）
     const q = cursor
-      ? query(col, where('updated', '>', new Timestamp(cursor.s, cursor.n)), orderBy('updated'))
+      ? query(col, where('updated', '>=', new Timestamp(cursor.s, cursor.n)), orderBy('updated'))
       : query(col, orderBy('updated'))
+    /** この購読で、まだサーバーと揃っていない（最初のサーバーからの通知を受け取っていない） */
+    let first = true
     unsub = onSnapshot(
       q,
+      // 状態だけの変化も受け取る（控えから作った最初の通知の後、サーバーの内容が変わっていなくても
+      // 「サーバーと揃った」通知を受け取れるように）
+      { includeMetadataChanges: true },
       (snap) => {
-        const changed = snap
-          .docChanges()
-          .filter((c) => c.type !== 'removed')
-          .map((c) => c.doc)
         const fromCache = snap.metadata.fromCache
+        // 最初にサーバーと揃うまでの、端末の中の控え（前の購読で受け取った、もう古いかもしれない内容）から
+        // 作った通知は使わない。揃った後の通知は、控えの印が付いていてもサーバーから届いた変化なので反映する
+        // （受け取った位置は、控えの印が無い通知でだけ進める）
+        if (first && fromCache) return
+        // 最初にサーバーと揃った通知は、すべての文書を受け取ったものとして扱う
+        // （控えからの通知で「追加」済みとされた文書は、変化として届かないため）
+        const changed = first
+          ? snap.docs
+          : snap
+              .docChanges()
+              .filter((c) => c.type !== 'removed')
+              .map((c) => c.doc)
+        first = false
         const all = snap.docs
         void exclusive(async () => {
           // 反映に失敗した後の通知は捨てる（後の通知で位置が進むと、失敗した分を取りこぼすため）
