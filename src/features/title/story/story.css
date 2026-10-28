@@ -207,7 +207,7 @@
   border-left: 3px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgb(30 30 40 / 4%);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
   transition: border-color 0.12s;
 }
@@ -284,7 +284,7 @@
 
 .story-row-subtitle {
   min-width: 0;
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-size: 16px;
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -321,7 +321,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-size: 13px;
   color: var(--text-muted);
 }

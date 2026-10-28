@@ -64,7 +64,7 @@ export function IdeaArea({ headingId, focusSection }: { headingId: string; focus
   return (
     <>
       <div className="home-pane-head">
-        <BulbIcon className="icon home-pane-icon is-idea" />
+        <BulbIcon className="icon home-pane-icon" />
         <h2 id={headingId} tabIndex={-1}>
           アイデア
         </h2>

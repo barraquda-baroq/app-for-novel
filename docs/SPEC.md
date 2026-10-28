@@ -69,5 +69,7 @@ src/routes.ts    パス生成（HashRouter）
 - データの読み取りは `const data = useData()` ＋ `useMemo(() => 導出(data, ...), [data, ...])`。セレクタで毎回新しい配列を返さない（無限再描画になる）。単一レコードは `useRecord('versions', id)`。
 - 長編（数百話・数百万字）でも重くならないよう、原稿全体をなめる重い導出（文字数・枚数・指紋）は `bodyMetrics(version)`（稿ごとのキャッシュ）を使い、`useMemo` の依存は `data` 全体ではなく実際に使う表（`data.pieces`・`data.versions`・`data.chapters`・`title.structure` など）に絞る。一覧の行は `React.memo` でレコード単位の props にする（例: `src/features/title/story/useStoryData.ts`）。
 - スタイルは `src/styles.css` の既存クラス（`btn`, `btn-primary`, `btn-active`, `btn-danger`, `btn-ghost`, `btn-sm`, `icon-btn`, `card`, `card-pad`, `section`, `section-head`, `list`, `empty`, `badge-*`, `tabs`, `segmented`, `switch`, `field`, `input`, `textarea`, `select`, `input-bare`, `row`, `stack`, `muted`, `small`, `hide-mobile`, `show-mobile`）と CSS 変数を使う。機能固有のスタイルは各機能ディレクトリの CSS ファイル（例: `src/features/piece/piece.css`）に書き、コンポーネントから import する。
+- 色は `src/styles.css` の CSS 変数だけを使う（`#fff` などを直接書かない）。外観はホワイト／ダーク／ディープダークの3種（`<html data-theme>`）で、どの外観でも白い面が出ず読めること。領域ごとの色（本編・設定項目・戦略・アイデア・タイトル）は要素に `data-area="story"` などを付けると、その中で `--area`・`--area-text`・`--area-soft` として使える。
+- 書体は UI が `--font-ui`（各端末の標準ゴシック）、原稿・題名・通し読みが `--editor-font`（設定で明朝に切り替え可）。
 - 文言は日本語。スマホ（幅 360px〜）でも操作できること（ボタンは 34px 以上、横スクロールしない）。
 - テスト用に主要な要素には `data-testid` を付ける。

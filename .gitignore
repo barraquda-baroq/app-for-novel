@@ -6,3 +6,4 @@ coverage
 .DS_Store
 e2e/artifacts
 .claude/worktrees
+test-results

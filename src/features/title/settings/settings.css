@@ -70,14 +70,15 @@
   white-space: nowrap;
 }
 
+/* 選んでいる項目は設定項目タブの色（領域の色 --area。styles.css の data-area）で示す */
 .st-cat:hover {
-  border-color: var(--accent);
+  border-color: var(--area, var(--accent));
 }
 
 .st-cat.is-selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
+  border-color: var(--area, var(--accent));
+  background: var(--area-soft, var(--accent-soft));
+  color: var(--area-text, var(--accent));
 }
 
 .st-cat-name {
@@ -101,7 +102,7 @@
 
 .st-cat.is-selected .st-cat-count {
   background: var(--surface);
-  color: var(--accent);
+  color: var(--area-text, var(--accent));
 }
 
 @media (min-width: 900px) {
@@ -155,8 +156,8 @@
   }
 
   .st-cat.is-selected {
-    background: var(--accent-soft);
-    box-shadow: inset 3px 0 0 var(--accent);
+    background: var(--area-soft, var(--accent-soft));
+    box-shadow: inset 3px 0 0 var(--area, var(--accent));
   }
 
   .st-cat-name {
@@ -277,7 +278,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgb(30 30 40 / 4%);
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.12s;
 }
 
@@ -337,7 +338,7 @@
 }
 
 .st-entry-name {
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-size: 17px;
   font-weight: 700;
   line-height: 1.45;
@@ -371,7 +372,7 @@
 }
 
 .input.st-entry-name-input {
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-weight: 700;
   font-size: 17px;
 }
