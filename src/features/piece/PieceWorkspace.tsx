@@ -142,6 +142,21 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
     [pieceKind, label, session, piece.id, storedLabel, storedSubtitle],
   )
 
+  // キーボードで押した「保存」「破棄」は、押した後に押せなく（無く）なってフォーカスが外れるので、最後に書いていた欄へ戻す
+  // （指・マウスで押した時は戻さない。スマホでキーボードが開いてしまうので）
+  const refocusAfter = (run: () => Promise<unknown>) => (e: { detail: number }) => {
+    const byKeyboard = e.detail === 0
+    void run().then(() => {
+      if (!byKeyboard) return
+      requestAnimationFrame(() => {
+        const a = document.activeElement
+        if (!a || a === document.body || !a.isConnected || a.matches(':disabled')) {
+          hub.getTarget()?.element()?.focus({ preventScroll: true })
+        }
+      })
+    })
+  }
+
   const crumbs: Crumb[] = [{ label: title.name || '無題のタイトル', to: paths.title(title.id) }]
   if (chapter) crumbs.push({ label: chapter.name || '（無題の章）', to: paths.chapter(title.id, chapter.id) })
   crumbs.push({ label })
@@ -166,7 +181,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
         crumbs={crumbs}
         actions={
           <>
-            <SaveControls dirty={dirty} onSave={() => void save()} onDiscard={() => void discard()} />
+            <SaveControls dirty={dirty} onSave={refocusAfter(save)} onDiscard={refocusAfter(discard)} />
             <Link
               to={paths.read(title.id)}
               className="icon-btn"

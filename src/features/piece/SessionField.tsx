@@ -17,7 +17,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { revealCaret } from './caret'
-import { useSessionValue, type EditorHub, type FieldHandle } from './editorHub'
+import { isFieldVisible, useSessionValue, type EditorHub, type FieldHandle } from './editorHub'
 import type { Sel } from './history'
 import type { FieldKey } from './session'
 import { applySymbol } from './symbols'
@@ -75,7 +75,8 @@ function useFieldEditor<E extends FieldEl>({ hub, fieldKey, stored, symbols = fa
       element: () => ref.current,
       insert: (kind) => {
         const el = ref.current
-        if (!el) return
+        // 見えていない欄（閉じた推敲メモなど）には入れない
+        if (!el || !isFieldVisible(el)) return
         // 変換中（Android のキーボードは英字の単語も変換中として扱う）に押された時は、そこまでを確定してから入れる
         flushComposition.current()
         const sel = readSel(el)

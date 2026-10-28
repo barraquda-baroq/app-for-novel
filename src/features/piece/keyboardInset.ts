@@ -3,6 +3,7 @@
 // iOS Safari は画面が縮まず、見えている範囲（visualViewport）だけが縮むので、その差を CSS 変数 --kb-inset に入れる。
 // 原稿画面はこの分だけ高さを詰め、いちばん下の記号バーがキーボードのすぐ上に来るようにする（piece.css）。
 import { useEffect } from 'react'
+import { revealCaret } from './caret'
 
 /** 拡大している時（ピンチ）は測らない */
 const MAX_SCALE = 1.01
@@ -29,6 +30,10 @@ export function useKeyboardInset(): void {
       if (inset === last) return
       last = inset
       root.style.setProperty('--kb-inset', `${inset}px`)
+      // 画面を詰めると本文欄も縮むが、ブラウザはカーソルの行までスクロールしない。隠れたら見える位置までスクロールする
+      // （revealCaret が位置を測る時に、新しい --kb-inset で組み直される）
+      const a = document.activeElement
+      if (a instanceof HTMLTextAreaElement && a.closest('.pw-root')) revealCaret(a)
     }
     const update = () => {
       cancelAnimationFrame(frame)

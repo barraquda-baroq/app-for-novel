@@ -41,7 +41,7 @@ export interface FieldEdit {
   /** 編集を始めた時の保存先の値 */
   base: string
   value: string
-  /** 本文なら、編集を始めた時の稿の名前（保存前に稿が削除されていた時の控えの名前） */
+  /** 本文・推敲メモなら、編集を始めた時の稿の名前（保存前に稿が削除されていた時の控えの名前） */
   label?: string
 }
 
@@ -77,6 +77,8 @@ export class EditSession {
   private nameRev = 0
   /** 端末内の控え（src/features/piece/crashDraft.ts）をこのセッションが書いた・復元したか */
   draftOwned = false
+  /** 控えの持ち主の印（同じ話を別のタブで開いている時に、そのタブの控えを「前回の編集」と取り違えない） */
+  readonly owner = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
   constructor(readonly pieceId: ID) {}
 
@@ -136,8 +138,10 @@ export class EditSession {
 
   private editFor(prev: FieldEdit | null, stored: string, value: string, label?: string): FieldEdit | null {
     const base = prev ? prev.base : stored
-    // 編集を始めた時の値に戻ったら、編集していないのと同じ
-    if (value === base) return null
+    // 保存先の値と同じになったら、編集していないのと同じ。
+    // 編集中に保存先が変わっていたら（同期で別の端末の編集が届いた等）、base に戻しても編集のまま
+    // （保存先の値に切り替えると、表示と履歴がずれて、打った文字を「進む」で取り戻せなくなる）
+    if (value === stored) return null
     const l = prev ? prev.label : label
     return l !== undefined ? { base, value, label: l } : { base, value }
   }

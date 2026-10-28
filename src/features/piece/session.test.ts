@@ -136,6 +136,27 @@ describe('編集セッション', () => {
     expect(s.display(body, '')).toBe('あいう漢字')
   })
 
+  it('編集中に保存先が変わった後で、書き始めの値まで巻き戻しても、別の端末の本文に切り替えず「進む」で戻せる', () => {
+    const s = new EditSession('p')
+    const key = versionField('v', 'body')
+    typeAt(s, key, 'A', 'abc', 0)
+    // 同期で別の端末の本文 X が届いた（表示はこの端末の編集のまま）
+    expect(s.display(key, 'X')).toBe('Aabc')
+    expect(s.undo(key, 'X')?.value).toBe('A')
+    expect(s.display(key, 'X')).toBe('A')
+    expect(s.isDirty()).toBe(true)
+    expect(s.redo(key, 'X')?.value).toBe('Aabc')
+    expect(s.display(key, 'X')).toBe('Aabc')
+    // 打ち消して書き始めの値に戻しても同じ
+    s.change(key, 'X', { value: 'A', selBefore: caret(4), selAfter: caret(1), inputType: 'deleteContentBackward', at: 5000 })
+    expect(s.display(key, 'X')).toBe('A')
+    expect(s.isDirty()).toBe(true)
+    // 保存先の値と同じにしたら、編集なし
+    s.change(key, 'X', { value: 'X', selBefore: { start: 0, end: 1 }, selAfter: caret(1), inputType: 'insertText', at: 9000 })
+    expect(s.isDirty()).toBe(false)
+    expect(s.display(key, 'X')).toBe('X')
+  })
+
   it('保存先の値が別の操作で変わって表示が変わったら、それまでの履歴は捨てる', () => {
     const s = new EditSession('p')
     const key = versionField('v', 'name')
@@ -165,7 +186,7 @@ describe('端末内の控え（アプリが落ちた時のため）', () => {
     const s = new EditSession(pieceId)
     typeAt(s, versionField(v1, 'body'), '元の本文', '。続き', 0)
     typeAt(s, pieceField(pieceId, 'subtitle'), '', '旅立ち', 0)
-    expect(writeCrashDraft(pieceId, s.edits(), 1234)).toBe(true)
+    expect(writeCrashDraft(pieceId, s.edits(), s.owner, 1234)).toBe(true)
     const draft = readCrashDraft(pieceId)!
     expect(draft.at).toBe(1234)
     const edits = resolveCrashDraft(draft, (k) => storedFieldValue(data, pieceId, k))
@@ -240,14 +261,54 @@ describe('端末内の控え（アプリが落ちた時のため）', () => {
     expect(readCrashDraft('p')).toBeNull()
   })
 
-  it('稿が削除されていたら、本文だけを復元する（保存すると新しい稿になる）', () => {
-    const { pieceId } = setup()
+  it('稿が削除されていても、本文・稿の名前・推敲メモを復元する（保存すると新しい稿になる）。話が無ければ話の題は戻さない', () => {
+    const { data, pieceId } = setup()
     writeCrashDraft(pieceId, {
       [versionField('gone', 'body')]: { base: '', value: '消えた稿の本文', label: '第2稿' },
       [versionField('gone', 'name')]: { base: '第2稿', value: '改' },
+      [versionField('gone', 'note')]: { base: '', value: '消えた稿のメモ', label: '第2稿' },
+      [pieceField('gone-piece', 'subtitle')]: { base: '', value: '題' },
     })
     const edits = resolveCrashDraft(readCrashDraft(pieceId)!, () => undefined)
-    expect(Object.keys(edits)).toEqual([versionField('gone', 'body')])
+    expect(Object.keys(edits).sort()).toEqual(
+      [versionField('gone', 'body'), versionField('gone', 'name'), versionField('gone', 'note')].sort(),
+    )
     expect(edits[versionField('gone', 'body')].label).toBe('第2稿')
+    // 保存すると、名前とメモも一緒に新しい稿として残る
+    const s = new EditSession(pieceId)
+    s.restore(edits)
+    const r = applyPieceEdits(data, pieceId, s.pendingEdits(), opts)
+    expect(r.result.dropped).toEqual([])
+    expect(r.data.versions[r.result.conflicts[0].newVersionId]).toMatchObject({
+      name: '改（競合: この端末での編集）',
+      body: '消えた稿の本文',
+      note: '消えた稿のメモ',
+    })
+  })
+
+  it('推敲メモだけの控えも、稿が削除されていれば復元する', () => {
+    const { pieceId } = setup()
+    writeCrashDraft(pieceId, { [versionField('gone', 'note')]: { base: '', value: 'メモだけ', label: '第2稿' } })
+    const edits = resolveCrashDraft(readCrashDraft(pieceId)!, () => undefined)
+    expect(edits).toEqual({ [versionField('gone', 'note')]: { base: '', value: 'メモだけ', label: '第2稿' } })
+  })
+
+  it('控えには書いた画面の印（owner）を入れ、消す時は自分の控えだけを消す', () => {
+    const { pieceId } = setup()
+    const edits = { [pieceField(pieceId, 'subtitle')]: { base: '', value: 'あ' } }
+    writeCrashDraft(pieceId, edits, 'tab-a', 10)
+    expect(readCrashDraft(pieceId)).toMatchObject({ owner: 'tab-a', at: 10 })
+    // 別のタブ（tab-b）が保存・破棄しても、tab-a の控えは消さない
+    removeCrashDraft(pieceId, 'tab-b')
+    expect(readCrashDraft(pieceId)?.owner).toBe('tab-a')
+    writeCrashDraft(pieceId, {}, 'tab-b')
+    expect(readCrashDraft(pieceId)?.owner).toBe('tab-a')
+    removeCrashDraft(pieceId, 'tab-a')
+    expect(readCrashDraft(pieceId)).toBeNull()
+    // 持ち主の印の無い古い控えは、どの画面からでも消せる
+    writeCrashDraft(pieceId, edits)
+    expect(readCrashDraft(pieceId)?.owner).toBeUndefined()
+    removeCrashDraft(pieceId, 'tab-b')
+    expect(readCrashDraft(pieceId)).toBeNull()
   })
 })

@@ -118,7 +118,7 @@ describe('保存', () => {
     expect(r.result.dropped).toHaveLength(1)
   })
 
-  it('保存する前に稿が削除されていたら、本文だけを新しい稿として残す', () => {
+  it('保存する前に稿が削除されていたら、本文と推敲メモを新しい稿として残す（どちらの文章も消さない）', () => {
     const { data: d0, pieceId, v1 } = setup()
     const data = deleteVersion(d0, v1)
     const r = applyPieceEdits(
@@ -132,7 +132,47 @@ describe('保存', () => {
     )
     expect(r.result.conflicts).toHaveLength(1)
     expect(r.result.conflicts[0]).toMatchObject({ reason: 'deleted', name: '第1稿（競合: この端末での編集）' })
-    expect(r.data.versions[r.result.conflicts[0].newVersionId].body).toBe('この端末の本文')
-    expect(r.result.dropped.map((e) => e.field)).toEqual(['note'])
+    const kept = r.data.versions[r.result.conflicts[0].newVersionId]
+    expect(kept).toMatchObject({ body: 'この端末の本文', note: 'メモ', pieceId })
+    expect(r.result.dropped).toEqual([])
+  })
+
+  it('推敲メモ・稿の名前だけを編集していた稿が削除されていても、新しい稿として残す', () => {
+    const { data: d0, pieceId, v1 } = setup()
+    const data = deleteVersion(d0, v1)
+    const noteOnly = applyPieceEdits(
+      data,
+      pieceId,
+      [{ ...edit('version', v1, 'note', '元のメモ', '長い推敲メモ'), label: '第1稿' }],
+      opts,
+    )
+    expect(noteOnly.result.conflicts).toEqual([
+      expect.objectContaining({
+        reason: 'deleted',
+        versionId: v1,
+        originalName: '第1稿',
+        name: '第1稿（競合: この端末での編集）',
+      }),
+    ])
+    expect(noteOnly.data.versions[noteOnly.result.conflicts[0].newVersionId]).toMatchObject({ body: '', note: '長い推敲メモ' })
+    expect(noteOnly.result.dropped).toEqual([])
+
+    // 稿の名前を変えていたら、その名前で残す
+    const renamed = applyPieceEdits(
+      data,
+      pieceId,
+      [edit('version', v1, 'name', '第1稿', '改稿'), edit('version', v1, 'note', '元のメモ', 'メモ')],
+      opts,
+    )
+    expect(renamed.result.conflicts[0]).toMatchObject({ originalName: '改稿', name: '改稿（競合: この端末での編集）' })
+    expect(renamed.data.versions[renamed.result.conflicts[0].newVersionId].note).toBe('メモ')
+  })
+
+  it('削除されていた稿の編集が空にしただけなら、残すものはない（書き込めなかった編集にもしない）', () => {
+    const { data: d0, pieceId, v1 } = setup()
+    const data = deleteVersion(d0, v1)
+    const r = applyPieceEdits(data, pieceId, [edit('version', v1, 'note', '元のメモ', '')], opts)
+    expect(r.result).toEqual({ conflicts: [], dropped: [] })
+    expect(r.data.pieces[pieceId].versionIds).toEqual(data.pieces[pieceId].versionIds)
   })
 })

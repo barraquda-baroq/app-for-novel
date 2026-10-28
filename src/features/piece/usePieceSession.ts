@@ -1,15 +1,23 @@
 // 原稿画面の保存ボタンまわり: 編集セッションの保存・破棄、画面を離れる時の確認、端末内の控えと復元。
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useBlocker, type BlockerFunction } from 'react-router-dom'
+import { useBlocker, type Blocker, type BlockerFunction } from 'react-router-dom'
 import type { AppData, ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { flushNow, getData } from '../../store/appStore'
 import { attempt, notify, notifyError } from '../../store/uiStore'
-import { setUnsavedEdits } from '../../store/unsavedEdits'
+import { registerEnsureSaved, setUnsavedEdits, useUnsavedEdits, type EnsureSaved } from '../../store/unsavedEdits'
 import { conflictVersionName } from '../../sync/conflicts'
 import { formatDateTime } from '../../ui/browser'
 import { choiceDialog, confirmDialog } from '../../ui/dialogs'
-import { readCrashDraft, removeCrashDraft, resolveCrashDraft, writeCrashDraft, type CrashDraft } from './crashDraft'
+import {
+  editOwnerAlive,
+  holdEditOwner,
+  readCrashDraft,
+  removeCrashDraft,
+  resolveCrashDraft,
+  writeCrashDraft,
+  type CrashDraft,
+} from './crashDraft'
 import { EditorHub, useSessionDirty } from './editorHub'
 import { EditSession, parseFieldKey, versionField, type FieldEdit, type FieldKey } from './session'
 
@@ -60,8 +68,11 @@ export interface PieceSession {
   /** 確認してから、保存していない編集を捨てる */
   discard: () => Promise<void>
   /** 話の構成を変える操作（採用・追加・複製・削除など）の前に呼ぶ。保存していない編集があれば保存するか聞く */
-  ensureSaved: () => Promise<boolean>
+  ensureSaved: EnsureSaved
 }
+
+/** 確認の文に出す、この画面で編集できる項目 */
+const EDITED_FIELDS = '本文・稿の名前・推敲メモ・話の題・見出し'
 
 export function usePieceSession(pieceId: ID): PieceSession {
   const [session] = useState(() => new EditSession(pieceId))
@@ -73,39 +84,56 @@ export function usePieceSession(pieceId: ID): PieceSession {
   useEffect(() => () => setUnsavedEdits(false), [])
 
   const forgetDraft = useCallback(() => {
-    removeCrashDraft(session.pieceId)
+    // 別のタブが書き直した控え（そのタブの編集）は消さない
+    removeCrashDraft(session.pieceId, session.owner)
     session.draftOwned = false
   }, [session])
 
   const save = useCallback(async (): Promise<boolean> => {
     const edits = session.pendingEdits()
+    let dropped = 0
     if (edits.length > 0) {
       const result = attempt(() => actions.savePieceEdits(session.pieceId, edits, { conflictName }))
       if (!result) return false
-      const conflicted = new Set(result.conflicts.map((c) => versionField(c.versionId, 'body')))
-      session.markSaved(edits, conflicted)
+      // 競合した本文（保存先の値を表示し直す）・削除されていた稿の項目は、履歴も捨てる
+      const resetHistory = new Set<FieldKey>()
+      for (const c of result.conflicts) {
+        resetHistory.add(versionField(c.versionId, 'body'))
+        if (c.reason === 'deleted') {
+          resetHistory.add(versionField(c.versionId, 'name'))
+          resetHistory.add(versionField(c.versionId, 'note'))
+        }
+      }
+      // 書き込めなかった編集は保存したことにしない（控えも残す）
+      const droppedSet = new Set(result.dropped)
+      session.markSaved(
+        edits.filter((e) => !droppedSet.has(e)),
+        resetHistory,
+      )
       if (!session.isDirty()) forgetDraft()
       for (const c of result.conflicts) {
         const name = c.originalName.trim() || '無題の稿'
         notify(
           c.reason === 'changed'
             ? `別の端末で「${name}」が書き換えられていたため、この端末の本文を「${c.name}」として残しました`
-            : `「${name}」が削除されていたため、この端末の本文を「${c.name}」として残しました`,
+            : `「${name}」が削除されていたため、この端末の編集を「${c.name}」として残しました`,
         )
       }
+      dropped = result.dropped.length
     }
     const ok = await flushNow()
-    if (ok) notify('保存しました')
-    else notifyError('端末に保存できませんでした。端末の空き容量を確認してください。')
-    return true
+    if (!ok) notifyError('端末に保存できませんでした。端末の空き容量を確認してください。')
+    else if (dropped > 0)
+      notifyError('保存先が無くなっていたため、保存できなかった編集があります。要らなければ「破棄」で取り消してください。')
+    else notify('保存しました')
+    return dropped === 0
   }, [session, forgetDraft])
 
   const discard = useCallback(async () => {
     if (!session.isDirty()) return
     const ok = await confirmDialog({
       title: '保存していない編集を破棄しますか？',
-      message:
-        'この話で保存していない編集（本文・稿の名前・推敲メモ・話の題）をすべて取り消し、保存した時の内容に戻します。元には戻せません。',
+      message: `この話で保存していない編集（${EDITED_FIELDS}）をすべて取り消し、保存した時の内容に戻します。元には戻せません。`,
       confirmLabel: '破棄',
       danger: true,
     })
@@ -115,16 +143,30 @@ export function usePieceSession(pieceId: ID): PieceSession {
     notify('保存していない編集を破棄しました')
   }, [session, forgetDraft])
 
-  const ensureSaved = useCallback(async (): Promise<boolean> => {
-    if (!session.isDirty()) return true
-    const ok = await confirmDialog({
-      title: '保存していない編集があります。保存してから続けますか？',
-      message: 'この操作の前に、この話の編集（本文・稿の名前・推敲メモ・話の題）を保存します。',
-      confirmLabel: '保存して続ける',
-    })
-    if (!ok) return false
-    return save()
-  }, [session, save])
+  const ensureSaved = useCallback<EnsureSaved>(
+    async (opts) => {
+      if (!session.isDirty()) return true
+      const ok = await confirmDialog({
+        title: '保存していない編集があります。保存してから続けますか？',
+        message: opts?.message ?? `この操作の前に、この話の編集（${EDITED_FIELDS}）を保存します。`,
+        confirmLabel: opts?.confirmLabel ?? '保存して続ける',
+      })
+      if (!ok) return false
+      return save()
+    },
+    [session, save],
+  )
+
+  // アプリの更新の前にも、保存していない編集を保存するか聞けるようにする（src/ui/Layout.tsx の UpdateBanner）
+  useEffect(() => {
+    registerEnsureSaved(ensureSaved)
+    return () => {
+      if (useUnsavedEdits.getState().ensureSaved === ensureSaved) registerEnsureSaved(null)
+    }
+  }, [ensureSaved])
+
+  // このセッションが開いている間は、控えの持ち主として名乗る（別のタブで開いても「復元しますか？」と聞かない）
+  useEffect(() => holdEditOwner(session.owner), [session])
 
   useCrashDraftWriter(session)
   useRestorePrompt(session)
@@ -156,10 +198,10 @@ function useCrashDraftWriter(session: EditSession): void {
       timer = null
       since = 0
       if (session.isDirty()) {
-        if (writeCrashDraft(pieceId, session.edits())) session.draftOwned = true
+        if (writeCrashDraft(pieceId, session.edits(), session.owner)) session.draftOwned = true
       } else if (session.draftOwned) {
         // 巻き戻して編集が無くなった: 自分で書いた控えは消す（前回の控えにはまだ答えていなければ触らない）
-        removeCrashDraft(pieceId)
+        removeCrashDraft(pieceId, session.owner)
         session.draftOwned = false
       }
     }
@@ -203,11 +245,14 @@ function useRestorePrompt(session: EditSession): void {
 
 async function askRestore(session: EditSession, draft: CrashDraft, isMounted: () => boolean): Promise<void> {
   const { pieceId } = session
+  // 別のタブ・ウィンドウでいま編集している控え（そのタブが開いている）なら、聞かずにそのままにする
+  if (draft.owner && draft.owner !== session.owner && (await editOwnerAlive(draft.owner))) return
+  if (!isMounted()) return
   const read = (key: FieldKey) => storedFieldValue(getData(), pieceId, key)
   const first = resolveCrashDraft(draft, read)
   if (Object.keys(first).length === 0) {
     // 控えの内容はもう保存されている（別のタブで保存した等）
-    removeCrashDraft(pieceId)
+    removeCrashDraft(pieceId, draft.owner)
     return
   }
   const choice = await choiceDialog({
@@ -221,7 +266,7 @@ async function askRestore(session: EditSession, draft: CrashDraft, isMounted: ()
   // 答える前に画面を離れた: 控えはそのまま残し、次に開いた時にまた聞く
   if (!isMounted()) return
   if (choice === 'discard') {
-    removeCrashDraft(pieceId)
+    removeCrashDraft(pieceId, draft.owner)
     notify('前回の編集の控えを破棄しました')
     return
   }
@@ -229,7 +274,8 @@ async function askRestore(session: EditSession, draft: CrashDraft, isMounted: ()
   if (session.isDirty()) return
   const edits = resolveCrashDraft(draft, read)
   session.restore(edits)
-  session.draftOwned = true
+  // 控えはこのタブのものとして書き直す（落ちた前のタブの持ち主のままにしない）
+  if (writeCrashDraft(pieceId, session.edits(), session.owner)) session.draftOwned = true
   notify('前回の編集を復元しました。「保存」を押すと保存されます')
 }
 
@@ -241,46 +287,58 @@ function useLeaveGuard(session: EditSession, dirty: boolean, save: () => Promise
     [session],
   )
   const blocker = useBlocker(shouldBlock)
-  const handled = useRef<unknown>(null)
+  // 確かめている間にもう一度「戻る」が押されると blocker が新しくなる。答えは最新の blocker に返す
+  const latest = useRef<Blocker>(blocker)
+  latest.current = blocker
+  const asking = useRef(false)
 
   useEffect(() => {
-    if (blocker.state !== 'blocked') {
-      handled.current = null
-      return
+    if (blocker.state !== 'blocked') return
+    // 確かめている間の「戻る」や StrictMode で、同じ確認を2つ出さない
+    if (asking.current) return
+    asking.current = true
+    const proceed = () => {
+      const b = latest.current
+      if (b.state === 'blocked') b.proceed()
     }
-    // StrictMode などで同じ確認を2回出さない
-    if (handled.current === blocker.location) return
-    handled.current = blocker.location
-    const b = blocker
+    const reset = () => {
+      const b = latest.current
+      if (b.state === 'blocked') b.reset()
+    }
     void choiceDialog({
       title: '保存していない編集があります',
-      message:
-        '保存しないで移動すると、この話で書いた内容（本文・稿の名前・推敲メモ・話の題）のうち保存していないものは消えます。',
+      message: `保存しないで移動すると、この話で書いた内容（${EDITED_FIELDS}）のうち保存していないものは消えます。`,
       choices: [
         { value: 'cancel', label: 'キャンセル', testId: 'leave-cancel' },
         { value: 'discard', label: '保存せずに移動', danger: true, testId: 'leave-discard' },
         { value: 'save', label: '保存して移動', primary: true, testId: 'leave-save' },
       ],
-    }).then(async (choice) => {
-      if (choice === 'save') {
-        if (await save()) b.proceed?.()
-        else b.reset?.()
-      } else if (choice === 'discard') {
-        session.discard()
-        forgetDraft()
-        b.proceed?.()
-      } else b.reset?.()
     })
+      .then(async (choice) => {
+        if (choice === 'save') {
+          if (await save()) proceed()
+          else reset()
+        } else if (choice === 'discard') {
+          session.discard()
+          forgetDraft()
+          proceed()
+        } else reset()
+      })
+      .finally(() => {
+        asking.current = false
+      })
   }, [blocker, session, save, forgetDraft])
 
-  // タブ・アプリを閉じる、再読み込みする時はブラウザの確認を出す（編集は端末内の控えにも残る）
+  // タブ・アプリを閉じる、再読み込みする時はブラウザの確認を出す（編集は端末内の控えにも残る）。
+  // 保存した直後（描き直す前）に閉じても確認を出さないよう、その時のセッションを見る
   useEffect(() => {
     if (!dirty) return
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!session.isDirty()) return
       e.preventDefault()
       e.returnValue = ''
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [dirty])
+  }, [dirty, session])
 }

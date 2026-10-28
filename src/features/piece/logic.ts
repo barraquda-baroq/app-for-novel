@@ -65,8 +65,18 @@ export function formatStats(s: Pick<TextStats, 'chars' | 'manuscriptPages'>): { 
  * 稿ごとにキャッシュした値（bodyMetrics）を使い、書いている間の下書きだけを数え直す。
  */
 export function liveStats(version: Version, text: string): TextStats {
-  return text === version.body ? bodyMetrics(version) : textStats(text)
+  if (text === version.body) return bodyMetrics(version)
+  // 書いている間の本文は、採用原稿・比較・一覧の文字数で同じ本文を何度も数えないよう、直近の数件を控えて使う
+  const hit = recentStats.find((r) => r.text === text)
+  if (hit) return hit.stats
+  const stats = textStats(text)
+  recentStats.unshift({ text, stats })
+  if (recentStats.length > RECENT_STATS) recentStats.pop()
+  return stats
 }
+
+const RECENT_STATS = 4
+const recentStats: { text: string; stats: TextStats }[] = []
 
 /**
  * コピーする時の見出し。第n話は「第3話　題」（題がなければ「第3話」）、特殊ブロックは見出し（題があれば「見出し　題」）。

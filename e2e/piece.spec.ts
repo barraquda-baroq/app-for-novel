@@ -602,6 +602,117 @@ test.describe('原稿画面', () => {
     const longTasks = await page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks)
     expect(Math.max(0, ...longTasks)).toBeLessThan(200)
   })
+
+  test('長い原稿でも、記号・巻き戻し・進むのたびに全文を組み直さない（カーソルの行は段落ごとの高さを控えて測る）', async ({
+    page,
+  }, info) => {
+    test.skip(!isDesktop(info), '計測はデスクトップだけで行う')
+    await openApp(page)
+    const { titleId, pieceId } = await seed(page, ({ actions, getData }) => {
+      const sentences = [
+        '朝の光が書架の隙間から差し込み、埃がゆっくりと舞っていた。',
+        '司書の澪は、誰もいない閲覧室で一冊の古い本を開いた。',
+        '「また、ここに戻ってきたのね」',
+        'ページをめくるたびに、紙の匂いと一緒に、遠い夏の記憶がよみがえる。',
+      ]
+      const lines: string[] = []
+      for (let i = 0; lines.join('\n').length < 15000; i++)
+        lines.push(i % 9 === 4 ? '' : sentences[(i * 7) % 4] + sentences[(i * 3 + 1) % 4])
+      const titleId = actions.createTitle('長編')
+      const pieceId = actions.addEpisode(titleId)
+      actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body: lines.join('\n') })
+      return { titleId, pieceId }
+    })
+    await openPiece(page, titleId, pieceId)
+    const editor = page.getByTestId('active-editor')
+    await editor.click()
+    await page.keyboard.press('ControlOrMeta+End')
+
+    // 段落ごとに測った位置が、全文を組んで測った位置（前の測り方）と同じこと。2回目からは速いこと
+    const r = await editor.evaluate(async (el: HTMLTextAreaElement, url: string) => {
+      const { caretLine } = (await import(/* @vite-ignore */ url)) as typeof import('../src/features/piece/caret')
+      const props = [
+        'boxSizing',
+        'paddingTop',
+        'paddingRight',
+        'paddingBottom',
+        'paddingLeft',
+        'fontFamily',
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'fontVariant',
+        'fontFeatureSettings',
+        'letterSpacing',
+        'lineHeight',
+        'textTransform',
+        'wordSpacing',
+        'textIndent',
+        'tabSize',
+        'wordBreak',
+        'lineBreak',
+      ] as const
+      const full = (pos: number) => {
+        const cs = getComputedStyle(el)
+        const m = document.createElement('div')
+        for (const p of props) m.style[p] = cs[p]
+        Object.assign(m.style, {
+          position: 'absolute',
+          visibility: 'hidden',
+          top: '0',
+          left: '-99999px',
+          boxSizing: 'border-box',
+          border: '0',
+          width: `${el.clientWidth}px`,
+          whiteSpace: 'pre-wrap',
+          overflowWrap: 'break-word',
+        })
+        m.textContent = el.value.slice(0, pos)
+        const mark = document.createElement('span')
+        mark.textContent = el.value.slice(pos, pos + 1).replace('\n', '') || '\u200b'
+        m.appendChild(mark)
+        document.body.appendChild(m)
+        const top = m.getBoundingClientRect().top
+        const t = mark.getBoundingClientRect().top - top
+        m.remove()
+        return t
+      }
+      const v = el.value
+      const end = v.length
+      caretLine(el, end)
+      const times: number[] = []
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now()
+        caretLine(el, end)
+        times.push(performance.now() - t0)
+      }
+      times.sort((a, b) => a - b)
+      const samples = [0, 1, end]
+      for (let i = 397; i < end; i += 997) samples.push(i)
+      for (let i = v.indexOf('\n'); i >= 0 && samples.length < 40; i = v.indexOf('\n', i + 400)) samples.push(i + 1)
+      const diffs = samples.map((pos) => Math.abs(caretLine(el, pos).top - full(pos)))
+      return { median: times[2], maxDiff: Math.max(...diffs), length: end }
+    }, '/src/features/piece/caret.ts')
+    expect(r.length).toBeGreaterThan(15000)
+    expect(r.maxDiff).toBeLessThanOrEqual(1)
+    expect(r.median).toBeLessThan(10)
+
+    // 記号・巻き戻し・進むを続けて押しても、画面が止まらない
+    await page.evaluate(() => {
+      const w = window as unknown as { __longTasks: number[] }
+      w.__longTasks = []
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) w.__longTasks.push(Math.round(e.duration))
+      }).observe({ type: 'longtask' })
+    })
+    for (let i = 0; i < 10; i++) await page.getByTestId('symbol-dash').click()
+    for (let i = 0; i < 10; i++) await page.getByTestId('undo-button').click()
+    for (let i = 0; i < 10; i++) await page.getByTestId('redo-button').click()
+    await expect(editor).toHaveValue(/(――){10}$/)
+    await expect(editor).toBeFocused()
+    const longTasks = await page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks)
+    expect(Math.max(0, ...longTasks)).toBeLessThan(200)
+  })
 })
 
 test.describe('スマホでの表示', () => {

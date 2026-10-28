@@ -3,7 +3,7 @@
 // （pointerdown / mousedown を止めるので、スマホのキーボードも閉じない）。
 // デスクトップは編集画面のいちばん下、スマホはキーボードのすぐ上（閉じている時は画面の下）に常に出す。
 import { useSyncExternalStore, type SyntheticEvent } from 'react'
-import { useHubTarget, type EditorHub } from './editorHub'
+import { isFieldVisible, useHubTarget, type EditorHub, type FieldHandle } from './editorHub'
 import { HistoryRedoIcon, HistoryUndoIcon } from './pieceIcons'
 import { SYMBOLS } from './symbols'
 
@@ -21,6 +21,13 @@ export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boole
   const canUndo = useSyncExternalStore(hub.session.subscribe, () => (key ? hub.session.canUndo(key) : false))
   const canRedo = useSyncExternalStore(hub.session.subscribe, () => (key ? hub.session.canRedo(key) : false))
   const symbolsOn = target?.symbols ?? false
+  // 見えていない欄（ほかの方法で隠れた欄）は書き換えない
+  const act = (f: (t: FieldHandle) => void) => {
+    const t = hub.getTarget()
+    const el = t?.element()
+    if (t && el && isFieldVisible(el)) f(t)
+    else hub.releaseHidden()
+  }
 
   return (
     <div
@@ -34,7 +41,7 @@ export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boole
       <button
         type="button"
         className="btn pw-sym pw-sym-icon"
-        onClick={() => target?.undo()}
+        onClick={() => act((t) => t.undo())}
         disabled={!canUndo}
         aria-label="巻き戻し"
         title={`巻き戻し（${UNDO_KEY}）`}
@@ -45,7 +52,7 @@ export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boole
       <button
         type="button"
         className="btn pw-sym pw-sym-icon"
-        onClick={() => target?.redo()}
+        onClick={() => act((t) => t.redo())}
         disabled={!canRedo}
         aria-label="進む"
         title={`進む（${REDO_KEY}）`}
@@ -59,7 +66,7 @@ export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boole
           key={s.kind}
           type="button"
           className={`btn pw-sym pw-sym-${s.kind}`}
-          onClick={() => target?.insert(s.kind)}
+          onClick={() => act((t) => t.insert(s.kind))}
           disabled={!symbolsOn}
           aria-label={s.title}
           title={symbolsOn ? s.title : `${s.title}（本文か推敲メモを書いている時に使えます）`}

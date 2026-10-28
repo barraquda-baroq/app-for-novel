@@ -1,12 +1,19 @@
 // 入力した直後に再読み込み・画面を閉じても、書いた内容が消えないこと
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Dialog, type Page } from '@playwright/test'
 import { openApp, seed, seedTitleWithEpisodes } from './helpers'
 
-async function reloadApp(page: Page) {
-  // 原稿画面に保存していない編集がある間は、再読み込みの前にブラウザの確認が出る
-  page.once('dialog', (d) => void d.accept())
+/** 再読み込みする。出たブラウザの確認（dialog の種類）を返す（原稿画面に保存していない編集がある間だけ beforeunload が出る） */
+async function reloadApp(page: Page): Promise<string[]> {
+  const types: string[] = []
+  const onDialog = (d: Dialog) => {
+    types.push(d.type())
+    void d.accept()
+  }
+  page.on('dialog', onDialog)
   await page.reload()
   await page.waitForFunction(() => Boolean(window.__ns))
+  page.off('dialog', onDialog)
+  return types
 }
 
 test.describe('入力直後の保存', () => {
@@ -18,8 +25,8 @@ test.describe('入力直後の保存', () => {
     await editor.click()
     await editor.press('Control+End')
     await page.keyboard.type('直後に閉じても残る一文。')
-    // 待たずに再読み込み（閉じる時に端末内に控える）
-    await reloadApp(page)
+    // 待たずに再読み込み（閉じる時に端末内に控える）。保存していない編集があるので、ブラウザの確認が出る
+    expect(await reloadApp(page)).toEqual(['beforeunload'])
     const dialog = page.getByRole('dialog')
     await expect(dialog).toContainText('前回保存されなかった編集があります')
     await dialog.getByRole('button', { name: '復元' }).click()
@@ -43,7 +50,8 @@ test.describe('入力直後の保存', () => {
     const stored = await page.evaluate((id) => window.__ns.getData().memos[id].body, memoId)
     // 1.5 秒ごとには反映されるので、途中までは必ずストアに入っている
     expect(stored.length).toBeGreaterThan(0)
-    await reloadApp(page)
+    // メモは自動保存なので、再読み込みの確認は出ない
+    expect(await reloadApp(page)).toEqual([])
     await expect(page.getByTestId('memo-body')).toHaveValue('あいうえおかきくけこさしすせそ')
   })
 })

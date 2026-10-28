@@ -1,5 +1,5 @@
 // 原稿画面の保存ボタン・未保存の警告・端末内の控え・巻き戻し／進む・記号バー・見出し付きコピーの E2E テスト
-import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type Dialog, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { openApp, seed } from './helpers'
 
 const BODY = '吾輩は猫である。名前はまだ無い。'
@@ -68,12 +68,32 @@ async function menuItem(page: Page, toggle: string, testId: string): Promise<Loc
   return page.getByTestId(testId)
 }
 
-async function reloadAccepting(page: Page) {
-  // 保存していない編集がある間は、閉じる・再読み込みの前にブラウザの確認が出る
-  page.once('dialog', (d) => void d.accept())
+/** 再読み込みする。保存していない編集がある間だけ、ブラウザの確認（beforeunload）が出ること */
+async function reloadAccepting(page: Page, { warns }: { warns: boolean }) {
+  const types: string[] = []
+  const onDialog = (d: Dialog) => {
+    types.push(d.type())
+    void d.accept()
+  }
+  page.on('dialog', onDialog)
   await page.reload()
   await page.waitForFunction(() => Boolean(window.__ns))
+  page.off('dialog', onDialog)
+  expect(types).toEqual(warns ? ['beforeunload'] : [])
   await expect(page.getByText('読み込み中…')).toHaveCount(0)
+}
+
+/** 開発サーバーが配る、カーソルの行を測る関数のモジュール（画面と同じものを読み込む） */
+const CARET_MODULE = '/src/features/piece/caret.ts'
+type CaretModule = typeof import('../src/features/piece/caret')
+
+/** 本文欄のカーソルの行（見えない要素で測る）が、本文欄の見えている範囲に入っているか */
+async function caretLineVisible(editor: Locator): Promise<boolean> {
+  return editor.evaluate(async (el: HTMLTextAreaElement, url: string) => {
+    const { caretLine } = (await import(/* @vite-ignore */ url)) as CaretModule
+    const { top, height } = caretLine(el, el.selectionEnd)
+    return top >= el.scrollTop - 1 && top + height <= el.scrollTop + el.clientHeight + 1
+  }, CARET_MODULE)
 }
 
 test.describe('保存ボタン', () => {
@@ -117,9 +137,40 @@ test.describe('保存ボタン', () => {
     if (isDesktop(info)) await expect(save).toBeDisabled()
     else await expect(save).toBeHidden()
     await expect(page.locator('.save-status')).toBeVisible()
+    // 保存した後は、再読み込みしてもブラウザの確認は出ない
+    await reloadAccepting(page, { warns: false })
+    await expect(editor).toHaveValue(`${BODY}追記した一文。`)
     // 保存した後は、確認なしで移動できる
     await page.getByTestId('next-piece').click()
     await expect(page).toHaveURL(new RegExp(`/p/${ids.secondId}$`))
+  })
+
+  test('キーボードで押した「保存」「破棄」の後は、書いていた欄にフォーカスを戻す', async ({ page }, info) => {
+    test.skip(!isDesktop(info), 'キーボードだけでの操作はデスクトップで確かめる')
+    const ids = await seedWork(page)
+    await openPiece(page, ids, ids.pieceId)
+    const editor = page.getByTestId('active-editor')
+    await appendTo(page, editor, '保存する')
+    await page.getByTestId('save-button').focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('unsaved-badge')).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    expect(await storedBody(page, ids.v1)).toBe(`${BODY}保存する`)
+
+    await page.keyboard.type('捨てる')
+    await page.getByTestId('discard-button').focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog')).toContainText('保存していない編集を破棄しますか？')
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(editor).toHaveValue(`${BODY}保存する`)
+    await expect(editor).toBeFocused()
+
+    // マウスで押した時はフォーカスを戻さない（スマホでキーボードを開かないため）
+    await appendTo(page, editor, '押す')
+    await page.getByTestId('save-button').click()
+    await expect(page.getByTestId('unsaved-badge')).toHaveCount(0)
+    await expect(editor).not.toBeFocused()
   })
 
   test('「破棄」は確かめてから、保存した時の内容に戻す', async ({ page }) => {
@@ -177,6 +228,39 @@ test.describe('画面を離れる時の確認', () => {
     expect(await storedBody(page, ids.v1)).toBe(`${BODY}その二。`)
   })
 
+  test('確かめている間にもう一度「戻る」を押しても確認は1つだけ。キャンセルの後に選び直せる', async ({ page }) => {
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+    const ids = await seedWork(page)
+    // ホーム → タイトル → 話（アプリ内のリンクで開く。「戻る」でタイトルに戻れる履歴にする）
+    await page.locator(`a[href$="/t/${ids.titleId}"]`).first().click()
+    await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
+    await page.locator(`a[href$="/p/${ids.pieceId}"]`).first().click()
+    await expect(page).toHaveURL(new RegExp(`/p/${ids.pieceId}$`))
+    const editor = page.getByTestId('active-editor')
+    await appendTo(page, editor, '戻る前。')
+    await leaveEditor(page, editor)
+    const dialog = page.getByRole('dialog')
+
+    await page.goBack()
+    await expect(dialog).toContainText('保存していない編集があります')
+    await page.goBack()
+    await page.waitForTimeout(300)
+    await expect(dialog).toHaveCount(1)
+    await page.getByTestId('leave-cancel').click()
+    await expect(dialog).toHaveCount(0)
+    await page.waitForTimeout(300)
+    await expect(dialog).toHaveCount(0)
+    await expect(page).toHaveURL(new RegExp(`/p/${ids.pieceId}$`))
+    await expect(editor).toHaveValue(`${BODY}戻る前。`)
+
+    await page.goBack()
+    await page.getByTestId('leave-discard').click()
+    await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
+    expect(await storedBody(page, ids.v1)).toBe(BODY)
+    expect(errors).toEqual([])
+  })
+
   test('比較する稿を選び直す（同じ話の中）時は確かめず、編集もそのまま残る', async ({ page }) => {
     const ids = await seedWork(page)
     await openPiece(page, ids, ids.pieceId, ids.v2)
@@ -221,7 +305,7 @@ test.describe('端末内の控え', () => {
     await expect
       .poll(() => page.evaluate((id) => localStorage.getItem(`novel-studio:edit:${id}`) ?? '', ids.pieceId))
       .toContain('控えの題')
-    await reloadAccepting(page)
+    await reloadAccepting(page, { warns: true })
 
     const dialog = page.getByRole('dialog')
     await expect(dialog).toContainText(/前回保存されなかった編集があります（\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}）。復元しますか？/)
@@ -242,13 +326,13 @@ test.describe('端末内の控え', () => {
     const ids = await seedWork(page)
     await openPiece(page, ids, ids.pieceId)
     await appendTo(page, page.getByTestId('active-editor'), '要らない編集')
-    await reloadAccepting(page)
+    await reloadAccepting(page, { warns: true })
     const dialog = page.getByRole('dialog')
     await dialog.getByTestId('restore-discard').click()
     await expect(page.getByTestId('active-editor')).toHaveValue(BODY)
     expect(await page.evaluate((id) => localStorage.getItem(`novel-studio:edit:${id}`), ids.pieceId)).toBeNull()
-    // もう聞かない
-    await reloadAccepting(page)
+    // もう聞かない（保存していない編集もないので、再読み込みの確認も出ない）
+    await reloadAccepting(page, { warns: false })
     await expect(page.getByTestId('piece-workspace')).toBeVisible()
     await expect(page.getByRole('dialog')).toHaveCount(0)
   })
@@ -357,6 +441,56 @@ test.describe('巻き戻し／進む', () => {
     await expect(editor).toHaveValue(/200行目の文章です。――$/)
   })
 
+  test('畳んだ推敲メモには、記号・巻き戻しが働かない（ボタンは押せなくなる）', async ({ page }) => {
+    const ids = await seedWork(page)
+    await openPiece(page, ids, ids.pieceId, ids.v2)
+    const compare = page.getByTestId('compare-editor')
+    await appendTo(page, compare, '本文に足す')
+    await leaveEditor(page, compare)
+    await page.getByTestId('note-toggle').click()
+    const note = page.getByTestId('version-note')
+    await note.click()
+    await page.keyboard.type('メモ')
+    await expect(page.getByTestId('symbol-dash')).toBeEnabled()
+    await page.getByTestId('note-toggle').click()
+    await expect(note).toBeHidden()
+    await expect(page.getByTestId('symbol-dash')).toBeDisabled()
+    await expect(page.getByTestId('undo-button')).toBeDisabled()
+    await page.getByTestId('symbol-dash').click({ force: true })
+    await page.getByTestId('undo-button').click({ force: true })
+    await expect(note).toHaveValue('メモ')
+    await expect(compare).toHaveValue('推敲中の本文。本文に足す')
+    // 本文に戻れば、本文に働く
+    await compare.click()
+    await page.keyboard.press('ControlOrMeta+End')
+    await page.getByTestId('undo-button').click()
+    await expect(compare).toHaveValue('推敲中の本文。')
+    await expect(note).toHaveValue('メモ')
+  })
+
+  test('稿の一覧は、保存していない名前と文字数を出し、編集のある稿に「未保存」の印を付ける', async ({ page }, info) => {
+    // スマホはいちばん狭い幅（360px）で確かめる
+    if (!isDesktop(info)) await page.setViewportSize({ width: 360, height: 780 })
+    const ids = await seedWork(page)
+    await openPiece(page, ids, ids.pieceId, ids.v2)
+    const name = await menuItem(page, 'compare-more-button', 'selected-version-name')
+    await name.fill('改稿')
+    await page.keyboard.press('Enter')
+    const compare = page.getByTestId('compare-editor')
+    await appendTo(page, compare, 'あ'.repeat(100))
+    await leaveEditor(page, compare)
+    await page.getByTestId('back-to-list').click()
+    const row = page.getByTestId('version-row').first()
+    await expect(row.getByTestId('version-row-name')).toHaveText('改稿')
+    await expect(row.getByTestId('version-row-count')).toHaveText('107字')
+    await expect(row.getByTestId('version-row-dirty')).toBeVisible()
+    await expect(page.getByTestId('version-row').nth(1).getByTestId('version-row-dirty')).toHaveCount(0)
+    // 印を付けても行は画面の幅に収まる
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    ).toBeLessThanOrEqual(0)
+  })
+
   test('巻き戻しは欄ごと（推敲メモと本文は別々に戻る）', async ({ page }) => {
     const ids = await seedWork(page)
     await openPiece(page, ids, ids.pieceId, ids.v2)
@@ -433,6 +567,24 @@ test.describe('記号バー', () => {
 
   test.describe('スマホ', () => {
     test.skip(({ isMobile }) => !isMobile, 'スマホ（タッチ操作）のみ')
+
+    test('狭いペインで「…」をしまうと、その中の稿の名前には巻き戻しが働かない', async ({ page }) => {
+      await page.setViewportSize({ width: 360, height: 780 })
+      const ids = await seedWork(page)
+      await openPiece(page, ids, ids.pieceId, ids.v2)
+      const more = page.getByTestId('compare-more-button')
+      await more.tap()
+      const name = page.getByTestId('selected-version-name')
+      await name.tap()
+      await page.keyboard.type('改')
+      await expect(name).toHaveValue('第2稿改')
+      await expect(page.getByTestId('undo-button')).toBeEnabled()
+      await more.tap()
+      await expect(name).toBeHidden()
+      await expect(page.getByTestId('undo-button')).toBeDisabled()
+      await more.tap()
+      await expect(name).toHaveValue('第2稿改')
+    })
 
     test('キーボードが閉じている時は画面の下、開くとキーボードのすぐ上。押しても本文のフォーカスは外れない', async ({ page }) => {
       await page.setViewportSize({ width: 360, height: 780 })
@@ -529,6 +681,61 @@ test.describe('記号バー', () => {
         })
         .toBe(844)
     })
+
+    test('iPhone: 画面の下の方の行を書いている時にキーボードが開いても、カーソルの行が隠れない', async ({ page }) => {
+      await page.addInitScript(() => {
+        const w = window as unknown as { __kb: number; __setKeyboard: (px: number) => void }
+        w.__kb = 0
+        const target = new EventTarget()
+        const fake = {
+          get height() {
+            return window.innerHeight - w.__kb
+          },
+          get width() {
+            return window.innerWidth
+          },
+          offsetTop: 0,
+          offsetLeft: 0,
+          pageTop: 0,
+          pageLeft: 0,
+          scale: 1,
+          addEventListener: target.addEventListener.bind(target),
+          removeEventListener: target.removeEventListener.bind(target),
+          dispatchEvent: target.dispatchEvent.bind(target),
+        }
+        Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => fake })
+        w.__setKeyboard = (px: number) => {
+          w.__kb = px
+          target.dispatchEvent(new Event('resize'))
+        }
+      })
+      await page.setViewportSize({ width: 390, height: 844 })
+      await openApp(page)
+      const ids = await seed(page, ({ actions, getData }) => {
+        const body = Array.from({ length: 60 }, (_, i) => `${i + 1}行目の文章です。`).join('\n')
+        const titleId = actions.createTitle('長い作品')
+        const pieceId = actions.addEpisode(titleId)
+        actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body })
+        return { titleId, pieceId }
+      })
+      await openPiece(page, ids, ids.pieceId)
+      const editor = page.getByTestId('active-editor')
+      // 採用原稿のペインの下の方の行をタップする
+      const box = (await editor.boundingBox())!
+      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height * 0.8)
+      await expect(editor).toBeFocused()
+      await expect(page.getByTestId('piece-workspace')).toHaveClass(/is-focus-mode/)
+      await page.waitForTimeout(200)
+      expect(await caretLineVisible(editor)).toBe(true)
+      await page.evaluate(() => (window as unknown as { __setKeyboard: (px: number) => void }).__setKeyboard(330))
+      await expect
+        .poll(async () => {
+          const b = (await page.getByTestId('symbol-bar').boundingBox())!
+          return Math.round(b.y + b.height)
+        })
+        .toBe(844 - 330)
+      await expect.poll(() => caretLineVisible(editor)).toBe(true)
+    })
   })
 })
 
@@ -598,7 +805,7 @@ test.describe('スクリーンショット', () => {
       await page.getByTestId('next-piece').click()
       await shot('leave-dialog')
       await page.getByRole('dialog').getByRole('button', { name: 'キャンセル' }).click()
-      await reloadAccepting(page)
+      await reloadAccepting(page, { warns: true })
       await shot('restore-dialog')
       await page.getByTestId('restore-discard').click()
     }

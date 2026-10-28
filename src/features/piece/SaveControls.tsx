@@ -1,6 +1,9 @@
 // 原稿画面のヘッダーの「未保存」「破棄」「保存」。
 // スマホでは、保存していない編集がある時だけ「破棄」「保存」を出す（ヘッダーが狭いので「未保存」の文字は保存ボタンの印にする）。
-export function SaveControls({ dirty, onSave, onDiscard }: { dirty: boolean; onSave: () => void; onDiscard: () => void }) {
+/** 押した時の呼び出し（detail はクリックの回数。キーボードで押した時は 0） */
+type Press = (e: { detail: number }) => void
+
+export function SaveControls({ dirty, onSave, onDiscard }: { dirty: boolean; onSave: Press; onDiscard: Press }) {
   return (
     <div className={`pw-save${dirty ? ' is-dirty' : ''}`} role="group" aria-label="保存" data-testid="save-controls">
       {dirty ? (

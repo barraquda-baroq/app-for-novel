@@ -153,10 +153,23 @@ function UpdateBanner() {
   const ready = useAppUpdate((s) => s.ready)
   const apply = useAppUpdate((s) => s.apply)
   if (!ready || !apply) return null
+  const update = async () => {
+    // 原稿画面の保存していない編集は、保存してから更新する（キャンセルしたら更新しない）
+    const ensure = useUnsavedEdits.getState().ensureSaved
+    if (
+      ensure &&
+      !(await ensure({
+        message: 'アプリを更新する（読み込み直す）前に、この話で保存していない編集を保存します。',
+        confirmLabel: '保存して更新',
+      }))
+    )
+      return
+    await apply()
+  }
   return (
-    <div className="banner banner-info" role="status">
+    <div className="banner banner-info" role="status" data-testid="update-banner">
       <span className="grow">新しいバージョンのアプリがあります。書いた内容を保存してから更新します。</span>
-      <button type="button" className="btn btn-sm" onClick={() => void apply()}>
+      <button type="button" className="btn btn-sm" onClick={() => void update()} data-testid="app-update">
         更新する
       </button>
     </div>

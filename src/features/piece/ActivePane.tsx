@@ -4,6 +4,7 @@ import { useDeferredValue, useId, useMemo, useRef, useState } from 'react'
 import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import type { Version } from '../../domain/types'
 import { actions } from '../../store/actions'
+import { getData } from '../../store/appStore'
 import { attempt } from '../../store/uiStore'
 import { copyText, formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
@@ -59,9 +60,11 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
   const unadopt = async () => {
     closeMore()
     if (!(await api.ensureSaved())) return
+    // 保存した後の名前（保存していなかった名前の編集も入っている）
+    const current = getData().versions[active.id] ?? active
     const ok = await confirmDialog({
       title: '採用を解除しますか？',
-      message: `この話には採用原稿がなくなり、章・タイトルの通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。\n\n「${active.name || '無題の稿'}」は削除されず、推敲バージョンの一覧に残ります。あとで「採用する」で戻せます。`,
+      message: `この話には採用原稿がなくなり、章・タイトルの通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。\n\n「${current.name.trim() || '無題の稿'}」は削除されず、推敲バージョンの一覧に残ります。あとで「採用する」で戻せます。`,
       confirmLabel: '採用を解除',
     })
     if (!ok) return

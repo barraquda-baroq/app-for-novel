@@ -611,6 +611,19 @@
   font-size: 14px;
 }
 
+/* 保存していない編集のある稿の印（行の幅を広げないよう、名前より先には縮まない小さな札） */
+.pw-root .pw-vrow-dirty {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
 .pw-root .pw-vrow-meta {
   display: flex;
   flex-wrap: wrap;

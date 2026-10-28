@@ -2,6 +2,7 @@
 // 編集を始めた後で保存先が変わっていたら（同期で別の端末の編集が届いた等）:
 // - 本文は上書きしない。この端末の本文を同じ話の新しい稿として残す（どちらの文章も消さない）
 // - 稿の名前・推敲メモ・話の題・見出しは、この端末の編集を正とする
+// - 稿が削除されていたら、この端末の編集（本文・稿の名前・推敲メモ）を同じ話の新しい稿として残す
 import { addVersion, updatePiece, updateVersion } from './storyOps'
 import type { AppData, ID } from './types'
 
@@ -16,7 +17,7 @@ export interface PieceEdit {
   base: string
   /** 画面で編集した値 */
   value: string
-  /** 本文の編集なら、編集を始めた時の稿の名前（保存前に稿が削除されていた時の控えの名前に使う） */
+  /** 本文・推敲メモの編集なら、編集を始めた時の稿の名前（保存前に稿が削除されていた時の控えの名前に使う） */
   label?: string
 }
 
@@ -30,7 +31,7 @@ export interface SavedConflict {
   reason: 'changed' | 'deleted'
   /** 書き換えられていた（または削除されていた）稿 */
   versionId: ID
-  /** この端末の本文を残した新しい稿 */
+  /** この端末の編集（本文。削除されていた時は稿の名前・推敲メモも）を残した新しい稿 */
   newVersionId: ID
   originalName: string
   name: string
@@ -38,7 +39,7 @@ export interface SavedConflict {
 
 export interface PieceEditsResult {
   conflicts: SavedConflict[]
-  /** 保存先が無くなっていて書き込めなかった編集（稿の名前・推敲メモ・話の題など） */
+  /** 保存先が無くなっていて書き込めなかった編集（話ごと削除されていた・第n話の見出しなど） */
   dropped: PieceEdit[]
 }
 
@@ -66,16 +67,19 @@ export function applyPieceEdits(
     const v = d.versions[versionId]
     const { body, name, note } = fields
     if (!v) {
-      // 保存する前に稿が削除されていた: 本文だけは新しい稿として残す
-      if (body && d.pieces[pieceId] && body.value !== '') {
-        const originalName = name?.value ?? body.label ?? ''
+      // 保存する前に稿が削除されていた: 本文・稿の名前・推敲メモを新しい稿として残す（どちらの文章も消さない）
+      const hasText = [body, name, note].some((e) => e && e.value !== '')
+      if (hasText && d.pieces[pieceId]) {
+        const originalName = name?.value ?? body?.label ?? note?.label ?? name?.base ?? ''
         const newName = opts.conflictName(originalName)
-        const r = addVersion(d, pieceId, { body: body.value, name: newName })
-        d = r.data
+        const r = addVersion(d, pieceId, { body: body?.value ?? '', name: newName })
+        d = note && note.value !== '' ? updateVersion(r.data, r.result, { note: note.value }) : r.data
         conflicts.push({ reason: 'deleted', versionId, newVersionId: r.result, originalName, name: newName })
-      } else if (body) dropped.push(body)
-      if (name) dropped.push(name)
-      if (note) dropped.push(note)
+      } else if (hasText) {
+        // 話ごと無くなっていた: 書き込める場所がない
+        for (const e of [body, name, note]) if (e) dropped.push(e)
+      }
+      // 空にした編集だけなら、残すものはない（稿と一緒に片付いたものとして扱う）
       continue
     }
     const patch: { name?: string; note?: string; body?: string } = {}

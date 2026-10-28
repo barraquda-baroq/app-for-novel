@@ -7,10 +7,11 @@ import { createPersistence } from '../../db/persistence'
 import type { ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../store/appStore'
-import { usePrefs, useToasts } from '../../store/uiStore'
+import { useAppUpdate, usePrefs, useToasts } from '../../store/uiStore'
+import { useSync } from '../../sync/controller'
 import { cancelAllDialogs } from '../../ui/dialogs'
 import { AppFrame } from '../../ui/Layout'
-import { draftKey, readCrashDraft, writeCrashDraft } from './crashDraft'
+import { draftKey, ownerLockName, readCrashDraft, writeCrashDraft } from './crashDraft'
 import { PieceWorkspace } from './PieceWorkspace'
 import { pieceField, versionField } from './session'
 
@@ -88,8 +89,22 @@ afterEach(() => {
   resetStoreForTests()
   usePrefs.getState().setPrefs({ showDiff: false })
   useToasts.setState({ toasts: [] })
+  useAppUpdate.setState({ ready: false, apply: null })
+  useSync.setState({ auth: 'idle', status: null, leader: false, everSignedIn: false })
+  Reflect.deleteProperty(navigator, 'locks')
   localStorage.clear()
 })
+
+/** 別のタブが持っている（開いている）控えの持ち主のロックを、Web Locks の代わりに用意する */
+function fakeLocks(heldOwners: string[]) {
+  Object.defineProperty(navigator, 'locks', {
+    configurable: true,
+    value: {
+      request: () => new Promise(() => {}),
+      query: async () => ({ held: heldOwners.map((o) => ({ name: ownerLockName(o), mode: 'exclusive' })), pending: [] }),
+    },
+  })
+}
 
 const bodyOf = (versionId: ID) => getData().versions[versionId]?.body
 const toastTexts = () => useToasts.getState().toasts.map((t) => t.message)
@@ -226,6 +241,8 @@ describe('保存ボタン', () => {
     await user.click(screen.getByTestId('discard-button'))
     const dialog = await screen.findByRole('dialog')
     expect(dialog.textContent).toContain('保存していない編集を破棄しますか？')
+    // 特殊ブロックの見出しも、捨てる編集に入る
+    expect(dialog.textContent).toContain('（本文・稿の名前・推敲メモ・話の題・見出し）')
     await user.click(within(dialog).getByRole('button', { name: '破棄' }))
     expect(editor.value).toBe(bodyOf(v1))
     expect(screen.queryByTestId('unsaved-badge')).toBeNull()
@@ -305,6 +322,28 @@ describe('保存ボタン', () => {
     expect(bodyOf(v1)).toContain('A')
   })
 
+  it('確かめている間にもう一度移動しようとしても（「戻る」の連打）、確認は1つだけ。キャンセルの後に選び直せる', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    const { router } = renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), 'C')
+    act(() => void router.navigate(`/t/${titleId}`))
+    await screen.findByRole('dialog')
+    act(() => void router.navigate(`/t/${titleId}`))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20))
+    })
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'キャンセル' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByTestId('location').textContent).toBe(`/t/${titleId}/p/${pieceId}`)
+
+    act(() => void router.navigate(`/t/${titleId}`))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '保存せずに移動' }))
+    await screen.findByTestId('title-page')
+    expect(bodyOf(v1)).not.toContain('C')
+  })
+
   it('「保存せずに移動」は編集を捨てて移動する', async () => {
     const { titleId, pieceId, v1 } = seed()
     const { router } = renderAt(`/t/${titleId}/p/${pieceId}`)
@@ -316,6 +355,145 @@ describe('保存ボタン', () => {
     await screen.findByTestId('title-page')
     expect(bodyOf(v1)).not.toContain('B')
     expect(localStorage.getItem(draftKey(pieceId))).toBeNull()
+  })
+})
+
+describe('保存と一緒に変わる表示', () => {
+  it('保存する前に稿が別の端末で削除されていたら、推敲メモの編集も新しい稿として残し、そう知らせる', async () => {
+    const { titleId, pieceId, v2 } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('version-note'), '長い推敲メモ')
+    await waitFor(() => expect(readCrashDraft(pieceId)).not.toBeNull(), { timeout: 3000 })
+    // 同期で別の端末の削除が届いた（比較は閉じるが、未保存のまま）
+    act(() => void actions.deleteVersion(v2))
+    await waitFor(() => expect(screen.queryByTestId('compare-pane')).toBeNull())
+    expect(screen.getByTestId('unsaved-badge')).toBeTruthy()
+
+    await user.click(screen.getByTestId('save-button'))
+    const ids = getData().pieces[pieceId].versionIds
+    const kept = getData().versions[ids[ids.length - 1]]
+    expect(kept).toMatchObject({ name: '第2稿（競合: この端末での編集）', note: '長い推敲メモ' })
+    expect(screen.queryByTestId('unsaved-badge')).toBeNull()
+    expect(localStorage.getItem(draftKey(pieceId))).toBeNull()
+    await waitFor(() =>
+      expect(toastTexts()).toContain(
+        '「第2稿」が削除されていたため、この端末の編集を「第2稿（競合: この端末での編集）」として残しました',
+      ),
+    )
+  })
+
+  it('比較の「採用原稿より±n字」は、採用原稿の保存していない編集も含めて数える', async () => {
+    const { titleId, pieceId, v2 } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    // 採用原稿 17字・推敲バージョン 18字
+    expect((await screen.findByTestId('compare-delta')).textContent).toBe('採用原稿より+1字')
+    const editor = screen.getByTestId('active-editor')
+    await user.click(editor)
+    await user.keyboard('{Control>}{End}{/Control}あいう')
+    await waitFor(() => expect(screen.getByTestId('compare-delta').textContent).toBe('採用原稿より−2字'))
+    expect(bodyOf(getData().pieces[pieceId].versionIds[0])).not.toContain('あいう')
+  })
+
+  it('稿の一覧は、保存していない名前・本文・推敲メモを出し、編集のある稿に「未保存」の印を付ける', async () => {
+    const { titleId, pieceId, v2 } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('selected-version-name'), '改')
+    const compare = screen.getByTestId('compare-editor')
+    await user.click(compare)
+    await user.keyboard('{Control>}{End}{/Control}あいう')
+    await user.type(screen.getByTestId('version-note'), '狙いを書いた')
+    await user.click(screen.getByTestId('back-to-list'))
+    const rows = await screen.findAllByTestId('version-row')
+    // 新しい順: 第2稿 → 第1稿（採用中）
+    expect(within(rows[0]).getByTestId('version-row-name').textContent).toBe('第2稿改')
+    await waitFor(() => expect(within(rows[0]).getByTestId('version-row-count').textContent).toBe('21字'))
+    expect(rows[0].textContent).toContain('+4字')
+    expect(rows[0].textContent).toContain('狙いを書いた')
+    expect(within(rows[0]).getByTestId('version-row-dirty').textContent).toBe('未保存')
+    expect(within(rows[0]).getByRole('button', { name: /未保存の編集あり/ })).toBeTruthy()
+    expect(within(rows[1]).queryByTestId('version-row-dirty')).toBeNull()
+    // 採用原稿に書き足すと、差も数え直す
+    await user.click(screen.getByTestId('active-editor'))
+    await user.keyboard('{Control>}{End}{/Control}えお')
+    await waitFor(() => expect(rows[0].textContent).toContain('+2字'))
+    await user.click(screen.getByTestId('save-button'))
+    await waitFor(() => expect(screen.queryAllByTestId('version-row-dirty')).toHaveLength(0))
+    expect(within(screen.getAllByTestId('version-row')[0]).getByTestId('version-row-name').textContent).toBe('第2稿改')
+  })
+
+  it('「保存して続ける」の後の削除・採用の確認と知らせは、保存した後の稿の名前を使う', async () => {
+    const { titleId, pieceId, v2 } = seed()
+    actions.addVersion(pieceId, { body: '三つ目の稿' })
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    const name = await screen.findByTestId('selected-version-name')
+    await user.clear(name)
+    await user.type(name, '改稿A')
+    await user.click(screen.getByTestId('delete-version'))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '保存して続ける' }))
+    await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain('「改稿A」を削除しますか？'))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '削除' }))
+    await waitFor(() => expect(toastTexts()).toContain('改稿Aをゴミ箱に移しました'))
+
+    // 採用も同じ（一覧の行の「採用する」）
+    const rows = await screen.findAllByTestId('version-row')
+    await user.click(within(rows[0]).getByRole('button', { name: /を開いて比較する/ }))
+    const second = await screen.findByTestId('selected-version-name')
+    await user.clear(second)
+    await user.type(second, '改稿B')
+    await user.click(screen.getByTestId('adopt-button'))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '保存して続ける' }))
+    await waitFor(() => expect(toastTexts()).toContain('改稿Bを採用しました'))
+  })
+
+  it('アプリの更新は、保存していない編集を保存するか聞いてから行う（キャンセルしたら更新しない）', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    const storedAtApply: (string | undefined)[] = []
+    const apply = vi.fn(async () => {
+      storedAtApply.push(bodyOf(v1))
+    })
+    useAppUpdate.setState({ ready: true, apply })
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = await screen.findByTestId('active-editor')
+    await user.click(editor)
+    await user.keyboard('{Control>}{End}{/Control}更新前')
+
+    // キャンセル: 更新せず、編集も残る
+    await user.click(screen.getByTestId('app-update'))
+    let dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('保存していない編集があります。保存してから続けますか？')
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }))
+    expect(apply).not.toHaveBeenCalled()
+    expect(screen.getByTestId('unsaved-badge')).toBeTruthy()
+
+    // 保存して更新: 保存してから更新する
+    await user.click(screen.getByTestId('app-update'))
+    dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '保存して更新' }))
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(1))
+    expect(storedAtApply[0]).toContain('更新前')
+  })
+
+  it('保存していない編集がある間は、同期の状態に「ほかの端末と同じ内容です」と言い切らない', async () => {
+    const { titleId, pieceId } = seed()
+    useSync.setState({
+      auth: 'signedIn',
+      leader: true,
+      everSignedIn: true,
+      status: { phase: 'synced', pending: 0, lastSyncedAt: Date.now(), error: null } as never,
+    })
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const indicator = await screen.findByTestId('sync-indicator')
+    expect(indicator.getAttribute('aria-label')).toContain('ほかの端末と同じ内容です')
+    await user.type(screen.getByTestId('active-editor'), '未送信')
+    expect(screen.getByTestId('sync-indicator').getAttribute('aria-label')).toContain('保存していない編集は、保存すると送ります')
+    await user.click(screen.getByTestId('save-button'))
+    expect(screen.getByTestId('sync-indicator').getAttribute('aria-label')).toContain('ほかの端末と同じ内容です')
   })
 })
 
@@ -386,6 +564,7 @@ describe('端末内の控え', () => {
         [versionField(v1, 'body')]: { base: bodyOf(v1)!, value: '復元する本文' },
         [pieceField(pieceId, 'subtitle')]: { base: '', value: '復元する題' },
       },
+      'closed-tab',
       new Date(2026, 9, 28, 7, 40).getTime(),
     )
     renderAt(`/t/${titleId}/p/${pieceId}`)
@@ -395,12 +574,37 @@ describe('端末内の控え', () => {
     expect(dialog.textContent).toContain('第1稿の本文・話の題')
     await user.click(within(dialog).getByRole('button', { name: '復元' }))
     expect((screen.getByTestId('active-editor') as HTMLTextAreaElement).value).toBe('復元する本文')
+    // 控えはこの画面のものとして書き直す（閉じたタブの持ち主のままにしない）
+    expect(readCrashDraft(pieceId)?.owner).toBeTruthy()
+    expect(readCrashDraft(pieceId)?.owner).not.toBe('closed-tab')
     expect((screen.getByTestId('subtitle-input') as HTMLInputElement).value).toBe('復元する題')
     expect(screen.getByTestId('unsaved-badge')).toBeTruthy()
     // 保存するまではストアに入れない
     expect(bodyOf(v1)).not.toBe('復元する本文')
     await user.click(screen.getByTestId('save-button'))
     expect(bodyOf(v1)).toBe('復元する本文')
+  })
+
+  it('同じ話を開いている別のタブの控えは、「前回保存されなかった編集」として聞かず、消しもしない', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    writeCrashDraft(pieceId, { [versionField(v1, 'body')]: { base: bodyOf(v1)!, value: '別のタブで書いている本文' } }, 'open-tab')
+    fakeLocks(['open-tab'])
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    await screen.findByTestId('active-editor')
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(readCrashDraft(pieceId)?.owner).toBe('open-tab')
+  })
+
+  it('控えを書いたタブが閉じていれば（ロックが無ければ）、復元するか聞く', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    writeCrashDraft(pieceId, { [versionField(v1, 'body')]: { base: bodyOf(v1)!, value: '落ちたタブの本文' } }, 'closed-tab')
+    fakeLocks([])
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('前回保存されなかった編集があります')
   })
 
   it('「破棄」を選ぶと控えを消す', async () => {

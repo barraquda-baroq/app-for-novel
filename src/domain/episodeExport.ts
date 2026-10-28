@@ -23,7 +23,22 @@ export function fileSafe(name: string, fallback = '無題'): string {
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
     .replace(/[. ]+$/, '')
     .trim()
-  return (cleaned || fallback).slice(0, 80)
+  // 80文字で切る（サロゲートペアの途中で切らないよう、文字（コードポイント）単位で数える）
+  return Array.from(cleaned || fallback)
+    .slice(0, 80)
+    .join('')
+}
+
+/**
+ * 同じ名前（大文字小文字だけの違いも含む。Windows・Mac では同じファイルになる）が既にあれば (2)(3)… を付ける。
+ * taken には付けた名前を入れていく
+ */
+export function uniqueFileStem(stem: string, taken: Set<string>): string {
+  const key = (n: string) => n.normalize('NFC').toLowerCase()
+  let name = stem
+  for (let n = 2; taken.has(key(name)); n++) name = `${stem}(${n})`
+  taken.add(key(name))
+  return name
 }
 
 export function yyyymmdd(d: Date): string {
@@ -39,18 +54,15 @@ export function episodeFiles(data: AppData, titleId: ID, opts: EpisodeExportOpti
   if (!title) return []
   const numbers = episodeNumbers(data, titleId)
   const prefix = `${yyyymmdd(opts.date)}${fileSafe(title.name, '無題のタイトル')}_`
-  const used = new Map<string, number>()
+  const taken = new Set<string>()
   const files: EpisodeFile[] = []
   for (const item of flatten(data, titleId)) {
     const piece = data.pieces[item.pieceId]
     const v = activeVersion(data, piece)
     if (!v) continue
     const label = pieceLabel(data, piece, numbers)
-    let base = `${prefix}${fileSafe(label)}`
     // 同じ見出しの特殊ブロックが複数ある時は (2)(3)… を付ける
-    const seen = used.get(base) ?? 0
-    used.set(base, seen + 1)
-    if (seen > 0) base = `${base}(${seen + 1})`
+    const base = uniqueFileStem(`${prefix}${fileSafe(label)}`, taken)
     const heading = piece.subtitle.trim() ? `${label}　${piece.subtitle.trim()}` : label
     const text = opts.withHeading ? `${heading}\n\n${v.body}` : v.body
     files.push({ pieceId: piece.id, name: `${base}.txt`, text: toCrlf(text) })
