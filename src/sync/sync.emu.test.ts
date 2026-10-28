@@ -10,9 +10,13 @@ import {
   getDocs,
   initializeFirestore,
   memoryLocalCache,
+  serverTimestamp,
+  setDoc,
   terminate,
   type Firestore,
 } from 'firebase/firestore'
+import emuRules from '../../firestore.emu.rules?raw'
+import prodRules from '../../firestore.rules?raw'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createPersistence, type Persistence } from '../db/persistence'
 import * as E from '../domain/entityOps'
@@ -34,6 +38,8 @@ interface Device {
   engine: SyncEngine | null
   load(): Promise<AppData>
   edit(fn: (d: AppData) => AppData): Promise<void>
+  /** バックアップからの復元・すべて削除 */
+  restore(data: AppData): Promise<void>
   online(): Promise<void>
   offline(): void
 }
@@ -52,7 +58,11 @@ afterEach(async () => {
   }
 })
 
-async function makeDevice(name: string, account: string, opts: { chunkSize?: number } = {}): Promise<Device> {
+async function makeDevice(
+  name: string,
+  account: string,
+  opts: { chunkSize?: number; ownerLock?: boolean } = {},
+): Promise<Device> {
   const app = initializeApp({ projectId: PROJECT, apiKey: 'fake-api-key', authDomain: 'localhost' }, `${name}-${++seq}`)
   const auth = getAuth(app)
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
@@ -71,6 +81,7 @@ async function makeDevice(name: string, account: string, opts: { chunkSize?: num
     applyRemote: (changes, cursor) =>
       p.applyRemote(changes, {
         cursor,
+        device: name,
         versionCopy: (mine) => conflictVersionCopy(mine as unknown as Version, name, newId(), Date.now()) as never,
         trashCopy: (table, record) => {
           const r = conflictTrash(context, table as never, record, { now: Date.now(), newId })
@@ -83,6 +94,7 @@ async function makeDevice(name: string, account: string, opts: { chunkSize?: num
       }),
     outboxCount: () => p.outboxCount(),
     markAllDirty: () => p.markAllDirty(),
+    localKeys: () => p.localKeys(),
     getMeta: (k) => p.getMeta(k),
     setMeta: (k, v) => p.setMeta(k, v),
   }
@@ -101,6 +113,10 @@ async function makeDevice(name: string, account: string, opts: { chunkSize?: num
       await p.save(prev, fn(prev))
       device.engine?.requestUpload(true)
     },
+    async restore(data) {
+      await p.replaceAll(data)
+      device.engine?.requestUpload(true)
+    },
     async online() {
       if (device.engine) return
       device.engine = createSyncEngine({
@@ -111,6 +127,7 @@ async function makeDevice(name: string, account: string, opts: { chunkSize?: num
         uploadDelay: 10,
         uploadMaxWait: 50,
         chunkSize: opts.chunkSize,
+        ownerLock: opts.ownerLock ?? false,
       })
       await device.engine.start()
     },
@@ -379,4 +396,158 @@ describe('同期（エミュレーター）', () => {
     await settle(a)
     await expect(getDocs(collection(other.fs, 'users', a.uid, 'records'))).rejects.toThrow()
   })
+
+  it('続けて書いて送っても、先に送った古い版の通知で本文が巻き戻らず、競合の控えも作らない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let pieceId = ''
+    let versionId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      pieceId = r.pieceId
+      versionId = r.data.pieces[r.pieceId].versionIds[0]
+      return r.data
+    })
+    await settle(a, b)
+    let body = ''
+    for (let i = 0; i < 25; i++) {
+      body += `${i}行目。`
+      const text = body
+      await a.edit((d) => S.updateVersion(d, versionId, { body: text }))
+      void a.engine?.flush()
+      await new Promise((r) => setTimeout(r, 15))
+    }
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.versions[versionId].body).toBe(body)
+      expect(data.pieces[pieceId].versionIds).toHaveLength(1)
+      expect(Object.keys(data.trashEntries)).toHaveLength(0)
+    }
+  })
+
+  it('バックアップからの復元は、ほかの端末にも当たる（この端末が受け取っていないレコードも消える）', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    let titleId = ''
+    let m1 = ''
+    let m2 = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '作品')
+      titleId = t.result
+      const x = E.addMemo(t.data, t.result, 'メモ1')
+      m1 = x.result
+      const y = E.addMemo(x.data, t.result, 'メモ2')
+      m2 = y.result
+      return y.data
+    })
+    const backup = await a.load()
+    await b.online()
+    await settle(a, b)
+    // A がオフラインの間に、B がメモ3を作った（A は受け取っていない）
+    a.offline()
+    let m3 = ''
+    await b.edit((d) => {
+      const z = E.addMemo(d, titleId, 'メモ3')
+      m3 = z.result
+      return z.data
+    })
+    await settle(b)
+    // A は、メモ2を消してメモ4を足したバックアップで復元する
+    const { [m2]: _gone, ...memos } = backup.memos
+    void _gone
+    const restored = E.addMemo({ ...backup, memos }, titleId, 'メモ4')
+    await a.restore(restored.data)
+    await a.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(Object.keys(data.memos).sort()).toEqual([m1, restored.result].sort())
+      expect(data.memos[m3]).toBeUndefined()
+    }
+  })
+
+  it('同じバックアップを入れた2台が初めてログインすると、クラウド側を採り、違う文章は控える', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    const t = E.createTitle(emptyData(), '作品')
+    const m = E.addMemo(t.data, t.result, 'メモ')
+    const k = E.addMemo(m.data, t.result, '消すメモ')
+    const base = E.updateMemo(k.data, m.result, { body: '古い本文' })
+    await a.restore(base)
+    await b.restore(base)
+    await a.p.setMeta('authoritative', null)
+    await b.p.setMeta('authoritative', null)
+    await a.online()
+    await settle(a)
+    // A が先にログインして同期した後で、メモを直し、もう1つのメモを消した
+    await a.edit((d) => {
+      const { [k.result]: _gone, ...memos } = E.updateMemo(d, m.result, { body: 'Aで直した本文' }).memos
+      void _gone
+      return { ...d, memos }
+    })
+    await settle(a)
+    await b.online()
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.memos[m.result].body).toBe('Aで直した本文')
+    expect(data.memos[k.result]).toBeUndefined()
+    const kept = Object.values(data.trashRecords).map((r) => (r.record as { body?: string; name?: string }).name)
+    // 違う内容だった B のメモと、A で消されていたメモは、ゴミ箱に控える
+    expect(kept.sort()).toEqual(['メモ', '消すメモ'].sort())
+  })
+
+  it('本番のアクセスルール: 最初にログインしたアカウントだけが使え、ほかのアカウントは同期できない', async () => {
+    await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
+      rules: { files: [{ name: 'firestore.rules', content: prodRules }] },
+    })
+    await emulatorRequest('DELETE', `/emulator/v1/projects/${PROJECT}/databases/(default)/documents`)
+    try {
+      const owner = await makeDevice('owner', account(), { ownerLock: true })
+      await owner.online()
+      await owner.edit((d) => E.createTitle(d, '持ち主の作品').data)
+      await settle(owner)
+      const stranger = await makeDevice('stranger', account(), { ownerLock: true })
+      await stranger.online()
+      await waitFor(async () => stranger.engine?.status.phase === 'error', '別のアカウントは同期できない')
+      expect(stranger.engine?.status.error).toContain('別の Google アカウント')
+      // ルールでも、持ち主以外は自分の場所にさえ書けない・持ち主の原稿は読めない
+      await expect(getDocs(collection(stranger.fs, 'users', owner.uid, 'records'))).rejects.toThrow()
+      await expect(
+        setDoc(doc(stranger.fs, 'users', stranger.uid, 'records', 'titles:x'), {
+          table: 'titles',
+          id: 'x',
+          json: '{}',
+          chunks: 0,
+          deleted: false,
+          hash: 'h',
+          updated: serverTimestamp(),
+          device: 'd',
+        }),
+      ).rejects.toThrow()
+      // 持ち主も、決まった形でない文書は書けない
+      await expect(
+        setDoc(doc(owner.fs, 'users', owner.uid, 'records', 'titles:y'), { table: 'titles', junk: 'x'.repeat(10) }),
+      ).rejects.toThrow()
+    } finally {
+      await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
+        rules: { files: [{ name: 'firestore.rules', content: emuRules }] },
+      })
+    }
+  })
 })
+
+async function emulatorRequest(method: string, path: string, body?: unknown): Promise<void> {
+  const res = await fetch(`http://127.0.0.1:8080${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`)
+}

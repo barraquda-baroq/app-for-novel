@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { notify, notifyError } from '../../store/uiStore'
-import { signIn, signOut, syncNow, useSync } from '../../sync/controller'
+import { confirmAccountSwitch, signIn, signOut, syncNow, useSync } from '../../sync/controller'
 import { formatRelative } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { syncBadge } from '../../ui/SyncIndicator'
@@ -51,7 +51,32 @@ export function SyncSettings() {
         </p>
       </div>
 
-      {s.auth === 'signedIn' && s.user ? (
+      {s.auth === 'signedIn' && s.user && s.accountMismatch ? (
+        <div className="aset-row" data-testid="sync-account-mismatch">
+          <div className="aset-row-label">
+            <span>別のアカウントでログインしています</span>
+            <span className="aset-row-desc">
+              この端末は以前{s.accountMismatch.previousEmail ? `、${s.accountMismatch.previousEmail} ` : '、別のアカウント'}
+              と同期していました。いまのアカウント（{s.user.email || s.user.name}
+              ）で同期すると、この端末の内容をこのアカウントのクラウドの内容と突き合わせて保存します（どちらの文章も消えません）。間違えて選んだ時は、ログアウトしてから持ち主のアカウントでログインし直してください。
+            </span>
+          </div>
+          <div className="aset-row-control">
+            <button type="button" className="btn" onClick={() => void signOut()} disabled={s.busy}>
+              ログアウト
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void confirmAccountSwitch()}
+              disabled={s.busy}
+              data-testid="sync-confirm-account"
+            >
+              このアカウントで同期する
+            </button>
+          </div>
+        </div>
+      ) : s.auth === 'signedIn' && s.user ? (
         <>
           <div className="aset-row">
             <div className="aset-row-label">

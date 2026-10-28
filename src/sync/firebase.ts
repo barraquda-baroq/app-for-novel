@@ -79,12 +79,24 @@ function prefersRedirect(): boolean {
   return nav.standalone === true
 }
 
+/** リダイレクトでログインに出かける印（戻ってきた時に、まだログインしたことのない端末でも結果を受け取るため） */
+const REDIRECT_MARK = 'novel-studio:auth-redirect'
+
+async function redirectSignIn(auth: Auth, provider: GoogleAuthProvider): Promise<void> {
+  try {
+    localStorage.setItem(REDIRECT_MARK, String(Date.now()))
+  } catch {
+    /* noop */
+  }
+  await signInWithRedirect(auth, provider)
+}
+
 export async function signInWithGoogle(): Promise<void> {
   const { auth } = firebase()
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: 'select_account' })
   if (prefersRedirect()) {
-    await signInWithRedirect(auth, provider)
+    await redirectSignIn(auth, provider)
     return
   }
   try {
@@ -92,7 +104,7 @@ export async function signInWithGoogle(): Promise<void> {
   } catch (e) {
     const code = typeof e === 'object' && e && 'code' in e ? String((e as { code: unknown }).code) : ''
     if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
-      await signInWithRedirect(auth, provider)
+      await redirectSignIn(auth, provider)
       return
     }
     throw e

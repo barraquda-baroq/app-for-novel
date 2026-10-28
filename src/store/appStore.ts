@@ -8,12 +8,21 @@
 // 同期では別の端末の変更が少しずつ届くので、途中の状態（話より先に稿が届いた等）を「直して」書き戻すと、
 // 後から届いたものと食い違ってしまうため。
 import { create } from 'zustand'
-import { createPersistence, type AnyRecord, type Change, type Persistence, type SaveOutcome } from '../db/persistence'
+import {
+  createPersistence,
+  type AnyRecord,
+  type Change,
+  type ConflictHooks,
+  type ConflictNote,
+  type Persistence,
+  type SaveOutcome,
+} from '../db/persistence'
 import { repairData } from '../domain/repair'
 import { TABLE_NAMES, emptyData, type AppData, type ContentTableName, type TableName, type Version } from '../domain/types'
 import { newId } from '../domain/util'
 import { conflictTrash, conflictVersionCopy, deviceLabel } from '../sync/conflicts'
 import { mergeRemote, TEXT_TABLES } from '../sync/merge'
+import { notify } from './uiStore'
 
 export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error'
 
@@ -184,13 +193,14 @@ export function applyChanges(base: AppData, changes: readonly Change[]): AppData
   return out as unknown as AppData
 }
 
-/** 別タブの変更と合わせて保存した結果を、メモリ上のデータにも反映する */
+/** 別タブの変更と合わせて保存した結果（と競合の控え）を、メモリ上のデータにも反映する */
 function reconcile(saved: AppData, outcome: SaveOutcome): AppData {
   const changes: Change[] = []
   for (const t of Object.keys(outcome.merged) as TableName[])
     for (const r of outcome.merged[t] ?? []) changes.push({ table: t, id: r.id, record: r })
   for (const t of Object.keys(outcome.dropped) as TableName[])
     for (const id of outcome.dropped[t] ?? []) changes.push({ table: t, id, record: null })
+  changes.push(...outcome.extra)
   return applyChanges(saved, changes)
 }
 
@@ -207,6 +217,24 @@ function trashCopy(table: TableName, record: AnyRecord): Change[] {
     { table: 'trashEntries', id: r.entry.id, record: r.entry as unknown as AnyRecord },
     ...r.records.map((tr) => ({ table: 'trashRecords' as const, id: tr.id, record: tr as unknown as AnyRecord })),
   ]
+}
+
+/** 競合の控え方。report で集めたものは、保存・反映が終わってからまとめて知らせる */
+function conflictHooks(notes: ConflictNote[]): ConflictHooks {
+  return { device: deviceLabel(), versionCopy, trashCopy, report: (n) => notes.push(n) }
+}
+
+/** 競合を控えたことを知らせる */
+function announceConflicts(notes: ConflictNote[]): void {
+  if (!notes.length) return
+  const copies = notes.filter((n) => n.kind === 'versionCopy').length
+  const trashed = notes.filter((n) => n.kind === 'trash').length
+  const joined = notes.filter((n) => n.kind === 'joined').length
+  const parts: string[] = []
+  if (copies) parts.push(`本文が両方で書き換えられた稿 ${copies} 件を、この端末の本文を別の稿として残しました`)
+  if (trashed) parts.push(`削除と編集が重なった内容など ${trashed} 件をゴミ箱に残しました`)
+  if (joined) parts.push(`両方で書き換えられた文章 ${joined} 件は、両方の文章をつないで残しました`)
+  notify(`ほかの端末と同時に編集されていました。${parts.join('。')}。`)
 }
 
 /**
@@ -238,10 +266,10 @@ export function rebaseView(latest: AppData, oldBase: AppData, newBase: AppData):
         continue
       }
       // このタブでも編集していた
-      const r = mergeRemote(t, o[id] ?? null, mine ?? null, n[id] ?? null)
+      const r = mergeRemote(t, o[id] ?? null, mine ?? null, n[id] ?? null, { device: deviceLabel() })
       if (r.record !== mine) write(id, r.record)
       if (r.bodyConflict) extras.push({ table: 'versions', id: '', record: versionCopy(r.bodyConflict) })
-      if (r.deletedEdit && TEXT_TABLES.has(t)) extras.push(...trashCopy(t, r.deletedEdit))
+      for (const kept of [r.deletedEdit, r.keptCopy]) if (kept && TEXT_TABLES.has(t)) extras.push(...trashCopy(t, kept))
     }
     out[t] = table
   }
@@ -274,7 +302,8 @@ async function saveOnce(): Promise<boolean> {
   }
   useApp.setState({ saveStatus: 'saving' })
   try {
-    const outcome = await persistence.save(persisted, next)
+    const notes: ConflictNote[] = []
+    const outcome = await persistence.save(persisted, next, conflictHooks(notes))
     const dropped: Change[] = []
     for (const t of Object.keys(outcome.dropped) as TableName[])
       for (const id of outcome.dropped[t] ?? []) dropped.push({ table: t, id, record: null })
@@ -300,6 +329,7 @@ async function saveOnce(): Promise<boolean> {
       channel?.postMessage({ from: tabId })
       emit(savedListeners)
     }
+    announceConflicts(notes)
     return true
   } catch (e) {
     useApp.setState({ saveStatus: 'error', saveError: e instanceof Error ? e.message : String(e) })
@@ -328,12 +358,14 @@ export function flushNow(): Promise<boolean> {
  * 先にこのタブの未保存の変更を保存し、端末内で送信待ちと3者マージしてから、画面の内容にも重ねる。
  * 実際に端末内に書いた内容を返す。
  */
-export function applyRemoteChanges(changes: Change[], cursor?: unknown): Promise<Change[]> {
-  const run = chain.then(async (): Promise<Change[]> => {
+export function applyRemoteChanges(changes: Change[], cursor?: unknown): Promise<Change[] | null> {
+  const run = chain.then(async (): Promise<Change[] | null> => {
     if (!persistence) throw new Error('保存先が初期化されていません')
     if (!(await saveOnce())) throw new Error('この端末の変更を保存できないため、クラウドの変更を反映できません')
-    const written = await persistence.applyRemote(changes, { cursor, versionCopy, trashCopy })
-    if (!written.length) return written
+    const notes: ConflictNote[] = []
+    const written = await persistence.applyRemote(changes, { cursor, ...conflictHooks(notes) })
+    announceConflicts(notes)
+    if (!written || !written.length) return written
     raw = applyChanges(raw, written)
     const view = repairData(raw).data
     const oldBase = persisted

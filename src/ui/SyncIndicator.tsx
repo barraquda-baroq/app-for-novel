@@ -6,14 +6,22 @@ import './sync.css'
 export type SyncBadge = { tone: 'ok' | 'busy' | 'warn' | 'error' | 'off'; label: string; detail: string }
 
 /** 同期の状態を、ヘッダー・設定で使う短い言葉にする */
-export function syncBadge(s: Pick<SyncState, 'auth' | 'status' | 'leader' | 'everSignedIn'>): SyncBadge | null {
+export function syncBadge(
+  s: Pick<SyncState, 'auth' | 'status' | 'leader' | 'everSignedIn'> & Partial<Pick<SyncState, 'accountMismatch'>>,
+): SyncBadge | null {
   if (s.auth === 'idle' && !s.everSignedIn) return null
+  if (s.auth === 'signedIn' && s.accountMismatch)
+    return {
+      tone: 'warn',
+      label: '確認が必要',
+      detail: '以前とは別のアカウントでログインしています。アプリの設定の「同期」で確かめてください',
+    }
   if (s.auth === 'idle' || s.auth === 'checking')
     return { tone: 'busy', label: '確認中', detail: 'ログインの状態を確認しています' }
   if (s.auth === 'signedOut')
     return { tone: 'off', label: '未ログイン', detail: 'ログインしていないため、ほかの端末と同期していません' }
-  if (!s.leader) return { tone: 'ok', label: '同期中', detail: '別のウィンドウ（タブ）で同期しています' }
   const st = s.status
+  if (!s.leader && !st) return { tone: 'ok', label: '同期中', detail: '別のウィンドウ（タブ）で同期しています' }
   if (!st || st.phase === 'starting' || st.phase === 'downloading')
     return { tone: 'busy', label: '同期中', detail: 'クラウドの内容を受け取っています' }
   if (st.phase === 'uploading')
@@ -36,7 +44,8 @@ export function SyncIndicator() {
   const status = useSync((s) => s.status)
   const leader = useSync((s) => s.leader)
   const everSignedIn = useSync((s) => s.everSignedIn)
-  const badge = syncBadge({ auth, status, leader, everSignedIn })
+  const accountMismatch = useSync((s) => s.accountMismatch)
+  const badge = syncBadge({ auth, status, leader, everSignedIn, accountMismatch })
   if (!badge) return null
   return (
     <Link

@@ -23,6 +23,11 @@ export interface SyncState {
   everSignedIn: boolean
   busy: boolean
   error: string | null
+  /**
+   * この端末は以前、別のアカウント（previousEmail）と同期していた。確かめるまで同期を始めない
+   * （間違えて別のアカウントを選んだ時に、原稿がそのアカウントへ写らないように）
+   */
+  accountMismatch: { previousEmail: string } | null
 }
 
 const initial: SyncState = {
@@ -33,6 +38,7 @@ const initial: SyncState = {
   everSignedIn: false,
   busy: false,
   error: null,
+  accountMismatch: null,
 }
 
 export const useSync = create<SyncState>(() => ({ ...initial }))
@@ -54,6 +60,7 @@ function storeTarget(): SyncTarget {
     applyRemote: (changes, cursor) => applyRemoteChanges(changes, cursor),
     outboxCount: () => p.outboxCount(),
     markAllDirty: () => p.markAllDirty(),
+    localKeys: () => p.localKeys(),
     getMeta: (k) => p.getMeta(k),
     setMeta: (k, v) => p.setMeta(k, v),
     flush: () => flushNow(),
@@ -69,16 +76,47 @@ async function deviceId(): Promise<string> {
   return id
 }
 
+/** 同期を受け持つ画面が、ほかの画面（タブ・ウィンドウ）に状態を知らせる */
+const STATUS_CHANNEL = 'novel-studio-sync-status'
+let statusChannel: BroadcastChannel | null = null
+/** 画面がこれより長く裏にあったら、戻った時に購読し直す（長く切れていた購読は全件を読み直すため） */
+const REANCHOR_AFTER_MS = 20 * 60 * 1000
+
 function installHooks(): void {
   if (hooksInstalled) return
   hooksInstalled = true
   onLocalSave(() => engine?.requestUpload())
   onExternalSave(() => engine?.requestUpload())
   if (typeof document !== 'undefined') {
-    // 画面を閉じる・裏に回る時は待たずに送る
+    let hiddenAt = 0
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') engine?.requestUpload(true)
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now()
+        // 画面を閉じる・裏に回る時は待たずに送る
+        engine?.requestUpload(true)
+      } else if (hiddenAt && Date.now() - hiddenAt > REANCHOR_AFTER_MS) {
+        engine?.reanchor()
+      }
     })
+  }
+  try {
+    statusChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(STATUS_CHANNEL)
+    if (statusChannel) {
+      statusChannel.onmessage = (ev: MessageEvent<{ status?: SyncStatus }>) => {
+        // 同期を受け持っていない画面は、受け持つ画面の状態を出す
+        if (!useSync.getState().leader && ev.data?.status) useSync.setState({ status: ev.data.status })
+      }
+    }
+  } catch {
+    statusChannel = null
+  }
+}
+
+function publishStatus(status: SyncStatus): void {
+  try {
+    statusChannel?.postMessage({ status })
+  } catch {
+    /* noop */
   }
 }
 
@@ -103,8 +141,11 @@ function startEngine(uid: string): void {
       uid,
       deviceId: await deviceId(),
       target: storeTarget(),
+      ownerLock: !fb.usingEmulator,
       onStatus: (status) => {
-        if (engine === e) useSync.setState({ status })
+        if (engine !== e) return
+        useSync.setState({ status })
+        publishStatus(status)
       },
     })
     engine = e
@@ -142,18 +183,35 @@ function boot(): Promise<void> {
       const message = fb.describeAuthError(e)
       if (message) useSync.setState({ error: message })
     })
+    try {
+      localStorage.removeItem(REDIRECT_MARK)
+    } catch {
+      /* noop */
+    }
     fb.watchUser((user) => {
       if (user) {
+        const email = user.email ?? ''
         useSync.setState({
           auth: 'signedIn',
-          user: { uid: user.uid, name: user.displayName ?? '', email: user.email ?? '' },
+          user: { uid: user.uid, name: user.displayName ?? '', email },
           everSignedIn: true,
           error: null,
         })
-        startEngine(user.uid)
+        void (async () => {
+          const p = getPersistence()
+          const previous = await p?.getMeta<string>('uid')
+          if (previous && previous !== user.uid) {
+            stopEngine()
+            useSync.setState({ accountMismatch: { previousEmail: (await p?.getMeta<string>('email')) ?? '' } })
+            return
+          }
+          await p?.setMeta('email', email)
+          useSync.setState({ accountMismatch: null })
+          startEngine(user.uid)
+        })().catch(reportError)
       } else {
         stopEngine()
-        useSync.setState({ auth: 'signedOut', user: null })
+        useSync.setState({ auth: 'signedOut', user: null, accountMismatch: null })
       }
     })
   })()
@@ -166,7 +224,32 @@ export async function initSync(): Promise<void> {
   if (!p) return
   const everSignedIn = Boolean(await p.getMeta('uid'))
   useSync.setState({ everSignedIn })
-  if (everSignedIn) await boot().catch(reportError)
+  // リダイレクトでログインして戻ってきた時も、その結果を受け取るために Firebase を読み込む
+  if (everSignedIn || redirectPending()) await boot().catch(reportError)
+}
+
+const REDIRECT_MARK = 'novel-studio:auth-redirect'
+
+function redirectPending(): boolean {
+  try {
+    if (localStorage.getItem(REDIRECT_MARK)) return true
+    for (let i = 0; i < sessionStorage.length; i++) {
+      if (sessionStorage.key(i)?.startsWith('firebase:pendingRedirect')) return true
+    }
+  } catch {
+    /* noop */
+  }
+  return false
+}
+
+/** この端末を、いまログインしているアカウントと同期するようにする（以前は別のアカウントと同期していた時） */
+export async function confirmAccountSwitch(): Promise<void> {
+  const user = useSync.getState().user
+  const p = getPersistence()
+  if (!user || !p) return
+  await p.setMeta('email', user.email)
+  useSync.setState({ accountMismatch: null })
+  startEngine(user.uid)
 }
 
 export async function signIn(): Promise<void> {
@@ -174,6 +257,8 @@ export async function signIn(): Promise<void> {
   try {
     await boot()
     const fb = await firebaseModule()
+    // リダイレクトでのログインが、Firebase を読み込んだ時点で済んでいることがある
+    if (fb.firebase().auth.currentUser) return
     await fb.signInWithGoogle()
   } catch (e) {
     const fb = await firebaseModule().catch(() => null)

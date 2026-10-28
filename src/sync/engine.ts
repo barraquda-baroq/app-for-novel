@@ -3,6 +3,7 @@
 // - 送信: 端末内の送信待ちを、クラウド側が前回揃えた時から変わっていないことを確かめながら（トランザクション）書く。
 //   変わっていたら書かずに、受信で base が新しくなる（3者マージされる）のを待ってから送り直す。
 // 送受信は exclusive で1つずつ行い、送った結果を記録する前に自分の書いた変更を受け取ることがないようにする。
+// この端末が書いた古い版（続けて送った時、先に送った版の通知が後から届く）は反映しない。
 import {
   Timestamp,
   collection,
@@ -14,7 +15,9 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   where,
+  writeBatch,
   type DocumentData,
   type Firestore,
   type QueryDocumentSnapshot,
@@ -34,16 +37,21 @@ import {
   type Encoded,
   type RecordDoc,
 } from './codec'
-import { contentEqual } from './merge'
+import { deepEqual } from './merge'
 
 /** エンジンが端末内のデータを読み書きする口（アプリではストア、テストでは保存先を直接使う） */
 export interface SyncTarget {
   readOutbox(limit: number): Promise<OutboxItem[]>
   completeUpload(sent: Change[]): Promise<void>
-  /** クラウドの変更を反映する。cursor は同じトランザクションで記録する */
-  applyRemote(changes: Change[], cursor?: unknown): Promise<unknown>
+  /**
+   * クラウドの変更を反映する。cursor は同じトランザクションで記録する。
+   * バックアップからの復元・すべて削除をクラウドに当てる前は反映せずに null を返す（後で受け取り直す）。
+   */
+  applyRemote(changes: Change[], cursor?: unknown): Promise<Change[] | null>
   outboxCount(): Promise<number>
   markAllDirty(): Promise<void>
+  /** 端末内のレコードと送信待ちのキー（`${表名}/${id}`） */
+  localKeys(): Promise<Set<string>>
   getMeta<T>(key: string): Promise<T | undefined>
   setMeta(key: string, value: unknown): Promise<void>
   /** 端末内にまだ保存していない変更を保存する（送る前に呼ぶ） */
@@ -72,6 +80,11 @@ export interface EngineOptions {
   uploadMaxWait?: number
   /** テスト用: 分割する大きさ */
   chunkSize?: number
+  /**
+   * 最初にログインしたアカウントをクラウドの持ち主として記録し、ほかのアカウントでは同期しない（既定 true）。
+   * アクセスルールも持ち主だけに読み書きを許す（firestore.rules）。
+   */
+  ownerLock?: boolean
 }
 
 export interface SyncEngine {
@@ -81,6 +94,8 @@ export interface SyncEngine {
   requestUpload(immediate?: boolean): void
   /** いますぐ送る（送り終わるか失敗するまで待つ） */
   flush(): Promise<void>
+  /** 画面がしばらく裏にあった後などに、記録した位置から購読し直す（読み取りの量を抑える） */
+  reanchor(): void
   /** 受信と送信がひと段落するまで待つ（テスト用） */
   idle(): Promise<void>
   readonly status: SyncStatus
@@ -88,6 +103,9 @@ export interface SyncEngine {
 
 /** 同期の形の版。文書の形や表を変えたら上げる（次の起動で全件を受け取り直す） */
 export const SYNC_SCHEMA = 1
+
+/** クラウドの持ち主を記録する文書 */
+export const OWNER_DOC = ['config', 'owner'] as const
 
 interface StoredCursor {
   s: number
@@ -99,8 +117,20 @@ const BATCH_RECORDS = 100
 const BATCH_CHARS = 1_500_000
 const BATCH_DOCS = 400
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000]
+/** この端末が送った版の指紋を、文書ごとにいくつまで覚えておくか */
+const SENT_MEMORY = 20
 
 const later = (a: StoredCursor, b: StoredCursor | null) => !b || a.s > b.s || (a.s === b.s && a.n > b.n)
+
+export class SyncError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SyncError'
+  }
+}
 
 function errorCode(e: unknown): string {
   return typeof e === 'object' && e && 'code' in e ? String((e as { code: unknown }).code) : ''
@@ -108,10 +138,15 @@ function errorCode(e: unknown): string {
 
 function describeError(e: unknown): { offline: boolean; message: string } {
   const code = errorCode(e)
+  if (e instanceof SyncError) return { offline: false, message: e.message }
   if (code === 'unavailable' || code === 'deadline-exceeded' || (typeof navigator !== 'undefined' && navigator.onLine === false))
     return { offline: true, message: 'オフラインです。つながると自動で同期します。' }
   if (code === 'permission-denied')
-    return { offline: false, message: 'クラウドへのアクセスが拒否されました。ログインし直してください。' }
+    return {
+      offline: false,
+      message:
+        'クラウドへのアクセスが拒否されました。アクセスルールを公開したか（docs/DEPLOY.md）、持ち主のアカウントでログインしているかを確かめてください。',
+    }
   if (code === 'resource-exhausted')
     return { offline: false, message: 'クラウドの今日の無料枠を使い切りました。明日になると同期を再開します。' }
   if (code === 'unauthenticated') return { offline: false, message: 'ログインの期限が切れました。ログインし直してください。' }
@@ -128,8 +163,16 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   let stopped = false
   let unsub: Unsubscribe | null = null
   let cursor: StoredCursor | null = null
+  /** いまの購読を始めた位置（購読し直すと、それまでに届いた分を読み直さずに済む） */
+  let subscribedFrom: StoredCursor | null = null
   let downloaded = false
+  /** バックアップからの復元・すべて削除をクラウドに当てるまで、受信を止めている */
+  let deferred = false
   let status: SyncStatus = { phase: 'starting', pending: 0, lastSyncedAt: null, error: null }
+  /** この端末が送った版の指紋（文書ごと、古い順） */
+  const sent = new Map<string, string[]>()
+  /** 持ち主の確認が済んだ（ownerLock の時） */
+  let ownerOk = opts.ownerLock === false
 
   // 送受信を1つずつ行うための鎖
   let lock: Promise<unknown> = Promise.resolve()
@@ -155,6 +198,27 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     const d = describeError(e)
     if (!d.offline) console.warn('同期できませんでした', e)
     setStatus({ phase: d.offline ? 'offline' : 'error', error: d.message })
+  }
+
+  function rememberSent(id: string, hash: string): void {
+    const list = sent.get(id) ?? []
+    list.push(hash)
+    if (list.length > SENT_MEMORY) list.splice(0, list.length - SENT_MEMORY)
+    sent.set(id, list)
+  }
+
+  /** この端末が先に送った古い版の通知か（その後にもっと新しい版を送っている） */
+  function isStaleEcho(id: string, data: RecordDoc): boolean {
+    if (data.device !== deviceId) return false
+    const list = sent.get(id)
+    if (!list || !list.includes(data.hash)) return false
+    if (list[list.length - 1] === data.hash) {
+      sent.set(id, [data.hash])
+      return false
+    }
+    // 届いた版より前に送った指紋は、もう届かない
+    sent.set(id, list.slice(list.lastIndexOf(data.hash) + 1))
+    return true
   }
 
   // ---------- 受信 ----------
@@ -195,6 +259,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (stopped) return
     unsub?.()
     const gen = ++listenerGen
+    subscribedFrom = cursor
     const q = cursor
       ? query(col, where('updated', '>', new Timestamp(cursor.s, cursor.n)), orderBy('updated'))
       : query(col, orderBy('updated'))
@@ -224,6 +289,15 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     )
   }
 
+  /** 記録した位置が購読を始めた位置より進んでいれば、そこから購読し直す */
+  function reanchor(): void {
+    if (stopped || !unsub || resubscribeTimer || deferred) return
+    void exclusive(async () => {
+      if (stopped || !unsub || deferred) return
+      if (cursor && (!subscribedFrom || later(cursor, subscribedFrom))) subscribe()
+    }).catch(fail)
+  }
+
   /** 分割文書が手元に揃っていない時に読み直す */
   async function fetchChunks(parentId: string): Promise<Map<string, ChunkDoc>> {
     const snap = await getDocs(query(col, where('parent', '==', parentId)))
@@ -237,7 +311,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     all: QueryDocumentSnapshot<DocumentData>[],
     fromCache: boolean,
   ): Promise<void> {
-    if (stopped) return
+    if (stopped || deferred) return
     if (!changed.length && fromCache) return
     const chunks = new Map<string, ChunkDoc>()
     for (const d of all) {
@@ -254,6 +328,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       }
       if (data.table === '_chunk') continue
       const recDoc = data as RecordDoc
+      if (isStaleEcho(d.id, recDoc)) continue
       let rec = decodeRecord(recDoc, (i) => chunks.get(chunkIdOf(d.id, i)))
       if (rec === undefined && recDoc.chunks > 0) {
         const fetched = await fetchChunks(d.id)
@@ -266,9 +341,18 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       changes.push({ table: recDoc.table as TableName, id: recDoc.id, record: rec as Change['record'] })
     }
     const advance = !fromCache && newest && later(newest, cursor) ? newest : undefined
-    if (changes.length || advance) await target.applyRemote(changes, advance)
+    if (changes.length || advance) {
+      const applied = await target.applyRemote(changes, advance)
+      if (applied === null) {
+        // 復元・すべて削除をクラウドに当てるまで受け取らない（当てた後で、記録した位置から受け取り直す）
+        deferred = true
+        requestUpload(true)
+        return
+      }
+    }
     if (advance) cursor = advance
-    if (!fromCache && !downloaded) downloaded = true
+    const first = !downloaded && !fromCache
+    if (!fromCache) downloaded = true
     for (const f of [...remoteWaiters]) f()
     if (!fromCache) {
       const pending = await refreshPending()
@@ -281,6 +365,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         if (pending > 0) requestUpload()
       }
     }
+    // 初めての全件の受け取りが終わったら、届いた分を抱えたままにしないよう、記録した位置から購読し直す
+    if (first && !subscribedFrom && cursor) reanchor()
   }
 
   // ---------- 送信 ----------
@@ -325,34 +411,39 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     conflicts: OutboxItem[]
   }
 
+  /** 送る必要が無い送信待ち（この端末にもクラウドにも無いもの・クラウドと全く同じもの） */
+  const nothingToSend = (it: OutboxItem) => !it.force && (it.noHistory ? it.local === null : deepEqual(it.local, it.base))
+
   async function uploadBatch(): Promise<BatchResult> {
     const items = await target.readOutbox(BATCH_RECORDS)
     if (!items.length) return { done: true, progressed: 0, conflicts: [] }
-    // クラウドと同じ内容になっているもの（編集して元に戻した等）は送らずに済ませる
-    const same = items.filter((it) => contentEqual(it.local, it.base))
-    if (same.length) await target.completeUpload(same.map((it) => ({ table: it.table, id: it.id, record: it.local })))
+    const idle = items.filter(nothingToSend)
+    if (idle.length) await target.completeUpload(idle.map((it) => ({ table: it.table, id: it.id, record: it.local })))
     const batch: { it: OutboxItem; enc: Encoded; baseHash: string }[] = []
     let chars = 0
     let docs = 0
     for (const it of items) {
-      if (contentEqual(it.local, it.base)) continue
+      if (nothingToSend(it)) continue
       const enc = encodeRecord(it.local, chunkSize)
       if (batch.length && (chars + enc.size > BATCH_CHARS || docs + 1 + enc.parts.length > BATCH_DOCS)) break
       batch.push({ it, enc, baseHash: hashRecord(it.base) })
       chars += enc.size
       docs += 1 + enc.parts.length
     }
-    if (!batch.length) return { done: false, progressed: same.length, conflicts: [] }
+    if (!batch.length) return { done: false, progressed: idle.length, conflicts: [] }
 
     const result = await runTransaction(fs, async (tx) => {
       const snaps = await Promise.all(batch.map((b) => tx.get(doc(col, docIdOf(b.it.table, b.it.id)))))
-      const written: Change[] = []
+      const written: { change: Change; hash: string }[] = []
       const conflicts: OutboxItem[] = []
       batch.forEach((b, i) => {
         const snap = snaps[i]
         const cloud = snap.exists() ? (snap.data() as RecordDoc) : null
         const cloudHash = cloud && !cloud.deleted ? cloud.hash : ''
-        if (cloudHash !== b.baseHash) {
+        // 共通の履歴が無いものは、クラウドに何も無い時だけ書く（あれば受信で突き合わせる）。
+        // 復元・すべて削除の後は、この端末の内容で必ず上書きする
+        const ok = b.it.force || (b.it.noHistory ? !snap.exists() : cloudHash === b.baseHash)
+        if (!ok) {
           conflicts.push(b.it)
           return
         }
@@ -381,12 +472,13 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           tx.set(doc(col, chunkIdOf(id, j)), chunk)
         })
         for (let j = b.enc.parts.length; j < (cloud?.chunks ?? 0); j++) tx.delete(doc(col, chunkIdOf(id, j)))
-        written.push({ table: b.it.table, id: b.it.id, record: b.it.local })
+        written.push({ change: { table: b.it.table, id: b.it.id, record: b.it.local }, hash: b.enc.hash })
       })
       return { written, conflicts }
     })
-    await target.completeUpload(result.written)
-    return { done: false, progressed: same.length + result.written.length, conflicts: result.conflicts }
+    for (const w of result.written) rememberSent(docIdOf(w.change.table, w.change.id), w.hash)
+    await target.completeUpload(result.written.map((w) => w.change))
+    return { done: false, progressed: idle.length + result.written.length, conflicts: result.conflicts }
   }
 
   /** 受信を待っても base が新しくならない時は、クラウドの内容を直接読んで反映する */
@@ -400,6 +492,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         continue
       }
       const data = snap.data() as RecordDoc
+      if (isStaleEcho(id, data)) continue
       let rec = decodeRecord(data, () => undefined)
       if (rec === undefined && data.chunks > 0) {
         const fetched = await fetchChunks(id)
@@ -408,6 +501,49 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       if (rec !== undefined) changes.push({ table: it.table, id: it.id, record: rec as Change['record'] })
     }
     if (changes.length) await target.applyRemote(changes, undefined)
+  }
+
+  /**
+   * バックアップからの復元・すべて削除の後: この端末に無いクラウドのレコードを消す（この端末の内容は、
+   * 「必ず上書き」の送信待ちとして続けて送る）。終わったら、記録した位置から受け取り直す。
+   */
+  async function pushAuthoritative(): Promise<void> {
+    if (!(await target.getMeta('authoritative'))) return
+    deferred = true
+    const local = await target.localKeys()
+    const snap = await getDocs(query(col, where('deleted', '==', false)))
+    const doomed: string[] = []
+    const chunkDocs = new Map<string, string[]>()
+    snap.forEach((d) => {
+      const data = d.data() as RecordDoc | ChunkDoc
+      if (data.table === '_chunk') {
+        const list = chunkDocs.get(data.parent) ?? []
+        list.push(d.id)
+        chunkDocs.set(data.parent, list)
+        return
+      }
+      if (!local.has(`${data.table}/${data.id}`)) doomed.push(d.id)
+    })
+    for (let i = 0; i < doomed.length; i += 200) {
+      const batch = writeBatch(fs)
+      for (const id of doomed.slice(i, i + 200)) {
+        const [table, ...rest] = id.split(':')
+        const tombstone: RecordDoc = {
+          table: table as TableName,
+          id: rest.join(':'),
+          json: null,
+          chunks: 0,
+          deleted: true,
+          hash: '',
+          updated: serverTimestamp(),
+          device: deviceId,
+        }
+        batch.set(doc(col, id), tombstone)
+        for (const c of chunkDocs.get(id) ?? []) batch.delete(doc(col, c))
+      }
+      await batch.commit()
+    }
+    await target.setMeta('authoritative', null)
   }
 
   function uploadAll(): Promise<void> {
@@ -424,6 +560,12 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     uploading = (async () => {
       try {
         await target.flush?.()
+        if (!ownerOk) {
+          // 起動した時に通信できず、持ち主を確かめられなかった
+          await claimOwner()
+          ownerOk = true
+        }
+        await exclusive(pushAuthoritative)
         let stuck = 0
         for (;;) {
           if (stopped) return
@@ -438,6 +580,13 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
             else await waitForRemote(3000)
             if (stuck > 6) throw new Error('クラウドとの差を解消できませんでした。しばらくしてからもう一度お試しください。')
           } else stuck = 0
+        }
+        if (deferred) {
+          // 復元・すべて削除をクラウドに当て終わった: 記録した位置から受け取り直す
+          deferred = false
+          await exclusive(async () => {
+            if (!stopped) subscribe()
+          })
         }
         retryCount = 0
         const pending = await refreshPending()
@@ -456,9 +605,25 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     return uploading
   }
 
+  /** 最初にログインしたアカウントを持ち主として記録する。別のアカウントのクラウドなら同期しない */
+  async function claimOwner(): Promise<void> {
+    const ref = doc(fs, ...OWNER_DOC)
+    const snap = await getDoc(ref)
+    if (!snap.exists()) {
+      await setDoc(ref, { uid, createdAt: serverTimestamp() })
+      return
+    }
+    if ((snap.data() as { uid?: string }).uid !== uid)
+      throw new SyncError(
+        'owner-mismatch',
+        'このクラウドは別の Google アカウントのものです。持ち主のアカウントでログインしてください。',
+      )
+  }
+
   const onOnline = () => {
     if (stopped) return
     if (!unsub && !resubscribeTimer) subscribe()
+    else reanchor()
     requestUpload(true)
   }
 
@@ -468,9 +633,23 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     },
 
     async start() {
+      if (!ownerOk) {
+        try {
+          await claimOwner()
+          ownerOk = true
+        } catch (e) {
+          fail(e)
+          if (e instanceof SyncError) {
+            // 別のアカウントのクラウド: 何も送らず、受け取らない
+            stopped = true
+            return
+          }
+          // 通信できない時は、端末内の送信待ちを積んだまま、つながってから続ける（送る前にもう一度確かめる）
+        }
+      }
       const storedUid = await target.getMeta<string>('uid')
       if (storedUid !== uid) {
-        // 初めてこのアカウントで同期する: 端末内のものはすべてクラウドに無い前提で送り、全件を受け取る
+        // このアカウントと同期するのは初めて: 端末内のものはクラウドとの共通の履歴が無い前提で突き合わせ、全件を受け取る
         await target.markAllDirty()
         await target.setMeta('cursor', null)
         await target.setMeta('uid', uid)
@@ -481,9 +660,10 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       }
       if (stopped) return
       cursor = (await target.getMeta<StoredCursor | null>('cursor')) ?? null
+      deferred = Boolean(await target.getMeta('authoritative'))
       setStatus({ phase: 'downloading', error: null })
       await refreshPending()
-      subscribe()
+      if (!deferred) subscribe()
       requestUpload(true)
       if (typeof window !== 'undefined') window.addEventListener('online', onOnline)
     },
@@ -500,6 +680,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     requestUpload,
 
     flush: () => uploadAll(),
+
+    reanchor,
 
     async idle() {
       for (;;) {

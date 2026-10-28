@@ -3,29 +3,12 @@
 // mine   = この端末の内容（null = この端末で削除した）
 // theirs = クラウドの最新の内容（null = 別の端末で削除された）
 // 項目ごとに、この端末が base から変えた項目だけをクラウド側に重ねる。
+import { deepEqual } from '../domain/equal'
 import type { TableName } from '../domain/types'
 
-export type Rec = { id: string; updatedAt?: number }
+export { deepEqual }
 
-/** 同じ内容か（キーの順番は問わない） */
-export function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
-  if (Array.isArray(a) !== Array.isArray(b)) return false
-  if (Array.isArray(a)) {
-    const bb = b as unknown[]
-    if (a.length !== bb.length) return false
-    for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], bb[i])) return false
-    return true
-  }
-  const ao = a as Record<string, unknown>
-  const bo = b as Record<string, unknown>
-  const ak = Object.keys(ao).filter((k) => ao[k] !== undefined)
-  const bk = Object.keys(bo).filter((k) => bo[k] !== undefined)
-  if (ak.length !== bk.length) return false
-  for (const k of ak) if (!deepEqual(ao[k], bo[k])) return false
-  return true
-}
+export type Rec = { id: string; updatedAt?: number }
 
 /** 更新日時を除いて同じ内容か（null 同士も同じ） */
 export function contentEqual(a: Rec | null | undefined, b: Rec | null | undefined): boolean {
@@ -81,6 +64,25 @@ export const TEXT_TABLES: ReadonlySet<TableName> = new Set<TableName>([
 
 const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 
+/** primary の並びに、secondary にしか無い要素を、secondary での直前の要素の後ろに入れる */
+function insertMissing(out: unknown[], seen: Set<string>, secondary: unknown[], skip: Set<string>, key: KeyOf): void {
+  secondary.forEach((y, i) => {
+    const k = key(y)
+    if (seen.has(k) || skip.has(k)) return
+    let pos = 0
+    for (let j = i - 1; j >= 0; j--) {
+      const pk = key(secondary[j])
+      const idx = out.findIndex((z) => key(z) === pk)
+      if (idx >= 0) {
+        pos = idx + 1
+        break
+      }
+    }
+    out.splice(pos, 0, y)
+    seen.add(k)
+  })
+}
+
 export function mergeList(base: unknown, mine: unknown, theirs: unknown, key: KeyOf): unknown[] {
   if (deepEqual(mine, base)) return asArray(theirs)
   if (deepEqual(theirs, base)) return asArray(mine)
@@ -103,40 +105,68 @@ export function mergeList(base: unknown, mine: unknown, theirs: unknown, key: Ke
     out.push(tx !== undefined && bx !== undefined && deepEqual(x, bx) ? tx : x)
   }
   // 相手が足したもの（この端末で消したものは足さない）
-  t.forEach((y, i) => {
-    const k = key(y)
-    if (seen.has(k) || baseItems.has(k)) return
-    let pos = 0
-    for (let j = i - 1; j >= 0; j--) {
-      const pk = key(t[j])
-      const idx = out.findIndex((z) => key(z) === pk)
-      if (idx >= 0) {
-        pos = idx + 1
-        break
-      }
-    }
-    out.splice(pos, 0, y)
+  insertMissing(out, seen, t, new Set(baseItems.keys()), key)
+  return out
+}
+
+/** 共通の履歴が無い2つの並びを合わせる: primary の並びに、secondary にしか無い要素を足す */
+export function unionList(primary: unknown, secondary: unknown, key: KeyOf): unknown[] {
+  const out: unknown[] = []
+  const seen = new Set<string>()
+  for (const x of asArray(primary)) {
+    const k = key(x)
+    if (seen.has(k)) continue
     seen.add(k)
-  })
+    out.push(x)
+  }
+  insertMissing(out, seen, asArray(secondary), new Set(), key)
   return out
 }
 
 /**
- * 両方にあるレコードを項目ごとに合わせる。同じ項目を両方が別々に変えていたら、並びは合わせ、それ以外はこの端末を優先する。
- * 稿の本文だけは opts.body で決める（theirs = クラウド側を採って bodyConflict を返す、mine = この端末を採る）。
+ * 長い文章の項目。両方の端末で別々に書き換えていたら、どちらも捨てずに、クラウド側の文章の後ろに
+ * この端末の文章を印付きで続ける（その場で両方が見え、利用者が整理できる）。
+ * 稿の本文（versions.body）だけは別の稿として残す（mergeRemote の bodyConflict）。
  */
-export function mergeFields(
-  table: TableName,
-  base: Rec | null,
-  mine: Rec,
-  theirs: Rec,
-  opts: { body: 'theirs' | 'mine' } = { body: 'theirs' },
-): { record: Rec; bodyConflict: boolean } {
+export const TEXT_FIELDS: Partial<Record<TableName, readonly string[]>> = {
+  memos: ['body'],
+  ideas: ['body'],
+  settingEntries: ['body'],
+  submissions: ['overview', 'result', 'revisionPlan', 'resubmissionPlan'],
+  titles: ['synopsis', 'strategyNote'],
+  chapters: ['note'],
+  versions: ['note'],
+}
+
+export function joinConflictText(theirs: string, mine: string, device: string): string {
+  return `${theirs}\n\n――――（同期の競合: ${device}で同時に書かれた内容）――――\n${mine}`
+}
+
+export interface MergeOptions {
+  /** 稿の本文が両方で変わっていた時: theirs = クラウド側を採って bodyConflict を返す、mine = この端末を採る */
+  body?: 'theirs' | 'mine'
+  /** この端末の呼び名（文章をつないだ時の印に使う） */
+  device: string
+}
+
+export interface FieldMerge {
+  record: Rec
+  bodyConflict: boolean
+  /** 両方の文章をつないだ項目 */
+  joined: string[]
+}
+
+/**
+ * 両方にあるレコードを項目ごとに合わせる。同じ項目を両方が別々に変えていたら、並びは要素ごとに合わせ、
+ * 長い文章はつなぎ、それ以外はこの端末を優先する。
+ */
+export function mergeFields(table: TableName, base: Rec | null, mine: Rec, theirs: Rec, opts: MergeOptions): FieldMerge {
   const out: Record<string, unknown> = { ...theirs }
   const b = (base ?? {}) as Record<string, unknown>
   const m = mine as unknown as Record<string, unknown>
   const t = theirs as unknown as Record<string, unknown>
   let bodyConflict = false
+  const joined: string[] = []
   const keys = new Set([...Object.keys(m), ...Object.keys(b)])
   for (const k of keys) {
     if (k === 'id' || k === 'updatedAt') continue
@@ -149,14 +179,17 @@ export function mergeFields(
     } else {
       const listKey = LIST_FIELDS[table]?.[k]
       if (listKey) out[k] = mergeList(bv, mv, tv, listKey)
-      else if (table === 'versions' && k === 'body' && opts.body === 'theirs') bodyConflict = true
-      else out[k] = mv
+      else if (table === 'versions' && k === 'body' && (opts.body ?? 'theirs') === 'theirs') bodyConflict = true
+      else if (TEXT_FIELDS[table]?.includes(k) && typeof mv === 'string' && typeof tv === 'string') {
+        out[k] = joinConflictText(tv, mv, opts.device)
+        joined.push(k)
+      } else out[k] = mv
     }
     if (out[k] === undefined) delete out[k]
   }
   if (mine.updatedAt !== undefined || theirs.updatedAt !== undefined)
     out.updatedAt = Math.max(mine.updatedAt ?? 0, theirs.updatedAt ?? 0)
-  return { record: out as Rec, bodyConflict }
+  return { record: out as Rec, bodyConflict, joined }
 }
 
 export interface MergeResult {
@@ -166,11 +199,47 @@ export interface MergeResult {
   bodyConflict?: Rec
   /** 片方で削除・片方で編集されていた: 削除を優先し、編集された内容をここに返す（文章の表ならゴミ箱へ） */
   deletedEdit?: Rec
+  /** 共通の履歴が無く、クラウド側を採った時のこの端末の内容（文章の表ならゴミ箱へ） */
+  keptCopy?: Rec
+  /** 両方の文章をつないだ項目 */
+  joined?: string[]
 }
 
-export function mergeRemote(table: TableName, base: Rec | null, mine: Rec | null, theirs: Rec | null): MergeResult {
+/**
+ * 共通の履歴が無い（初めてのログイン・アカウントの切り替えで、この端末の内容をクラウドの内容と突き合わせる）時。
+ * クラウド側を正とし、この端末にしか無い文章は控える。並びにはこの端末にしか無い要素を足す。
+ */
+function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null): MergeResult {
+  if (!mine) return { record: theirs }
+  // クラウドで削除されていた: 削除を優先し、この端末の内容は控える
+  if (!theirs) return { record: null, deletedEdit: mine }
+  if (contentEqual(mine, theirs)) return { record: theirs }
+  const out: Record<string, unknown> = { ...theirs }
+  const m = mine as unknown as Record<string, unknown>
+  for (const [field, key] of Object.entries(LIST_FIELDS[table] ?? {})) {
+    if (field in out || field in m) out[field] = unionList(out[field], m[field], key)
+  }
+  const record = out as Rec
+  const result: MergeResult = { record }
+  const mineV = mine as unknown as { body?: unknown }
+  const theirV = theirs as unknown as { body?: unknown }
+  if (table === 'versions' && mineV.body !== theirV.body) result.bodyConflict = mine
+  else if (TEXT_TABLES.has(table) && !contentEqual(mine, record)) result.keptCopy = mine
+  return result
+}
+
+export function mergeRemote(
+  table: TableName,
+  base: Rec | null,
+  mine: Rec | null,
+  theirs: Rec | null,
+  opts: MergeOptions & { noHistory?: boolean },
+): MergeResult {
+  if (opts.noHistory) return mergeUnrelated(table, mine, theirs)
   if (contentEqual(mine, base)) return { record: theirs }
-  if (contentEqual(theirs, base) || contentEqual(theirs, mine)) return { record: mine }
+  // 同じ内容になっていれば、クラウドの内容をそのまま使う（端末内とクラウドを完全に揃えるため）
+  if (contentEqual(theirs, mine)) return { record: theirs }
+  if (contentEqual(theirs, base)) return { record: mine }
   if (!mine) {
     // この端末で削除・別の端末で編集
     return theirs ? { record: null, deletedEdit: theirs } : { record: null }
@@ -179,6 +248,26 @@ export function mergeRemote(table: TableName, base: Rec | null, mine: Rec | null
     // 別の端末で削除・この端末で編集（クラウドに無かったものはこの端末で作ったものなので残す）
     return base ? { record: null, deletedEdit: mine } : { record: mine }
   }
-  const { record, bodyConflict } = mergeFields(table, base, mine, theirs)
-  return bodyConflict ? { record, bodyConflict: mine } : { record }
+  const { record, bodyConflict, joined } = mergeFields(table, base, mine, theirs, opts)
+  const result: MergeResult = { record }
+  if (bodyConflict) result.bodyConflict = mine
+  if (joined.length) result.joined = joined
+  return result
+}
+
+/**
+ * 同期の規則を使わない時（控えの作り方を渡さずに保存した時）の3者マージ: base から mine で変えた項目だけを
+ * theirs に重ね、同じ項目を両方が変えていたらこの端末を優先する。
+ */
+export function mergeRecordLegacy(base: Rec, mine: Rec, theirs: Rec, table?: TableName): Rec {
+  if (table) return mergeFields(table, base, mine, theirs, { body: 'mine', device: 'この端末' }).record
+  const out: Record<string, unknown> = { ...theirs }
+  const b = base as unknown as Record<string, unknown>
+  const m = mine as unknown as Record<string, unknown>
+  for (const key of Object.keys(m)) {
+    if (key === 'updatedAt') continue
+    if (!deepEqual(m[key], b[key])) out[key] = m[key]
+  }
+  out.updatedAt = Math.max(mine.updatedAt ?? 0, theirs.updatedAt ?? 0)
+  return out as Rec
 }

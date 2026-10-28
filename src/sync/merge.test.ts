@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { decodeRecord, encodeRecord, hashRecord, splitJson, type ChunkDoc, type RecordDoc } from './codec'
 import { contentEqual, deepEqual, mergeFields, mergeList, mergeRemote, stableStringify } from './merge'
 
+const D = { device: 'テスト端末' }
+
 describe('比較', () => {
   it('キーの順番と undefined の項目は問わない', () => {
     expect(deepEqual({ a: 1, b: [1, { c: 2 }] }, { b: [1, { c: 2 }], a: 1 })).toBe(true)
@@ -58,7 +60,7 @@ describe('レコードのマージ', () => {
   it('別々の項目の変更は両方残る', () => {
     const mine = { ...base, name: 'こちら', updatedAt: 3 }
     const theirs = { ...base, synopsis: 'あちら', updatedAt: 2 }
-    const r = mergeFields('titles', base, mine, theirs).record as typeof base
+    const r = mergeFields('titles', base, mine, theirs, D).record as typeof base
     expect(r.name).toBe('こちら')
     expect(r.synopsis).toBe('あちら')
     expect(r.updatedAt).toBe(3)
@@ -66,14 +68,14 @@ describe('レコードのマージ', () => {
   it('構成の並びは要素ごとに合わせる', () => {
     const mine = { ...base, structure: [...base.structure, { type: 'piece', id: 'm' }] }
     const theirs = { ...base, structure: [{ type: 'piece', id: 't' }, ...base.structure] }
-    const r = mergeFields('titles', base, mine, theirs).record as typeof base
+    const r = mergeFields('titles', base, mine, theirs, D).record as typeof base
     expect(r.structure.map((n) => n.id)).toEqual(['t', 'p1', 'm'])
   })
   it('稿の本文が両方で変わっていたら、クラウド側を採って競合を知らせる', () => {
     const v = { id: 'v', body: '元', note: '', updatedAt: 1 }
     const mine = { ...v, body: 'こちら', note: 'メモ' }
     const theirs = { ...v, body: 'あちら' }
-    const r = mergeRemote('versions', v, mine, theirs)
+    const r = mergeRemote('versions', v, mine, theirs, D)
     expect((r.record as typeof v).body).toBe('あちら')
     expect((r.record as typeof v).note).toBe('メモ')
     expect((r.bodyConflict as typeof v).body).toBe('こちら')
@@ -82,25 +84,25 @@ describe('レコードのマージ', () => {
     const v = { id: 'v', body: '元', updatedAt: 1 }
     const mine = { ...v, body: '同じ' }
     const theirs = { ...v, body: '同じ', updatedAt: 5 }
-    const r = mergeRemote('versions', v, mine, theirs)
+    const r = mergeRemote('versions', v, mine, theirs, D)
     expect(r.bodyConflict).toBeUndefined()
   })
   it('削除と編集がぶつかったら削除を優先し、編集された内容を返す', () => {
     const m = { id: 'm', body: '元', updatedAt: 1 }
     const edited = { ...m, body: '追記' }
-    expect(mergeRemote('memos', m, edited, null)).toEqual({ record: null, deletedEdit: edited })
-    expect(mergeRemote('memos', m, null, edited)).toEqual({ record: null, deletedEdit: edited })
+    expect(mergeRemote('memos', m, edited, null, D)).toEqual({ record: null, deletedEdit: edited })
+    expect(mergeRemote('memos', m, null, edited, D)).toEqual({ record: null, deletedEdit: edited })
   })
   it('この端末で作ったもの（クラウドに無かったもの）は消さない', () => {
     const m = { id: 'm', body: '新しい' }
-    expect(mergeRemote('memos', null, m, null)).toEqual({ record: m })
+    expect(mergeRemote('memos', null, m, null, D)).toEqual({ record: m })
   })
   it('変えていなければクラウドの内容、クラウドが変わっていなければこの端末の内容', () => {
     const m = { id: 'm', body: '元', updatedAt: 1 }
     const t = { ...m, body: 'あちら', updatedAt: 2 }
-    expect(mergeRemote('memos', m, m, t).record).toBe(t)
+    expect(mergeRemote('memos', m, m, t, D).record).toBe(t)
     const mine = { ...m, body: 'こちら' }
-    expect(mergeRemote('memos', m, mine, { ...m, updatedAt: 9 }).record).toBe(mine)
+    expect(mergeRemote('memos', m, mine, { ...m, updatedAt: 9 }, D).record).toBe(mine)
   })
 })
 
@@ -146,5 +148,56 @@ describe('文書の形', () => {
     expect(hashRecord(r1)).not.toBe(hashRecord(r3))
     expect(hashRecord(null)).toBe('')
     expect(splitJson('abcdef', 4)).toEqual(['abcd', 'ef'])
+  })
+})
+
+describe('共通の履歴が無い時（初めてのログイン・アカウントの切り替え）', () => {
+  const N = { device: 'iPhone', noHistory: true }
+  it('クラウド側を採り、この端末にしか無い文章は控える', () => {
+    const cloud = { id: 'm', body: '新しい', updatedAt: 5 }
+    const local = { id: 'm', body: '古い', updatedAt: 9 }
+    expect(mergeRemote('memos', null, local, cloud, N)).toEqual({ record: cloud, keptCopy: local })
+    const mineV = { id: 'v', body: 'こちら' }
+    const theirV = { id: 'v', body: 'あちら' }
+    const v = mergeRemote('versions', null, mineV, theirV, N)
+    expect(v.record).toEqual({ id: 'v', body: 'あちら' })
+    expect(v.bodyConflict).toEqual({ id: 'v', body: 'こちら' })
+  })
+  it('同じ内容なら控えない。クラウドで削除されていれば削除を優先して控える', () => {
+    const a = { id: 'm', body: '同じ', updatedAt: 1 }
+    expect(mergeRemote('memos', null, a, { ...a, updatedAt: 2 }, N)).toEqual({ record: { ...a, updatedAt: 2 } })
+    expect(mergeRemote('memos', null, a, null, N)).toEqual({ record: null, deletedEdit: a })
+  })
+  it('並びにはこの端末にしか無い要素を足す', () => {
+    const cloud = { id: 'p', versionIds: ['v1', 'v2'] }
+    const local = { id: 'p', versionIds: ['v1', 'mine'] }
+    expect((mergeRemote('pieces', null, local, cloud, N).record as typeof cloud).versionIds).toEqual(['v1', 'mine', 'v2'])
+  })
+})
+
+describe('長い文章の項目が両方で書き換えられた時', () => {
+  it('クラウド側の文章の後ろに、この端末の文章を印付きでつなぐ', () => {
+    const base = { id: 'm', name: 'メモ', body: '元', updatedAt: 1 }
+    const mine = { ...base, body: 'こちらの追記' }
+    const theirs = { ...base, body: 'あちらの追記' }
+    const r = mergeRemote('memos', base, mine, theirs, D)
+    expect((r.record as typeof base).body).toBe(
+      'あちらの追記\n\n――――（同期の競合: テスト端末で同時に書かれた内容）――――\nこちらの追記',
+    )
+    expect(r.joined).toEqual(['body'])
+  })
+  it('名前のような短い項目は、この端末を優先する', () => {
+    const base = { id: 'm', name: '元', body: '', updatedAt: 1 }
+    const mine = { ...base, name: 'こちら' }
+    const theirs = { ...base, name: 'あちら' }
+    const r = mergeRemote('memos', base, mine, theirs, D)
+    expect((r.record as typeof base).name).toBe('こちら')
+    expect(r.joined).toBeUndefined()
+  })
+  it('同じ内容になっていれば、クラウドの内容そのもの（更新日時も）を使う', () => {
+    const base = { id: 'm', body: '元', updatedAt: 1 }
+    const theirs = { ...base, body: '同じ', updatedAt: 7 }
+    const mine = { ...base, body: '同じ', updatedAt: 9 }
+    expect(mergeRemote('memos', base, mine, theirs, D).record).toBe(theirs)
   })
 })

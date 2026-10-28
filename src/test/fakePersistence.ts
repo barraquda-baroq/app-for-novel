@@ -2,7 +2,7 @@
 import type { Persistence, SaveOutcome } from '../db/persistence'
 import { emptyData } from '../domain/types'
 
-export const emptyOutcome = (): SaveOutcome => ({ merged: {}, dropped: {}, written: [] })
+export const emptyOutcome = (): SaveOutcome => ({ merged: {}, dropped: {}, written: [], extra: [] })
 
 export function fakePersistence(over: Partial<Persistence> = {}): Persistence {
   return {
@@ -14,6 +14,7 @@ export function fakePersistence(over: Partial<Persistence> = {}): Persistence {
     completeUpload: async () => {},
     outboxCount: async () => 0,
     markAllDirty: async () => {},
+    localKeys: async () => new Set(),
     getMeta: async () => undefined,
     setMeta: async () => {},
     close: () => {},

@@ -1,5 +1,6 @@
 // 読み込んだデータの整合性を直す。壊れたバックアップや、別タブとの競合で参照が切れたデータでも
 // 画面が落ちないよう、起動時とバックアップ復元時に通す。直せないものは安全側（削除・未分類）に倒す。
+import { deepEqual } from './equal'
 import { textHash } from './text'
 import { TRASH_KIND_LABELS, isContentTable, isTrashKind } from './trash'
 import {
@@ -49,7 +50,7 @@ const STATUSES: SubmissionStatus[] = [
 
 /** 変わった時だけ差し替える（同じ内容なら元のオブジェクトを使い続ける） */
 function same(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b)
+  return deepEqual(a, b)
 }
 
 function normalizeSnapshot(raw: unknown, texts: AppData['snapshotTexts'], fix: (m: string) => void): SubmissionSnapshot | null {

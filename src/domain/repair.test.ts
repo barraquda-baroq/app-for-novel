@@ -132,3 +132,18 @@ describe('壊れたバックアップの修復（項目の欠け）', () => {
     expect(r.data.titles[titleId].structure).toEqual(data.titles[titleId].structure)
   })
 })
+
+describe('同期で届いたレコード（キーが並べ替えてある）', () => {
+  it('内容が正しければ直したことにせず、同じオブジェクトのまま使う', async () => {
+    const { createTitle } = await import('./entityOps')
+    const { addEpisode } = await import('./storyOps')
+    const { stableStringify } = await import('../sync/merge')
+    const t = createTitle(emptyData(), '作品')
+    const e = addEpisode(t.data, t.result)
+    // クラウドから届いた形（キーの順番が違う）にする
+    const sorted = JSON.parse(stableStringify(e.data)) as typeof e.data
+    const r = repairData(sorted)
+    expect(r.fixes).toEqual([])
+    expect(r.data).toBe(sorted)
+  })
+})

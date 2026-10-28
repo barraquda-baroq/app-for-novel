@@ -32,6 +32,20 @@ Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）を�
 > アクセスルールを公開するまでは、ログインしても同期できません（「クラウドへのアクセスが拒否されました」と出ます）。
 > 先に必ず `npm run deploy` を行ってください。
 
+5. Google ログインの戻り先を登録する（最初の1回だけ）。アプリはログインの画面も `novel-studio-3352e.web.app` で開くので、
+   Google 側にその戻り先を教えておきます。これをしないと、ログインの画面に「エラー 400: redirect_uri_mismatch」と出ます。
+   1. [Google Cloud コンソールの「認証情報」](https://console.cloud.google.com/apis/credentials?project=novel-studio-3352e) を開く
+      （Firebase と同じ Google アカウントで。プロジェクトが「novel-studio-3352e」になっていることを確かめる）。
+   2. 「OAuth 2.0 クライアント ID」の **Web client (auto created by Google Service)** を押す。
+   3. 「承認済みのリダイレクト URI」の「URI を追加」で次を足して、「保存」を押す（元からある `…firebaseapp.com/__/auth/handler` は消さない）。
+
+      ```
+      https://novel-studio-3352e.web.app/__/auth/handler
+      ```
+
+   4. 反映まで数分かかることがあります。
+
+
 ## 2. 各端末で使い始める
 
 ### Windows（Edge）
@@ -51,26 +65,16 @@ Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）を�
 その端末に入っていた内容とクラウドの内容が合わさります（どちらも消えません）。
 同じバックアップを2台で復元していた場合のように、同じものが両方にあった時は1つにまとまります。
 
-## 3. 自分以外のアカウントを締め出す（おすすめ）
+## 3. 持ち主のアカウント
 
-アクセスルールで「ログインした本人のデータは本人だけ」が読み書きできるようになっていますが、
-他人が自分の Google アカウントでログインすると、その人用の空の保存場所を使えてしまいます（無料枠を使われる）。
-初めてログインした後に、次の手順で自分だけに限れます。
+最初にログインして同期を始めた Google アカウントが、このクラウドの「持ち主」になります（Firestore の `config/owner` に記録）。
+アクセスルールで、持ち主のアカウントだけが原稿を読み書きできるようにしているので、ほかの人が自分の Google アカウントで
+ログインしても、何も読めず、何も書けません（無料枠を使われることもありません）。
 
-1. [Firebase コンソール](https://console.firebase.google.com/project/novel-studio-3352e/authentication/users) → Authentication → ユーザー で、自分の「ユーザー UID」をコピーする。
-2. `firestore.rules` の
-
-   ```
-   allow read, write: if request.auth != null && request.auth.uid == uid;
-   ```
-
-   を
-
-   ```
-   allow read, write: if request.auth != null && request.auth.uid == uid && uid == 'コピーしたUID';
-   ```
-
-   に書き換えて、`npx firebase deploy --only firestore:rules` で公開し直す。
+- 持ち主を変えたい時（別の Google アカウントに移したい時）は、[Firebase コンソールの Firestore](https://console.firebase.google.com/project/novel-studio-3352e/firestore) で
+  `config` → `owner` の文書を削除してから、新しいアカウントでログインします。
+- 同じ端末で以前と別のアカウントでログインした時は、同期を始める前に「このアカウントで同期しますか？」と確かめます
+  （間違えて別のアカウントを選んでも、原稿がそのアカウントに写らないように）。
 
 ## 4. 更新する時
 

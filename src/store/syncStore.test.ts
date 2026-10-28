@@ -1,6 +1,6 @@
 // ストアの同期まわり: 修復は表示用の内容にだけ当てる・クラウドの変更の反映・送信待ち
 import { afterEach, describe, expect, it } from 'vitest'
-import { createPersistence } from '../db/persistence'
+import { createPersistence, type Persistence } from '../db/persistence'
 import { createTitle, addMemo } from '../domain/entityOps'
 import { addEpisode, updateVersion } from '../domain/storyOps'
 import { emptyData, type AppData, type Piece, type Version } from '../domain/types'
@@ -11,6 +11,13 @@ let n = 0
 const dbName = () => `sync-store-${++n}`
 
 afterEach(() => resetStoreForTests())
+
+/** 端末内にデータを置き、クラウドと揃っている状態にする（復元・すべて削除の扱いにはしない） */
+async function seedSynced(p: Persistence, data: AppData, { synced = true } = {}): Promise<void> {
+  await p.replaceAll(data)
+  if (synced) await p.completeUpload((await p.readOutbox(1000)).map((i) => ({ table: i.table, id: i.id, record: i.local })))
+  await p.setMeta('authoritative', null)
+}
 
 function sample(): { data: AppData; titleId: string; pieceId: string; versionId: string } {
   const t = createTitle(emptyData(), '作品')
@@ -26,7 +33,7 @@ describe('修復は表示用の内容にだけ当てる', () => {
     const p = createPersistence(name)
     // 稿だけ先に届いた状態（話はまだ無い）
     const { [pieceId]: piece, ...pieces } = data.pieces
-    await p.replaceAll({ ...data, pieces })
+    await seedSynced(p, { ...data, pieces }, { synced: false })
     await initStore(p)
     expect(getData().versions[versionId]).toBeUndefined()
     await flushNow()
@@ -49,7 +56,7 @@ describe('修復は表示用の内容にだけ当てる', () => {
       ...data.titles[titleId],
       structure: [...data.titles[titleId].structure, { type: 'piece' as const, id: 'later' }],
     }
-    await p.replaceAll({ ...data, titles: { ...data.titles, [titleId]: title } })
+    await seedSynced(p, { ...data, titles: { ...data.titles, [titleId]: title } }, { synced: false })
     await initStore(p)
     expect(getData().titles[titleId].structure.map((s) => s.id)).toEqual([pieceId])
     actions.updateTitle(titleId, { synopsis: 'あらすじ' })
@@ -64,9 +71,7 @@ describe('クラウドの変更の反映', () => {
   it('未保存の編集があっても、項目ごとに合わせて両方を残す', async () => {
     const { data, titleId } = sample()
     const p = createPersistence(dbName())
-    await p.replaceAll(data)
-    // クラウドと揃っている状態にする
-    await p.completeUpload((await p.readOutbox(100)).map((i) => ({ table: i.table, id: i.id, record: i.local })))
+    await seedSynced(p, data)
     await initStore(p)
     actions.updateTitle(titleId, { synopsis: 'この端末のあらすじ' })
     const remote = { ...data.titles[titleId], name: '別の端末の名前', updatedAt: Date.now() + 10 }
@@ -103,9 +108,7 @@ describe('クラウドの変更の反映', () => {
     const t = createTitle(emptyData(), '作品')
     const m = addMemo(t.data, t.result, 'メモ')
     const p = createPersistence(dbName())
-    await p.replaceAll(m.data)
-    // クラウドと揃っている状態にする
-    await p.completeUpload((await p.readOutbox(100)).map((i) => ({ table: i.table, id: i.id, record: i.local })))
+    await seedSynced(p, m.data)
     await initStore(p)
     actions.updateMemo(m.result, { body: '書き足した' })
     await flushNow()
