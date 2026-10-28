@@ -68,9 +68,9 @@ export function paragraphAt(body: string, offset: number): number {
   return n + 1
 }
 
-const strippedMaps = new WeakMap<Version, StrippedMap>()
-/** 稿の本文の、記法を除いた本文と元の位置の対応（稿ごとに1回だけ作る） */
-function mapOf(v: Version): StrippedMap {
+const strippedMaps = new WeakMap<{ body: string }, StrippedMap>()
+/** 稿の本文の、記法を除いた本文と元の位置の対応（稿ごとに1回だけ作る。検索でも使う） */
+export function strippedMapOf(v: { body: string }): StrippedMap {
   let m = strippedMaps.get(v)
   if (!m) {
     m = stripRubyMap(v.body)
@@ -93,7 +93,7 @@ export function bodyHashOf(record: { body: string }): string {
 /** 一致した範囲を、ルビ・傍点の記法の途中で切らないように広げる（記法を含む本文の上の範囲） */
 function widenToMarkup(v: Version, start: number, end: number): [number, number] {
   if (!hasRubyMarkup(v.body)) return [start, end]
-  const m = mapOf(v)
+  const m = strippedMapOf(v)
   let s = start
   let e = end
   // 記法の文字は、その記法全体を指す。範囲にかかる記法を探して広げる（start・end は前から順に並んでいる）
@@ -152,7 +152,7 @@ function findAll(segments: readonly TextSegment[], excerpt: string, mode: 'raw' 
       return
     }
     if (!hasRubyMarkup(v.body) && !hasRubyMarkup(excerpt)) return
-    const m = mapOf(v)
+    const m = strippedMapOf(v)
     for (const p of positions(m.text, needle)) {
       if (ctx && !precededBy(m.text, p, ctx)) continue
       const last = p + needle.length - 1
