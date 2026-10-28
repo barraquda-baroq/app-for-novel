@@ -99,15 +99,18 @@ const sendRank = (k: string) => {
   return i < 0 ? SEND_ORDER.length : i
 }
 
-/** 親の表と、その親を指す項目（親が無ければ見えない子になる） */
-const PARENT_OF: Partial<Record<TableName, { table: TableName; field: string }>> = {
-  chapters: { table: 'titles', field: 'titleId' },
-  pieces: { table: 'titles', field: 'titleId' },
-  versions: { table: 'pieces', field: 'pieceId' },
-  memos: { table: 'titles', field: 'titleId' },
-  settingCategories: { table: 'titles', field: 'titleId' },
-  settingEntries: { table: 'settingCategories', field: 'categoryId' },
-  submissions: { table: 'titles', field: 'titleId' },
+/** 親の表と、その親を指す項目（親が無ければ見えない子になる。項目が無いレコードは確かめない） */
+const PARENT_OF: Partial<Record<TableName, { table: TableName; field: string }[]>> = {
+  chapters: [{ table: 'titles', field: 'titleId' }],
+  pieces: [
+    { table: 'titles', field: 'titleId' },
+    { table: 'pieces', field: 'parentId' },
+  ],
+  versions: [{ table: 'pieces', field: 'pieceId' }],
+  memos: [{ table: 'titles', field: 'titleId' }],
+  settingCategories: [{ table: 'titles', field: 'titleId' }],
+  settingEntries: [{ table: 'settingCategories', field: 'categoryId' }],
+  submissions: [{ table: 'titles', field: 'titleId' }],
 }
 
 /** 親が消えたら、子も消す（子にしか無い文章はゴミ箱に控える） */
@@ -121,7 +124,11 @@ const CHILDREN: Partial<Record<TableName, { table: TableName; field: string }[]>
     { table: 'settingEntries', field: 'titleId' },
     { table: 'submissions', field: 'titleId' },
   ],
-  pieces: [{ table: 'versions', field: 'pieceId' }],
+  pieces: [
+    { table: 'versions', field: 'pieceId' },
+    // 幕（kind 'act'）は、幕に分けた話（parentId）の子
+    { table: 'pieces', field: 'parentId' },
+  ],
   settingCategories: [{ table: 'settingEntries', field: 'categoryId' }],
 }
 
@@ -434,15 +441,15 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         if (hooks) {
           // 別の端末で消された親の下に、このタブが新しく作ったもの（古い表示のまま作った）は、文章を控えて片付ける
           for (const job of work) {
-            const parent = PARENT_OF[job.table]
-            if (!parent) continue
-            for (const rec of job.puts) {
-              if (prev[job.table][rec.id as never]) continue
-              const parentId = (rec as unknown as Record<string, string>)[parent.field]
-              if (!parentId || (await db.tableOf(parent.table).get(parentId))) continue
-              const set = parents.get(parent.table) ?? new Set<string>()
-              set.add(parentId)
-              parents.set(parent.table, set)
+            for (const parent of PARENT_OF[job.table] ?? []) {
+              for (const rec of job.puts) {
+                if (prev[job.table][rec.id as never]) continue
+                const parentId = (rec as unknown as Record<string, string>)[parent.field]
+                if (!parentId || (await db.tableOf(parent.table).get(parentId))) continue
+                const set = parents.get(parent.table) ?? new Set<string>()
+                set.add(parentId)
+                parents.set(parent.table, set)
+              }
             }
           }
           if (parents.size) await w.sweepOrphans(parents, hooks)

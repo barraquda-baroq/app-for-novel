@@ -47,7 +47,8 @@ const byNode: KeyOf = (x) => {
 export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
   titles: { structure: byNode },
   chapters: { pieceIds: asString },
-  pieces: { versionIds: asString },
+  // actIds: 幕に分けた話の幕の並び（2.2）
+  pieces: { versionIds: asString, actIds: asString },
   settingCategories: { fieldTemplate: asString },
   settingEntries: { fields: byId },
   trashEntries: { recordIds: asString },
