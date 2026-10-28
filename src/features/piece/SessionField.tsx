@@ -75,7 +75,9 @@ function useFieldEditor<E extends FieldEl>({ hub, fieldKey, stored, symbols = fa
       element: () => ref.current,
       insert: (kind) => {
         const el = ref.current
-        if (!el || composing.current) return
+        if (!el) return
+        // 変換中（Android のキーボードは英字の単語も変換中として扱う）に押された時は、そこまでを確定してから入れる
+        flushComposition.current()
         const sel = readSel(el)
         const { stored: st, label: l } = latest.current
         const r = applySymbol(session.display(fieldKey, st), sel.start, sel.end, kind)
@@ -88,12 +90,12 @@ function useFieldEditor<E extends FieldEl>({ hub, fieldKey, stored, symbols = fa
         showSelection(r.selection)
       },
       undo: () => {
-        if (composing.current) return
+        flushComposition.current()
         const r = session.undo(fieldKey, latest.current.stored)
         if (r) showSelection(r.selection)
       },
       redo: () => {
-        if (composing.current) return
+        flushComposition.current()
         const r = session.redo(fieldKey, latest.current.stored)
         if (r) showSelection(r.selection)
       },
@@ -165,7 +167,11 @@ function useFieldEditor<E extends FieldEl>({ hub, fieldKey, stored, symbols = fa
     const next = el.value
     const ne = e.nativeEvent as InputEvent
     const { stored: st, label: l } = latest.current
-    if (composing.current || ne.isComposing) {
+    // compositionstart の後で（記号の挿入などで）確定させた変換が続いている時は、ここから1手を数え直す
+    if (ne.isComposing && !composing.current) {
+      composing.current = { before: session.display(fieldKey, st), sel: selBefore.current ?? readSel(el) }
+    }
+    if (composing.current) {
       session.setValue(fieldKey, st, next, l)
       return
     }

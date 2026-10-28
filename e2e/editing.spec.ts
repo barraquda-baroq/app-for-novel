@@ -78,6 +78,8 @@ async function reloadAccepting(page: Page) {
 
 test.describe('保存ボタン', () => {
   test('編集は「保存」を押すまでストアに入らず、未保存と出る。保存するとまとめて反映される', async ({ page }, info) => {
+    // スマホはいちばん狭い幅（360px）で確かめる
+    if (!isDesktop(info)) await page.setViewportSize({ width: 360, height: 780 })
     const ids = await seedWork(page)
     await openPiece(page, ids, ids.pieceId)
     const save = page.getByTestId('save-button')
@@ -93,6 +95,15 @@ test.describe('保存ボタン', () => {
     if (isDesktop(info)) await expect(page.getByTestId('unsaved-badge')).toHaveText('未保存')
     // 「保存済み」は出さない
     await expect(page.locator('.save-status')).toHaveCount(0)
+    for (const b of [save, page.getByTestId('discard-button')]) {
+      const box = (await b.boundingBox())!
+      expect(box.height).toBeGreaterThanOrEqual(34)
+      expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+    }
+    // 横にスクロールしない
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    ).toBeLessThanOrEqual(0)
     // 少し待ってもストアには入らない（ほかの端末にも送らない）
     await page.waitForTimeout(2500)
     expect(await storedBody(page, ids.v1)).toBe(BODY)
@@ -308,6 +319,19 @@ test.describe('巻き戻し／進む', () => {
     await page.keyboard.press('ControlOrMeta+z')
     await expect(editor).toHaveValue(BODY)
     await page.keyboard.press('ControlOrMeta+Shift+z')
+    await expect(editor).toHaveValue(`${BODY}漢字`)
+
+    // 変換中に記号ボタンを押すと、変換中の文字を確定してから記号を入れる（それぞれ1手）
+    await cdp.send('Input.imeSetComposition', { text: 'かん', selectionStart: 2, selectionEnd: 2 })
+    await page.getByTestId('symbol-dash').click()
+    await expect(editor).toHaveValue(`${BODY}漢字かん――`)
+    await compose(['じ'], '字')
+    await expect(editor).toHaveValue(`${BODY}漢字かん――字`)
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(editor).toHaveValue(`${BODY}漢字かん――`)
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(editor).toHaveValue(`${BODY}漢字かん`)
+    await page.keyboard.press('ControlOrMeta+z')
     await expect(editor).toHaveValue(`${BODY}漢字`)
   })
 
