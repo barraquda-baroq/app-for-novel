@@ -224,6 +224,37 @@ describe('戦略タブ（現在の原稿・応募時の原稿）', () => {
     expect(screen.queryByTestId('snapshot-export')).toBeNull()
   })
 
+  it('2.0 までの数え方（ルビの記号と読みも数えた）の記録も、画面では本文の控えから数え直した文字数を出す', async () => {
+    const user = userEvent.setup()
+    // 表示される文字: 魔法使いが来た。（8字）。2.0 までは記号と読みも数えて 16字
+    const { titleId, pieceIds } = seedTitle(['｜魔法使い《ウィザード》が来た。'])
+    const subId = actions.addSubmission(titleId, '潮騒文庫新人賞')
+    actions.recordSubmissionSnapshot(subId)
+    const snap = getData().submissions[subId].snapshot!
+    const piece = snap.pieces![pieceIds[0]]
+    actions.updateSubmission(subId, {
+      snapshot: { ...snap, charCount: 16, pieces: { [pieceIds[0]]: { ...piece, chars: 16 } } },
+      status: 'submitted',
+      maxChars: 10,
+    })
+    // 記録の後に1字足した
+    actions.updateVersion(getData().pieces[pieceIds[0]].activeVersionId!, { body: '｜魔法使い《ウィザード》が来た。ね' })
+    renderTab(titleId)
+
+    // 見出しの規定の判定は、数え直した 8字で（記録した 16字なら「規定を6字超過」）
+    expect(screen.getByTestId('submission-limit').textContent).toBe('応募時 規定内')
+    await user.click(screen.getByTestId('submission-toggle'))
+    expect(screen.getByTestId('snapshot-info').textContent).toMatch(/記録・8字・約1枚・1話$/)
+    expect(screen.getByTestId('snapshot-piece').textContent).toBe('第1話第1稿・8字本文を編集')
+    expect(screen.getByTestId('snapshot-diff').textContent).toBe('記録した後に変わったもの：本文の編集 1件（文字数 +1字）')
+    expect(screen.getByTestId('submission-limit-detail').textContent).toBe('応募時の原稿 8字 → 規定内')
+    await user.click(screen.getByTestId('snapshot-read'))
+    const reader = await screen.findByTestId('snapshot-reader')
+    expect(reader.textContent).toContain('に記録・8字')
+    // 記録そのものは書き換えない
+    expect(getData().submissions[subId].snapshot!.charCount).toBe(16)
+  })
+
   it('状態を応募済みにすると応募時の原稿の記録をすすめ、記録する時は空の応募日に今日を入れる', async () => {
     const user = userEvent.setup()
     const { titleId } = seedTitle(['一話', '二話です'])

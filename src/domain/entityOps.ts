@@ -733,6 +733,46 @@ export function snapshotPieceBody(data: AppData, piece: SnapshotPiece): string |
   return piece.body ?? null
 }
 
+/** 応募時の記録の文字数・枚数（今の数え方で数え直したもの） */
+export interface SnapshotCounts {
+  /** 総文字数（空白・改行、ルビ・傍点の記号とルビの読みを除く） */
+  charCount: number
+  /** 400字詰め原稿用紙換算の枚数（古い記録で数えられなければ null） */
+  pages: number | null
+  /** pieceId -> 文字数（話ごとの内容がない古い記録は空） */
+  chars: Record<ID, number>
+}
+
+/** 本文の控えのレコード（古い記録は記録の中の本文）。採用原稿がなかった話・控えがまだ届いていない話は null */
+function snapshotPieceRecord(data: Pick<AppData, 'snapshotTexts'>, p: SnapshotPiece): { body: string } | null {
+  if (p.textKey) return data.snapshotTexts[p.textKey] ?? null
+  return typeof p.body === 'string' ? (p as { body: string }) : null
+}
+
+/**
+ * 記録の文字数・枚数を今の数え方で。記録に残した数は 2.0 までの数え方（ルビの記号と読みも数えていた）のことがあるので、
+ * 本文の控えがあれば数え直す（記録そのものは書き換えない）。控えのない話は記録した数のまま。
+ * 数え直しは本文の控えのレコードごとに1回だけ（bodyMetrics のキャッシュ）。
+ */
+export function snapshotCounts(data: Pick<AppData, 'snapshotTexts'>, s: SubmissionSnapshot): SnapshotCounts {
+  if (!s.pieces) return { charCount: s.charCount, pages: s.pages ?? null, chars: {} }
+  let charCount = 0
+  let pages = 0
+  /** どの話も本文の控えから数えられた（採用原稿があった話の控えが欠けていない） */
+  let complete = true
+  const chars: Record<ID, number> = {}
+  for (const [id, p] of Object.entries(s.pieces)) {
+    const rec = snapshotPieceRecord(data, p)
+    const m = rec ? bodyMetrics(rec) : null
+    if (!m && p.versionId !== null) complete = false
+    chars[id] = m ? m.chars : p.chars
+    charCount += chars[id]
+    if (m) pages += m.manuscriptPages
+  }
+  // 控えが欠けている時の枚数は、記録した枚数（なければ数えられた分だけ）
+  return { charCount, pages: complete || typeof s.pages !== 'number' ? pages : s.pages, chars }
+}
+
 export interface SnapshotDiff {
   /** 採用する稿が変わった話（追加・削除された話は added / removed に入る） */
   switched: ID[]
@@ -745,7 +785,10 @@ export interface SnapshotDiff {
   charDelta: number
 }
 
-/** 記録した時点と今の採用原稿を比べる（本文の指紋で比べるので、稿の名前やメモの変更は数えない） */
+/**
+ * 記録した時点と今の採用原稿を比べる（本文の指紋で比べるので、稿の名前やメモの変更は数えない）。
+ * 文字数の差は、記録の文字数を今の数え方で数え直して比べる（snapshotCounts）
+ */
 export function compareSnapshotWithCurrent(data: AppData, titleId: ID, snapshot: SubmissionSnapshot): SnapshotDiff {
   const current = takeSnapshot(data, titleId, false)
   const diff: SnapshotDiff = {
@@ -753,7 +796,7 @@ export function compareSnapshotWithCurrent(data: AppData, titleId: ID, snapshot:
     edited: [],
     added: [],
     removed: [],
-    charDelta: current.charCount - snapshot.charCount,
+    charDelta: current.charCount - snapshotCounts(data, snapshot).charCount,
   }
   const recordedIds = Object.keys(snapshot.activeVersions)
   for (const id of recordedIds) {
