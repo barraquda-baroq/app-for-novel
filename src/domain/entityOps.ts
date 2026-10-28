@@ -1,6 +1,6 @@
 // タイトル・アイデア・メモ・設定項目・戦略（応募計画）の更新操作。
-import { activeBody, flatten } from './structure'
-import { countChars } from './text'
+import { activeBody, episodeNumbers, flatten, pieceLabel } from './structure'
+import { countChars, textStats } from './text'
 import { Tx, transact } from './tx'
 import {
   DomainError,
@@ -11,6 +11,7 @@ import {
   type SettingCategory,
   type SettingEntry,
   type SettingField,
+  type SnapshotPiece,
   type Submission,
   type SubmissionSnapshot,
   type Title,
@@ -102,21 +103,37 @@ export function deleteTitle(data: AppData, titleId: ID): AppData {
 export interface TitleSummary {
   episodes: number
   specials: number
+  /** 採用原稿がない話・特殊ブロックの合計 */
   missingActive: number
+  /** 採用原稿がない第n話の数 */
+  missingEpisodes: number
+  /** 採用原稿がない特殊ブロックの数 */
+  missingSpecials: number
   activeChars: number
 }
 
 export function titleSummary(data: AppData, titleId: ID): TitleSummary {
-  const summary: TitleSummary = { episodes: 0, specials: 0, missingActive: 0, activeChars: 0 }
+  const summary: TitleSummary = { episodes: 0, specials: 0, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 }
   for (const item of flatten(data, titleId)) {
     const p = data.pieces[item.pieceId]
     if (p.kind === 'episode') summary.episodes += 1
     else summary.specials += 1
     const body = activeBody(data, p)
-    if (body === null) summary.missingActive += 1
-    else summary.activeChars += countChars(body)
+    if (body === null) {
+      summary.missingActive += 1
+      if (p.kind === 'episode') summary.missingEpisodes += 1
+      else summary.missingSpecials += 1
+    } else summary.activeChars += countChars(body)
   }
   return summary
+}
+
+/** 「採用原稿なし 2話＋特殊1」のような表記（話と特殊ブロックを分けて数える）。どちらも0なら空文字 */
+export function missingActiveLabel(missingEpisodes: number, missingSpecials: number): string {
+  if (missingEpisodes === 0 && missingSpecials === 0) return ''
+  if (missingSpecials === 0) return `採用原稿なし ${missingEpisodes}話`
+  if (missingEpisodes === 0) return `採用原稿なし 特殊${missingSpecials}`
+  return `採用原稿なし ${missingEpisodes}話＋特殊${missingSpecials}`
 }
 
 /** タイトル配下のどれかが最後に編集された日時（原稿の編集も含む） */
@@ -407,6 +424,7 @@ export function addSubmission(data: AppData, titleId: ID, contestName = ''): { d
       overview: '',
       minChars: null,
       maxChars: null,
+      limitUnit: 'chars',
       result: '',
       revisionPlan: '',
       resubmissionPlan: '',
@@ -441,17 +459,98 @@ export function deleteSubmission(data: AppData, submissionId: ID): AppData {
   return transact(data, (tx) => tx.delete('submissions', submissionId)).data
 }
 
-/** 現在の採用原稿の状態（どの稿を採用しているか・総文字数）を記録する */
+/** 本文の指紋（FNV-1a 32bit）。記録後に本文が変わったかの判定に使う */
+export function textHash(text: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
+/** 現在の採用原稿の状態（どの話にどの稿を採用しているか・本文の控え・総文字数）を記録する */
 export function takeSnapshot(data: AppData, titleId: ID): SubmissionSnapshot {
   const activeVersions: Record<ID, ID | null> = {}
+  const pieces: Record<ID, SnapshotPiece> = {}
+  const order: ID[] = []
+  const numbers = episodeNumbers(data, titleId)
   let charCount = 0
+  let pages = 0
   for (const item of flatten(data, titleId)) {
     const p = data.pieces[item.pieceId]
-    activeVersions[p.id] = p.activeVersionId
     const body = activeBody(data, p)
-    if (body) charCount += countChars(body)
+    const chars = body ? countChars(body) : 0
+    activeVersions[p.id] = body === null ? null : p.activeVersionId
+    order.push(p.id)
+    pieces[p.id] = {
+      kind: p.kind,
+      label: pieceLabel(data, p, numbers),
+      subtitle: p.subtitle,
+      versionId: body === null ? null : p.activeVersionId,
+      versionName: body === null ? null : (data.versions[p.activeVersionId!]?.name ?? null),
+      chars,
+      body,
+      hash: textHash(body ?? ''),
+    }
+    charCount += chars
+    if (body) pages += textStats(body).manuscriptPages
   }
-  return { at: now(), charCount, activeVersions }
+  return { at: now(), charCount, activeVersions, pages, order, pieces }
+}
+
+export interface SnapshotDiff {
+  /** 採用する稿が変わった話（追加・削除された話も含む） */
+  switched: ID[]
+  /** 同じ稿のまま本文が変わった話 */
+  edited: ID[]
+  /** 記録時より後に追加された話 */
+  added: ID[]
+  /** 記録時にはあったが今はない話 */
+  removed: ID[]
+  charDelta: number
+}
+
+/** 記録した時点と今の採用原稿を比べる（本文の指紋で比べるので、稿の名前やメモの変更は数えない） */
+export function compareSnapshotWithCurrent(data: AppData, titleId: ID, snapshot: SubmissionSnapshot): SnapshotDiff {
+  const current = takeSnapshot(data, titleId)
+  const diff: SnapshotDiff = { switched: [], edited: [], added: [], removed: [], charDelta: current.charCount - snapshot.charCount }
+  const recordedIds = Object.keys(snapshot.activeVersions)
+  for (const id of recordedIds) {
+    if (!(id in current.activeVersions)) {
+      diff.removed.push(id)
+      continue
+    }
+    if (current.activeVersions[id] !== snapshot.activeVersions[id]) {
+      diff.switched.push(id)
+      continue
+    }
+    const before = snapshot.pieces?.[id]
+    const now_ = current.pieces![id]
+    if (before ? before.hash !== now_.hash : false) diff.edited.push(id)
+  }
+  for (const id of Object.keys(current.activeVersions)) if (!(id in snapshot.activeVersions)) diff.added.push(id)
+  return diff
+}
+
+/** この稿を「応募時の原稿」として記録している応募先 */
+export function submissionsReferencingVersion(data: AppData, versionId: ID): Submission[] {
+  return Object.values(data.submissions)
+    .filter((s) => s.snapshot && Object.values(s.snapshot.activeVersions).includes(versionId))
+    .sort(byOrder)
+}
+
+/** 応募時に記録した原稿をテキストにする（記録に本文の控えがある場合のみ） */
+export function snapshotText(snapshot: SubmissionSnapshot, titleName: string): string | null {
+  if (!snapshot.pieces || !snapshot.order) return null
+  const parts: string[] = [titleName, '']
+  for (const id of snapshot.order) {
+    const p = snapshot.pieces[id]
+    if (!p) continue
+    parts.push(p.subtitle.trim() ? `${p.label}　${p.subtitle.trim()}` : p.label, '')
+    parts.push(p.body ?? '採用原稿がありません。', '', '')
+  }
+  return parts.join('\n').trimEnd() + '\n'
 }
 
 export function recordSubmissionSnapshot(data: AppData, submissionId: ID): AppData {

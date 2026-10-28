@@ -43,7 +43,7 @@ describe('タイトルカードの情報', () => {
     const { titleId, pieceIds } = seeded
     let info = titleCardInfo(data, titleId)!
     expect(info.name).toBe('星の海')
-    expect(info.summary).toEqual({ episodes: 2, specials: 0, missingActive: 0, activeChars: 9 })
+    expect(info.summary).toMatchObject({ episodes: 2, specials: 0, missingActive: 0, activeChars: 9 })
     expect(info.chaptersEnabled).toBe(false)
     expect(info.ideaCount).toBe(0)
     expect(info.versionCount).toBe(2)
@@ -55,7 +55,7 @@ describe('タイトルカードの情報', () => {
     data = addIdea(data, null, '', '別').data
     data = updateTitle(data, titleId, { synopsis: '星の海を\n渡る' })
     info = titleCardInfo(data, titleId)!
-    expect(info.summary).toEqual({ episodes: 2, specials: 1, missingActive: 1, activeChars: 6 })
+    expect(info.summary).toMatchObject({ episodes: 2, specials: 1, missingActive: 1, activeChars: 6 })
     expect(info.chaptersEnabled).toBe(true)
     expect(info.ideaCount).toBe(1)
     expect(info.versionCount).toBe(3)
@@ -78,14 +78,14 @@ describe('タイトルカードの情報', () => {
 
 describe('タイトル削除の確認文', () => {
   it('削除されるものと、アイデアが「どのタイトルにも属さない」へ移ることを書く', () => {
-    const msg = deleteTitleMessage({ summary: { episodes: 4, specials: 1, missingActive: 0, activeChars: 0 }, versionCount: 7, ideaCount: 2 })
+    const msg = deleteTitleMessage({ summary: { episodes: 4, specials: 1, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 }, versionCount: 7, ideaCount: 2 })
     expect(msg).toContain('すべての話・推敲バージョン・設定・戦略・メモが削除されます')
     expect(msg).toContain('全4話、特殊ブロック1件、推敲バージョン7稿')
     expect(msg).toContain('アイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります')
   })
 
   it('アイデアがなくても移動先を説明する', () => {
-    const msg = deleteTitleMessage({ summary: { episodes: 0, specials: 0, missingActive: 0, activeChars: 0 }, versionCount: 0, ideaCount: 0 })
+    const msg = deleteTitleMessage({ summary: { episodes: 0, specials: 0, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 }, versionCount: 0, ideaCount: 0 })
     expect(msg).toContain('全0話、推敲バージョン0稿')
     expect(msg).not.toContain('特殊ブロック')
     expect(msg).toContain('「どのタイトルにも属さない」へ移ります')

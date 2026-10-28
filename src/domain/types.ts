@@ -135,13 +135,37 @@ export type SubmissionStatus =
   | 'rejected'
   | 'withdrawn'
 
+/** 応募時点の1話分の控え */
+export interface SnapshotPiece {
+  kind: PieceKind
+  /** 当時の表記（第3話・プロローグ等） */
+  label: string
+  subtitle: string
+  versionId: ID | null
+  versionName: string | null
+  chars: number
+  /** 当時の採用原稿の本文（稿が後で編集・削除されても応募した原稿が残るように控える） */
+  body: string | null
+  /** 本文の指紋（記録後に本文が変わったかの判定用） */
+  hash: string
+}
+
 export interface SubmissionSnapshot {
   at: number
   /** 応募時点の採用原稿の総文字数（空白・改行を除く） */
   charCount: number
   /** pieceId -> 採用していた versionId */
   activeVersions: Record<ID, ID | null>
+  /** 400字詰め原稿用紙換算の枚数（古い記録には無い） */
+  pages?: number
+  /** 読む順の pieceId（古い記録には無い） */
+  order?: ID[]
+  /** pieceId -> 当時の内容（古い記録には無い） */
+  pieces?: Record<ID, SnapshotPiece>
 }
+
+/** 規定の単位。chars = 文字数（空白・改行除く）、pages = 400字詰め原稿用紙換算の枚数 */
+export type LimitUnit = 'chars' | 'pages'
 
 export interface Submission {
   id: ID
@@ -160,9 +184,10 @@ export interface Submission {
   stage: string
   /** コンテストの概要（対象ジャンル・賞典・選考方法など） */
   overview: string
-  /** 規定文字数（未設定は null） */
+  /** 規定（未設定は null）。単位は limitUnit（古いデータでは未設定 = 文字数） */
   minChars: number | null
   maxChars: number | null
+  limitUnit?: LimitUnit
   /** 結果の詳細・講評 */
   result: string
   /** 結果を踏まえた改稿方針 */

@@ -118,7 +118,18 @@ function slotAfterLastEpisodeIn(data: AppData, titleId: ID, chapterId: ID | null
   title.structure.forEach((n, i) => {
     if (n.type === 'piece' && data.pieces[n.id]?.kind === 'episode') idx = i
   })
-  return { chapterId: null, index: idx >= 0 ? idx + 1 : title.structure.length }
+  return { chapterId: null, index: idx >= 0 ? idx + 1 : rootEndBeforeTrailingSpecials(data, title) }
+}
+
+/** タイトル直下の末尾に並ぶ特殊ブロック（エピローグ・あとがき等）の手前の位置 */
+function rootEndBeforeTrailingSpecials(data: AppData, title: Title): number {
+  let i = title.structure.length
+  while (i > 0) {
+    const node = title.structure[i - 1]
+    if (node.type !== 'piece' || data.pieces[node.id]?.kind !== 'special') break
+    i -= 1
+  }
+  return i
 }
 
 // ---------- 話数追加 ----------
@@ -153,7 +164,7 @@ export function planEpisodeSlot(data: AppData, titleId: ID, target?: ID | null):
         return { chapterId: slot.chapterId, index: slot.index + 1 }
       }
       if (chapters.length > 0) return slotAfterLastEpisodeIn(data, titleId, chapters[0].id)
-      return { chapterId: null, index: title.structure.length }
+      return { chapterId: null, index: rootEndBeforeTrailingSpecials(data, title) }
     }
     // 章ごと: 最後に話がある章（なければ最初の章）
     const flat = flatten(data, titleId)
@@ -161,7 +172,7 @@ export function planEpisodeSlot(data: AppData, titleId: ID, target?: ID | null):
       if (data.pieces[flat[i].pieceId].kind === 'episode') return slotAfterLastEpisodeIn(data, titleId, flat[i].chapterId)
     }
     if (chapters.length > 0) return slotAfterLastEpisodeIn(data, titleId, chapters[0].id)
-    return { chapterId: null, index: title.structure.length }
+    return { chapterId: null, index: rootEndBeforeTrailingSpecials(data, title) }
   }
 
   if (target !== null && !data.chapters[target]) throw new DomainError('章が見つかりません')
@@ -169,7 +180,11 @@ export function planEpisodeSlot(data: AppData, titleId: ID, target?: ID | null):
 
   // 通し番号 + 章あり: 指定コンテナに入れた結果が全体の最新話になる位置でなければならない
   const candidates: Slot[] = [slotAfterLastEpisodeIn(data, titleId, target)]
-  if (target === null) candidates.push({ chapterId: null, index: title.structure.length })
+  if (target === null) {
+    // 末尾のエピローグ等より前、それでもだめなら最後
+    candidates.push({ chapterId: null, index: rootEndBeforeTrailingSpecials(data, title) })
+    candidates.push({ chapterId: null, index: title.structure.length })
+  }
   for (const slot of candidates) {
     if (isLastEpisodeAfterInsert(data, titleId, slot)) return slot
   }
@@ -234,52 +249,75 @@ export interface InsertOption {
   label: string
 }
 
-/** 特殊ブロックや移動先として選べる位置の一覧（読む順） */
+/**
+ * 特殊ブロックや移動先として選べる位置の一覧（読む順）。
+ * excludePieceId を渡すと移動用になり、その話を外した後の位置で返す（現在位置も必ず含まれる）。
+ */
 export function insertOptions(data: AppData, titleId: ID, excludePieceId?: ID): InsertOption[] {
   const title = data.titles[titleId]
   if (!title) return []
   const numbers = episodeNumbers(data, titleId)
   const name = (pid: ID) => `「${pieceFullLabel(data, data.pieces[pid], numbers)}」`
-  const opts: InsertOption[] = []
+  // next: その位置の直後にある話（同じ見出しが並んだ時の区別に使う）
+  const opts: (InsertOption & { next?: string })[] = []
 
   if (!title.chaptersEnabled) {
-    const flat = flatten(data, titleId).filter((f) => f.pieceId !== excludePieceId)
-    if (flat.length === 0) return [{ slot: { chapterId: null, index: title.structure.length }, label: '先頭' }]
-    opts.push({ slot: { chapterId: flat[0].chapterId, index: flat[0].index }, label: `先頭（${name(flat[0].pieceId)}の前）` })
-    flat.forEach((f, i) => {
-      opts.push({
-        slot: { chapterId: f.chapterId, index: f.index + 1 },
-        label: i === flat.length - 1 ? `末尾（${name(f.pieceId)}の後）` : `${name(f.pieceId)}の後`,
-      })
-    })
-    return normalizeExcluded(data, titleId, opts, excludePieceId)
+    const all = flatten(data, titleId)
+    const exIdx = excludePieceId ? all.findIndex((f) => f.pieceId === excludePieceId) : -1
+    const from = exIdx >= 0 ? all[exIdx] : null
+    const flat = all.filter((f) => f.pieceId !== excludePieceId)
+    if (flat.length === 0) {
+      const slot = from ? { chapterId: from.chapterId, index: from.index } : { chapterId: null, index: title.structure.length }
+      return normalizeExcluded(data, [{ slot, label: '先頭' }], excludePieceId)
+    }
+    for (let k = 0; k <= flat.length; k++) {
+      // 隠れた章の境目では同じ読み位置を複数の slot で表せるので、移動元の現在位置はその話の slot を使う
+      let slot: Slot
+      if (from && k === exIdx) slot = { chapterId: from.chapterId, index: from.index }
+      else if (k === 0) slot = { chapterId: flat[0].chapterId, index: flat[0].index }
+      else slot = { chapterId: flat[k - 1].chapterId, index: flat[k - 1].index + 1 }
+      const label =
+        k === 0
+          ? `先頭（${name(flat[0].pieceId)}の前）`
+          : k === flat.length
+            ? `末尾（${name(flat[k - 1].pieceId)}の後）`
+            : `${name(flat[k - 1].pieceId)}の後`
+      opts.push({ slot, label, next: flat[k] ? name(flat[k].pieceId) : undefined })
+    }
+    return normalizeExcluded(data, opts, excludePieceId)
   }
 
-  opts.push({ slot: { chapterId: null, index: 0 }, label: '冒頭（タイトル直下・すべての前）' })
+  const firstNode = title.structure.find((n) => n.type === 'chapter' || n.id !== excludePieceId)
+  const nodeName = (n: NodeRef | undefined) =>
+    !n ? undefined : n.type === 'piece' ? name(n.id) : `「${data.chapters[n.id]?.name || '無題の章'}」`
+  opts.push({ slot: { chapterId: null, index: 0 }, label: '冒頭（タイトル直下・すべての前）', next: nodeName(firstNode) })
   title.structure.forEach((node, r) => {
+    const nextNode = title.structure.slice(r + 1).find((n) => n.type === 'chapter' || n.id !== excludePieceId)
     if (node.type === 'piece') {
       if (node.id === excludePieceId) return
-      opts.push({ slot: { chapterId: null, index: r + 1 }, label: `${name(node.id)}の後（タイトル直下）` })
+      opts.push({ slot: { chapterId: null, index: r + 1 }, label: `${name(node.id)}の後（タイトル直下）`, next: nodeName(nextNode) })
       return
     }
     const ch = data.chapters[node.id]
     if (!ch) return
     const chName = `「${ch.name || '無題の章'}」`
-    opts.push({ slot: { chapterId: ch.id, index: 0 }, label: `${chName}の先頭` })
+    const inside = ch.pieceIds.filter((pid) => pid !== excludePieceId)
+    opts.push({ slot: { chapterId: ch.id, index: 0 }, label: `${chName}の先頭`, next: inside[0] ? name(inside[0]) : undefined })
     ch.pieceIds.forEach((pid, i) => {
       if (pid === excludePieceId) return
-      opts.push({ slot: { chapterId: ch.id, index: i + 1 }, label: `${chName}内 ${name(pid)}の後` })
+      const after = ch.pieceIds.slice(i + 1).find((x) => x !== excludePieceId)
+      opts.push({ slot: { chapterId: ch.id, index: i + 1 }, label: `${chName}内 ${name(pid)}の後`, next: after ? name(after) : undefined })
     })
-    opts.push({ slot: { chapterId: null, index: r + 1 }, label: `${chName}の後（タイトル直下）` })
+    opts.push({ slot: { chapterId: null, index: r + 1 }, label: `${chName}の後（タイトル直下）`, next: nodeName(nextNode) })
   })
-  return normalizeExcluded(data, titleId, opts, excludePieceId)
+  return normalizeExcluded(data, opts, excludePieceId)
 }
 
 /**
  * 移動元を除外した後のインデックスに直す（移動時は一度外してから差し込むため）。
- * 同じ位置を指す選択肢は1つにまとめる。
+ * 同じ位置を指す選択肢は1つにまとめ、同じ見出しの選択肢は直後の話を添えて区別する。
  */
-function normalizeExcluded(data: AppData, titleId: ID, opts: InsertOption[], excludePieceId?: ID): InsertOption[] {
+function normalizeExcluded(data: AppData, opts: (InsertOption & { next?: string })[], excludePieceId?: ID): InsertOption[] {
   let normalized = opts
   if (excludePieceId) {
     const from = locatePiece(data, excludePieceId)
@@ -292,12 +330,20 @@ function normalizeExcluded(data: AppData, titleId: ID, opts: InsertOption[], exc
     }
   }
   const seen = new Set<string>()
-  const title = data.titles[titleId]
-  return normalized.filter((o) => {
-    const key = title.chaptersEnabled ? `${o.slot.chapterId}:${o.slot.index}` : o.label
+  const unique = normalized.filter((o) => {
+    const key = `${o.slot.chapterId}:${o.slot.index}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
+  })
+  const labelCount = new Map<string, number>()
+  for (const o of unique) labelCount.set(o.label, (labelCount.get(o.label) ?? 0) + 1)
+  const ordinal = new Map<string, number>()
+  return unique.map(({ slot, label, next }) => {
+    if ((labelCount.get(label) ?? 0) < 2) return { slot, label }
+    const n = (ordinal.get(label) ?? 0) + 1
+    ordinal.set(label, n)
+    return { slot, label: next ? `${label}（${next}の前）` : `${label}（${n}つ目）` }
   })
 }
 
@@ -370,6 +416,13 @@ export function movePieceStep(data: AppData, pieceId: ID, dir: -1 | 1): AppData 
     if (neighbor.chapterId === from.chapterId) {
       dest = { chapterId: from.chapterId, index: neighbor.index }
     } else {
+      // 隠れた章の境目をまたぐ時は、読む順で入れ替えた上で各章の話数（器の大きさ）を保つ。
+      // こうすると ↑ と ↓ で元に戻り、章をオンに戻した時に章の構成が崩れない。
+      const order = flat.map((f) => f.pieceId)
+      ;[order[i], order[i + dir]] = [order[i + dir], order[i]]
+      if (containerCapacity(data, title) === order.length) {
+        return transact(data, (tx) => refillContainers(tx, title.id, order)).data
+      }
       dest = { chapterId: neighbor.chapterId, index: dir < 0 ? neighbor.index : neighbor.index + 1 }
     }
   } else if (from.chapterId) {
@@ -392,6 +445,27 @@ export function movePieceStep(data: AppData, pieceId: ID, dir: -1 | 1): AppData 
     }
   }
   return movePiece(data, pieceId, dest)
+}
+
+function containerCapacity(data: AppData, title: Title): number {
+  return title.structure.reduce((n, node) => n + (node.type === 'piece' ? 1 : (data.chapters[node.id]?.pieceIds.length ?? 0)), 0)
+}
+
+/** 読む順の並び order を、今のコンテナ構成（章の外の位置・各章の話数）のまま詰め直す */
+function refillContainers(tx: Tx, titleId: ID, order: ID[]): void {
+  const t = requireTitle(tx, titleId)
+  let k = 0
+  const structure: NodeRef[] = t.structure.map((node) => {
+    if (node.type === 'piece') return { type: 'piece', id: order[k++] }
+    const ch = tx.get('chapters', node.id)
+    if (ch) {
+      const ids = order.slice(k, k + ch.pieceIds.length)
+      k += ch.pieceIds.length
+      tx.put('chapters', { ...ch, pieceIds: ids, updatedAt: now() })
+    }
+    return node
+  })
+  touchTitle(tx, titleId, { structure })
 }
 
 // ---------- 章 ----------
@@ -424,14 +498,26 @@ export function setNumbering(data: AppData, titleId: ID, numbering: Title['numbe
   return transact(data, (tx) => touchTitle(tx, titleId, { numbering })).data
 }
 
+/** 既定の章名。既にある「第n章」と重ならない番号にする */
+function nextChapterName(data: AppData, title: Title): string {
+  const chapters = chaptersOf(data, title.id)
+  let max = chapters.length
+  for (const c of chapters) {
+    const m = /^第(\d+)章/.exec(c.name.trim())
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  return `第${max + 1}章`
+}
+
 export function addChapter(data: AppData, titleId: ID, name?: string): { data: AppData; result: ID } {
   return transact(data, (tx) => {
     const t = requireTitle(tx, titleId)
-    const count = t.structure.filter((n) => n.type === 'chapter').length
     const ts = now()
-    const ch: Chapter = { id: newId(), titleId, name: name ?? `第${count + 1}章`, note: '', pieceIds: [], createdAt: ts, updatedAt: ts }
+    const ch: Chapter = { id: newId(), titleId, name: name ?? nextChapterName(tx.data, t), note: '', pieceIds: [], createdAt: ts, updatedAt: ts }
     tx.put('chapters', ch)
-    touchTitle(tx, titleId, { structure: [...t.structure, { type: 'chapter', id: ch.id }] })
+    // 末尾のエピローグ等（タイトル直下の特殊ブロック）より前に入れる
+    const at = rootEndBeforeTrailingSpecials(tx.data, t)
+    touchTitle(tx, titleId, { structure: insertAt<NodeRef>(t.structure, at, { type: 'chapter', id: ch.id }) })
     return ch.id
   })
 }
@@ -487,6 +573,14 @@ export function addVersion(
   })
 }
 
+/** 複製名に使う元の稿の呼び名。「第2稿（第1稿を複製）」なら「第2稿」。名前が空なら「無題の稿」 */
+export function baseVersionName(name: string): string {
+  const trimmed = name.trim()
+  const m = /^(第\d+稿)/.exec(trimmed)
+  if (m) return m[1]
+  return trimmed.replace(/（[^（）]*を複製）$/, '').trim() || '無題の稿'
+}
+
 /** 推敲用に既存バージョンを複製して新しいバージョンを作る */
 export function duplicateVersion(data: AppData, versionId: ID): { data: AppData; result: ID } {
   const src = data.versions[versionId]
@@ -495,7 +589,7 @@ export function duplicateVersion(data: AppData, versionId: ID): { data: AppData;
   return addVersion(data, src.pieceId, {
     body: src.body,
     sourceVersionId: src.id,
-    name: `第${piece.versionSeq + 1}稿（${src.name}を複製）`,
+    name: `第${piece.versionSeq + 1}稿（${baseVersionName(src.name)}を複製）`,
   })
 }
 

@@ -1,8 +1,22 @@
 // 本編構成の境界ケース
 import { describe, expect, it } from 'vitest'
 import { createTitle } from './entityOps'
-import { addChapter, addEpisode, addSpecial, insertOptions, movePiece, movePieceStep, planEpisodeSlot, setChaptersEnabled, updatePiece } from './storyOps'
-import { canDeletePiece, episodeNumbers, flatten, pieceLabel } from './structure'
+import {
+  addChapter,
+  addEpisode,
+  addSpecial,
+  baseVersionName,
+  duplicateVersion,
+  insertOptions,
+  movePiece,
+  movePieceStep,
+  planEpisodeSlot,
+  removeChapter,
+  setChaptersEnabled,
+  setNumbering,
+  updatePiece,
+} from './storyOps'
+import { canDeletePiece, episodeNumbers, flatten, locatePiece, pieceLabel } from './structure'
 import { emptyData, type AppData, type ID } from './types'
 
 function labels(data: AppData, titleId: ID): string[] {
@@ -94,5 +108,95 @@ describe('話数追加の位置（章あり・通し番号）', () => {
     data = addSpecial(data, titleId, { chapterId: null, index: 2 }, 'あとがき').data
     expect(canDeletePiece(data, ids[1]).ok).toBe(true)
     expect(canDeletePiece(data, ids[0]).ok).toBe(false)
+  })
+})
+
+describe('レビューで見つかった境界ケース', () => {
+  it('章オフ中に↑してから↓すると、章をオンに戻した時の章の構成も元どおり', () => {
+    let { data, titleId, ids } = build(4)
+    data = setChaptersEnabled(data, titleId, true)
+    const c1 = data.titles[titleId].structure[0].id
+    const c2 = addChapter(data, titleId)
+    data = movePiece(c2.data, ids[2], { chapterId: c2.result, index: 0 })
+    data = movePiece(data, ids[3], { chapterId: c2.result, index: 1 })
+    data = setChaptersEnabled(data, titleId, false)
+    data = movePieceStep(data, ids[2], -1)
+    expect(labels(data, titleId)).toEqual(['第1話:A', '第2話:C', '第3話:B', '第4話:D'])
+    data = movePieceStep(data, ids[2], 1)
+    data = setChaptersEnabled(data, titleId, true)
+    expect(data.chapters[c1].pieceIds).toEqual([ids[0], ids[1]])
+    expect(data.chapters[c2.result].pieceIds).toEqual([ids[2], ids[3]])
+  })
+
+  it('同じ見出しの特殊ブロックが複数あっても、差し込み位置が欠けず区別できる', () => {
+    let { data, titleId } = build(3)
+    data = addSpecial(data, titleId, { chapterId: null, index: 1 }, '幕間').data
+    data = addSpecial(data, titleId, { chapterId: null, index: 3 }, '幕間').data
+    expect(labels(data, titleId)).toEqual(['第1話:A', '幕間', '第2話:B', '幕間', '第3話:C'])
+    const opts = insertOptions(data, titleId)
+    expect(opts).toHaveLength(6)
+    expect(new Set(opts.map((o) => o.label)).size).toBe(6)
+    expect(opts.map((o) => o.label)).toContain('「幕間」の後（「第3話　C」の前）')
+  })
+
+  it('章オフ中、隠れた章の先頭にある話の移動先候補にも現在位置が含まれる', () => {
+    let { data, titleId, ids } = build(4)
+    data = setChaptersEnabled(data, titleId, true)
+    const c2 = addChapter(data, titleId)
+    data = movePiece(c2.data, ids[2], { chapterId: c2.result, index: 0 })
+    data = movePiece(data, ids[3], { chapterId: c2.result, index: 1 })
+    data = setChaptersEnabled(data, titleId, false)
+    const from = locatePiece(data, ids[2])!
+    const opts = insertOptions(data, titleId, ids[2])
+    expect(opts.filter((o) => o.slot.chapterId === from.chapterId && o.slot.index === from.index)).toHaveLength(1)
+    // 現在位置を選んで移動しても何も変わらない
+    const current = opts.find((o) => o.slot.chapterId === from.chapterId && o.slot.index === from.index)!
+    const moved = movePiece(data, ids[2], current.slot)
+    expect(labels(moved, titleId)).toEqual(labels(data, titleId))
+  })
+})
+
+describe('章の追加位置・名前、複製名、削除理由', () => {
+  it('末尾のエピローグより前に章が追加され、新しい章への話数追加もエピローグより前になる', () => {
+    let { data, titleId } = build(2)
+    data = setChaptersEnabled(data, titleId, true)
+    data = addSpecial(data, titleId, { chapterId: null, index: 1 }, 'エピローグ').data
+    const c2 = addChapter(data, titleId)
+    data = addEpisode(c2.data, titleId, c2.result).data
+    expect(labels(data, titleId)).toEqual(['第1話:A', '第2話:B', '第3話', 'エピローグ'])
+    // タイトル直下を指定しても、エピローグの前に入る
+    data = addEpisode(data, titleId, null).data
+    expect(labels(data, titleId)).toEqual(['第1話:A', '第2話:B', '第3話', '第4話', 'エピローグ'])
+  })
+
+  it('章の既定名は既存の第n章と重ならない', () => {
+    let { data, titleId } = build(1)
+    data = setChaptersEnabled(data, titleId, true)
+    const first = data.titles[titleId].structure[0].id
+    const c2 = addChapter(data, titleId)
+    data = removeChapter(c2.data, first)
+    const c3 = addChapter(data, titleId)
+    expect(c3.data.chapters[c3.result].name).toBe('第3章')
+  })
+
+  it('複製名は入れ子にならない', () => {
+    expect(baseVersionName('第2稿（第1稿を複製）')).toBe('第2稿')
+    expect(baseVersionName('')).toBe('無題の稿')
+    expect(baseVersionName('決定稿（第1稿を複製）')).toBe('決定稿')
+    let { data, ids } = build(1)
+    const v1 = data.pieces[ids[0]].versionIds[0]
+    const d1 = duplicateVersion(data, v1)
+    const d2 = duplicateVersion(d1.data, d1.result)
+    expect(d2.data.versions[d2.result].name).toBe('第3稿（第2稿を複製）')
+  })
+
+  it('章ごとの話数でタイトル直下の話を消せない時は、章ではなくタイトル直下と説明する', () => {
+    let { data, titleId, ids } = build(2)
+    data = setChaptersEnabled(data, titleId, true)
+    data = setNumbering(data, titleId, 'perChapter')
+    data = removeChapter(data, data.titles[titleId].structure[0].id)
+    const reason = canDeletePiece(data, ids[0]).reason ?? ''
+    expect(reason).toContain('タイトル直下')
+    expect(reason).not.toContain('この章')
   })
 })

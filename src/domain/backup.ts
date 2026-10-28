@@ -1,4 +1,5 @@
 // JSON バックアップの書き出し・読み込み。データは端末内にしかないので、機種変更や保全のために用意する。
+import { repairData } from './repair'
 import { DomainError, TABLE_NAMES, emptyData, type AppData } from './types'
 
 export const BACKUP_APP_ID = 'novel-studio'
@@ -43,5 +44,6 @@ export function parseBackup(json: string): AppData {
     }
     ;(data as unknown as Record<string, unknown>)[table] = records
   }
-  return data
+  // 参照切れ（存在しない章・話・タイトルへの参照など）は読み込み時に直す
+  return repairData(data).data
 }

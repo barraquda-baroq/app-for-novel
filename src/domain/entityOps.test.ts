@@ -8,21 +8,25 @@ import {
   addMemo,
   addSubmission,
   categoriesOf,
+  compareSnapshotWithCurrent,
   createTitle,
   deleteTitle,
   entriesOf,
   ideaSections,
   memosOf,
+  missingActiveLabel,
   moveIdeaStep,
   moveIdeaToSection,
   moveSubmissionStep,
   recordSubmissionSnapshot,
+  snapshotText,
+  submissionsReferencingVersion,
   submissionsOf,
   titleLastEdited,
   titleSummary,
   updateCategory,
 } from './entityOps'
-import { addEpisode, setActiveVersion, updateVersion } from './storyOps'
+import { addEpisode, deleteVersion, setActiveVersion, updateVersion } from './storyOps'
 import { countChars, textStats } from './text'
 import { DomainError, emptyData } from './types'
 
@@ -105,7 +109,7 @@ describe('タイトル配下', () => {
     data = updateVersion(data, data.pieces[e1.result].versionIds[0], { body: 'あいう えお\nかき' })
     const e2 = addEpisode(data, t.result)
     data = setActiveVersion(e2.data, e2.result, null)
-    expect(titleSummary(data, t.result)).toEqual({ episodes: 2, specials: 0, missingActive: 1, activeChars: 7 })
+    expect(titleSummary(data, t.result)).toEqual({ episodes: 2, specials: 0, missingActive: 1, missingEpisodes: 1, missingSpecials: 0, activeChars: 7 })
   })
 })
 
@@ -170,5 +174,38 @@ describe('バックアップ', () => {
     expect(() => parseBackup(JSON.stringify({ app: 'novel-studio', schemaVersion: 1, data: { titles: [] } }))).toThrow(
       DomainError,
     )
+  })
+})
+
+describe('応募時の原稿の記録', () => {
+  it('話ごとの稿と本文の控えを残し、稿の名前変更では「本文が変わった」としない', () => {
+    let data = emptyData()
+    const t = createTitle(data, '作品A')
+    data = t.data
+    const e1 = addEpisode(data, t.result)
+    data = e1.data
+    const v1 = data.pieces[e1.result].versionIds[0]
+    data = updateVersion(data, v1, { body: '応募した本文' })
+    const s = addSubmission(data, t.result, 'A賞')
+    data = recordSubmissionSnapshot(s.data, s.result)
+    const snap = data.submissions[s.result].snapshot!
+    expect(snap.pieces![e1.result]).toMatchObject({ label: '第1話', versionName: '第1稿', body: '応募した本文', chars: 6 })
+    expect(snapshotText(snap, '作品A')).toContain('応募した本文')
+    expect(submissionsReferencingVersion(data, v1).map((x) => x.contestName)).toEqual(['A賞'])
+
+    data = updateVersion(data, v1, { name: '決定稿', note: 'メモだけ変更' })
+    expect(compareSnapshotWithCurrent(data, t.result, snap)).toMatchObject({ switched: [], edited: [], charDelta: 0 })
+    data = updateVersion(data, v1, { body: '応募後に直した本文' })
+    expect(compareSnapshotWithCurrent(data, t.result, snap).edited).toEqual([e1.result])
+    // 稿を消しても、応募した本文は記録に残る
+    data = deleteVersion(data, v1)
+    expect(data.submissions[s.result].snapshot!.pieces![e1.result].body).toBe('応募した本文')
+  })
+
+  it('採用原稿なしの話と特殊ブロックを分けて表記する', () => {
+    expect(missingActiveLabel(0, 0)).toBe('')
+    expect(missingActiveLabel(2, 0)).toBe('採用原稿なし 2話')
+    expect(missingActiveLabel(1, 1)).toBe('採用原稿なし 1話＋特殊1')
+    expect(missingActiveLabel(0, 1)).toBe('採用原稿なし 特殊1')
   })
 })

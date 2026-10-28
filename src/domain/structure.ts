@@ -137,7 +137,8 @@ export function canDeletePiece(data: AppData, pieceId: ID): Permission {
   const last = lastEpisodeInScope(data, piece.titleId, slot?.chapterId ?? null)
   if (last === pieceId) return { ok: true }
   const title = data.titles[piece.titleId]
-  const scope = effectiveNumbering(title) === 'perChapter' ? 'この章の' : ''
+  const scope =
+    effectiveNumbering(title) !== 'perChapter' ? '' : slot?.chapterId ? 'この章の' : 'タイトル直下（章に入っていない話）の'
   return {
     ok: false,
     reason: `途中の話数は削除できません。${scope}最後の話だけが削除できます。削除したい話を並べ替えで最後に移動してから削除してください。`,

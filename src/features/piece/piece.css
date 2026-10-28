@@ -15,6 +15,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  overflow: clip;
 }
 
 @supports not selector(:has(*)) {
@@ -348,6 +349,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* キャレット追従で外枠がスクロールして先頭行が隠れないようにする */
+  overflow: clip;
 }
 
 .pw-root .pw-scroll {
@@ -899,7 +902,7 @@
   }
 
   .pw-root .pw-body > .manuscript {
-    padding: 14px 16px 40vh;
+    padding: 14px 16px 3em;
   }
 
   .pw-root .pw-vselect,

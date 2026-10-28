@@ -1,6 +1,7 @@
 // アプリ全体の状態（Zustand）と、IndexedDB への自動保存。
 import { create } from 'zustand'
 import { createPersistence, type Persistence } from '../db/persistence'
+import { repairData } from '../domain/repair'
 import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../domain/types'
 
 export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error'
@@ -49,8 +50,11 @@ export async function initStore(p: Persistence = createPersistence()): Promise<v
     const data = await p.load()
     persisted = data
     const recovered = applyRecoveryJournal(data)
-    useApp.setState({ data: recovered.data, status: 'ready', loadError: null, recoveredCount: recovered.count })
-    if (recovered.count > 0) {
+    // 参照切れなどがあれば直してから使う（直した内容は保存される）
+    const repaired = repairData(recovered.data)
+    if (repaired.fixes.length) console.warn('データの整合性を修復しました', repaired.fixes)
+    useApp.setState({ data: repaired.data, status: 'ready', loadError: null, recoveredCount: recovered.count })
+    if (recovered.count > 0 || repaired.fixes.length > 0) {
       useApp.setState({ saveStatus: 'pending' })
       scheduleSave()
     } else {

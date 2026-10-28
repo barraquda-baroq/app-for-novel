@@ -321,6 +321,14 @@ h4 {
 .breadcrumbs .current {
   color: var(--text);
   font-weight: 600;
+  /* 現在地（第n話など短いもの）は削らず、前の階層から省略する */
+  flex-shrink: 0;
+  max-width: 50%;
+}
+
+.breadcrumbs a {
+  flex-shrink: 1;
+  min-width: 2.5em;
 }
 
 /* ===== ボタン ===== */
@@ -927,7 +935,9 @@ h4 {
   width: 100%;
   height: 100%;
   min-height: 200px;
-  padding: 18px 20px 40vh;
+  /* 末尾に少し余白を取る。ビューポート基準の大きな余白はペインより高くなり、
+     キャレット追従で外側の枠がスクロールしてしまうので使わない */
+  padding: 18px 20px 4em;
   border: 0;
   outline: none;
   resize: none;
@@ -966,6 +976,8 @@ h4 {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* プログラムによるスクロール（キャレット追従など）でも動かないようにする */
+  overflow: clip;
 }
 
 .split-divider {
@@ -999,6 +1011,21 @@ h4 {
 
 .split.vertical > .split-divider::before {
   inset: -10px 0;
+}
+
+/* 指で操作する端末では境界をつかみやすくする */
+@media (pointer: coarse) {
+  .split.horizontal > .split-divider::before {
+    inset: 0 -18px;
+  }
+
+  .split.vertical > .split-divider::before {
+    inset: -18px 0;
+  }
+
+  .split-divider .grip {
+    transform: translate(-50%, -50%) scale(1.25);
+  }
 }
 
 .split-divider .grip {
