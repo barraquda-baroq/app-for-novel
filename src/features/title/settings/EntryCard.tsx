@@ -1,12 +1,13 @@
 // 設定エントリ1件のカード。畳んでいる時は名前と要約、開くと名前・フィールド・自由記述を編集できる。
-import { useState } from 'react'
-import type { SettingCategory, SettingEntry } from '../../../domain/types'
+import { useRef, useState } from 'react'
+import type { SettingCategory, SettingEntry, SettingField } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
 import { confirmDialog } from '../../../ui/dialogs'
-import { DraftInput } from '../../../ui/DraftField'
+import { DraftInput, type DraftHandle } from '../../../ui/DraftField'
 import { ChevronRightIcon, DownIcon, PlusIcon, TrashIcon, UpIcon, XIcon } from '../../../ui/icons'
+import { ActionMenu } from './ActionMenu'
 import { commitEntry, commitFields } from './commits'
 import { GrowTextarea } from './GrowTextarea'
 import {
@@ -32,6 +33,8 @@ export interface EntryCardProps {
 
 export function EntryCard({ entry, categories, isFirst, isLast, expanded, onToggle, autoFocusName }: EntryCardProps) {
   const [newFieldId, setNewFieldId] = useState<string | null>(null)
+  const fieldListRef = useRef<HTMLUListElement>(null)
+  const addFieldRef = useRef<HTMLButtonElement>(null)
   const name = entryDisplayName(entry.name)
   const summary = entrySummary(entry)
   const others = categories.filter((c) => c.id !== entry.categoryId)
@@ -59,7 +62,14 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
       })
       if (!ok) return
     }
-    commitFields(entry.id, (fields) => removeField(fields, fieldId))
+    const index = getData().settingEntries[entry.id]?.fields.findIndex((f) => f.id === fieldId) ?? -1
+    if (!commitFields(entry.id, (fields) => removeField(fields, fieldId))) return
+    // 消したフィールドの操作メニューにあったフォーカスを、同じ位置のフィールド（なければ「フィールドを追加」）へ移す
+    requestAnimationFrame(() => {
+      const keys = fieldListRef.current?.querySelectorAll<HTMLInputElement>('[data-testid="field-key"]')
+      const next = keys && keys.length > 0 ? keys[Math.min(Math.max(index, 0), keys.length - 1)] : null
+      ;(next ?? addFieldRef.current)?.focus()
+    })
   }
 
   const moveTo = (categoryId: string) => {
@@ -128,70 +138,21 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
                 フィールドはまだありません。「＋フィールドを追加」で年齢・読みなどの欄を作れます。
               </p>
             ) : (
-              <ul className="st-field-list">
-                {entry.fields.map((f, i) => {
-                  const label = f.key.trim() || `フィールド${i + 1}`
-                  return (
-                    <li key={f.id} className="st-field" data-testid="entry-field">
-                      <DraftInput
-                        key={f.id}
-                        className="input st-field-key"
-                        value={f.key}
-                        onCommit={(v) => commitFields(entry.id, (fields) => patchField(fields, f.id, { key: v }))}
-                        placeholder="項目名"
-                        aria-label={`フィールド${i + 1}の項目名`}
-                        autoFocus={f.id === newFieldId}
-                        data-testid="field-key"
-                      />
-                      <GrowTextarea
-                        key={f.id}
-                        className="textarea st-field-value"
-                        value={f.value}
-                        onCommit={(v) => commitFields(entry.id, (fields) => patchField(fields, f.id, { value: v }))}
-                        placeholder="内容"
-                        aria-label={`${label}の内容`}
-                        data-testid="field-value"
-                      />
-                      <div className="st-field-tools">
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          disabled={i === 0}
-                          onClick={() => commitFields(entry.id, (fields) => moveField(fields, f.id, -1))}
-                          aria-label={`${label}を上へ`}
-                          title="上へ"
-                          data-testid="field-up"
-                        >
-                          <UpIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          disabled={i === entry.fields.length - 1}
-                          onClick={() => commitFields(entry.id, (fields) => moveField(fields, f.id, 1))}
-                          aria-label={`${label}を下へ`}
-                          title="下へ"
-                          data-testid="field-down"
-                        >
-                          <DownIcon />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn st-danger-icon"
-                          onClick={() => void removeFieldWithConfirm(f.id, label)}
-                          aria-label={`${label}を削除`}
-                          title="このフィールドを削除"
-                          data-testid="field-remove"
-                        >
-                          <XIcon />
-                        </button>
-                      </div>
-                    </li>
-                  )
-                })}
+              <ul className="st-field-list" ref={fieldListRef}>
+                {entry.fields.map((f, i) => (
+                  <FieldRow
+                    key={f.id}
+                    entryId={entry.id}
+                    field={f}
+                    index={i}
+                    count={entry.fields.length}
+                    autoFocus={f.id === newFieldId}
+                    onRemove={(label) => void removeFieldWithConfirm(f.id, label)}
+                  />
+                ))}
               </ul>
             )}
-            <button type="button" className="btn btn-sm st-add-field" onClick={addField} data-testid="add-field">
+            <button type="button" ref={addFieldRef} className="btn btn-sm st-add-field" onClick={addField} data-testid="add-field">
               <PlusIcon />
               フィールドを追加
             </button>
@@ -266,6 +227,87 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
           </div>
         </div>
       ) : null}
+    </li>
+  )
+}
+
+/**
+ * フィールド1行（項目名・内容・操作メニュー）。キーボードで続けて入力しやすいよう、
+ * 並べ替え・削除は1つの「…」メニューにまとめ（Tab で止まるのは1か所だけ）、項目名で Enter を押すと内容へ移る。
+ */
+function FieldRow({
+  entryId,
+  field: f,
+  index,
+  count,
+  autoFocus,
+  onRemove,
+}: {
+  entryId: string
+  field: SettingField
+  index: number
+  count: number
+  autoFocus: boolean
+  onRemove: (label: string) => void
+}) {
+  const rowRef = useRef<HTMLLIElement>(null)
+  const valueRef = useRef<DraftHandle>(null)
+  const label = f.key.trim() || `フィールド${index + 1}`
+
+  const move = (dir: -1 | 1) => {
+    if (!commitFields(entryId, (fields) => moveField(fields, f.id, dir))) return
+    // 行が入れ替わるとメニューのボタンからフォーカスが外れることがあるので戻す
+    requestAnimationFrame(() => rowRef.current?.querySelector<HTMLElement>('.st-menu-trigger')?.focus())
+  }
+
+  return (
+    <li ref={rowRef} className="st-field" data-testid="entry-field" data-field-id={f.id}>
+      <DraftInput
+        key={`${f.id}:key`}
+        className="input st-field-key"
+        value={f.key}
+        onCommit={(v) => commitFields(entryId, (fields) => patchField(fields, f.id, { key: v }))}
+        onKeyDown={(e) => {
+          // 項目名を確定したら、そのまま内容を書けるようにする
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            valueRef.current?.focus()
+          }
+        }}
+        placeholder="項目名"
+        aria-label={`フィールド${index + 1}の項目名`}
+        enterKeyHint="next"
+        autoFocus={autoFocus}
+        data-testid="field-key"
+      />
+      <GrowTextarea
+        key={`${f.id}:value`}
+        ref={valueRef}
+        className="textarea st-field-value"
+        value={f.value}
+        onCommit={(v) => commitFields(entryId, (fields) => patchField(fields, f.id, { value: v }))}
+        placeholder="内容"
+        aria-label={`${label}の内容`}
+        data-testid="field-value"
+      />
+      <div className="st-field-tools">
+        <ActionMenu
+          label={`「${label}」の操作`}
+          testId="field-menu"
+          triggerClassName="st-field-menu"
+          items={[
+            { label: '上へ移動', icon: <UpIcon />, disabled: index === 0, onSelect: () => move(-1), testId: 'field-up' },
+            {
+              label: '下へ移動',
+              icon: <DownIcon />,
+              disabled: index === count - 1,
+              onSelect: () => move(1),
+              testId: 'field-down',
+            },
+            { label: 'このフィールドを削除', icon: <XIcon />, danger: true, onSelect: () => onRemove(label), testId: 'field-remove' },
+          ]}
+        />
+      </div>
     </li>
   )
 }

@@ -1,25 +1,47 @@
-// 応募計画1件のカード。見出し行に応募順・コンテスト名・状態・締切・規定文字数の判定、開くと詳細を編集できる。
+// 応募計画1件のカード。見出し行に応募順・コンテスト名・状態と、状態に応じた情報
+// （応募前: 締切・規定の判定／結果待ち: 応募日・結果発表まで／終了: 結果・改稿方針・再応募方針の抜粋）、開くと詳細を編集できる。
 import { useId, useMemo, useState } from 'react'
-import { SUBMISSION_STATUSES, submissionStatusLabel, type SubmissionPatch } from '../../../domain/entityOps'
+import {
+  SUBMISSION_STATUSES,
+  snapshotText,
+  submissionStatusLabel,
+  type SubmissionPatch,
+} from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
-import type { Submission, SubmissionStatus } from '../../../domain/types'
+import type { LimitUnit, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
 import { attempt, notify, notifyError } from '../../../store/uiStore'
-import { formatDateTime } from '../../../ui/browser'
+import { downloadFile, formatDateTime, safeFileName } from '../../../ui/browser'
 import { confirmDialog } from '../../../ui/dialogs'
 import { DraftInput } from '../../../ui/DraftField'
-import { CameraIcon, ChevronRightIcon, DownIcon, LinkIcon, TrashIcon, UpIcon } from '../../../ui/icons'
+import { BookIcon, CameraIcon, ChevronRightIcon, DownIcon, DownloadIcon, LinkIcon, TrashIcon, UpIcon } from '../../../ui/icons'
+import { Modal } from '../../../ui/Modal'
 import { GrowTextarea } from '../settings/GrowTextarea'
 import {
-  charLimitCheck,
-  charLimitRange,
-  compareSnapshot,
   deadlineInfo,
+  followUpLines,
+  formatAmount,
+  formatYmd,
+  isBeforeSubmission,
   isHttpUrl,
-  parseCharLimit,
+  limitBasis,
+  limitCheck,
+  limitRange,
+  limitUnitOf,
+  manuscriptSummary,
+  parseLimit,
+  pieceCountLabel,
+  resultInfo,
+  SNAPSHOT_CHANGE_LABEL,
+  snapshotChangeSummary,
+  snapshotPages,
+  snapshotView,
+  statusPhase,
   statusTone,
-  type CharLimitCheck,
+  toYmd,
+  unitSuffix,
+  type LimitCheck,
 } from './strategyLogic'
 
 /** 削除後に届いた下書きの保存や、値が変わらない保存は何もしない */
@@ -35,13 +57,24 @@ export function contestDisplayName(name: string): string {
   return name.trim() || '（コンテスト名未設定）'
 }
 
-/** 規定文字数は入力の途中で判定しないよう、確定（Enter・フォーカスを外す）した時だけ保存する */
+/** 規定は入力の途中で判定しないよう、確定（Enter・フォーカスを外す）した時だけ保存する */
 const LIMIT_COMMIT_DELAY = 10 * 60 * 1000
 
-const LIMIT_BADGE: Record<CharLimitCheck['state'], string> = {
+const LIMIT_BADGE: Record<LimitCheck['state'], string> = {
   ok: 'badge-active',
   short: 'badge-missing',
   over: 'badge-danger',
+}
+
+const UNIT_HINT: Record<LimitUnit, string> = {
+  chars: '空白・改行を除いた文字数',
+  pages: '400字詰め原稿用紙換算の枚数',
+}
+
+/** 現在の採用原稿の量（規定との比較用） */
+export interface CurrentAmount {
+  chars: number
+  pages: number
 }
 
 export interface SubmissionCardProps {
@@ -54,8 +87,8 @@ export interface SubmissionCardProps {
   canReorder: boolean
   expanded: boolean
   onToggle: () => void
-  /** 現在の採用原稿の総文字数 */
-  totalChars: number
+  /** 現在の採用原稿の総文字数・原稿用紙換算枚数 */
+  current: CurrentAmount
   today: Date
 }
 
@@ -67,12 +100,20 @@ export function SubmissionCard({
   canReorder,
   expanded,
   onToggle,
-  totalChars,
+  current,
   today,
 }: SubmissionCardProps) {
   const tone = statusTone(s.status)
-  const deadline = deadlineInfo(s, today)
-  const check = charLimitCheck(totalChars, s.minChars, s.maxChars)
+  const phase = statusPhase(s.status)
+  const unit = limitUnitOf(s)
+  // 応募前: 締切と現在の原稿の規定判定／結果待ち: 応募日・結果発表と応募時の原稿の規定判定／終了: 注意は出さない
+  const deadline = phase === 'before' ? deadlineInfo(s, today) : null
+  const result = phase === 'waiting' ? resultInfo(s.resultOn, today) : null
+  const submittedOn = phase === 'waiting' ? formatYmd(s.submittedOn) : ''
+  const basis = phase === 'finished' ? null : limitBasis(s, current)
+  const check = basis ? limitCheck(basis.amount, s.minChars, s.maxChars, unit) : null
+  const followUps = phase === 'finished' && !expanded ? followUpLines(s) : null
+  const followUpsEmpty = followUps !== null && followUps.every((f) => !f.text)
   const name = contestDisplayName(s.contestName)
   const bodyId = `sg-sub-${s.id}`
 
@@ -113,16 +154,43 @@ export function SubmissionCard({
                   {deadline.text}
                 </span>
               ) : null}
-              {check ? (
+              {submittedOn ? (
+                <span className="sg-deadline" data-testid="submission-submitted-on">
+                  応募日 {submittedOn}
+                </span>
+              ) : null}
+              {result ? (
+                <span className={`sg-deadline is-${result.tone}`} data-testid="submission-result-on">
+                  {result.text}
+                </span>
+              ) : null}
+              {check && basis ? (
                 <span
                   className={`badge ${LIMIT_BADGE[check.state]}`}
                   data-testid="submission-limit"
-                  title={`規定 ${charLimitRange(s.minChars, s.maxChars)}`}
+                  title={`規定 ${limitRange(s.minChars, s.maxChars, unit)}（${basis.source === 'snapshot' ? '応募時の原稿' : '現在の採用原稿'} ${formatAmount(basis.amount, unit)}）`}
                 >
                   {check.text}
                 </span>
               ) : null}
             </span>
+            {followUps && !followUpsEmpty ? (
+              <span className="sg-followups" data-testid="submission-followups">
+                {followUps.map((f) => (
+                  <span key={f.field} className={`sg-followup${f.text ? '' : ' is-empty'}`} data-testid="submission-followup">
+                    <span className="sg-followup-label">{f.label}</span>
+                    <span className="sg-followup-text">{f.text || '未記入'}</span>
+                  </span>
+                ))}
+              </span>
+            ) : null}
+            {followUpsEmpty && s.status !== 'withdrawn' ? (
+              <span className="sg-followups" data-testid="submission-followups">
+                <span className="sg-followup is-empty">
+                  <span className="sg-followup-text">結果・講評／改稿方針／再応募方針は未記入</span>
+                </span>
+              </span>
+            ) : null}
           </span>
           <ChevronRightIcon className="icon sg-card-chevron" />
         </button>
@@ -153,38 +221,83 @@ export function SubmissionCard({
           </div>
         ) : null}
       </div>
-      {expanded ? <SubmissionEditor id={bodyId} submission={s} totalChars={totalChars} check={check} onClose={onToggle} /> : null}
+      {expanded ? <SubmissionEditor id={bodyId} submission={s} current={current} onClose={onToggle} /> : null}
     </li>
   )
+}
+
+/**
+ * 状態を「応募済み」（または応募前から「選考中」）にした時、応募時の原稿がまだ記録されていなければ、
+ * 今の採用原稿を記録するか尋ねる。記録する場合は、応募日が空なら今日を入れる。
+ */
+async function changeStatus(id: string, next: SubmissionStatus): Promise<void> {
+  const prev = getData().submissions[id]
+  if (!prev || prev.status === next) return
+  commitSubmission(id, { status: next })
+  const justSubmitted = next === 'submitted' || (next === 'reviewing' && isBeforeSubmission(prev.status))
+  if (!justSubmitted || prev.snapshot) return
+
+  const summary = manuscriptSummary(getData(), prev.titleId)
+  const today = toYmd(new Date())
+  const ok = await confirmDialog({
+    title: '応募した原稿を記録しますか？',
+    message:
+      `現在の採用原稿（${formatCount(summary.chars)}字・${pieceCountLabel(summary.episodes, summary.specials)}）を、` +
+      `この応募先に応募した原稿として記録します。後から改稿しても、応募した時の内容を見返せます。` +
+      (prev.submittedOn.trim() ? '' : `\n応募日には今日（${formatYmd(today)}）を入れます。`),
+    confirmLabel: '記録する',
+    cancelLabel: '記録しない',
+  })
+  if (!ok) return
+  const latest = getData().submissions[id]
+  if (!latest || latest.snapshot) return
+  const done = attempt(() => {
+    actions.recordSubmissionSnapshot(id)
+    if (!latest.submittedOn.trim()) actions.updateSubmission(id, { submittedOn: today })
+    return true
+  })
+  if (done) notify('応募時の原稿を記録しました')
 }
 
 function SubmissionEditor({
   id,
   submission: s,
-  totalChars,
-  check,
+  current,
   onClose,
 }: {
   id: string
   submission: Submission
-  totalChars: number
-  check: CharLimitCheck | null
+  current: CurrentAmount
   onClose: () => void
 }) {
   const uid = useId()
-  // 数字として読めない入力をしたら、入力欄を保存済みの値に戻すための番号
-  const [limitReset, setLimitReset] = useState(0)
+  // 数字として読めない入力をしたら、その入力欄だけを保存済みの値に戻すための番号
+  // （もう一方の欄まで作り直すと、Tab で移ったフォーカスが外れてしまう）
+  const [limitReset, setLimitReset] = useState({ minChars: 0, maxChars: 0 })
   const urlOk = isHttpUrl(s.url)
+  const unit = limitUnitOf(s)
+  const suffix = unitSuffix(unit)
+  const phase = statusPhase(s.status)
 
   const commitLimit = (field: 'minChars' | 'maxChars', raw: string) => {
-    const parsed = parseCharLimit(raw)
+    const parsed = parseLimit(raw)
     if (parsed === undefined) {
-      notifyError('規定文字数は数字で入力してください（例：100000、10万）')
-      setLimitReset((n) => n + 1)
+      notifyError(
+        unit === 'pages'
+          ? '規定枚数は数字で入力してください（例：250）'
+          : '規定文字数は数字で入力してください（例：100000、10万）',
+      )
+      setLimitReset((prev) => ({ ...prev, [field]: prev[field] + 1 }))
       return
     }
     commitSubmission(s.id, field === 'minChars' ? { minChars: parsed } : { maxChars: parsed })
   }
+
+  // 応募後は応募時の原稿と比べる（記録がなければ、参考として現在の採用原稿と比べる）
+  const recorded = limitBasis(s, current)
+  const basis = recorded ?? { source: 'current' as const, amount: unit === 'pages' ? current.pages : current.chars }
+  const fallback = phase !== 'before' && recorded === null
+  const check = limitCheck(basis.amount, s.minChars, s.maxChars, unit)
 
   const remove = async () => {
     const latest = getData().submissions[s.id] ?? s
@@ -305,7 +418,7 @@ function SubmissionEditor({
             <select
               className="select"
               value={s.status}
-              onChange={(e) => commitSubmission(s.id, { status: e.target.value as SubmissionStatus })}
+              onChange={(e) => void changeStatus(s.id, e.target.value as SubmissionStatus)}
               data-testid="submission-status-select"
             >
               {SUBMISSION_STATUSES.map((st) => (
@@ -329,56 +442,85 @@ function SubmissionEditor({
         </div>
 
         <fieldset className="sg-limits">
-          <legend className="field-label">規定文字数（空白・改行を除く）</legend>
+          <legend className="field-label">規定（{UNIT_HINT[unit]}）</legend>
           <div className="sg-limits-row">
-            <label className="sg-limit-field">
-              <span className="visually-hidden">下限</span>
-              <span aria-hidden="true" className="sg-limit-label">
-                下限
+            <div className="segmented sg-unit" role="group" aria-label="規定の単位">
+              <button
+                type="button"
+                aria-pressed={unit === 'chars'}
+                onClick={() => commitSubmission(s.id, { limitUnit: 'chars' })}
+                data-testid="limit-unit-chars"
+              >
+                文字数
+              </button>
+              <button
+                type="button"
+                aria-pressed={unit === 'pages'}
+                onClick={() => commitSubmission(s.id, { limitUnit: 'pages' })}
+                data-testid="limit-unit-pages"
+              >
+                原稿用紙換算枚数
+              </button>
+            </div>
+            <span className="sg-limit-inputs">
+              <label className="sg-limit-field">
+                <span className="visually-hidden">下限</span>
+                <span aria-hidden="true" className="sg-limit-label">
+                  下限
+                </span>
+                <DraftInput
+                  key={`${s.id}:min:${limitReset.minChars}`}
+                  className="input sg-limit-input"
+                  inputMode="numeric"
+                  value={s.minChars === null ? '' : String(s.minChars)}
+                  onCommit={(v) => commitLimit('minChars', v)}
+                  delay={LIMIT_COMMIT_DELAY}
+                  placeholder="なし"
+                  data-testid="submission-min"
+                />
+                <span className="sg-limit-unit">{suffix}</span>
+              </label>
+              <span className="sg-limit-sep" aria-hidden="true">
+                〜
               </span>
-              <DraftInput
-                key={`${s.id}:min:${limitReset}`}
-                className="input sg-limit-input"
-                inputMode="numeric"
-                value={s.minChars === null ? '' : String(s.minChars)}
-                onCommit={(v) => commitLimit('minChars', v)}
-                delay={LIMIT_COMMIT_DELAY}
-                placeholder="なし"
-                data-testid="submission-min"
-              />
-              <span className="sg-limit-unit">字</span>
-            </label>
-            <span className="sg-limit-sep" aria-hidden="true">
-              〜
+              <label className="sg-limit-field">
+                <span className="visually-hidden">上限</span>
+                <span aria-hidden="true" className="sg-limit-label">
+                  上限
+                </span>
+                <DraftInput
+                  key={`${s.id}:max:${limitReset.maxChars}`}
+                  className="input sg-limit-input"
+                  inputMode="numeric"
+                  value={s.maxChars === null ? '' : String(s.maxChars)}
+                  onCommit={(v) => commitLimit('maxChars', v)}
+                  delay={LIMIT_COMMIT_DELAY}
+                  placeholder="なし"
+                  data-testid="submission-max"
+                />
+                <span className="sg-limit-unit">{suffix}</span>
+              </label>
             </span>
-            <label className="sg-limit-field">
-              <span className="visually-hidden">上限</span>
-              <span aria-hidden="true" className="sg-limit-label">
-                上限
-              </span>
-              <DraftInput
-                key={`${s.id}:max:${limitReset}`}
-                className="input sg-limit-input"
-                inputMode="numeric"
-                value={s.maxChars === null ? '' : String(s.maxChars)}
-                onCommit={(v) => commitLimit('maxChars', v)}
-                delay={LIMIT_COMMIT_DELAY}
-                placeholder="なし"
-                data-testid="submission-max"
-              />
-              <span className="sg-limit-unit">字</span>
-            </label>
           </div>
           <p className={`sg-limit-status small${check ? ` is-${check.state}` : ''}`} data-testid="submission-limit-detail">
-            現在の採用原稿 {formatCount(totalChars)}字
+            {basis.source === 'snapshot' ? '応募時の原稿' : '現在の採用原稿'} {formatAmount(basis.amount, unit)}
             {check ? (
               <>
                 {' → '}
                 <strong>{check.text}</strong>
               </>
             ) : (
-              <span className="faint">（規定を入れると、足りない・超えている文字数を表示します）</span>
+              <span className="faint">
+                （規定を入れると、足りない・超えている{unit === 'pages' ? '枚数' : '文字数'}を表示します）
+              </span>
             )}
+            {fallback ? (
+              <span className="faint" data-testid="submission-limit-fallback">
+                {s.snapshot
+                  ? '（応募時の記録に枚数がないため、現在の採用原稿と比べています）'
+                  : '（応募時の原稿が未記録のため、現在の採用原稿と比べています）'}
+              </span>
+            ) : null}
           </p>
           {minMaxInvalid ? <p className="small sg-limit-warn">下限が上限より大きくなっています。</p> : null}
         </fieldset>
@@ -439,10 +581,18 @@ function DateField({
   )
 }
 
+/** 内訳を最初から開いておく件数の上限（多いときは畳んでおく） */
+const OPEN_ROWS_LIMIT = 12
+
 function SnapshotBox({ submission: s }: { submission: Submission }) {
   const data = useData()
   const snap = s.snapshot
-  const diff = useMemo(() => (snap ? compareSnapshot(data, s.titleId, snap) : null), [data, s.titleId, snap])
+  const view = useMemo(() => (snap ? snapshotView(data, s.titleId, snap) : null), [data, s.titleId, snap])
+  const [reading, setReading] = useState(false)
+  const titleName = data.titles[s.titleId]?.name ?? ''
+  const pages = snap ? snapshotPages(snap) : null
+  const changes = view ? snapshotChangeSummary(view.diff) : ''
+  const recordedRows = view ? view.rows.filter((r) => r.change !== 'added').length : 0
 
   const record = async () => {
     const latest = getData().submissions[s.id]
@@ -458,44 +608,170 @@ function SnapshotBox({ submission: s }: { submission: Submission }) {
     if (attempt(() => (actions.recordSubmissionSnapshot(s.id), true))) notify('応募時の原稿を記録しました')
   }
 
+  const exportText = () => {
+    const latest = getData().submissions[s.id]?.snapshot
+    const text = latest ? snapshotText(latest, getData().titles[s.titleId]?.name ?? titleName) : null
+    if (!text) return
+    const contest = s.contestName.trim() || '応募先'
+    downloadFile(`${safeFileName(titleName)}_${safeFileName(contest)}_応募時の原稿.txt`, text)
+  }
+
   return (
     <section className="sg-snapshot" aria-label="応募時の原稿" data-testid="snapshot">
-      <div className="sg-snapshot-text">
+      <div className="sg-snapshot-head">
         <h3 className="sg-snapshot-title">
           <CameraIcon />
           応募時の原稿
         </h3>
-        {snap && diff ? (
-          <>
-            <p className="sg-snapshot-info" data-testid="snapshot-info">
-              {formatDateTime(snap.at)} 記録・{formatCount(snap.charCount)}字・{diff.recordedPieces}話
-            </p>
-            {diff.switched === 0 && diff.edited === 0 ? (
-              <p className="small muted" data-testid="snapshot-diff">
-                記録した後、採用原稿は変わっていません。
-              </p>
-            ) : (
-              <p className="small sg-snapshot-changed" data-testid="snapshot-diff">
-                記録した後に採用原稿が変わった話：<strong>{diff.switched}話</strong>
-                {diff.edited > 0 ? <>　採用中の稿を編集した話：{diff.edited}話</> : null}
-                {diff.charDelta !== 0 ? (
-                  <>
-                    　文字数 {diff.charDelta > 0 ? '+' : '−'}
-                    {formatCount(Math.abs(diff.charDelta))}字
-                  </>
-                ) : null}
-              </p>
-            )}
-          </>
-        ) : (
-          <p className="small muted">
-            応募した時点で、どの稿を採用していたか・総文字数を記録しておけます。後から改稿した話がひと目で分かります。
-          </p>
-        )}
+        <button type="button" className="btn btn-sm sg-snapshot-btn" onClick={() => void record()} data-testid="snapshot-record">
+          {snap ? '記録し直す' : '応募時の原稿を記録'}
+        </button>
       </div>
-      <button type="button" className="btn btn-sm sg-snapshot-btn" onClick={() => void record()} data-testid="snapshot-record">
-        応募時の原稿を記録
-      </button>
+      {snap && view ? (
+        <>
+          <p className="sg-snapshot-info" data-testid="snapshot-info">
+            <span>{formatDateTime(snap.at)} 記録</span>・<span>{formatCount(snap.charCount)}字</span>
+            {pages !== null ? (
+              <>
+                ・<span>約{formatCount(pages)}枚</span>
+              </>
+            ) : null}
+            ・<span>{pieceCountLabel(view.episodes, view.specials)}</span>
+          </p>
+          {changes ? (
+            <p className="small sg-snapshot-changed" data-testid="snapshot-diff">
+              記録した後に変わったもの：<strong>{changes}</strong>
+              {view.diff.charDelta !== 0 ? (
+                <>
+                  （文字数 {view.diff.charDelta > 0 ? '+' : '−'}
+                  {formatCount(Math.abs(view.diff.charDelta))}字）
+                </>
+              ) : null}
+            </p>
+          ) : (
+            <p className="small muted" data-testid="snapshot-diff">
+              記録した後、採用原稿は変わっていません。
+            </p>
+          )}
+          {view.detailed ? (
+            <>
+              <details className="sg-snap-details" open={view.rows.length <= OPEN_ROWS_LIMIT}>
+                <summary data-testid="snapshot-pieces-toggle">応募した原稿の内訳（{recordedRows}件）</summary>
+                <ol className="sg-snap-list" data-testid="snapshot-pieces">
+                  {view.rows.map((r) => (
+                    <li
+                      key={r.pieceId}
+                      className={`sg-snap-row${r.change ? ` is-${r.change}` : ''}`}
+                      data-testid="snapshot-piece"
+                      data-change={r.change ?? ''}
+                    >
+                      <span className="sg-snap-name">
+                        <span className={`sg-snap-label${r.kind === 'special' ? ' is-special' : ''}`}>{r.label}</span>
+                        {r.subtitle ? <span className="sg-snap-subtitle">{r.subtitle}</span> : null}
+                      </span>
+                      <span className="sg-snap-meta">
+                        {r.change === 'added'
+                          ? '記録後に追加'
+                          : r.noActive
+                            ? '採用原稿なし'
+                            : `${r.versionName ?? '（稿名なし）'}・${formatCount(r.chars)}字`}
+                      </span>
+                      {r.change ? (
+                        <span className={`badge sg-snap-badge is-${r.change}`} data-testid="snapshot-piece-change">
+                          {SNAPSHOT_CHANGE_LABEL[r.change]}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ol>
+              </details>
+              <div className="sg-snapshot-actions">
+                <button type="button" className="btn btn-sm" onClick={() => setReading(true)} data-testid="snapshot-read">
+                  <BookIcon />
+                  応募時の原稿を読む
+                </button>
+                <button type="button" className="btn btn-sm" onClick={exportText} data-testid="snapshot-export">
+                  <DownloadIcon />
+                  応募時の原稿を書き出す
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="small sg-snapshot-legacy" data-testid="snapshot-legacy">
+              この記録は以前の形式のため、話ごとの内訳と本文の控えがありません。内訳を残すには「記録し直す」を押してください（その時点の採用原稿で記録し直されます）。
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="small muted">
+          応募した時点で、どの稿を採用していたか・本文・文字数を記録しておけます。後から改稿しても、応募した原稿を読み返したり書き出したりでき、変えた話がひと目で分かります。
+        </p>
+      )}
+      {reading && snap ? (
+        <SnapshotReader
+          snapshot={snap}
+          contest={contestDisplayName(s.contestName)}
+          onExport={exportText}
+          onClose={() => setReading(false)}
+        />
+      ) : null}
     </section>
+  )
+}
+
+/** 応募時に記録した原稿（本文の控え）を読む */
+function SnapshotReader({
+  snapshot,
+  contest,
+  onExport,
+  onClose,
+}: {
+  snapshot: SubmissionSnapshot
+  contest: string
+  onExport: () => void
+  onClose: () => void
+}) {
+  const order = snapshot.order ?? []
+  return (
+    <Modal
+      title={`応募時の原稿（${contest}）`}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onExport} data-testid="snapshot-reader-export">
+            <DownloadIcon />
+            書き出す
+          </button>
+          <button type="button" className="btn btn-primary" onClick={onClose}>
+            閉じる
+          </button>
+        </>
+      }
+    >
+      <div className="sg-reader" data-testid="snapshot-reader">
+        <p className="small muted sg-reader-info">
+          {formatDateTime(snapshot.at)} に記録・{formatCount(snapshot.charCount)}字
+        </p>
+        {order.map((id) => {
+          const p = snapshot.pieces?.[id]
+          if (!p) return null
+          return (
+            <article key={id} className="sg-reader-piece">
+              <h3 className="sg-reader-heading">
+                <span>{p.label}</span>
+                {p.subtitle.trim() ? <span className="sg-reader-subtitle">{p.subtitle.trim()}</span> : null}
+                {p.versionName ? <span className="badge sg-reader-version">{p.versionName}</span> : null}
+              </h3>
+              {p.body === null ? (
+                <p className="muted sg-reader-none">採用原稿がありません。</p>
+              ) : (
+                <div className="sg-reader-body">{p.body}</div>
+              )}
+            </article>
+          )
+        })}
+      </div>
+    </Modal>
   )
 }

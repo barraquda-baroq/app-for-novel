@@ -53,11 +53,30 @@
 }
 
 /* 現在の原稿 */
+.sg-current {
+  container-type: inline-size;
+}
+
+/* 狭い枠（広い画面の右カラム・スマホ）では総文字数を1行使って、桁の多い数でも途中で折り返さないようにする */
 .sg-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
+}
+
+.sg-stat-chars {
+  grid-column: 1 / -1;
+}
+
+@container (min-width: 520px) {
+  .sg-stats {
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .sg-stat-chars {
+    grid-column: auto;
+  }
 }
 
 .sg-stat {
@@ -83,7 +102,12 @@
   font-weight: 700;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
+  /* 数と単位は途中で折り返さない */
+  white-space: nowrap;
+}
+
+.sg-stat-chars dd {
+  font-size: 22px;
 }
 
 .sg-stat dd small {
@@ -111,6 +135,7 @@
 }
 
 .sg-missing span {
+  display: inline-block;
   font-weight: 500;
 }
 
@@ -336,6 +361,47 @@
   font-weight: 700;
 }
 
+/* 結果が出た応募先: 結果・講評 → 改稿方針 → 再応募方針 の抜粋 */
+.sg-followups {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin-top: 2px;
+  padding: 5px 0 1px 10px;
+  border-left: 2px solid var(--sg-tone-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.sg-followup {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sg-followup-label {
+  flex: none;
+  width: 5.5em;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.sg-followup-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.sg-followup.is-empty .sg-followup-text {
+  color: var(--text-faint);
+}
+
 .sg-card-chevron {
   color: var(--text-faint);
   transition: transform 0.15s;
@@ -431,6 +497,17 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.segmented.sg-unit button {
+  min-height: 34px;
+}
+
+.sg-limit-inputs {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -489,32 +566,32 @@
 /* 応募時の原稿 */
 .sg-snapshot {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  padding: 10px 12px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
 
-.sg-snapshot-text {
-  flex: 1 1 260px;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sg-snapshot-text p {
+.sg-snapshot > p {
   margin: 0;
   line-height: 1.6;
+}
+
+.sg-snapshot-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
 }
 
 .sg-snapshot-title {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
   font-size: 13px;
   color: var(--text-muted);
 }
@@ -522,6 +599,11 @@
 .sg-snapshot-info {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* 「約29枚」「4話＋特殊1」などは途中で折り返さない */
+.sg-snapshot-info span {
+  white-space: nowrap;
 }
 
 .sg-snapshot-changed {
@@ -532,8 +614,192 @@
   color: var(--warn);
 }
 
+.sg-snapshot-legacy {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
 .btn.sg-snapshot-btn {
   flex: none;
+}
+
+.sg-snap-details {
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.sg-snap-details summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+}
+
+.sg-snap-details summary::-webkit-details-marker {
+  display: none;
+}
+
+/* 開閉の矢印 */
+.sg-snap-details summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.sg-snap-details[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.sg-snap-details summary:hover {
+  background: var(--accent-soft);
+}
+
+.sg-snap-list {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.sg-snap-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sg-snap-row + .sg-snap-row {
+  border-top: 1px solid var(--border);
+}
+
+.sg-snap-row.is-switched,
+.sg-snap-row.is-edited {
+  background: var(--warn-soft);
+}
+
+.sg-snap-row.is-removed .sg-snap-name {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.sg-snap-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.sg-snap-label {
+  flex: none;
+  font-weight: 700;
+}
+
+.sg-snap-label.is-special {
+  color: var(--special);
+}
+
+.sg-snap-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+.sg-snap-meta {
+  flex: none;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge.sg-snap-badge.is-switched,
+.badge.sg-snap-badge.is-edited {
+  background: var(--surface);
+  color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+
+.badge.sg-snap-badge.is-added {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.sg-snap-badge.is-removed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sg-snapshot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 応募時の原稿を読む */
+.sg-reader {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sg-reader-info {
+  margin: 0;
+}
+
+.sg-reader-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mincho);
+  font-size: 17px;
+}
+
+.sg-reader-subtitle {
+  font-weight: 600;
+}
+
+.badge.sg-reader-version {
+  font-family: var(--font-ui);
+}
+
+.sg-reader-body {
+  font-family: var(--font-mincho);
+  font-size: 16px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sg-reader-none {
+  margin: 0;
 }
 
 .sg-editor-actions {
@@ -600,13 +866,11 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .btn.sg-snapshot-btn {
+  .sg-snapshot-actions .btn {
     flex: 1 1 auto;
   }
-}
 
-@media (max-width: 380px) {
-  .sg-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .sg-snap-row {
+    padding: 6px 8px;
   }
 }

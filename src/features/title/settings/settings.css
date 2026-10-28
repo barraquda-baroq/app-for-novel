@@ -408,9 +408,17 @@
   min-height: 40px;
 }
 
-.icon-btn.st-danger-icon:hover:not(:disabled) {
-  color: var(--danger);
-  background: var(--danger-soft);
+/* フィールドの操作メニュー（入力欄の並びを邪魔しないよう枠なし） */
+.icon-btn.st-menu-trigger.st-field-menu {
+  width: 36px;
+  height: 40px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.icon-btn.st-menu-trigger.st-field-menu:hover,
+.icon-btn.st-menu-trigger.st-field-menu[aria-expanded='true'] {
+  background: var(--surface-3);
 }
 
 .btn.st-add-field {
