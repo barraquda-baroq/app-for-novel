@@ -53,7 +53,8 @@ export function describeEdits(data: AppData, edits: Record<FieldKey, FieldEdit>)
       parts.push(f.field === 'subtitle' ? '話の題' : '見出し')
       continue
     }
-    const name = data.versions[f.id]?.name.trim() || e.label?.trim() || '無題の稿'
+    // 稿が削除されていたら、控えの稿の名前（名前の編集なら編集前の名前）で呼ぶ
+    const name = data.versions[f.id]?.name.trim() || e.label?.trim() || (f.field === 'name' ? e.base.trim() : '') || '無題の稿'
     parts.push(`${name}の${f.field === 'body' ? '本文' : f.field === 'name' ? '名前' : '推敲メモ'}`)
   }
   return parts.join('・')

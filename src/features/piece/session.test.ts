@@ -274,6 +274,7 @@ describe('端末内の控え（アプリが落ちた時のため）', () => {
       [versionField('gone', 'body'), versionField('gone', 'name'), versionField('gone', 'note')].sort(),
     )
     expect(edits[versionField('gone', 'body')].label).toBe('第2稿')
+    expect(describeEdits(data, edits)).toBe('第2稿の本文・第2稿の名前・第2稿の推敲メモ')
     // 保存すると、名前とメモも一緒に新しい稿として残る
     const s = new EditSession(pieceId)
     s.restore(edits)
