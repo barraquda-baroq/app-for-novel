@@ -1,6 +1,8 @@
 // タイトル・アイデア・メモ・設定項目・戦略（応募計画）の更新操作。
-import { activeBody, episodeNumbers, flatten, pieceLabel } from './structure'
-import { countChars, textStats } from './text'
+import { activeVersion, episodeNumbers, flatten, pieceLabel } from './structure'
+import { bodyMetrics, textHash } from './text'
+
+export { textHash }
 import { Tx, transact } from './tx'
 import {
   DomainError,
@@ -18,12 +20,14 @@ import {
 } from './types'
 import { byOrder, newId, nextOrder, now, stepOrder } from './util'
 
+/** 並べ替えで順番が変わったレコードを書き込む（別タブとの競合判定のため更新日時も進める） */
 function putAll<T extends 'titles' | 'ideas' | 'memos' | 'settingCategories' | 'settingEntries' | 'submissions'>(
   tx: Tx,
   table: T,
   records: AppData[T][string][],
 ): void {
-  for (const r of records) tx.put(table, r)
+  const ts = now()
+  for (const r of records) tx.put(table, { ...r, updatedAt: ts })
 }
 
 // ---------- タイトル ----------
@@ -68,7 +72,11 @@ export function createTitle(data: AppData, name: string): { data: AppData; resul
   })
 }
 
-export function updateTitle(data: AppData, titleId: ID, patch: Partial<Pick<Title, 'name' | 'synopsis' | 'strategyNote'>>): AppData {
+export function updateTitle(
+  data: AppData,
+  titleId: ID,
+  patch: Partial<Pick<Title, 'name' | 'synopsis' | 'strategyNote'>>,
+): AppData {
   return transact(data, (tx) => {
     const t = tx.get('titles', titleId)
     if (!t) throw new DomainError('タイトルが見つかりません')
@@ -84,8 +92,9 @@ export function moveTitleTo(data: AppData, titleId: ID, index: number): AppData 
     if (from < 0) return
     const [moved] = list.splice(from, 1)
     list.splice(Math.max(0, Math.min(index, list.length)), 0, moved)
+    const ts = now()
     list.forEach((t, i) => {
-      if (t.order !== i) tx.put('titles', { ...t, order: i })
+      if (t.order !== i) tx.put('titles', { ...t, order: i, updatedAt: ts })
     })
   }).data
 }
@@ -106,6 +115,7 @@ export function deleteTitle(data: AppData, titleId: ID): AppData {
     for (const c of tx.all('settingCategories').filter(belongs)) tx.delete('settingCategories', c.id)
     for (const e of tx.all('settingEntries').filter(belongs)) tx.delete('settingEntries', e.id)
     for (const s of tx.all('submissions').filter(belongs)) tx.delete('submissions', s.id)
+    collectSnapshotTexts(tx)
     let order = nextOrder(tx.all('ideas').filter((i) => i.titleId === null))
     for (const idea of tx.all('ideas').filter(belongs).sort(byOrder)) {
       tx.put('ideas', { ...idea, titleId: null, order: order++, updatedAt: now() })
@@ -127,17 +137,24 @@ export interface TitleSummary {
 }
 
 export function titleSummary(data: AppData, titleId: ID): TitleSummary {
-  const summary: TitleSummary = { episodes: 0, specials: 0, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 }
+  const summary: TitleSummary = {
+    episodes: 0,
+    specials: 0,
+    missingActive: 0,
+    missingEpisodes: 0,
+    missingSpecials: 0,
+    activeChars: 0,
+  }
   for (const item of flatten(data, titleId)) {
     const p = data.pieces[item.pieceId]
     if (p.kind === 'episode') summary.episodes += 1
     else summary.specials += 1
-    const body = activeBody(data, p)
-    if (body === null) {
+    const v = activeVersion(data, p)
+    if (v === null) {
       summary.missingActive += 1
       if (p.kind === 'episode') summary.missingEpisodes += 1
       else summary.missingSpecials += 1
-    } else summary.activeChars += countChars(body)
+    } else summary.activeChars += bodyMetrics(v).chars
   }
   return summary
 }
@@ -240,7 +257,7 @@ export function moveIdeaTo(data: AppData, ideaId: ID, titleId: ID | null, index:
     list.forEach((it, i) => {
       if (it.id === ideaId) {
         if (it.order !== i || idea.titleId !== titleId) tx.put('ideas', { ...it, order: i, updatedAt: ts })
-      } else if (it.order !== i) tx.put('ideas', { ...it, order: i })
+      } else if (it.order !== i) tx.put('ideas', { ...it, order: i, updatedAt: ts })
     })
   }).data
 }
@@ -249,7 +266,15 @@ export function moveIdeaStep(data: AppData, ideaId: ID, dir: -1 | 1): AppData {
   return transact(data, (tx) => {
     const i = tx.get('ideas', ideaId)
     if (!i) return
-    putAll(tx, 'ideas', stepOrder(tx.all('ideas').filter((x) => x.titleId === i.titleId), ideaId, dir))
+    putAll(
+      tx,
+      'ideas',
+      stepOrder(
+        tx.all('ideas').filter((x) => x.titleId === i.titleId),
+        ideaId,
+        dir,
+      ),
+    )
   }).data
 }
 
@@ -295,7 +320,15 @@ export function moveMemoStep(data: AppData, memoId: ID, dir: -1 | 1): AppData {
   return transact(data, (tx) => {
     const m = tx.get('memos', memoId)
     if (!m) return
-    putAll(tx, 'memos', stepOrder(tx.all('memos').filter((x) => x.titleId === m.titleId), memoId, dir))
+    putAll(
+      tx,
+      'memos',
+      stepOrder(
+        tx.all('memos').filter((x) => x.titleId === m.titleId),
+        memoId,
+        dir,
+      ),
+    )
   }).data
 }
 
@@ -317,7 +350,12 @@ export function entriesOf(data: AppData, categoryId: ID): SettingEntry[] {
     .sort(byOrder)
 }
 
-export function addCategory(data: AppData, titleId: ID, name: string, fieldTemplate: string[] = []): { data: AppData; result: ID } {
+export function addCategory(
+  data: AppData,
+  titleId: ID,
+  name: string,
+  fieldTemplate: string[] = [],
+): { data: AppData; result: ID } {
   return transact(data, (tx) => {
     if (!tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
     const ts = now()
@@ -351,7 +389,15 @@ export function moveCategoryStep(data: AppData, categoryId: ID, dir: -1 | 1): Ap
   return transact(data, (tx) => {
     const c = tx.get('settingCategories', categoryId)
     if (!c) return
-    putAll(tx, 'settingCategories', stepOrder(tx.all('settingCategories').filter((x) => x.titleId === c.titleId), categoryId, dir))
+    putAll(
+      tx,
+      'settingCategories',
+      stepOrder(
+        tx.all('settingCategories').filter((x) => x.titleId === c.titleId),
+        categoryId,
+        dir,
+      ),
+    )
   }).data
 }
 
@@ -396,7 +442,15 @@ export function moveEntryStep(data: AppData, entryId: ID, dir: -1 | 1): AppData 
   return transact(data, (tx) => {
     const e = tx.get('settingEntries', entryId)
     if (!e) return
-    putAll(tx, 'settingEntries', stepOrder(tx.all('settingEntries').filter((x) => x.categoryId === e.categoryId), entryId, dir))
+    putAll(
+      tx,
+      'settingEntries',
+      stepOrder(
+        tx.all('settingEntries').filter((x) => x.categoryId === e.categoryId),
+        entryId,
+        dir,
+      ),
+    )
   }).data
 }
 
@@ -485,52 +539,89 @@ export function moveSubmissionStep(data: AppData, submissionId: ID, dir: -1 | 1)
   return transact(data, (tx) => {
     const s = tx.get('submissions', submissionId)
     if (!s) return
-    putAll(tx, 'submissions', stepOrder(tx.all('submissions').filter((x) => x.titleId === s.titleId), submissionId, dir))
+    putAll(
+      tx,
+      'submissions',
+      stepOrder(
+        tx.all('submissions').filter((x) => x.titleId === s.titleId),
+        submissionId,
+        dir,
+      ),
+    )
   }).data
 }
 
 export function deleteSubmission(data: AppData, submissionId: ID): AppData {
-  return transact(data, (tx) => tx.delete('submissions', submissionId)).data
+  return transact(data, (tx) => {
+    tx.delete('submissions', submissionId)
+    collectSnapshotTexts(tx)
+  }).data
 }
 
-/** 本文の指紋（FNV-1a 32bit）。記録後に本文が変わったかの判定に使う */
-export function textHash(text: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i)
-    h = Math.imul(h, 0x01000193) >>> 0
+/** 本文の控えの保存キー。指紋と長さを組み合わせ、万一衝突したら連番を付ける */
+function snapshotTextKey(data: AppData, body: string, hash: string, pending: Map<ID, string>): ID {
+  const base = `${hash}-${body.length.toString(36)}`
+  for (let n = 0; ; n++) {
+    const key = n === 0 ? base : `${base}-${n}`
+    const existing = pending.get(key) ?? data.snapshotTexts[key]?.body
+    if (existing === undefined || existing === body) return key
   }
-  return h.toString(16).padStart(8, '0')
 }
 
-/** 現在の採用原稿の状態（どの話にどの稿を採用しているか・本文の控え・総文字数）を記録する */
-export function takeSnapshot(data: AppData, titleId: ID): SubmissionSnapshot {
+/**
+ * 現在の採用原稿の状態（どの話にどの稿を採用しているか・総文字数・本文の指紋）。
+ * texts には記録用の本文の控え（キー → 本文）が入る。
+ */
+export function takeSnapshot(data: AppData, titleId: ID, withTexts = true): SubmissionSnapshot & { texts: Map<ID, string> } {
   const activeVersions: Record<ID, ID | null> = {}
   const pieces: Record<ID, SnapshotPiece> = {}
   const order: ID[] = []
+  const texts = new Map<ID, string>()
   const numbers = episodeNumbers(data, titleId)
   let charCount = 0
   let pages = 0
   for (const item of flatten(data, titleId)) {
     const p = data.pieces[item.pieceId]
-    const body = activeBody(data, p)
-    const chars = body ? countChars(body) : 0
-    activeVersions[p.id] = body === null ? null : p.activeVersionId
+    const v = activeVersion(data, p)
+    const m = v ? bodyMetrics(v) : null
+    activeVersions[p.id] = v ? v.id : null
     order.push(p.id)
+    let textKey: ID | null = null
+    if (v && m && withTexts) {
+      textKey = snapshotTextKey(data, v.body, m.hash, texts)
+      texts.set(textKey, v.body)
+    }
     pieces[p.id] = {
       kind: p.kind,
       label: pieceLabel(data, p, numbers),
       subtitle: p.subtitle,
-      versionId: body === null ? null : p.activeVersionId,
-      versionName: body === null ? null : (data.versions[p.activeVersionId!]?.name ?? null),
-      chars,
-      body,
-      hash: textHash(body ?? ''),
+      versionId: v ? v.id : null,
+      versionName: v ? v.name : null,
+      chars: m ? m.chars : 0,
+      textKey,
+      hash: m ? m.hash : textHash(''),
     }
-    charCount += chars
-    if (body) pages += textStats(body).manuscriptPages
+    if (m) {
+      charCount += m.chars
+      pages += m.manuscriptPages
+    }
   }
-  return { at: now(), charCount, activeVersions, pages, order, pieces }
+  return { at: now(), charCount, activeVersions, pages, order, pieces, texts }
+}
+
+/** どの応募記録からも参照されなくなった本文の控えを消す */
+function collectSnapshotTexts(tx: Tx): void {
+  const used = new Set<ID>()
+  for (const s of tx.all('submissions')) {
+    for (const p of Object.values(s.snapshot?.pieces ?? {})) if (p.textKey) used.add(p.textKey)
+  }
+  for (const t of tx.all('snapshotTexts')) if (!used.has(t.id)) tx.delete('snapshotTexts', t.id)
+}
+
+/** 記録した本文の控え（古い記録は記録内の本文、採用原稿がなかった話は null） */
+export function snapshotPieceBody(data: AppData, piece: SnapshotPiece): string | null {
+  if (piece.textKey) return data.snapshotTexts[piece.textKey]?.body ?? null
+  return piece.body ?? null
 }
 
 export interface SnapshotDiff {
@@ -547,8 +638,14 @@ export interface SnapshotDiff {
 
 /** 記録した時点と今の採用原稿を比べる（本文の指紋で比べるので、稿の名前やメモの変更は数えない） */
 export function compareSnapshotWithCurrent(data: AppData, titleId: ID, snapshot: SubmissionSnapshot): SnapshotDiff {
-  const current = takeSnapshot(data, titleId)
-  const diff: SnapshotDiff = { switched: [], edited: [], added: [], removed: [], charDelta: current.charCount - snapshot.charCount }
+  const current = takeSnapshot(data, titleId, false)
+  const diff: SnapshotDiff = {
+    switched: [],
+    edited: [],
+    added: [],
+    removed: [],
+    charDelta: current.charCount - snapshot.charCount,
+  }
   const recordedIds = Object.keys(snapshot.activeVersions)
   for (const id of recordedIds) {
     if (!(id in current.activeVersions)) {
@@ -575,14 +672,14 @@ export function submissionsReferencingVersion(data: AppData, versionId: ID): Sub
 }
 
 /** 応募時に記録した原稿をテキストにする（記録に本文の控えがある場合のみ） */
-export function snapshotText(snapshot: SubmissionSnapshot, titleName: string): string | null {
+export function snapshotText(data: AppData, snapshot: SubmissionSnapshot, titleName: string): string | null {
   if (!snapshot.pieces || !snapshot.order) return null
   const parts: string[] = [titleName, '']
   for (const id of snapshot.order) {
     const p = snapshot.pieces[id]
     if (!p) continue
     parts.push(p.subtitle.trim() ? `${p.label}　${p.subtitle.trim()}` : p.label, '')
-    parts.push(p.body ?? '採用原稿がありません。', '', '')
+    parts.push(snapshotPieceBody(data, p) ?? '採用原稿がありません。', '', '')
   }
   return parts.join('\n').trimEnd() + '\n'
 }
@@ -590,5 +687,10 @@ export function snapshotText(snapshot: SubmissionSnapshot, titleName: string): s
 export function recordSubmissionSnapshot(data: AppData, submissionId: ID): AppData {
   const s = data.submissions[submissionId]
   if (!s) throw new DomainError('応募計画が見つかりません')
-  return updateSubmission(data, submissionId, { snapshot: takeSnapshot(data, s.titleId) })
+  const { texts, ...snapshot } = takeSnapshot(data, s.titleId)
+  return transact(data, (tx) => {
+    for (const [id, body] of texts) if (!tx.get('snapshotTexts', id)) tx.put('snapshotTexts', { id, body })
+    tx.put('submissions', { ...s, snapshot, updatedAt: now() })
+    collectSnapshotTexts(tx)
+  }).data
 }

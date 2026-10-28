@@ -42,6 +42,7 @@ export function tocGroups(blocks: ReadBlock[]): TocGroup[] {
       groups.push(current)
       continue
     }
+    if (b.type === 'chapterEnd') continue
     // 章の外に出た話（章が有効なとき、章の後ろにタイトル直下の話がある場合）
     if (!current || (current.chapterId !== null && b.chapterId !== current.chapterId)) {
       current = { chapterId: null, name: null, items: [] }

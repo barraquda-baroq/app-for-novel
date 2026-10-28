@@ -21,7 +21,9 @@ export function DangerZone() {
         'この端末の書きかけ（アイデアの入力欄など）や折りたたみの状態も消えます。表示の設定（テーマ・文字サイズなど）は残ります。',
         '必要なら、先に「バックアップを書き出す」で保存してください。',
         '',
-        isEmptyData(current) ? '（いまは保存されているデータがありません）' : `削除される内容: ${countsSummary(dataCounts(current))}`,
+        isEmptyData(current)
+          ? '（いまは保存されているデータがありません）'
+          : `削除される内容: ${countsSummary(dataCounts(current))}`,
       ].join('\n'),
       danger: true,
       confirmLabel: '削除へ進む',
@@ -64,7 +66,13 @@ export function DangerZone() {
           </span>
         </div>
         <div className="aset-row-control">
-          <button type="button" className="btn btn-danger" onClick={() => void deleteAll()} disabled={busy} data-testid="delete-all">
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={() => void deleteAll()}
+            disabled={busy}
+            data-testid="delete-all"
+          >
             <TrashIcon />
             すべてのデータを削除
           </button>

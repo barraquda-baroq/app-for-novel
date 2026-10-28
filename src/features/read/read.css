@@ -713,3 +713,19 @@
     box-shadow: none;
   }
 }
+
+/* 章の終わり（続く話はどの章にも入っていない） */
+.rt-chapter-end {
+  border: 0;
+  border-top: 1px solid var(--border-strong);
+  width: 6em;
+  margin: 2.5em auto;
+}
+
+.rt-root.is-vertical .rt-chapter-end {
+  border-top: 0;
+  border-left: 1px solid var(--border-strong);
+  width: auto;
+  height: 6em;
+  margin: auto 2.5em;
+}

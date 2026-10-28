@@ -1,6 +1,6 @@
 // 本編（章・第n話・特殊ブロック）の構成に関する読み取り専用の計算。
 // 話数は保存せず、ここで並び順から導出する。
-import type { AppData, Chapter, ID, NodeRef, NumberingMode, Piece, Slot, Title } from './types'
+import type { AppData, Chapter, ID, NodeRef, NumberingMode, Piece, Slot, Title, Version } from './types'
 
 export interface FlatItem {
   pieceId: ID
@@ -152,6 +152,12 @@ export interface TitleStats {
   missingActive: number
   /** 採用原稿の総文字数（空白・改行除く） */
   activeChars: number
+}
+
+/** 採用中の推敲バージョン（なければ null） */
+export function activeVersion(data: AppData, piece: Piece): Version | null {
+  if (!piece.activeVersionId) return null
+  return data.versions[piece.activeVersionId] ?? null
 }
 
 export function activeBody(data: AppData, piece: Piece): string | null {

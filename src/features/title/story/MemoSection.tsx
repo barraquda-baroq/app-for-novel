@@ -13,7 +13,12 @@ import { DownIcon, NoteIcon, PlusIcon, TrashIcon, UpIcon } from '../../../ui/ico
 import { memoExcerpt } from './storyLogic'
 
 export async function addMemoFlow(titleId: ID): Promise<ID | undefined> {
-  const name = await promptDialog({ title: 'メモを追加', label: 'メモのタイトル', placeholder: '例: 伏線の回収リスト', confirmLabel: '追加' })
+  const name = await promptDialog({
+    title: 'メモを追加',
+    label: 'メモのタイトル',
+    placeholder: '例: 伏線の回収リスト',
+    confirmLabel: '追加',
+  })
   if (name === null) return undefined
   const id = attempt(() => actions.addMemo(titleId, name.trim()))
   if (id) notify(`メモ「${name.trim()}」を追加しました`)
@@ -84,7 +89,11 @@ function MemoCard({ memo, edit, first, last }: { memo: Memo; edit: boolean; firs
     <li className="story-memo" data-testid="memo-card">
       <Link to={paths.memo(memo.titleId, memo.id)} className="story-memo-link">
         <span className="story-memo-name">{name}</span>
-        {excerpt ? <span className="story-memo-body">{excerpt}</span> : <span className="story-memo-body is-empty">（まだ何も書かれていません）</span>}
+        {excerpt ? (
+          <span className="story-memo-body">{excerpt}</span>
+        ) : (
+          <span className="story-memo-body is-empty">（まだ何も書かれていません）</span>
+        )}
         <span className="story-memo-time">更新: {formatRelative(memo.updatedAt)}</span>
       </Link>
       {edit ? (
@@ -110,7 +119,14 @@ function MemoCard({ memo, edit, first, last }: { memo: Memo; edit: boolean; firs
             <DownIcon />
           </button>
           <span className="grow" />
-          <button type="button" className="icon-btn story-memo-delete" onClick={() => void remove()} aria-label="削除" title="削除" data-testid="memo-delete">
+          <button
+            type="button"
+            className="icon-btn story-memo-delete"
+            onClick={() => void remove()}
+            aria-label="削除"
+            title="削除"
+            data-testid="memo-delete"
+          >
             <TrashIcon />
           </button>
         </div>

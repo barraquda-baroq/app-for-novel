@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { addIdea, createTitle, updateTitle } from '../../domain/entityOps'
 import { addEpisode, addSpecial, setActiveVersion, setChaptersEnabled, updateVersion } from '../../domain/storyOps'
 import { emptyData, type AppData } from '../../domain/types'
-import { charsLabel, deleteTitleMessage, episodesLabel, missingLabel, parseHomeView, synopsisExcerpt, titleCardInfo } from './homeLogic'
+import {
+  charsLabel,
+  deleteTitleMessage,
+  episodesLabel,
+  missingLabel,
+  parseHomeView,
+  synopsisExcerpt,
+  titleCardInfo,
+} from './homeLogic'
 
 describe('ホームの表示の保存値', () => {
   it('titles / ideas 以外は null', () => {
@@ -90,14 +98,22 @@ describe('タイトルカードの情報', () => {
 
 describe('タイトル削除の確認文', () => {
   it('削除されるものと、アイデアが「どのタイトルにも属さない」へ移ることを書く', () => {
-    const msg = deleteTitleMessage({ summary: { episodes: 4, specials: 1, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 }, versionCount: 7, ideaCount: 2 })
+    const msg = deleteTitleMessage({
+      summary: { episodes: 4, specials: 1, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 },
+      versionCount: 7,
+      ideaCount: 2,
+    })
     expect(msg).toContain('すべての話・推敲バージョン・設定・戦略・メモが削除されます')
     expect(msg).toContain('全4話、特殊ブロック1件、推敲バージョン7稿')
     expect(msg).toContain('アイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります')
   })
 
   it('アイデアがなくても移動先を説明する', () => {
-    const msg = deleteTitleMessage({ summary: { episodes: 0, specials: 0, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 }, versionCount: 0, ideaCount: 0 })
+    const msg = deleteTitleMessage({
+      summary: { episodes: 0, specials: 0, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 },
+      versionCount: 0,
+      ideaCount: 0,
+    })
     expect(msg).toContain('全0話、推敲バージョン0稿')
     expect(msg).not.toContain('特殊ブロック')
     expect(msg).toContain('「どのタイトルにも属さない」へ移ります')

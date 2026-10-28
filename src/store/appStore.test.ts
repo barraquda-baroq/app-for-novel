@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence } from '../db/persistence'
 import { actions } from './actions'
-import { applyRecoveryJournal, flushNow, initStore, replaceAllData, resetStoreForTests, useApp, writeRecoveryJournal } from './appStore'
+import {
+  applyRecoveryJournal,
+  flushNow,
+  initStore,
+  reloadFromDisk,
+  replaceAllData,
+  resetStoreForTests,
+  useApp,
+  writeRecoveryJournal,
+} from './appStore'
 import { markDraftDirty } from './draftRegistry'
 import { saveBeforeLeave } from './lifecycle'
 import { emptyData, type AppData } from '../domain/types'
@@ -112,5 +121,87 @@ describe('閉じる直前の変更の復旧', () => {
     expect(useApp.getState().data.titles[titleId].synopsis).toBe('未反映の下書き')
     const lastCall = save.mock.calls.at(-1) as unknown as [AppData, AppData]
     expect(lastCall[1].titles[titleId].synopsis).toBe('未反映の下書き')
+  })
+})
+
+describe('複数タブ・保存失敗', () => {
+  it('別タブが先に変えた項目は上書きせず、このタブが変えた項目だけを重ねて保存する', async () => {
+    const name = `test-db-${++n}`
+    await initStore(createPersistence(name))
+    const titleId = actions.createTitle('元の名前')
+    await flushNow()
+    // 別タブ: 名前を変えて保存
+    const other = createPersistence(name)
+    const disk = await other.load()
+    const renamed = { ...disk.titles[titleId], name: '別タブの名前', updatedAt: Date.now() + 1000 }
+    await other.save(disk, { ...disk, titles: { ...disk.titles, [titleId]: renamed } })
+    // このタブ: 古い内容のまま、あらすじだけ変えて保存
+    actions.updateTitle(titleId, { synopsis: 'このタブのあらすじ' })
+    expect(await flushNow()).toBe(true)
+    const after = await other.load()
+    expect(after.titles[titleId].name).toBe('別タブの名前')
+    expect(after.titles[titleId].synopsis).toBe('このタブのあらすじ')
+    // メモリ上も合わせた内容になる
+    expect(useApp.getState().data.titles[titleId].name).toBe('別タブの名前')
+    other.close()
+  })
+
+  it('別タブで削除されたレコードは、このタブの古い内容で復活させない', async () => {
+    const name = `test-db-${++n}`
+    await initStore(createPersistence(name))
+    const titleId = actions.createTitle('作品')
+    const memoId = actions.addMemo(titleId, 'メモ')
+    await flushNow()
+    const other = createPersistence(name)
+    const disk = await other.load()
+    const { [memoId]: _gone, ...memos } = disk.memos
+    void _gone
+    await other.save(disk, { ...disk, memos })
+    actions.updateMemo(memoId, { body: '古いタブでの編集' })
+    await flushNow()
+    expect((await other.load()).memos[memoId]).toBeUndefined()
+    expect(useApp.getState().data.memos[memoId]).toBeUndefined()
+    other.close()
+  })
+
+  it('控えは、このタブで新しく作ったもの以外の「保存先に無いレコード」を復活させない', async () => {
+    const name = `test-db-${++n}`
+    await initStore(createPersistence(name))
+    const titleId = actions.createTitle('作品')
+    const memoId = actions.addMemo(titleId, 'メモ')
+    await flushNow()
+    actions.updateMemo(memoId, { body: '閉じる直前の編集' })
+    const newMemo = actions.addMemo(titleId, '閉じる直前に作ったメモ')
+    writeRecoveryJournal()
+    resetStoreForTests()
+    // 別タブがメモを消して保存した
+    const other = createPersistence(name)
+    const disk = await other.load()
+    const { [memoId]: _gone, ...memos } = disk.memos
+    void _gone
+    await other.save(disk, { ...disk, memos })
+    other.close()
+
+    await initStore(createPersistence(name))
+    const data = useApp.getState().data
+    expect(data.memos[memoId]).toBeUndefined()
+    expect(data.memos[newMemo]?.name).toBe('閉じる直前に作ったメモ')
+  })
+
+  it('保存に失敗したら false を返し、未保存のまま読み込み直さない', async () => {
+    const failing = {
+      load: async () => emptyData(),
+      save: async () => {
+        throw new Error('QuotaExceededError')
+      },
+      replaceAll: async () => {},
+      close: () => {},
+    }
+    await initStore(failing)
+    const titleId = actions.createTitle('保存できない')
+    expect(await flushNow()).toBe(false)
+    expect(useApp.getState().saveStatus).toBe('error')
+    expect(await reloadFromDisk()).toBe(false)
+    expect(useApp.getState().data.titles[titleId]).toBeDefined()
   })
 })

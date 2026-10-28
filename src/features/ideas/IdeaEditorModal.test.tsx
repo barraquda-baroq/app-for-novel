@@ -20,14 +20,18 @@ afterEach(() => {
 describe('IdeaEditorModal の下書き', () => {
   it('入力するたびに控え、閉じずに画面が消えても（戻る・アプリの終了）次に開くと復元する', async () => {
     const user = userEvent.setup()
-    const first = render(<IdeaEditorModal mode="add" sectionName="どのタイトルにも属さない" draftKey={addKey} onSave={vi.fn()} onClose={vi.fn()} />)
+    const first = render(
+      <IdeaEditorModal mode="add" sectionName="どのタイトルにも属さない" draftKey={addKey} onSave={vi.fn()} onClose={vi.fn()} />,
+    )
     await user.type(screen.getByTestId('idea-heading-input'), '古書店')
     await user.type(screen.getByTestId('idea-body-input'), '記憶を売る')
     expect(JSON.parse(localStorage.getItem(addKey)!)).toEqual({ heading: '古書店', body: '記憶を売る' })
     // 保存も破棄もせずに消える（ブラウザの「戻る」で画面が切り替わった時など）
     first.unmount()
 
-    render(<IdeaEditorModal mode="add" sectionName="どのタイトルにも属さない" draftKey={addKey} onSave={vi.fn()} onClose={vi.fn()} />)
+    render(
+      <IdeaEditorModal mode="add" sectionName="どのタイトルにも属さない" draftKey={addKey} onSave={vi.fn()} onClose={vi.fn()} />,
+    )
     expect(screen.getByTestId('idea-draft-restored').textContent).toContain('下書きを復元しました')
     expect(value('idea-heading-input')).toBe('古書店')
     expect(value('idea-body-input')).toBe('記憶を売る')
@@ -47,13 +51,31 @@ describe('IdeaEditorModal の下書き', () => {
     const user = userEvent.setup()
     localStorage.setItem(editKey, JSON.stringify({ heading: '見出し', body: '元の本文' }))
     const { unmount } = render(
-      <IdeaEditorModal mode="edit" sectionName="x" initialHeading="見出し" initialBody="元の本文" draftKey={editKey} onSave={vi.fn()} onClose={vi.fn()} />,
+      <IdeaEditorModal
+        mode="edit"
+        sectionName="x"
+        initialHeading="見出し"
+        initialBody="元の本文"
+        draftKey={editKey}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
     )
     expect(screen.queryByTestId('idea-draft-restored')).toBeNull()
     unmount()
 
     localStorage.setItem(editKey, JSON.stringify({ heading: '見出し', body: '直しかけ' }))
-    render(<IdeaEditorModal mode="edit" sectionName="x" initialHeading="見出し" initialBody="元の本文" draftKey={editKey} onSave={vi.fn()} onClose={vi.fn()} />)
+    render(
+      <IdeaEditorModal
+        mode="edit"
+        sectionName="x"
+        initialHeading="見出し"
+        initialBody="元の本文"
+        draftKey={editKey}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
     expect(value('idea-body-input')).toBe('直しかけ')
     await user.click(screen.getByTestId('idea-draft-discard'))
     expect(value('idea-body-input')).toBe('元の本文')

@@ -1,175 +1,140 @@
 // アイデア1件のカード。見出し（任意）＋内容（長い場合は6行で折りたたみ）と、編集・移動・並べ替え・削除。
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
-import { useNavigate } from "react-router-dom";
-import type { Idea } from "../../domain/types";
-import { paths } from "../../routes";
-import { actions } from "../../store/actions";
-import { getData } from "../../store/appStore";
-import { attempt, notify } from "../../store/uiStore";
-import { formatDateTime, formatRelative } from "../../ui/browser";
-import { confirmDialog, promptDialog } from "../../ui/dialogs";
-import {
-  DownIcon,
-  EditIcon,
-  MoveIcon,
-  TrashIcon,
-  UpIcon,
-} from "../../ui/icons";
-import { IdeaEditorModal } from "./IdeaEditorModal";
-import { IdeaMoveDialog } from "./IdeaMoveDialog";
-import { SparkIcon } from "./ideaIcons";
-import {
-  ideaModalDraftKey,
-  ideaShortLabel,
-  titleNameFromIdea,
-} from "./ideaLogic";
-import { useKeepInPlace } from "./keepInPlace";
-import { REVEAL_MS, useReveal } from "./reveal";
-import { writeLocal } from "./storage";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useNavigate } from 'react-router-dom'
+import type { Idea } from '../../domain/types'
+import { paths } from '../../routes'
+import { actions } from '../../store/actions'
+import { getData } from '../../store/appStore'
+import { attempt, notify } from '../../store/uiStore'
+import { formatDateTime, formatRelative } from '../../ui/browser'
+import { confirmDialog, promptDialog } from '../../ui/dialogs'
+import { DownIcon, EditIcon, MoveIcon, TrashIcon, UpIcon } from '../../ui/icons'
+import { IdeaEditorModal } from './IdeaEditorModal'
+import { IdeaMoveDialog } from './IdeaMoveDialog'
+import { SparkIcon } from './ideaIcons'
+import { ideaModalDraftKey, ideaShortLabel, titleNameFromIdea } from './ideaLogic'
+import { useKeepInPlace } from '../../ui/keepInPlace'
+import { REVEAL_MS, useReveal } from './reveal'
+import { writeLocal } from './storage'
 
 export interface IdeaCardProps {
-  idea: Idea;
+  idea: Idea
   /** 表示している仕切りの名前（編集ダイアログに出す） */
-  sectionName: string;
+  sectionName: string
   /** 「どのタイトルにも属さない」仕切りにあるか（「この案でタイトルを作る」を出す） */
-  unassigned: boolean;
-  first: boolean;
-  last: boolean;
+  unassigned: boolean
+  first: boolean
+  last: boolean
 }
 
 /** 内容が折りたたみ表示（6行）からはみ出しているか */
 function useOverflow(text: string, expanded: boolean) {
-  const ref = useRef<HTMLParagraphElement>(null);
-  const [overflow, setOverflow] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null)
+  const [overflow, setOverflow] = useState(false)
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const el = ref.current
+    if (!el) return
     const measure = () => {
-      if (expanded) return;
-      setOverflow(el.scrollHeight > el.clientHeight + 1);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [text, expanded]);
-  return [ref, overflow] as const;
+      if (expanded) return
+      setOverflow(el.scrollHeight > el.clientHeight + 1)
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text, expanded])
+  return [ref, overflow] as const
 }
 
 /** quick capture などで「表示」を押した時に、このカードまでスクロールして少しの間目立たせる */
-function useRevealed(
-  ideaId: string,
-  ref: RefObject<HTMLLIElement | null>,
-): boolean {
+function useRevealed(ideaId: string, ref: RefObject<HTMLLIElement | null>): boolean {
   // 同じアイデアをもう一度見せる時も反応させる（seq が変わる）
-  const seq = useReveal((s) => (s.id === ideaId ? s.seq : 0));
-  const [on, setOn] = useState(false);
+  const seq = useReveal((s) => (s.id === ideaId ? s.seq : 0))
+  const [on, setOn] = useState(false)
   useEffect(() => {
-    if (!seq) return;
-    setOn(true);
-    let raf = 0;
+    if (!seq) return
+    setOn(true)
+    let raf = 0
     if (useReveal.getState().scroll) {
       raf = requestAnimationFrame(() => {
-        const el = ref.current;
-        if (!el) return;
-        const reduce = window.matchMedia?.(
-          "(prefers-reduced-motion: reduce)",
-        ).matches;
+        const el = ref.current
+        if (!el) return
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
         el.scrollIntoView({
-          block: "center",
-          behavior: reduce ? "auto" : "smooth",
-        });
-        el.focus({ preventScroll: true });
-      });
+          block: 'center',
+          behavior: reduce ? 'auto' : 'smooth',
+        })
+        el.focus({ preventScroll: true })
+      })
     }
-    const timer = setTimeout(() => setOn(false), REVEAL_MS);
+    const timer = setTimeout(() => setOn(false), REVEAL_MS)
     return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(timer);
-      setOn(false);
-    };
-  }, [seq, ref]);
-  return on;
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+      setOn(false)
+    }
+  }, [seq, ref])
+  return on
 }
 
-export function IdeaCard({
-  idea,
-  sectionName,
-  unassigned,
-  first,
-  last,
-}: IdeaCardProps) {
-  const navigate = useNavigate();
-  const [editing, setEditing] = useState(false);
-  const [moving, setMoving] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const heading = idea.heading.trim();
-  const body = idea.body;
-  const [bodyRef, overflow] = useOverflow(body, expanded);
-  const label = ideaShortLabel(idea);
-  const editDraftKey = ideaModalDraftKey({ mode: "edit", ideaId: idea.id });
-  const { ref: cardRef, move } = useKeepInPlace<HTMLLIElement>();
-  const revealed = useRevealed(idea.id, cardRef);
+export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCardProps) {
+  const navigate = useNavigate()
+  const [editing, setEditing] = useState(false)
+  const [moving, setMoving] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const heading = idea.heading.trim()
+  const body = idea.body
+  const [bodyRef, overflow] = useOverflow(body, expanded)
+  const label = ideaShortLabel(idea)
+  const editDraftKey = ideaModalDraftKey({ mode: 'edit', ideaId: idea.id })
+  const { ref: cardRef, move } = useKeepInPlace<HTMLLIElement>()
+  const revealed = useRevealed(idea.id, cardRef)
 
   // 動かしたカードが押した指の下に残るように（続けて押すとそのまま動かし続けられる）
   const step = (dir: -1 | 1) => {
-    const same =
-      dir < 0 ? '[data-testid="idea-up"]' : '[data-testid="idea-down"]';
-    const other =
-      dir < 0 ? '[data-testid="idea-down"]' : '[data-testid="idea-up"]';
-    move(
-      () => attempt(() => (actions.moveIdeaStep(idea.id, dir), true)),
-      [same, other],
-    );
-  };
+    const same = dir < 0 ? '[data-testid="idea-up"]' : '[data-testid="idea-down"]'
+    const other = dir < 0 ? '[data-testid="idea-down"]' : '[data-testid="idea-up"]'
+    move(() => attempt(() => (actions.moveIdeaStep(idea.id, dir), true)), [same, other])
+  }
 
   const remove = async () => {
     const ok = await confirmDialog({
-      title: "アイデアを削除しますか？",
+      title: 'アイデアを削除しますか？',
       message: `「${label}」を削除します。元に戻すことはできません。`,
       danger: true,
-      confirmLabel: "削除",
-    });
-    if (!ok) return;
-    if (attempt(() => (actions.deleteIdea(idea.id), true)))
-      writeLocal(editDraftKey, null);
-  };
+      confirmLabel: '削除',
+    })
+    if (!ok) return
+    if (attempt(() => (actions.deleteIdea(idea.id), true))) writeLocal(editDraftKey, null)
+  }
 
   const makeTitle = async () => {
-    const suggestion = titleNameFromIdea(idea);
+    const suggestion = titleNameFromIdea(idea)
     const asked = promptDialog({
-      title: "この案でタイトルを作る",
-      label: "タイトル名（このアイデアは新しいタイトルの仕切りへ移ります）",
+      title: 'この案でタイトルを作る',
+      label: 'タイトル名（このアイデアは新しいタイトルの仕切りへ移ります）',
       initial: suggestion,
-      placeholder: "例: 星の海の図書館",
-      confirmLabel: "作成",
+      placeholder: '例: 星の海の図書館',
+      confirmLabel: '作成',
       selectOnOpen: true,
-    });
-    const name = await asked;
-    if (name === null) return;
+    })
+    const name = await asked
+    if (name === null) return
     const titleId = attempt(() => {
-      const id = actions.createTitle(name.trim());
-      actions.moveIdeaToSection(idea.id, id);
-      return id;
-    });
-    if (!titleId) return;
-    notify(
-      `タイトル「${getData().titles[titleId]?.name ?? name.trim()}」を作成し、アイデアを移しました`,
-    );
-    navigate(paths.title(titleId));
-  };
+      const id = actions.createTitle(name.trim())
+      actions.moveIdeaToSection(idea.id, id)
+      return id
+    })
+    if (!titleId) return
+    notify(`タイトル「${getData().titles[titleId]?.name ?? name.trim()}」を作成し、アイデアを移しました`)
+    navigate(paths.title(titleId))
+  }
 
   return (
     <li
       ref={cardRef}
-      className={`idea-card${revealed ? " is-revealed" : ""}`}
+      className={`idea-card${revealed ? ' is-revealed' : ''}`}
       tabIndex={-1}
       data-testid="idea-card"
       data-idea-id={idea.id}
@@ -181,11 +146,7 @@ export function IdeaCard({
           </h4>
         ) : null}
         {body.trim() ? (
-          <p
-            ref={bodyRef}
-            className={`idea-card-body${expanded ? " is-expanded" : ""}`}
-            data-testid="idea-body"
-          >
+          <p ref={bodyRef} className={`idea-card-body${expanded ? ' is-expanded' : ''}`} data-testid="idea-body">
             {body}
           </p>
         ) : null}
@@ -197,16 +158,12 @@ export function IdeaCard({
             onClick={() => setExpanded((v) => !v)}
             data-testid="idea-more"
           >
-            {expanded ? "折りたたむ" : "続きを表示"}
+            {expanded ? '折りたたむ' : '続きを表示'}
           </button>
         ) : null}
       </div>
 
-      <div
-        className="idea-card-actions"
-        role="group"
-        aria-label={`「${label}」の操作`}
-      >
+      <div className="idea-card-actions" role="group" aria-label={`「${label}」の操作`}>
         <button
           type="button"
           className="icon-btn"
@@ -249,21 +206,11 @@ export function IdeaCard({
           </button>
         ) : null}
         <span className="idea-card-buttons">
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            onClick={() => setMoving(true)}
-            data-testid="idea-move"
-          >
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setMoving(true)} data-testid="idea-move">
             <MoveIcon />
             移動
           </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            onClick={() => setEditing(true)}
-            data-testid="idea-edit"
-          >
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(true)} data-testid="idea-edit">
             <EditIcon />
             編集
           </button>
@@ -289,14 +236,12 @@ export function IdeaCard({
           draftKey={editDraftKey}
           onClose={() => setEditing(false)}
           onSave={(h, b) => {
-            attempt(() => actions.updateIdea(idea.id, { heading: h, body: b }));
-            setEditing(false);
+            attempt(() => actions.updateIdea(idea.id, { heading: h, body: b }))
+            setEditing(false)
           }}
         />
       ) : null}
-      {moving ? (
-        <IdeaMoveDialog ideaId={idea.id} onClose={() => setMoving(false)} />
-      ) : null}
+      {moving ? <IdeaMoveDialog ideaId={idea.id} onClose={() => setMoving(false)} /> : null}
     </li>
-  );
+  )
 }

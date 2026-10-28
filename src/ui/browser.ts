@@ -77,3 +77,9 @@ export function formatRelative(ts: number, nowTs = Date.now()): string {
   if (days < 7) return `${days}日前`
   return formatDateTime(ts).slice(0, 10)
 }
+
+/** 「たった今更新」「3分前に更新」のような更新日時の表記 */
+export function formatUpdated(ts: number, nowTs = Date.now()): string {
+  const rel = formatRelative(ts, nowTs)
+  return rel === 'たった今' ? 'たった今更新' : `${rel}に更新`
+}

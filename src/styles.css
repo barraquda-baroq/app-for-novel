@@ -8,7 +8,8 @@
   --border-strong: #c9c3b6;
   --text: #24272e;
   --text-muted: #6b6f78;
-  --text-faint: #9a9da4;
+  /* 文字に使うので白・背景色の上でも読める濃さにする（4.5:1 前後） */
+  --text-faint: #6e727b;
   --accent: #35598f;
   --accent-strong: #284673;
   --accent-soft: #e4ebf5;
@@ -20,7 +21,7 @@
   --danger-soft: #f8e6e2;
   --warn: #9a6a12;
   --warn-soft: #f8efd9;
-  --memo: #b58a1a;
+  --memo: #8a6812;
   --memo-soft: #fbf3d6;
   --special: #7a4f9c;
   --special-soft: #f0e8f6;
@@ -32,8 +33,8 @@
   --shadow-lg: 0 10px 40px rgb(20 20 30 / 22%);
   --radius: 10px;
   --radius-sm: 6px;
-  --font-ui: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', Meiryo, system-ui,
-    sans-serif;
+  --font-ui:
+    'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', Meiryo, system-ui, sans-serif;
   --font-mincho: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', 'BIZ UDPMincho', serif;
   --header-h: 52px;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -321,9 +322,9 @@ h4 {
 .breadcrumbs .current {
   color: var(--text);
   font-weight: 600;
-  /* 現在地（第n話など短いもの）は削らず、前の階層から省略する */
+  /* 現在地は削らず、前の階層から省略する（上限は画面幅で決める。親の幅に対する % は自分自身の幅になってしまう） */
   flex-shrink: 0;
-  max-width: 50%;
+  max-width: min(45vw, 420px);
 }
 
 .breadcrumbs a {
@@ -895,6 +896,11 @@ h4 {
   flex-wrap: wrap;
 }
 
+.banner-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .banner-info {
   background: var(--accent-soft);
   color: var(--accent-strong);
@@ -1089,11 +1095,6 @@ h4 {
     display: none !important;
   }
 
-  /* スマホではタップしやすい高さを確保する */
-  .btn-sm,
-  .segmented button {
-    min-height: 34px;
-  }
 
   .page {
     padding: 14px 12px calc(32px + var(--safe-bottom));
@@ -1115,6 +1116,43 @@ h4 {
   .show-mobile {
     display: none !important;
   }
+}
+
+/* 指で操作する端末（スマホ・タブレット・横持ち含む）ではタップしやすい大きさを確保する */
+@media (max-width: 720px), (pointer: coarse) {
+  .btn-sm,
+  .segmented button {
+    min-height: 34px;
+  }
+}
+
+@media (pointer: coarse) {
+  .app-header .brand {
+    min-height: 34px;
+    min-width: 34px;
+  }
+
+  .breadcrumbs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+  }
+
+  .toast button {
+    min-width: 34px;
+    min-height: 34px;
+  }
+
+  /* キーボードのショートカットの案内は、指で操作する端末では出さない */
+  .hint-keyboard {
+    display: none !important;
+  }
+}
+
+/* ダイアログ（スマホでは下からのシート）を開いている間は、通知を上に出してボタンを隠さない */
+body:has(.modal-backdrop) .toasts {
+  top: calc(12px + var(--safe-top));
+  bottom: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

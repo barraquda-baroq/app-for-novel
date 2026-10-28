@@ -11,7 +11,14 @@ import { entryCounts } from './storyLogic'
 export function SettingStrip({ titleId }: { titleId: ID }) {
   const data = useData()
   const categories = useMemo(() => categoriesOf(data, titleId), [data, titleId])
-  const counts = useMemo(() => entryCounts(data, categories.map((c) => c.id)), [data, categories])
+  const counts = useMemo(
+    () =>
+      entryCounts(
+        data,
+        categories.map((c) => c.id),
+      ),
+    [data, categories],
+  )
   const settingsPath = paths.title(titleId, 'settings')
 
   return (

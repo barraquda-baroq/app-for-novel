@@ -15,7 +15,10 @@ export function TitleMoveDialog({ titleId, onClose }: { titleId: ID; onClose: ()
   const formId = useId()
   const titles = useMemo(() => sortedTitles(data), [data])
   const currentIndex = titles.findIndex((t) => t.id === titleId)
-  const options = useMemo(() => positionOptions(titles.filter((t) => t.id !== titleId).map((t) => displayName(t.name))), [titles, titleId])
+  const options = useMemo(
+    () => positionOptions(titles.filter((t) => t.id !== titleId).map((t) => displayName(t.name))),
+    [titles, titleId],
+  )
   const [selected, setSelected] = useState(() => Math.max(0, currentIndex))
   const title = data.titles[titleId]
   if (!title) return null
@@ -53,7 +56,12 @@ export function TitleMoveDialog({ titleId, onClose }: { titleId: ID; onClose: ()
       >
         <label className="field">
           <span>移動先</span>
-          <select className="select" value={selected} onChange={(e) => setSelected(Number(e.target.value))} data-testid="title-move-target">
+          <select
+            className="select"
+            value={selected}
+            onChange={(e) => setSelected(Number(e.target.value))}
+            data-testid="title-move-target"
+          >
             {options.map((o) => (
               <option key={o.index} value={o.index}>
                 {o.label}

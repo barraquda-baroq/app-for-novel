@@ -23,16 +23,19 @@ export function commitVersion(versionId: string, patch: VersionPatch): void {
 export function commitPiece(pieceId: string, patch: { subtitle?: string; label?: string }): void {
   const p = getData().pieces[pieceId]
   if (!p) return
-  if ((patch.subtitle === undefined || patch.subtitle === p.subtitle) && (patch.label === undefined || patch.label === p.label)) return
+  if ((patch.subtitle === undefined || patch.subtitle === p.subtitle) && (patch.label === undefined || patch.label === p.label))
+    return
   attempt(() => actions.updatePiece(pieceId, patch))
 }
 
 /** 成功したかどうかを返す attempt（戻り値のない操作用） */
 export function tryRun(fn: () => void): boolean {
-  return attempt(() => {
-    fn()
-    return true
-  }) === true
+  return (
+    attempt(() => {
+      fn()
+      return true
+    }) === true
+  )
 }
 
 export function flushEditors(...refs: RefObject<DraftHandle | null>[]): void {

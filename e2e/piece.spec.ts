@@ -2,7 +2,8 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { openApp, seed, seedTitleWithEpisodes } from './helpers'
 
-const BODY1 = '吾輩は猫である。名前はまだ無い。\nどこで生れたかとんと見当がつかぬ。\n何でも薄暗いじめじめした所でニャーニャー泣いていた事だけは記憶している。'
+const BODY1 =
+  '吾輩は猫である。名前はまだ無い。\nどこで生れたかとんと見当がつかぬ。\n何でも薄暗いじめじめした所でニャーニャー泣いていた事だけは記憶している。'
 const BODY2 = '二話目の本文。'
 
 const isDesktop = (info: TestInfo) => info.project.name === 'desktop'
@@ -362,7 +363,11 @@ test.describe('原稿画面', () => {
     await expect(page.locator('.toast.error')).toHaveCount(0)
 
     // 採用中のバージョンを選ぶと読み取り専用で表示される
-    await page.getByTestId('version-row').first().getByRole('button', { name: /を開いて比較する/ }).click()
+    await page
+      .getByTestId('version-row')
+      .first()
+      .getByRole('button', { name: /を開いて比較する/ })
+      .click()
     await expect(page.getByTestId('compare-readonly')).toHaveValue(BODY1)
     await expect(page.getByText('このバージョンは採用中です')).toBeVisible()
     await expect(page.getByTestId('adopt-button')).toBeDisabled()
@@ -427,9 +432,7 @@ test.describe('原稿画面', () => {
     await page.getByTestId('subtitle-input').click()
     await page.keyboard.type('はじまり')
     await page.keyboard.press('ControlOrMeta+s')
-    await expect
-      .poll(() => page.evaluate((id) => window.__ns.getData().pieces[id].subtitle, pieceIds[0]))
-      .toBe('はじまり')
+    await expect.poll(() => page.evaluate((id) => window.__ns.getData().pieces[id].subtitle, pieceIds[0])).toBe('はじまり')
     await expect(page.getByTestId('subtitle-input')).toBeFocused()
   })
 
@@ -447,7 +450,11 @@ test.describe('原稿画面', () => {
   test('一覧から開いた比較は、ブラウザの「戻る」で一覧に戻る（バージョンの切り替えは履歴に積まない）', async ({ page }) => {
     const { titleId, pieceId, v1, v2 } = await seedLines(page, 3)
     await openPiece(page, titleId, pieceId)
-    await page.getByTestId('version-row').first().getByRole('button', { name: /を開いて比較する/ }).click()
+    await page
+      .getByTestId('version-row')
+      .first()
+      .getByRole('button', { name: /を開いて比較する/ })
+      .click()
     await expect(page).toHaveURL(new RegExp(`\\?v=${v2}$`))
     await page.getByTestId('version-select').selectOption(v1)
     await expect(page).toHaveURL(new RegExp(`\\?v=${v1}$`))
@@ -532,7 +539,9 @@ test.describe('原稿画面', () => {
 test.describe('スマホでの表示', () => {
   test.skip(({ isMobile }) => !isMobile, 'スマホ（タッチ操作）のみ')
 
-  test('縦持ち: ペインのヘッダーは1行。編集中は画面上部を畳み（集中モード）、キーボードが出ても上下に分けたまま', async ({ page }) => {
+  test('縦持ち: ペインのヘッダーは1行。編集中は画面上部を畳み（集中モード）、キーボードが出ても上下に分けたまま', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 390, height: 664 })
     const { titleId, pieceId, v2 } = await seedLines(page, 60)
     await openPiece(page, titleId, pieceId, v2)
@@ -542,7 +551,9 @@ test.describe('スマホでの表示', () => {
       expect(head!.height).toBeLessThanOrEqual(50)
     }
     // 採用原稿の1行目が画面の上から 210px 以内（以前は 238px）
-    const firstLine = await page.getByTestId('active-editor').evaluate((el) => el.getBoundingClientRect().top + parseFloat(getComputedStyle(el).paddingTop))
+    const firstLine = await page
+      .getByTestId('active-editor')
+      .evaluate((el) => el.getBoundingClientRect().top + parseFloat(getComputedStyle(el).paddingTop))
     expect(firstLine).toBeLessThan(210)
     expect(await page.getByTestId('active-count').textContent()).toContain('字')
 
@@ -588,7 +599,9 @@ test.describe('スマホでの表示', () => {
     expect((await page.getByTestId('subtitle-input').boundingBox())!.width).toBeGreaterThan(150)
   })
 
-  test('横持ち: 上部バーは1行で各ペインに6行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({ page }) => {
+  test('横持ち: 上部バーは1行で各ペインに6行以上。キーボード表示中も3行以上見え、比率は表示の設定で変えられる', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 844, height: 390 })
     const { titleId, pieceId, v2 } = await seedLines(page, 60)
     await openPiece(page, titleId, pieceId, v2)
@@ -768,7 +781,9 @@ test.describe('スクリーンショット', () => {
       actions.updateVersion(v1, { body })
       const v2 = actions.duplicateVersion(v1)
       actions.updateVersion(v2, {
-        body: body.replace('埃がゆっくりと舞っていた', '細かな埃が光の筋の中で踊っていた').replace('「また、ここに戻ってきたのね」\n', ''),
+        body: body
+          .replace('埃がゆっくりと舞っていた', '細かな埃が光の筋の中で踊っていた')
+          .replace('「また、ここに戻ってきたのね」\n', ''),
         note: '冒頭の描写を具体的に。台詞を一つ削った。',
       })
       const v3 = actions.addVersion(pieceId, { body: '　（書き直し中）\n　朝の光。' })

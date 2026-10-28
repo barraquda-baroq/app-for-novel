@@ -26,14 +26,11 @@ test.describe('入力直後の保存', () => {
     await page.keyboard.type('あいうえおかきくけこさしすせそ', { delay: 150 })
     // 打ち終わった直後（まだ下書きが残っている間）は「保存済み」と表示しない
     await expect(page.locator('.save-status')).not.toHaveClass(/\bsaved\b/)
-    const stored = await page.evaluate(
-      (id) => {
-        const d = window.__ns.getData()
-        const p = d.pieces[id]
-        return d.versions[p.activeVersionId!].body
-      },
-      pieceIds[0],
-    )
+    const stored = await page.evaluate((id) => {
+      const d = window.__ns.getData()
+      const p = d.pieces[id]
+      return d.versions[p.activeVersionId!].body
+    }, pieceIds[0])
     // 1.5 秒ごとには反映されるので、途中までは必ずストアに入っている
     expect(stored.length).toBeGreaterThan(0)
     await page.reload()

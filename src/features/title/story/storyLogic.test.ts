@@ -203,7 +203,12 @@ describe('章の解除で振り直される話数', () => {
   })
 
   it('説明は題を添え、多ければ「ほか n話」にまとめる', () => {
-    const items = [1, 2, 3].map((n) => ({ pieceId: `p${n}`, before: `第${n}話`, after: `第${n + 1}話`, subtitle: n === 1 ? '旅立ち' : '' }))
+    const items = [1, 2, 3].map((n) => ({
+      pieceId: `p${n}`,
+      before: `第${n}話`,
+      after: `第${n + 1}話`,
+      subtitle: n === 1 ? '旅立ち' : '',
+    }))
     expect(formatRenumbering(items)).toBe('第1話「旅立ち」→第2話、第2話→第3話、第3話→第4話')
     expect(formatRenumbering(items, 2)).toBe('第1話「旅立ち」→第2話、第2話→第3話 ほか1話')
   })

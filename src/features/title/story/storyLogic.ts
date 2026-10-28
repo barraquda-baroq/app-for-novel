@@ -105,11 +105,7 @@ export function chapterName(chapter: Chapter | undefined): string {
  * 話数追加ダイアログの「追加先の章」の既定値。
  * 最新話（読む順で最後の話）がある章が候補にあればそれ、なければ最初の候補。
  */
-export function defaultEpisodeTarget(
-  data: AppData,
-  titleId: ID,
-  targets: { chapterId: ID | null }[],
-): ID | null | undefined {
+export function defaultEpisodeTarget(data: AppData, titleId: ID, targets: { chapterId: ID | null }[]): ID | null | undefined {
   if (targets.length === 0) return undefined
   const flat = flatten(data, titleId)
   for (let i = flat.length - 1; i >= 0; i--) {

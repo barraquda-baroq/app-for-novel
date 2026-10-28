@@ -196,10 +196,12 @@ export function ChapterPage() {
           {edit ? (
             <div className="story-edit-help" role="note">
               <p>
-                ↑↓ で1つずつ並べ替えられます。章の先頭から↑、末尾から↓で章の外へ出ます。並べ替えると話数は並び順どおりに振り直されます。
+                ↑↓
+                で1つずつ並べ替えられます。章の先頭から↑、末尾から↓で章の外へ出ます。並べ替えると話数は並び順どおりに振り直されます。
               </p>
               <p>
-                削除できるのは{title.numbering === 'perChapter' ? 'この章の' : 'タイトル全体の'}<strong>最後の話だけ</strong>
+                削除できるのは{title.numbering === 'perChapter' ? 'この章の' : 'タイトル全体の'}
+                <strong>最後の話だけ</strong>
                 です（途中の話数を抜けさせないため）。特殊ブロックはいつでも削除できます。
               </p>
             </div>
@@ -230,7 +232,12 @@ export function ChapterPage() {
 
           {edit ? (
             <div className="chpage-danger">
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => void release()} data-testid="chapter-page-remove">
+              <button
+                type="button"
+                className="btn btn-sm btn-danger"
+                onClick={() => void release()}
+                data-testid="chapter-page-remove"
+              >
                 <XIcon />
                 この章を解除
               </button>

@@ -166,7 +166,8 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
 
         {sort === 'deadline' && submissions.length > 1 ? (
           <p className="small muted sg-sort-note" data-testid="sort-note">
-            応募前で締切が近いもの → 応募済み・選考中 → 結果が出たもの・締切を過ぎたもの の順に表示しています（番号は応募順のままです）。並べ替えるときは「応募順」に戻してください。
+            応募前で締切が近いもの → 応募済み・選考中 → 結果が出たもの・締切を過ぎたもの
+            の順に表示しています（番号は応募順のままです）。並べ替えるときは「応募順」に戻してください。
           </p>
         ) : null}
 

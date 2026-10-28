@@ -87,7 +87,11 @@ export function IdeaSectionView({
           <h3 className="idea-section-title">{titleContent}</h3>
         )}
         {showOpenLink && section.titleId ? (
-          <Link to={paths.title(section.titleId)} className="btn btn-sm btn-ghost idea-section-open" aria-label={`タイトル「${name}」を開く`}>
+          <Link
+            to={paths.title(section.titleId)}
+            className="btn btn-sm btn-ghost idea-section-open"
+            aria-label={`タイトル「${name}」を開く`}
+          >
             開く
           </Link>
         ) : null}
@@ -116,7 +120,14 @@ export function IdeaSectionView({
         ) : (
           <ul className="idea-list">
             {section.ideas.map((idea, i) => (
-              <IdeaCard key={idea.id} idea={idea} sectionName={name} unassigned={unassigned} first={i === 0} last={i === count - 1} />
+              <IdeaCard
+                key={idea.id}
+                idea={idea}
+                sectionName={name}
+                unassigned={unassigned}
+                first={i === 0}
+                last={i === count - 1}
+              />
             ))}
           </ul>
         )}

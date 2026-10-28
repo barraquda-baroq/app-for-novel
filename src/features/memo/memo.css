@@ -36,11 +36,7 @@
   bottom: 0;
   width: 22px;
   height: 22px;
-  background: linear-gradient(
-    315deg,
-    var(--bg) 0 50%,
-    color-mix(in srgb, var(--memo) 30%, var(--memo-soft)) 50% 100%
-  );
+  background: linear-gradient(315deg, var(--bg) 0 50%, color-mix(in srgb, var(--memo) 30%, var(--memo-soft)) 50% 100%);
   box-shadow: -1px -1px 2px rgb(0 0 0 / 6%);
   border-top-left-radius: 3px;
   pointer-events: none;
@@ -84,8 +80,7 @@
   border: 0;
   outline: none;
   resize: vertical;
-  background:
-    repeating-linear-gradient(
+  background: repeating-linear-gradient(
       to bottom,
       transparent 0 calc(1.9em - 1px),
       color-mix(in srgb, var(--memo) 18%, transparent) calc(1.9em - 1px) 1.9em

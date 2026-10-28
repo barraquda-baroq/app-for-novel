@@ -156,7 +156,16 @@ describe('推敲バージョンの削除の確認文', () => {
     activeVersions: { p1: 'v1' },
     order: ['p1'],
     pieces: {
-      p1: { kind: 'episode' as const, label: '第1話', subtitle: '', versionId: 'v1', versionName: '第1稿', chars: 3, body: '本文。', hash: 'x' },
+      p1: {
+        kind: 'episode' as const,
+        label: '第1話',
+        subtitle: '',
+        versionId: 'v1',
+        versionName: '第1稿',
+        chars: 3,
+        textKey: 'k1',
+        hash: 'x',
+      },
     },
   }
 

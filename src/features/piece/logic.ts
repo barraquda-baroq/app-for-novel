@@ -146,7 +146,7 @@ export function versionDeleteMessage(
     // 古い記録には本文の控えがない
     const hasCopy = referencedBy.every((s) => {
       const p = s.snapshot?.pieces?.[version.pieceId]
-      return Boolean(p && p.versionId === version.id && p.body !== null)
+      return Boolean(p && p.versionId === version.id && (p.textKey ?? p.body ?? null) !== null)
     })
     parts.push(
       hasCopy

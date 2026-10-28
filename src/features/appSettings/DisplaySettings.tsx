@@ -41,7 +41,13 @@ function Choices<T extends string>({
   return (
     <div className="segmented aset-seg" role="group" aria-labelledby={labelId}>
       {options.map((o) => (
-        <button key={o.value} type="button" aria-pressed={value === o.value} onClick={() => onChange(o.value)} data-testid={`${testid}-${o.value}`}>
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={value === o.value}
+          onClick={() => onChange(o.value)}
+          data-testid={`${testid}-${o.value}`}
+        >
           {o.label}
         </button>
       ))}
@@ -70,7 +76,13 @@ export function DisplaySettings() {
           <span id={`${id}-theme`}>テーマ</span>
         </div>
         <div className="aset-row-control">
-          <Choices labelId={`${id}-theme`} options={THEMES} value={theme} onChange={(v) => setPrefs({ theme: v })} testid="theme" />
+          <Choices
+            labelId={`${id}-theme`}
+            options={THEMES}
+            value={theme}
+            onChange={(v) => setPrefs({ theme: v })}
+            testid="theme"
+          />
         </div>
       </div>
 
@@ -79,7 +91,13 @@ export function DisplaySettings() {
           <span id={`${id}-font`}>原稿の書体</span>
         </div>
         <div className="aset-row-control">
-          <Choices labelId={`${id}-font`} options={FONTS} value={font} onChange={(v) => setPrefs({ editorFont: v })} testid="font" />
+          <Choices
+            labelId={`${id}-font`}
+            options={FONTS}
+            value={font}
+            onChange={(v) => setPrefs({ editorFont: v })}
+            testid="font"
+          />
         </div>
       </div>
 
@@ -110,7 +128,11 @@ export function DisplaySettings() {
             {size}px
           </output>
           {size !== DEFAULT_PREFS.editorFontSize ? (
-            <button type="button" className="btn btn-sm btn-ghost aset-size-reset" onClick={() => setPrefs({ editorFontSize: DEFAULT_PREFS.editorFontSize })}>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost aset-size-reset"
+              onClick={() => setPrefs({ editorFontSize: DEFAULT_PREFS.editorFontSize })}
+            >
               標準（{DEFAULT_PREFS.editorFontSize}px）に戻す
             </button>
           ) : null}
@@ -127,10 +149,18 @@ export function DisplaySettings() {
       <div className="aset-row">
         <div className="aset-row-label">
           <span id={`${id}-split`}>比較画面の分割</span>
-          <span className="aset-row-desc">採用原稿と推敲バージョンを並べて比べるときの向きです。自動では、広い画面は左右、スマホは上下になります。</span>
+          <span className="aset-row-desc">
+            採用原稿と推敲バージョンを並べて比べるときの向きです。自動では、広い画面は左右、スマホは上下になります。
+          </span>
         </div>
         <div className="aset-row-control">
-          <Choices labelId={`${id}-split`} options={SPLITS} value={split} onChange={(v) => setPrefs({ splitOrientation: v })} testid="split" />
+          <Choices
+            labelId={`${id}-split`}
+            options={SPLITS}
+            value={split}
+            onChange={(v) => setPrefs({ splitOrientation: v })}
+            testid="split"
+          />
         </div>
       </div>
 

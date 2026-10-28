@@ -6,6 +6,8 @@ export const NO_ACTIVE_MESSAGE = '採用原稿がありません。'
 
 export type ReadBlock =
   | { type: 'chapter'; chapterId: ID; name: string; note: string }
+  /** 章が終わり、タイトル直下（どの章にも入っていない）の話が続くことを示す区切り */
+  | { type: 'chapterEnd'; chapterId: ID }
   | {
       type: 'piece'
       pieceId: ID
@@ -32,6 +34,7 @@ export function buildReadThrough(data: AppData, titleId: ID, chapterId?: ID): Re
   for (const item of flatten(data, titleId)) {
     if (chapterId !== undefined && item.chapterId !== chapterId) continue
     if (title.chaptersEnabled && item.chapterId !== currentChapter) {
+      if (currentChapter && item.chapterId === null) blocks.push({ type: 'chapterEnd', chapterId: currentChapter })
       currentChapter = item.chapterId
       if (item.chapterId && chapterIds.has(item.chapterId)) {
         const ch = data.chapters[item.chapterId]
@@ -70,8 +73,17 @@ export function readThroughText(data: AppData, titleId: ID, chapterId?: ID): str
       parts.push(`■ ${b.name}`, '')
       continue
     }
+    if (b.type === 'chapterEnd') {
+      parts.push('――――――――', '')
+      continue
+    }
     parts.push(b.subtitle.trim() ? `${b.label}　${b.subtitle.trim()}` : b.label, '')
     parts.push(b.body ?? NO_ACTIVE_MESSAGE, '', '')
   }
-  return parts.join('\n').replace(/\n{4,}/g, '\n\n\n').trimEnd() + '\n'
+  return (
+    parts
+      .join('\n')
+      .replace(/\n{4,}/g, '\n\n\n')
+      .trimEnd() + '\n'
+  )
 }

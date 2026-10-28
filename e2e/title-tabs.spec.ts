@@ -467,7 +467,12 @@ test.describe('戦略タブ', () => {
         const sub = actions.addSubmission(a.titleId, '潮風文学賞')
         actions.updateSubmission(sub, { status: 'planned', minChars: 2100 })
         const done = actions.addSubmission(a.titleId, '去年の賞')
-        actions.updateSubmission(done, { status: 'rejected', deadline: '2020-01-01', minChars: 999999, result: '一次落選。会話が多いとの講評。' })
+        actions.updateSubmission(done, {
+          status: 'rejected',
+          deadline: '2020-01-01',
+          minChars: 999999,
+          result: '一次落選。会話が多いとの講評。',
+        })
         return { sub, done }
       },
       { titleId, pieceIds },
@@ -489,12 +494,17 @@ test.describe('戦略タブ', () => {
     await dialog(page).getByRole('button', { name: '記録する' }).click()
     await expect(card.getByTestId('snapshot-info')).toContainText('記録・2,000字・約7枚・2話＋特殊1')
     await expect(card.getByTestId('submission-submitted-input')).toHaveValue(ymd(new Date()))
-    await expect(card.getByTestId('snapshot-piece')).toHaveText(['プロローグ第1稿・2字', '第1話霧笛第1稿・6字', '第2話第1稿・1,992字'])
+    await expect(card.getByTestId('snapshot-piece')).toHaveText([
+      'プロローグ第1稿・2字',
+      '第1話霧笛第1稿・6字',
+      '第2話第1稿・1,992字',
+    ])
 
     // 応募後に原稿を直しても、規定の判定は応募した原稿で行い、変わった話に印が付く
     await seed(
       page,
-      ({ actions, getData }, id: string) => actions.updateVersion(getData().pieces[id].activeVersionId!, { body: 'あ'.repeat(2200) }),
+      ({ actions, getData }, id: string) =>
+        actions.updateVersion(getData().pieces[id].activeVersionId!, { body: 'あ'.repeat(2200) }),
       pieceIds[1],
     )
     await expect(card.getByTestId('snapshot-piece').nth(2)).toContainText('本文を編集')
@@ -504,7 +514,9 @@ test.describe('戦略タブ', () => {
     // 書き出しと読む
     const exported = await exportAndRead(page, card.getByTestId('snapshot-export'))
     expect(exported.name).toBe('灯台守_潮風文学賞_応募時の原稿.txt')
-    expect(exported.text).toBe(`灯台守\n\nプロローグ\n\n序。\n\n\n第1話　霧笛\n\n一話の本文。\n\n\n第2話\n\n${'あ'.repeat(1992)}\n`)
+    expect(exported.text).toBe(
+      `灯台守\n\nプロローグ\n\n序。\n\n\n第1話　霧笛\n\n一話の本文。\n\n\n第2話\n\n${'あ'.repeat(1992)}\n`,
+    )
     await card.getByTestId('snapshot-read').click()
     await expect(page.getByTestId('snapshot-reader')).toContainText('一話の本文。')
     await page.keyboard.press('Escape')

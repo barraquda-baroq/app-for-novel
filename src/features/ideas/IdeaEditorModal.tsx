@@ -37,7 +37,9 @@ export function IdeaEditorModal({
   const [body, setBody] = useState(restored?.body ?? initialBody)
   const [restoredNotice, setRestoredNotice] = useState(restored !== null)
   // 見出しが空で内容がある時は内容から書き始める（開いた時に一度だけ決める）
-  const [focusBody] = useState(() => mode === 'edit' && (restored?.heading ?? initialHeading) === '' && (restored?.body ?? initialBody) !== '')
+  const [focusBody] = useState(
+    () => mode === 'edit' && (restored?.heading ?? initialHeading) === '' && (restored?.body ?? initialBody) !== '',
+  )
   const confirming = useRef(false)
   const canSave = canSaveIdea(heading, body)
   const dirty = heading !== initialHeading || body !== initialBody
@@ -125,7 +127,12 @@ export function IdeaEditorModal({
         {restoredNotice ? (
           <p className="idea-editor-restored" role="status" data-testid="idea-draft-restored">
             <span>下書きを復元しました</span>
-            <button type="button" className="idea-editor-restored-discard" onClick={discardRestored} data-testid="idea-draft-discard">
+            <button
+              type="button"
+              className="idea-editor-restored-discard"
+              onClick={discardRestored}
+              data-testid="idea-draft-discard"
+            >
               {mode === 'add' ? '下書きを破棄' : '下書きを破棄して元に戻す'}
             </button>
           </p>

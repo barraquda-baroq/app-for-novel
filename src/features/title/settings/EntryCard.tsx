@@ -152,7 +152,13 @@ export function EntryCard({ entry, categories, isFirst, isLast, expanded, onTogg
                 ))}
               </ul>
             )}
-            <button type="button" ref={addFieldRef} className="btn btn-sm st-add-field" onClick={addField} data-testid="add-field">
+            <button
+              type="button"
+              ref={addFieldRef}
+              className="btn btn-sm st-add-field"
+              onClick={addField}
+              data-testid="add-field"
+            >
               <PlusIcon />
               フィールドを追加
             </button>
@@ -304,7 +310,13 @@ function FieldRow({
               onSelect: () => move(1),
               testId: 'field-down',
             },
-            { label: 'このフィールドを削除', icon: <XIcon />, danger: true, onSelect: () => onRemove(label), testId: 'field-remove' },
+            {
+              label: 'このフィールドを削除',
+              icon: <XIcon />,
+              danger: true,
+              onSelect: () => onRemove(label),
+              testId: 'field-remove',
+            },
           ]}
         />
       </div>

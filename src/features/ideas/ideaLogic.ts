@@ -107,7 +107,11 @@ export interface MoveTarget {
   current: boolean
 }
 
-export function moveTargets(sections: IdeaSection[], idea: Pick<Idea, 'titleId'>, titleExists: (id: ID) => boolean): MoveTarget[] {
+export function moveTargets(
+  sections: IdeaSection[],
+  idea: Pick<Idea, 'titleId'>,
+  titleExists: (id: ID) => boolean,
+): MoveTarget[] {
   // 削除済みタイトルを指すアイデアは「どのタイトルにも属さない」に表示されている
   const currentTitleId = idea.titleId !== null && titleExists(idea.titleId) ? idea.titleId : null
   return sections.map((s) => ({

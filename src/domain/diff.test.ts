@@ -19,7 +19,10 @@ describe('推敲比較の差分', () => {
   })
 
   it('全段落に手を入れた長い話でも、全文削除・全文追加にはならない', () => {
-    const paras = Array.from({ length: 300 }, (_, i) => `第${i}段落の文章です。静かな朝に、少女は古い本を開いた。表紙は擦り切れていた。`)
+    const paras = Array.from(
+      { length: 300 },
+      (_, i) => `第${i}段落の文章です。静かな朝に、少女は古い本を開いた。表紙は擦り切れていた。`,
+    )
     const a = paras.join('\n') + '\n'
     const b = paras.map((p) => p.replace('静かな', '穏やかな')).join('\n') + '\n'
     const started = performance.now()

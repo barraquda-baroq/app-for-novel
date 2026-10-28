@@ -125,15 +125,7 @@ export interface SettingEntry {
   updatedAt: number
 }
 
-export type SubmissionStatus =
-  | 'considering'
-  | 'planned'
-  | 'submitted'
-  | 'reviewing'
-  | 'passed'
-  | 'won'
-  | 'rejected'
-  | 'withdrawn'
+export type SubmissionStatus = 'considering' | 'planned' | 'submitted' | 'reviewing' | 'passed' | 'won' | 'rejected' | 'withdrawn'
 
 /** 応募時点の1話分の控え */
 export interface SnapshotPiece {
@@ -144,10 +136,22 @@ export interface SnapshotPiece {
   versionId: ID | null
   versionName: string | null
   chars: number
-  /** 当時の採用原稿の本文（稿が後で編集・削除されても応募した原稿が残るように控える） */
-  body: string | null
+  /**
+   * 当時の採用原稿の本文の控え（snapshotTexts のキー）。稿が後で編集・削除されても応募した原稿が残る。
+   * 同じ本文は複数の応募記録で1つだけ保存される。採用原稿がなかった話は null。
+   */
+  textKey: ID | null
+  /** 古い記録だけが持つ本文（読み込み時に snapshotTexts へ移す） */
+  body?: string | null
   /** 本文の指紋（記録後に本文が変わったかの判定用） */
   hash: string
+}
+
+/** 応募時の原稿の本文（内容で重複をまとめて保存する） */
+export interface SnapshotText {
+  /** 内容から作ったキー */
+  id: ID
+  body: string
 }
 
 export interface SubmissionSnapshot {
@@ -209,6 +213,7 @@ export interface AppData {
   settingCategories: Record<ID, SettingCategory>
   settingEntries: Record<ID, SettingEntry>
   submissions: Record<ID, Submission>
+  snapshotTexts: Record<ID, SnapshotText>
 }
 
 export type TableName = keyof AppData
@@ -223,6 +228,7 @@ export const TABLE_NAMES: TableName[] = [
   'settingCategories',
   'settingEntries',
   'submissions',
+  'snapshotTexts',
 ]
 
 export function emptyData(): AppData {
@@ -236,6 +242,7 @@ export function emptyData(): AppData {
     settingCategories: {},
     settingEntries: {},
     submissions: {},
+    snapshotTexts: {},
   }
 }
 

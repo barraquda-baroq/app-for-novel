@@ -157,7 +157,9 @@ export function DataSettings() {
         </button>
       </div>
       <p className="aset-note" data-testid="last-backup">
-        {lastBackup ? `この端末で最後に書き出した日時: ${formatDateTime(lastBackup)}` : 'この端末ではまだバックアップを書き出していません。'}
+        {lastBackup
+          ? `この端末で最後に書き出した日時: ${formatDateTime(lastBackup)}`
+          : 'この端末ではまだバックアップを書き出していません。'}
       </p>
 
       <div className="aset-storage" data-testid="storage-info">

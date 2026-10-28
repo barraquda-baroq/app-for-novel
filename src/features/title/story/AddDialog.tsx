@@ -125,7 +125,15 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
   }
 
   const submitLabel =
-    kind === 'episode' ? (preview ? `第${preview.number}話を作成` : '作成') : kind === 'special' ? 'ブロックを差し込む' : kind === 'memo' ? 'メモを作成' : '追加'
+    kind === 'episode'
+      ? preview
+        ? `第${preview.number}話を作成`
+        : '作成'
+      : kind === 'special'
+        ? 'ブロックを差し込む'
+        : kind === 'memo'
+          ? 'メモを作成'
+          : '追加'
 
   const numberingNote = !chaptersOn
     ? null

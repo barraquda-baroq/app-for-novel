@@ -262,7 +262,9 @@ test.describe('タイトル画面・本編', () => {
     await expect(page.getByTestId('stat-chars')).toContainText('採用原稿 8字')
   })
 
-  test('章管理: オンにすると第1章ができ、章の追加・章への話数追加・章ごとの話数・章ページ・章の解除ができる', async ({ page }) => {
+  test('章管理: オンにすると第1章ができ、章の追加・章への話数追加・章ごとの話数・章ページ・章の解除ができる', async ({
+    page,
+  }) => {
     await openApp(page)
     const { titleId } = await seedTitleWithEpisodes(page, '大長編', ['一', '二'])
     await openTitle(page, titleId)

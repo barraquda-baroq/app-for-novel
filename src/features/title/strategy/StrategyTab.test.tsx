@@ -314,11 +314,11 @@ describe('戦略タブ（状態ごとの見出し・規定）', () => {
     // 終了: 締切・規定の注意は出さず、結果 → 改稿方針 → 再応募方針の抜粋を出す
     expect(within(c4).queryByTestId('submission-deadline')).toBeNull()
     expect(within(c4).queryByTestId('submission-limit')).toBeNull()
-    expect(within(c4).getAllByTestId('submission-followup').map((e) => e.textContent)).toEqual([
-      '結果・講評一次選考で落選。 中盤が遅いとの講評。',
-      '改稿方針中盤を削る',
-      '再応募方針未記入',
-    ])
+    expect(
+      within(c4)
+        .getAllByTestId('submission-followup')
+        .map((e) => e.textContent),
+    ).toEqual(['結果・講評一次選考で落選。 中盤が遅いとの講評。', '改稿方針中盤を削る', '再応募方針未記入'])
   })
 
   it('結果待ちの詳細では応募時の原稿と比べ、記録がなければ現在の原稿で比べていることを示す', async () => {

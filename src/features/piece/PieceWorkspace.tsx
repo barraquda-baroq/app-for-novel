@@ -8,7 +8,7 @@ import { episodeNumbers, locatePiece, pieceLabel } from '../../domain/structure'
 import type { ID, Piece, Title } from '../../domain/types'
 import { paths } from '../../routes'
 import { flushNow, useData } from '../../store/appStore'
-import { notify, usePrefs } from '../../store/uiStore'
+import { notify, notifyError, usePrefs } from '../../store/uiStore'
 import type { DraftHandle } from '../../ui/DraftField'
 import { useDocumentTitle, useMediaQuery, useSplitOrientation } from '../../ui/hooks'
 import { BookIcon } from '../../ui/icons'
@@ -130,7 +130,9 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
         flushEditors(activeEditor, compareEditor, noteEditor, ...drafts)
-        void flushNow().then(() => notify('保存しました'))
+        void flushNow().then((ok) =>
+          ok ? notify('保存しました') : notifyError('保存できませんでした。端末の空き容量を確認してください。'),
+        )
       }
     }
     window.addEventListener('keydown', onKey)
@@ -138,11 +140,7 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
   }, [drafts])
 
   const comparing = Boolean(selected)
-  useScrollSync(
-    scrollSync && comparing,
-    rootRef,
-    `${active?.id ?? ''}|${selected?.id ?? ''}|${showDiff ? 1 : 0}|${orientation}`,
-  )
+  useScrollSync(scrollSync && comparing, rootRef, `${active?.id ?? ''}|${selected?.id ?? ''}|${showDiff ? 1 : 0}|${orientation}`)
 
   const goTo = (id: ID | null) => {
     if (!id) return
@@ -170,7 +168,12 @@ function Workspace({ title, piece }: { title: Title; piece: Piece }) {
         <AppHeader
           crumbs={crumbs}
           actions={
-            <Link to={paths.read(title.id)} className="icon-btn" aria-label="通し読み（採用原稿のみ）" title="通し読み（採用原稿のみ）">
+            <Link
+              to={paths.read(title.id)}
+              className="icon-btn"
+              aria-label="通し読み（採用原稿のみ）"
+              title="通し読み（採用原稿のみ）"
+            >
               <BookIcon />
             </Link>
           }

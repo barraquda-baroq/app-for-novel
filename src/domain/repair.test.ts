@@ -32,7 +32,12 @@ describe('データの修復', () => {
         ...data.titles,
         [titleId]: {
           ...data.titles[titleId],
-          structure: [{ type: 'chapter', id: c1 }, { type: 'chapter', id: 'nope' }, { type: 'piece', id: 'ghost' }, { type: 'chapter', id: c2 }],
+          structure: [
+            { type: 'chapter', id: c1 },
+            { type: 'chapter', id: 'nope' },
+            { type: 'piece', id: 'ghost' },
+            { type: 'chapter', id: c2 },
+          ],
         },
       },
       chapters: {
@@ -67,10 +72,63 @@ describe('データの修復', () => {
     data = addIdea(data, null, 'a').data
     data = addIdea(data, null, 'b').data
     const orphanId = 'orphan'
-    data = { ...data, ideas: { ...data.ideas, [orphanId]: { id: orphanId, titleId: 'gone', heading: 'o', body: '', order: 0, createdAt: 0, updatedAt: 0 } } }
+    data = {
+      ...data,
+      ideas: {
+        ...data.ideas,
+        [orphanId]: { id: orphanId, titleId: 'gone', heading: 'o', body: '', order: 0, createdAt: 0, updatedAt: 0 },
+      },
+    }
     const r = repairData(data)
     expect(r.data.ideas[orphanId].titleId).toBeNull()
     const moved = moveIdeaStep(r.data, orphanId, -1)
     expect(ideaSections(moved)[0].ideas.map((i) => i.heading)).toEqual(['a', 'o', 'b'])
+  })
+})
+
+describe('壊れたバックアップの修復（項目の欠け）', () => {
+  it('どの種類のレコードでも、文字列・数値・配列の欠けを補う', () => {
+    const { data, titleId } = sample()
+    const pid = flatten(data, titleId)[0].pieceId
+    const vid = data.pieces[pid].versionIds[0]
+    const chapterId = data.titles[titleId].structure[0].id
+    const catId = Object.values(data.settingCategories)[0].id
+    const broken = {
+      ...data,
+      ideas: { i1: { id: 'i1', titleId: null, heading: '思いつき', body: '本文', order: 0 } },
+      memos: { m1: { id: 'm1', titleId } },
+      versions: { ...data.versions, [vid]: { ...data.versions[vid], name: undefined, note: null } },
+      chapters: { ...data.chapters, [chapterId]: { ...data.chapters[chapterId], name: undefined } },
+      submissions: { s1: { id: 's1', titleId } },
+      settingCategories: { ...data.settingCategories, [catId]: { ...data.settingCategories[catId], name: undefined } },
+      settingEntries: { e1: { id: 'e1', titleId, categoryId: catId, fields: [null, { id: 'f', key: 1 }] } },
+    } as unknown as AppData
+    const r = repairData(broken)
+    const d = r.data
+    expect(d.ideas.i1).toMatchObject({ createdAt: 0, updatedAt: 0 })
+    expect(d.memos.m1).toMatchObject({ name: '', body: '', order: 0 })
+    expect(d.versions[vid]).toMatchObject({ name: '', note: '' })
+    expect(d.chapters[chapterId].name).toBe('')
+    expect(d.submissions.s1).toMatchObject({ contestName: '', status: 'considering', minChars: null, snapshot: null })
+    expect(d.settingCategories[catId].name).toBe('')
+    expect(d.settingEntries.e1.fields).toEqual([{ id: 'f', key: '', value: '' }])
+    expect(d.settingEntries.e1).toMatchObject({ name: '', body: '' })
+  })
+
+  it('存在しない章・話への参照だけが壊れている時も、直した内容を返す', () => {
+    const { data, titleId } = sample()
+    const broken: AppData = {
+      ...data,
+      titles: {
+        ...data.titles,
+        [titleId]: {
+          ...data.titles[titleId],
+          structure: [...data.titles[titleId].structure, { type: 'piece', id: 'gone' }, { type: 'chapter', id: 'gone2' }],
+        },
+      },
+    }
+    const r = repairData(broken)
+    expect(r.fixes.length).toBeGreaterThan(0)
+    expect(r.data.titles[titleId].structure).toEqual(data.titles[titleId].structure)
   })
 })

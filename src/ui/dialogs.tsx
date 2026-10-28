@@ -1,101 +1,92 @@
 // Promise で使える確認・入力ダイアログ。
 //   if (await confirmDialog({ title: '削除しますか？', danger: true })) { ... }
 //   const name = await promptDialog({ title: 'タイトル名', initial: '' })
-import { useState } from "react";
-import { create } from "zustand";
-import { Modal } from "./Modal";
+import { useState } from 'react'
+import { create } from 'zustand'
+import { Modal } from './Modal'
 
 interface ConfirmOptions {
-  title: string;
-  message?: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  danger?: boolean;
+  title: string
+  message?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  danger?: boolean
 }
 
 interface PromptOptions {
-  title: string;
-  label?: string;
-  initial?: string;
-  placeholder?: string;
-  confirmLabel?: string;
-  multiline?: boolean;
+  title: string
+  label?: string
+  initial?: string
+  placeholder?: string
+  confirmLabel?: string
+  multiline?: boolean
   /** 空欄を許可するか（既定: 許可しない） */
-  allowEmpty?: boolean;
+  allowEmpty?: boolean
   /** 開いた時に初期値を全選択する（そのまま打ち直せるように） */
-  selectOnOpen?: boolean;
+  selectOnOpen?: boolean
 }
 
 type DialogRequest =
   | {
-      id: number;
-      kind: "confirm";
-      opts: ConfirmOptions;
-      resolve: (v: boolean) => void;
+      id: number
+      kind: 'confirm'
+      opts: ConfirmOptions
+      resolve: (v: boolean) => void
     }
   | {
-      id: number;
-      kind: "prompt";
-      opts: PromptOptions;
-      resolve: (v: string | null) => void;
-    };
+      id: number
+      kind: 'prompt'
+      opts: PromptOptions
+      resolve: (v: string | null) => void
+    }
 
-type NewRequest = DialogRequest extends infer R
-  ? R extends DialogRequest
-    ? Omit<R, "id">
-    : never
-  : never;
+type NewRequest = DialogRequest extends infer R ? (R extends DialogRequest ? Omit<R, 'id'> : never) : never
 
-let seq = 0;
+let seq = 0
 
-const useDialogs = create<{ queue: DialogRequest[] }>(() => ({ queue: [] }));
+const useDialogs = create<{ queue: DialogRequest[] }>(() => ({ queue: [] }))
 
 function enqueue(req: NewRequest) {
-  const withId = { ...req, id: ++seq } as DialogRequest;
-  useDialogs.setState((s) => ({ queue: [...s.queue, withId] }));
+  const withId = { ...req, id: ++seq } as DialogRequest
+  useDialogs.setState((s) => ({ queue: [...s.queue, withId] }))
 }
 
 function dequeue() {
-  useDialogs.setState((s) => ({ queue: s.queue.slice(1) }));
+  useDialogs.setState((s) => ({ queue: s.queue.slice(1) }))
 }
 
 export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
-  return new Promise((resolve) => enqueue({ kind: "confirm", opts, resolve }));
+  return new Promise((resolve) => enqueue({ kind: 'confirm', opts, resolve }))
 }
 
 export function promptDialog(opts: PromptOptions): Promise<string | null> {
-  return new Promise((resolve) => enqueue({ kind: "prompt", opts, resolve }));
+  return new Promise((resolve) => enqueue({ kind: 'prompt', opts, resolve }))
 }
 
 /** 開いている・待っているダイアログをすべてキャンセル扱いで閉じる（画面遷移時など） */
 export function cancelAllDialogs(): void {
-  const { queue } = useDialogs.getState();
-  if (queue.length === 0) return;
-  useDialogs.setState({ queue: [] });
+  const { queue } = useDialogs.getState()
+  if (queue.length === 0) return
+  useDialogs.setState({ queue: [] })
   for (const req of queue) {
-    if (req.kind === "confirm") req.resolve(false);
-    else req.resolve(null);
+    if (req.kind === 'confirm') req.resolve(false)
+    else req.resolve(null)
   }
 }
 
 export function DialogHost() {
-  const current = useDialogs((s) => s.queue[0]);
-  if (!current) return null;
-  if (current.kind === "confirm")
-    return <ConfirmView key={current.id} req={current} />;
-  return <PromptView key={current.id} req={current} />;
+  const current = useDialogs((s) => s.queue[0])
+  if (!current) return null
+  if (current.kind === 'confirm') return <ConfirmView key={current.id} req={current} />
+  return <PromptView key={current.id} req={current} />
 }
 
-function ConfirmView({
-  req,
-}: {
-  req: Extract<DialogRequest, { kind: "confirm" }>;
-}) {
-  const { opts } = req;
+function ConfirmView({ req }: { req: Extract<DialogRequest, { kind: 'confirm' }> }) {
+  const { opts } = req
   const close = (v: boolean) => {
-    dequeue();
-    req.resolve(v);
-  };
+    dequeue()
+    req.resolve(v)
+  }
   return (
     <Modal
       title={opts.title}
@@ -104,41 +95,35 @@ function ConfirmView({
       footer={
         <>
           <button type="button" className="btn" onClick={() => close(false)}>
-            {opts.cancelLabel ?? "キャンセル"}
+            {opts.cancelLabel ?? 'キャンセル'}
           </button>
           <button
             type="button"
-            className={`btn ${opts.danger ? "btn-danger" : "btn-primary"}`}
+            className={`btn ${opts.danger ? 'btn-danger' : 'btn-primary'}`}
             onClick={() => close(true)}
             data-autofocus
           >
-            {opts.confirmLabel ?? "OK"}
+            {opts.confirmLabel ?? 'OK'}
           </button>
         </>
       }
     >
-      {opts.message ? (
-        <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{opts.message}</p>
-      ) : null}
+      {opts.message ? <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{opts.message}</p> : null}
     </Modal>
-  );
+  )
 }
 
-function PromptView({
-  req,
-}: {
-  req: Extract<DialogRequest, { kind: "prompt" }>;
-}) {
-  const { opts } = req;
-  const [value, setValue] = useState(opts.initial ?? "");
+function PromptView({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }> }) {
+  const { opts } = req
+  const [value, setValue] = useState(opts.initial ?? '')
   const close = (v: string | null) => {
-    dequeue();
-    req.resolve(v);
-  };
-  const canSubmit = opts.allowEmpty || value.trim().length > 0;
+    dequeue()
+    req.resolve(v)
+  }
+  const canSubmit = opts.allowEmpty || value.trim().length > 0
   const submit = () => {
-    if (canSubmit) close(value);
-  };
+    if (canSubmit) close(value)
+  }
   return (
     <Modal
       title={opts.title}
@@ -148,21 +133,16 @@ function PromptView({
           <button type="button" className="btn" onClick={() => close(null)}>
             キャンセル
           </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={submit}
-            disabled={!canSubmit}
-          >
-            {opts.confirmLabel ?? "OK"}
+          <button type="button" className="btn btn-primary" onClick={submit} disabled={!canSubmit}>
+            {opts.confirmLabel ?? 'OK'}
           </button>
         </>
       }
     >
       <form
         onSubmit={(e) => {
-          e.preventDefault();
-          submit();
+          e.preventDefault()
+          submit()
         }}
       >
         <label className="field">
@@ -181,13 +161,11 @@ function PromptView({
               value={value}
               placeholder={opts.placeholder}
               onChange={(e) => setValue(e.target.value)}
-              onFocus={
-                opts.selectOnOpen ? (e) => e.currentTarget.select() : undefined
-              }
+              onFocus={opts.selectOnOpen ? (e) => e.currentTarget.select() : undefined}
             />
           )}
         </label>
       </form>
     </Modal>
-  );
+  )
 }

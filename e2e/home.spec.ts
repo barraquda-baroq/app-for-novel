@@ -85,7 +85,9 @@ async function ideasInData(page: Page): Promise<{ heading: string; body: string;
 }
 
 test.describe('ホーム', () => {
-  test('起動するとタイトル群とアイデア領域が表示され、タイトルがなくても「どのタイトルにも属さない」仕切りがある', async ({ page }) => {
+  test('起動するとタイトル群とアイデア領域が表示され、タイトルがなくても「どのタイトルにも属さない」仕切りがある', async ({
+    page,
+  }) => {
     await openApp(page)
     await expect(page).toHaveTitle('Novel Studio')
     // どの幅でも両方が表示される（スマホでもどちらかを隠さない）
@@ -306,7 +308,11 @@ test.describe('ホーム', () => {
   test('「この案でタイトルを作る」の候補は、長い文でも「…」を付けずに文の区切りで切り、選択した状態で出す', async ({ page }) => {
     await openApp(page)
     await seed(page, ({ actions }) => {
-      actions.addIdea(null, '', '雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている。そして十年が過ぎた。')
+      actions.addIdea(
+        null,
+        '',
+        '雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている。そして十年が過ぎた。',
+      )
     })
     await cardsIn(section(page, 'none')).nth(0).getByTestId('idea-make-title').click()
     const input = dialog(page).getByRole('textbox')
@@ -626,7 +632,11 @@ test.describe('ホーム', () => {
     await page.getByTestId('titles-edit-toggle').click()
     await page.getByTestId('title-card').nth(0).getByTestId('title-move').click()
     const target = page.getByTestId('title-move-target')
-    await expect(target.locator('option')).toHaveText(['先頭（「風の街」の前）（現在の位置）', '「風の街」の後', '末尾（「無人駅」の後）'])
+    await expect(target.locator('option')).toHaveText([
+      '先頭（「風の街」の前）（現在の位置）',
+      '「風の街」の後',
+      '末尾（「無人駅」の後）',
+    ])
     await expect(page.getByTestId('title-move-submit')).toBeDisabled()
     await target.selectOption({ label: '末尾（「無人駅」の後）' })
     await page.getByTestId('title-move-submit').click()
@@ -860,7 +870,11 @@ test.describe('アプリの設定', () => {
     const json = JSON.parse(await readFile(file, 'utf8')) as {
       app: string
       schemaVersion: number
-      data: { titles: Record<string, { name: string }>; versions: Record<string, { body: string }>; ideas: Record<string, { heading: string }> }
+      data: {
+        titles: Record<string, { name: string }>
+        versions: Record<string, { body: string }>
+        ideas: Record<string, { heading: string }>
+      }
     }
     expect(json.app).toBe('novel-studio')
     expect(json.schemaVersion).toBe(1)
@@ -1039,9 +1053,14 @@ test.describe('画面のスクリーンショット', () => {
     const { titleId } = await seed(page, ({ actions, getData }) => {
       const a = actions.createTitle('月下の図書館')
       actions.updateTitle(a, {
-        synopsis: '廃墟となった図書館で、司書の少女と記憶をなくした青年が、失われた物語を一冊ずつ取り戻していく。静かな夜と古い紙の匂いの物語。',
+        synopsis:
+          '廃墟となった図書館で、司書の少女と記憶をなくした青年が、失われた物語を一冊ずつ取り戻していく。静かな夜と古い紙の匂いの物語。',
       })
-      const bodies = ['　月の光が、崩れた天窓から斜めに差し込んでいた。', '　青年が目を覚ましたのは、書架と書架のあいだだった。', '　「この図書館には、まだ読まれていない物語が眠っているの」']
+      const bodies = [
+        '　月の光が、崩れた天窓から斜めに差し込んでいた。',
+        '　青年が目を覚ましたのは、書架と書架のあいだだった。',
+        '　「この図書館には、まだ読まれていない物語が眠っているの」',
+      ]
       const ids = bodies.map((b) => {
         const pid = actions.addEpisode(a)
         actions.updateVersion(getData().pieces[pid].versionIds[0], { body: b.repeat(30) })
@@ -1061,7 +1080,9 @@ test.describe('画面のスクリーンショット', () => {
       actions.addIdea(
         a,
         '',
-        Array.from({ length: 9 }, (_, i) => `・伏線${i + 1}: 天窓、栞、止まった時計、読めない題名のどれかと結びつける`).join('\n'),
+        Array.from({ length: 9 }, (_, i) => `・伏線${i + 1}: 天窓、栞、止まった時計、読めない題名のどれかと結びつける`).join(
+          '\n',
+        ),
       )
       actions.addIdea(b, 'パンの名前', '売れ残るパンには名前がない。最終話で名前が付く。')
       actions.addIdea(null, '記憶を売る古書店', '客は自分の記憶を一冊の本にして売る。店主はそれを決して読まない。')

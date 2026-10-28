@@ -12,7 +12,17 @@ import {
   pieceFullLabel,
 } from './structure'
 import { Tx, transact } from './tx'
-import { DomainError, type AppData, type Chapter, type ID, type NodeRef, type Piece, type Slot, type Title, type Version } from './types'
+import {
+  DomainError,
+  type AppData,
+  type Chapter,
+  type ID,
+  type NodeRef,
+  type Piece,
+  type Slot,
+  type Title,
+  type Version,
+} from './types'
 import { insertAt, newId, now, removeValue } from './util'
 
 // ---------- 内部ヘルパー ----------
@@ -299,7 +309,11 @@ export function insertOptions(data: AppData, titleId: ID, excludePieceId?: ID): 
     const nextNode = title.structure.slice(r + 1).find((n) => n.type === 'chapter' || n.id !== excludePieceId)
     if (node.type === 'piece') {
       if (node.id === excludePieceId) return
-      opts.push({ slot: { chapterId: null, index: r + 1 }, label: `${name(node.id)}の後（タイトル直下）`, next: nodeName(nextNode) })
+      opts.push({
+        slot: { chapterId: null, index: r + 1 },
+        label: `${name(node.id)}の後（タイトル直下）`,
+        next: nodeName(nextNode),
+      })
       return
     }
     const ch = data.chapters[node.id]
@@ -310,7 +324,11 @@ export function insertOptions(data: AppData, titleId: ID, excludePieceId?: ID): 
     ch.pieceIds.forEach((pid, i) => {
       if (pid === excludePieceId) return
       const after = ch.pieceIds.slice(i + 1).find((x) => x !== excludePieceId)
-      opts.push({ slot: { chapterId: ch.id, index: i + 1 }, label: `${chName}内 ${name(pid)}の後`, next: after ? name(after) : undefined })
+      opts.push({
+        slot: { chapterId: ch.id, index: i + 1 },
+        label: `${chName}内 ${name(pid)}の後`,
+        next: after ? name(after) : undefined,
+      })
     })
     opts.push({ slot: { chapterId: null, index: r + 1 }, label: `${chName}の後（タイトル直下）`, next: nodeName(nextNode) })
   })
@@ -436,7 +454,10 @@ export function movePieceStep(data: AppData, pieceId: ID, dir: -1 | 1): AppData 
       dest = from.index > 0 ? { chapterId: ch.id, index: from.index - 1 } : { chapterId: null, index: rootIndex }
     } else {
       // 章の外へ出すときは、移動元を外しても章ノードの位置は変わらないので rootIndex + 1
-      dest = from.index < ch.pieceIds.length - 1 ? { chapterId: ch.id, index: from.index + 1 } : { chapterId: null, index: rootIndex + 1 }
+      dest =
+        from.index < ch.pieceIds.length - 1
+          ? { chapterId: ch.id, index: from.index + 1 }
+          : { chapterId: null, index: rootIndex + 1 }
     }
   } else {
     const neighbor = title.structure[from.index + dir]
@@ -517,7 +538,15 @@ export function addChapter(data: AppData, titleId: ID, name?: string): { data: A
   return transact(data, (tx) => {
     const t = requireTitle(tx, titleId)
     const ts = now()
-    const ch: Chapter = { id: newId(), titleId, name: name ?? nextChapterName(tx.data, t), note: '', pieceIds: [], createdAt: ts, updatedAt: ts }
+    const ch: Chapter = {
+      id: newId(),
+      titleId,
+      name: name ?? nextChapterName(tx.data, t),
+      note: '',
+      pieceIds: [],
+      createdAt: ts,
+      updatedAt: ts,
+    }
     tx.put('chapters', ch)
     // 末尾のエピローグ等（タイトル直下の特殊ブロック）より前に入れる
     const at = rootEndBeforeTrailingSpecials(tx.data, t)

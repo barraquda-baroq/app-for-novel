@@ -85,7 +85,13 @@ function VersionList({ api, active }: { api: WorkspaceApi; active: Version | nul
           推敲バージョン（{rows.length}）
         </h2>
         <div className="pw-tools" role="group" aria-label="推敲バージョンの追加">
-          <button type="button" className="btn pw-tbtn" onClick={addBlank} title="白紙の推敲バージョンを追加する" data-testid="add-blank-version">
+          <button
+            type="button"
+            className="btn pw-tbtn"
+            onClick={addBlank}
+            title="白紙の推敲バージョンを追加する"
+            data-testid="add-blank-version"
+          >
             <PlusIcon />
             <span className="pw-tlabel">白紙の稿</span>
           </button>
@@ -293,7 +299,13 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
         {/* 広いペインではヘッダーにそのまま並び、狭いペインでは「…」で開くパネルになる */}
         <div className="pw-cmore" id={moreId}>
           <div className="pw-tools" role="group" aria-label="推敲バージョンの操作">
-            <button type="button" className="btn pw-tbtn" onClick={duplicate} title="このバージョンを複製する" data-testid="duplicate-selected">
+            <button
+              type="button"
+              className="btn pw-tbtn"
+              onClick={duplicate}
+              title="このバージョンを複製する"
+              data-testid="duplicate-selected"
+            >
               <ReviseIcon />
               <span className="pw-tlabel">複製</span>
             </button>
@@ -301,7 +313,13 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
               <CopyIcon />
               <span className="pw-tlabel">コピー</span>
             </button>
-            <button type="button" className="btn btn-danger pw-tbtn" onClick={() => void remove()} title="このバージョンを削除する" data-testid="delete-version">
+            <button
+              type="button"
+              className="btn btn-danger pw-tbtn"
+              onClick={() => void remove()}
+              title="このバージョンを削除する"
+              data-testid="delete-version"
+            >
               <TrashIcon />
               <span className="pw-tlabel">削除</span>
             </button>
@@ -412,7 +430,9 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
         <summary data-testid="note-toggle">
           <NoteIcon />
           <span className="pw-note-label">推敲メモ</span>
-          {!noteOpen && selected.note.trim() ? <span className="pw-note-preview ellipsis">{firstLine(selected.note)}</span> : null}
+          {!noteOpen && selected.note.trim() ? (
+            <span className="pw-note-preview ellipsis">{firstLine(selected.note)}</span>
+          ) : null}
           {/* 狭いペインではヘッダーに文字数を出さないので、ここに出す */}
           <span className="pw-note-count" aria-hidden="true">
             {stats.chars}

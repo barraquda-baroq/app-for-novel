@@ -6,7 +6,7 @@ import { flushAllDrafts } from './draftRegistry'
  * 入力欄の下書きをすべてストアへ反映し、まだ保存できていない変更を同期的に控えてから保存を始める。
  * pagehide / visibilitychange(hidden) / アプリ更新の前に呼ぶ。
  */
-export function saveBeforeLeave(): Promise<void> {
+export function saveBeforeLeave(): Promise<boolean> {
   flushAllDrafts()
   writeRecoveryJournal()
   return flushNow()

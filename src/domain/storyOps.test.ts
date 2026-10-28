@@ -347,12 +347,7 @@ describe('挿入位置の候補', () => {
       ids.push(r.id)
     }
     const opts = insertOptions(data, titleId)
-    expect(opts.map((o) => o.label)).toEqual([
-      '先頭（「第1話」の前）',
-      '「第1話」の後',
-      '「第2話」の後',
-      '末尾（「第3話」の後）',
-    ])
+    expect(opts.map((o) => o.label)).toEqual(['先頭（「第1話」の前）', '「第1話」の後', '「第2話」の後', '末尾（「第3話」の後）'])
     const moveOpts = insertOptions(data, titleId, ids[0])
     const toEnd = moveOpts[moveOpts.length - 1]
     data = movePiece(data, ids[0], toEnd.slot)
@@ -373,5 +368,17 @@ describe('挿入位置の候補', () => {
     const prologue = addSpecial(data, titleId, insertOptions(data, titleId)[0].slot, 'プロローグ')
     expect(labels(prologue.data, titleId)).toEqual(['プロローグ', '第1話'])
     expect(prologue.data.titles[titleId].structure[0]).toEqual({ type: 'piece', id: prologue.result })
+  })
+})
+
+describe('通し読みの章の区切り', () => {
+  it('章の後ろにあるタイトル直下の話の前に、章の終わりの区切りが入る', () => {
+    const t = createTitle(emptyData(), '作品')
+    let data = addEpisode(t.data, t.result).data
+    data = setChaptersEnabled(data, t.result, true)
+    data = addSpecial(data, t.result, { chapterId: null, index: 1 }, 'エピローグ').data
+    const blocks = buildReadThrough(data, t.result)
+    expect(blocks.map((b) => b.type)).toEqual(['chapter', 'piece', 'chapterEnd', 'piece'])
+    expect(readThroughText(data, t.result)).toContain('――――――――')
   })
 })

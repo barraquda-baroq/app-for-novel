@@ -125,7 +125,8 @@ export function StoryTab({ titleId }: { titleId: ID }) {
         {edit ? (
           <div className="story-edit-help" role="note" data-testid="edit-help">
             <p>
-              <strong>並べ替え:</strong> ↑↓ で1つずつ、「移動…」で位置を選んで動かせます。並べ替えると話数は並び順どおりに振り直されます
+              <strong>並べ替え:</strong> ↑↓
+              で1つずつ、「移動…」で位置を選んで動かせます。並べ替えると話数は並び順どおりに振り直されます
               {chaptersOn ? '（章の先頭から↑で章の外へ、章の外から章の方へ動かすと章の端に入ります）' : ''}。
             </p>
             <p>

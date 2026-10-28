@@ -329,6 +329,14 @@ export function ReadThroughPage() {
                   <h2 key={`ch-${b.chapterId}`} className="rt-chapter" data-testid="read-chapter">
                     <Tcy text={b.name.trim() || '無題の章'} />
                   </h2>
+                ) : b.type === 'chapterEnd' ? (
+                  // 章が終わり、どの章にも入っていない話が続く
+                  <hr
+                    key={`end-${b.chapterId}`}
+                    className="rt-chapter-end"
+                    aria-label="章の終わり"
+                    data-testid="read-chapter-end"
+                  />
                 ) : (
                   <section
                     key={b.pieceId}

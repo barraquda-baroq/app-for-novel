@@ -56,12 +56,7 @@ function MemoEditor({ title, memo }: { title: Title; memo: Memo }) {
 
   return (
     <>
-      <AppHeader
-        crumbs={[
-          { label: title.name || '無題のタイトル', to: paths.title(title.id) },
-          { label: `メモ: ${name}` },
-        ]}
-      />
+      <AppHeader crumbs={[{ label: title.name || '無題のタイトル', to: paths.title(title.id) }, { label: `メモ: ${name}` }]} />
       <main className="page page-narrow memo-page">
         <article className="memo-sheet" data-testid="memo-sheet">
           <div className="memo-head">

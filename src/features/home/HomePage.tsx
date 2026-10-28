@@ -112,7 +112,12 @@ export function HomePage() {
         ) : null}
 
         <div className="home-grid">
-          <section id={paneIds.titles} className="home-pane home-titles" aria-labelledby={titleHeadingId} data-testid="title-group">
+          <section
+            id={paneIds.titles}
+            className="home-pane home-titles"
+            aria-labelledby={titleHeadingId}
+            data-testid="title-group"
+          >
             <TitleGroup headingId={titleHeadingId} />
           </section>
           <section

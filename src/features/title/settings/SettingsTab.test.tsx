@@ -187,7 +187,11 @@ describe('設定タブ', () => {
     await user.keyboard('{Enter}')
     expect(document.activeElement).toBe(screen.getByTestId('field-up'))
     await user.keyboard('{ArrowDown}{Enter}')
-    expect(getData().settingEntries[entryId].fields.slice(0, 3).map((f) => f.key)).toEqual(['よみがな', '性別', '年齢'])
+    expect(
+      getData()
+        .settingEntries[entryId].fields.slice(0, 3)
+        .map((f) => f.key),
+    ).toEqual(['よみがな', '性別', '年齢'])
     await waitFor(() => expect(document.activeElement).toBe(menus()[2]))
   })
 

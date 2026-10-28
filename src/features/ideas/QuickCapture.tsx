@@ -6,7 +6,14 @@ import type { ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { attempt } from '../../store/uiStore'
 import { CheckIcon, PlusIcon } from '../../ui/icons'
-import { isSubmitShortcut, sectionDisplayName, sectionKey, submitShortcutLabel, titleIdFromKey, UNASSIGNED_KEY } from './ideaLogic'
+import {
+  isSubmitShortcut,
+  sectionDisplayName,
+  sectionKey,
+  submitShortcutLabel,
+  titleIdFromKey,
+  UNASSIGNED_KEY,
+} from './ideaLogic'
 import { revealIdea } from './reveal'
 import { readLocal, writeLocal } from './storage'
 

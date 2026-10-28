@@ -15,7 +15,16 @@ export interface SplitPaneProps {
   className?: string
 }
 
-export function SplitPane({ orientation, ratio, onRatioChange, first, second, firstLabel, secondLabel, className }: SplitPaneProps) {
+export function SplitPane({
+  orientation,
+  ratio,
+  onRatioChange,
+  first,
+  second,
+  firstLabel,
+  secondLabel,
+  className,
+}: SplitPaneProps) {
   const container = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
   const r = clampRatio(ratio)

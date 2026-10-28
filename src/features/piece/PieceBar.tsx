@@ -149,7 +149,10 @@ export function PieceBar({
       <div className={`pw-view${menuOpen ? ' is-open' : ''}`} ref={viewRef}>
         {compact ? null : ratioControl}
 
-        <label className={`switch pw-switch${comparing ? '' : ' is-disabled'}`} title={compareHint ?? '採用原稿との違いを色分けして表示します'}>
+        <label
+          className={`switch pw-switch${comparing ? '' : ' is-disabled'}`}
+          title={compareHint ?? '採用原稿との違いを色分けして表示します'}
+        >
           <input
             type="checkbox"
             checked={showDiff}
@@ -189,7 +192,10 @@ export function PieceBar({
               </button>
             ))}
           </div>
-          <label className={`switch pw-switch${comparing ? '' : ' is-disabled'}`} title={compareHint ?? '2つの原稿のスクロール位置を揃えます'}>
+          <label
+            className={`switch pw-switch${comparing ? '' : ' is-disabled'}`}
+            title={compareHint ?? '2つの原稿のスクロール位置を揃えます'}
+          >
             <input
               type="checkbox"
               checked={scrollSync}

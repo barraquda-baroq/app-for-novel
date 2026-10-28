@@ -9,7 +9,7 @@ import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatRelative } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { BookIcon, BulbIcon, ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
-import { useKeepInPlace } from '../ideas/keepInPlace'
+import { useKeepInPlace } from '../../ui/keepInPlace'
 import { charsLabel, deleteTitleMessage, episodesLabel, missingLabel, titleCardInfo, type TitleCardInfo } from './homeLogic'
 import { TitleMoveDialog } from './TitleMoveDialog'
 
@@ -60,7 +60,12 @@ export function TitleGroup({ headingId }: { headingId: string }) {
             {editing ? '編集を終える' : '並べ替え・編集'}
           </button>
         ) : null}
-        <button type="button" className="btn btn-primary btn-sm home-new-title" onClick={() => void createTitleFlow(navigate)} data-testid="new-title">
+        <button
+          type="button"
+          className="btn btn-primary btn-sm home-new-title"
+          onClick={() => void createTitleFlow(navigate)}
+          data-testid="new-title"
+        >
           <PlusIcon />
           新しいタイトル
         </button>
@@ -196,7 +201,13 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
             移動…
           </button>
           <span className="grow" />
-          <button type="button" className="btn btn-sm" onClick={() => void rename()} aria-label="名前を変更" data-testid="title-rename">
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => void rename()}
+            aria-label="名前を変更"
+            data-testid="title-rename"
+          >
             <EditIcon />
             名前<span className="hide-mobile">を変更</span>
           </button>

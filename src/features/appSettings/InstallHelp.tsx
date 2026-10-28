@@ -34,7 +34,8 @@ const GUIDES: { platform: Platform; title: string; steps: string[] }[] = [
 
 function useStandalone(): boolean {
   const displayStandalone = useMediaQuery('(display-mode: standalone)')
-  const iosStandalone = typeof navigator !== 'undefined' && (navigator as Navigator & { standalone?: boolean }).standalone === true
+  const iosStandalone =
+    typeof navigator !== 'undefined' && (navigator as Navigator & { standalone?: boolean }).standalone === true
   return displayStandalone || iosStandalone
 }
 
@@ -109,7 +110,11 @@ export function InstallHelp() {
 
       <ul className="aset-guides">
         {guides.map((g) => (
-          <li key={g.platform} className={`aset-guide${g.platform === platform ? ' is-current' : ''}`} data-testid={`install-guide-${g.platform}`}>
+          <li
+            key={g.platform}
+            className={`aset-guide${g.platform === platform ? ' is-current' : ''}`}
+            data-testid={`install-guide-${g.platform}`}
+          >
             <div className="aset-guide-head">
               <strong>{g.title}</strong>
               {g.platform === platform ? <span className="badge badge-accent">お使いの端末</span> : null}
@@ -124,7 +129,8 @@ export function InstallHelp() {
       </ul>
 
       <p className="aset-note">
-        ホーム画面に追加しても、データはその端末のブラウザの中に保存されます。iPhone・iPad では Safari とホーム画面のアプリでデータが別々になることがあるので、移すときはバックアップの書き出し・復元を使ってください。
+        ホーム画面に追加しても、データはその端末のブラウザの中に保存されます。iPhone・iPad では Safari
+        とホーム画面のアプリでデータが別々になることがあるので、移すときはバックアップの書き出し・復元を使ってください。
       </p>
     </section>
   )

@@ -20,6 +20,7 @@ export const TABLE_LABELS: Record<TableName, string> = {
   settingCategories: '設定項目',
   settingEntries: '設定のエントリ',
   submissions: '応募計画',
+  snapshotTexts: '応募時の原稿の控え',
 }
 
 /** 表示の順番（主要なものから） */

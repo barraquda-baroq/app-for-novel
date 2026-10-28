@@ -41,7 +41,11 @@ export async function seed<R, A = undefined>(page: Page, fn: (hook: DevHook, arg
 }
 
 /** タイトルと話をまとめて作る。戻り値は titleId と pieceId の配列 */
-export async function seedTitleWithEpisodes(page: Page, name: string, bodies: string[]): Promise<{ titleId: string; pieceIds: string[] }> {
+export async function seedTitleWithEpisodes(
+  page: Page,
+  name: string,
+  bodies: string[],
+): Promise<{ titleId: string; pieceIds: string[] }> {
   return seed(
     page,
     ({ actions, getData }, a: { name: string; bodies: string[] }) => {

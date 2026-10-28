@@ -62,7 +62,8 @@ export const actions = {
   deleteMemo: (memoId: ID) => apply((d) => E.deleteMemo(d, memoId)),
 
   // 設定項目
-  addCategory: (titleId: ID, name: string, fieldTemplate?: string[]) => run((d) => E.addCategory(d, titleId, name, fieldTemplate)),
+  addCategory: (titleId: ID, name: string, fieldTemplate?: string[]) =>
+    run((d) => E.addCategory(d, titleId, name, fieldTemplate)),
   updateCategory: (categoryId: ID, patch: Parameters<typeof E.updateCategory>[2]) =>
     apply((d) => E.updateCategory(d, categoryId, patch)),
   moveCategoryStep: (categoryId: ID, dir: -1 | 1) => apply((d) => E.moveCategoryStep(d, categoryId, dir)),

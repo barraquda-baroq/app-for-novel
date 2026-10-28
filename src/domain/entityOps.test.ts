@@ -10,6 +10,7 @@ import {
   categoriesOf,
   compareSnapshotWithCurrent,
   createTitle,
+  deleteSubmission,
   deleteTitle,
   entriesOf,
   ideaSections,
@@ -21,6 +22,7 @@ import {
   moveSubmissionStep,
   moveTitleTo,
   recordSubmissionSnapshot,
+  snapshotPieceBody,
   snapshotText,
   sortedTitles,
   submissionsReferencingVersion,
@@ -31,7 +33,8 @@ import {
 } from './entityOps'
 import { addEpisode, deleteVersion, setActiveVersion, updateVersion } from './storyOps'
 import { countChars, textStats } from './text'
-import { DomainError, emptyData } from './types'
+import { repairData } from './repair'
+import { DomainError, emptyData, type AppData } from './types'
 
 describe('アイデア領域', () => {
   it('タイトルを増やすと仕切りが増え、どのタイトルにも属さない仕切りが常に最後にある', () => {
@@ -112,7 +115,14 @@ describe('タイトル配下', () => {
     data = updateVersion(data, data.pieces[e1.result].versionIds[0], { body: 'あいう えお\nかき' })
     const e2 = addEpisode(data, t.result)
     data = setActiveVersion(e2.data, e2.result, null)
-    expect(titleSummary(data, t.result)).toEqual({ episodes: 2, specials: 0, missingActive: 1, missingEpisodes: 1, missingSpecials: 0, activeChars: 7 })
+    expect(titleSummary(data, t.result)).toEqual({
+      episodes: 2,
+      specials: 0,
+      missingActive: 1,
+      missingEpisodes: 1,
+      missingSpecials: 0,
+      activeChars: 7,
+    })
   })
 })
 
@@ -154,8 +164,14 @@ describe('差分', () => {
     expect(changed.some((s) => s.kind === 'del' && s.text.includes('れ'))).toBe(true)
     // 2行目は変更されていない
     expect(changed.every((s) => !s.text.includes('明日'))).toBe(true)
-    const joinedTarget = segs.filter((s) => s.kind !== 'del').map((s) => s.text).join('')
-    const joinedBase = segs.filter((s) => s.kind !== 'add').map((s) => s.text).join('')
+    const joinedTarget = segs
+      .filter((s) => s.kind !== 'del')
+      .map((s) => s.text)
+      .join('')
+    const joinedBase = segs
+      .filter((s) => s.kind !== 'add')
+      .map((s) => s.text)
+      .join('')
     expect(joinedTarget).toBe('今日は快晴。\n明日は雨。\n')
     expect(joinedBase).toBe('今日は晴れ。\n明日は雨。\n')
     expect(diffSummary(segs).added).toBeGreaterThan(0)
@@ -192,8 +208,9 @@ describe('応募時の原稿の記録', () => {
     const s = addSubmission(data, t.result, 'A賞')
     data = recordSubmissionSnapshot(s.data, s.result)
     const snap = data.submissions[s.result].snapshot!
-    expect(snap.pieces![e1.result]).toMatchObject({ label: '第1話', versionName: '第1稿', body: '応募した本文', chars: 6 })
-    expect(snapshotText(snap, '作品A')).toContain('応募した本文')
+    expect(snap.pieces![e1.result]).toMatchObject({ label: '第1話', versionName: '第1稿', chars: 6 })
+    expect(snapshotPieceBody(data, snap.pieces![e1.result])).toBe('応募した本文')
+    expect(snapshotText(data, snap, '作品A')).toContain('応募した本文')
     expect(submissionsReferencingVersion(data, v1).map((x) => x.contestName)).toEqual(['A賞'])
 
     data = updateVersion(data, v1, { name: '決定稿', note: 'メモだけ変更' })
@@ -202,7 +219,53 @@ describe('応募時の原稿の記録', () => {
     expect(compareSnapshotWithCurrent(data, t.result, snap).edited).toEqual([e1.result])
     // 稿を消しても、応募した本文は記録に残る
     data = deleteVersion(data, v1)
-    expect(data.submissions[s.result].snapshot!.pieces![e1.result].body).toBe('応募した本文')
+    expect(snapshotPieceBody(data, data.submissions[s.result].snapshot!.pieces![e1.result])).toBe('応募した本文')
+  })
+
+  it('同じ本文は複数の応募記録で1つだけ保存され、使われなくなった控えは消える', () => {
+    let data = emptyData()
+    const t = createTitle(data, '作品A')
+    const e1 = addEpisode(t.data, t.result)
+    data = updateVersion(e1.data, e1.data.pieces[e1.result].versionIds[0], { body: '同じ本文' })
+    const a = addSubmission(data, t.result, 'A賞')
+    const b = addSubmission(a.data, t.result, 'B賞')
+    data = recordSubmissionSnapshot(b.data, a.result)
+    data = recordSubmissionSnapshot(data, b.result)
+    expect(Object.keys(data.snapshotTexts)).toHaveLength(1)
+    data = deleteSubmission(data, a.result)
+    expect(Object.keys(data.snapshotTexts)).toHaveLength(1)
+    data = deleteSubmission(data, b.result)
+    expect(Object.keys(data.snapshotTexts)).toHaveLength(0)
+  })
+
+  it('古い記録（本文が記録の中にある）は読み込み時に控えの表へ移される', () => {
+    let data = emptyData()
+    const t = createTitle(data, '作品A')
+    const s = addSubmission(t.data, t.result, 'A賞')
+    data = s.data
+    const legacy = {
+      at: 1,
+      charCount: 2,
+      activeVersions: { p: 'v' },
+      order: ['p'],
+      pieces: {
+        p: {
+          kind: 'episode',
+          label: '第1話',
+          subtitle: '',
+          versionId: 'v',
+          versionName: '第1稿',
+          chars: 2,
+          body: '古い',
+          hash: 'h',
+        },
+      },
+    } as unknown as NonNullable<AppData['submissions'][string]['snapshot']>
+    data = { ...data, submissions: { [s.result]: { ...data.submissions[s.result], snapshot: legacy } } }
+    const repaired = repairData(data).data
+    const piece = repaired.submissions[s.result].snapshot!.pieces!.p
+    expect(piece.body).toBeUndefined()
+    expect(snapshotPieceBody(repaired, piece)).toBe('古い')
   })
 
   it('採用原稿なしの話と特殊ブロックを分けて表記する', () => {
@@ -225,10 +288,18 @@ describe('位置を指定した並べ替え', () => {
       ids.push(r.result)
     }
     data = moveIdeaTo(data, ids[2], null, 0)
-    expect(ideaSections(data).at(-1)!.ideas.map((i) => i.heading)).toEqual(['3', '1', '2'])
+    expect(
+      ideaSections(data)
+        .at(-1)!
+        .ideas.map((i) => i.heading),
+    ).toEqual(['3', '1', '2'])
     data = moveIdeaTo(data, ids[0], t.result, 0)
     expect(ideaSections(data)[0].ideas.map((i) => i.heading)).toEqual(['1'])
-    expect(ideaSections(data).at(-1)!.ideas.map((i) => i.heading)).toEqual(['3', '2'])
+    expect(
+      ideaSections(data)
+        .at(-1)!
+        .ideas.map((i) => i.heading),
+    ).toEqual(['3', '2'])
     data = moveTitleTo(data, t.result, 5)
     expect(sortedTitles(data).map((x) => x.name)).toEqual(['B', 'A'])
   })

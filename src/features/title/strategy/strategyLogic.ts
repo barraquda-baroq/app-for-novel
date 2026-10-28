@@ -2,15 +2,7 @@
 import { compareSnapshotWithCurrent, type SnapshotDiff } from '../../../domain/entityOps'
 import { activeBody, episodeNumbers, flatten, pieceLabel } from '../../../domain/structure'
 import { countChars, formatCount, textStats } from '../../../domain/text'
-import type {
-  AppData,
-  ID,
-  LimitUnit,
-  PieceKind,
-  Submission,
-  SubmissionSnapshot,
-  SubmissionStatus,
-} from '../../../domain/types'
+import type { AppData, ID, LimitUnit, PieceKind, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
 
 // ---------- 現在の原稿 ----------
 
@@ -191,12 +183,7 @@ export interface LimitCheck {
 }
 
 /** 原稿の量が規定（下限・上限）に収まっているか。どちらも未設定なら null */
-export function limitCheck(
-  total: number,
-  min: number | null,
-  max: number | null,
-  unit: LimitUnit = 'chars',
-): LimitCheck | null {
+export function limitCheck(total: number, min: number | null, max: number | null, unit: LimitUnit = 'chars'): LimitCheck | null {
   if (min === null && max === null) return null
   const u = UNIT_SUFFIX[unit]
   if (min !== null && total < min) {
@@ -246,6 +233,7 @@ export function snapshotPages(snapshot: SubmissionSnapshot): number | null {
   if (!snapshot.pieces) return null
   let pages = 0
   for (const p of Object.values(snapshot.pieces)) if (p.body) pages += textStats(p.body).manuscriptPages
+  // 枚数を持たない記録は古い形式（本文が記録の中にある）だけなので、本文の控えの表は見なくてよい
   return pages
 }
 

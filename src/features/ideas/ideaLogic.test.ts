@@ -66,7 +66,9 @@ describe('アイデアからタイトル名を作る', () => {
 
   it('長い文は40文字以内の最後の文の区切り、なければ読点などの区切りで切る', () => {
     const long = '雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている。そして十年が過ぎた。'
-    expect(titleNameFromIdea({ heading: '', body: long })).toBe('雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている')
+    expect(titleNameFromIdea({ heading: '', body: long })).toBe(
+      '雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている',
+    )
     // 文の区切りがなければ読点で
     const clauses = '灯台守の少女は嵐の夜に流れ着いた手紙を拾い、差出人を探して海沿いの町を一軒ずつ訪ね歩く'
     expect(cutAtBoundary(clauses, 40)).toBe('灯台守の少女は嵐の夜に流れ着いた手紙を拾い')

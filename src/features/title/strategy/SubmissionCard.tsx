@@ -3,6 +3,7 @@
 import { useId, useMemo, useState } from 'react'
 import {
   SUBMISSION_STATUSES,
+  snapshotPieceBody,
   snapshotText,
   submissionStatusLabel,
   type SubmissionPatch,
@@ -610,7 +611,7 @@ function SnapshotBox({ submission: s }: { submission: Submission }) {
 
   const exportText = () => {
     const latest = getData().submissions[s.id]?.snapshot
-    const text = latest ? snapshotText(latest, getData().titles[s.titleId]?.name ?? titleName) : null
+    const text = latest ? snapshotText(getData(), latest, getData().titles[s.titleId]?.name ?? titleName) : null
     if (!text) return
     const contest = s.contestName.trim() || '応募先'
     downloadFile(`${safeFileName(titleName)}_${safeFileName(contest)}_応募時の原稿.txt`, text)
@@ -756,6 +757,7 @@ function SnapshotReader({
         {order.map((id) => {
           const p = snapshot.pieces?.[id]
           if (!p) return null
+          const body = snapshotPieceBody(getData(), p)
           return (
             <article key={id} className="sg-reader-piece">
               <h3 className="sg-reader-heading">
@@ -763,10 +765,10 @@ function SnapshotReader({
                 {p.subtitle.trim() ? <span className="sg-reader-subtitle">{p.subtitle.trim()}</span> : null}
                 {p.versionName ? <span className="badge sg-reader-version">{p.versionName}</span> : null}
               </h3>
-              {p.body === null ? (
+              {body === null ? (
                 <p className="muted sg-reader-none">採用原稿がありません。</p>
               ) : (
-                <div className="sg-reader-body">{p.body}</div>
+                <div className="sg-reader-body">{body}</div>
               )}
             </article>
           )

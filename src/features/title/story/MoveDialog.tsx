@@ -49,7 +49,13 @@ export function MoveDialog({ pieceId, onClose, onMoved }: { pieceId: ID; onClose
           <button type="button" className="btn" onClick={onClose}>
             キャンセル
           </button>
-          <button type="submit" form={formId} className="btn btn-primary" disabled={!option || unchanged} data-testid="move-submit">
+          <button
+            type="submit"
+            form={formId}
+            className="btn btn-primary"
+            disabled={!option || unchanged}
+            data-testid="move-submit"
+          >
             移動する
           </button>
         </>

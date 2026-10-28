@@ -121,7 +121,10 @@ describe('規定（文字数・原稿用紙換算枚数）', () => {
       source: 'current',
       amount: 5,
     })
-    expect(limitBasis({ status: 'submitted', snapshot, limitUnit: 'chars' }, current)).toEqual({ source: 'snapshot', amount: 1_500 })
+    expect(limitBasis({ status: 'submitted', snapshot, limitUnit: 'chars' }, current)).toEqual({
+      source: 'snapshot',
+      amount: 1_500,
+    })
     expect(limitBasis({ status: 'reviewing', snapshot, limitUnit: 'pages' }, current)).toEqual({ source: 'snapshot', amount: 4 })
     expect(limitBasis({ status: 'won', snapshot, limitUnit: undefined }, current)).toEqual({ source: 'snapshot', amount: 1_500 })
     // 応募後で記録がなければ比べない
@@ -135,7 +138,16 @@ describe('規定（文字数・原稿用紙換算枚数）', () => {
   it('応募時の原稿の枚数（古い記録は本文の控えから数える）', () => {
     expect(snapshotPages({ at: 0, charCount: 0, activeVersions: {}, pages: 7 })).toBe(7)
     expect(snapshotPages({ at: 0, charCount: 0, activeVersions: {} })).toBeNull()
-    const piece = { kind: 'episode' as const, label: '第1話', subtitle: '', versionId: 'v', versionName: '第1稿', chars: 0, hash: '' }
+    const piece = {
+      kind: 'episode' as const,
+      label: '第1話',
+      subtitle: '',
+      versionId: 'v',
+      versionName: '第1稿',
+      chars: 0,
+      textKey: null,
+      hash: '',
+    }
     expect(
       snapshotPages({
         at: 0,
