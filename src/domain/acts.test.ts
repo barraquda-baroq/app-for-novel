@@ -881,7 +881,7 @@ describe('古い版（2.1）の端末が第n話として削除した幕を戻す
 // ---------- 同期のための元の稿の指紋（2.2） ----------
 
 describe('分けた・つないだ稿の元の稿の指紋', () => {
-  it('分けた幕の第1稿・さらに分けた稿・つないだ稿は、元の稿と、その本文の指紋を控える（解除した稿は控えない）', () => {
+  it('分けた幕の第1稿・さらに分けた稿・つないだ稿・解除した稿は、元の稿と、その本文の指紋を控える', () => {
     const { data: d0, ids } = setup(['ABCDEFGHI'])
     const ev = d0.pieces[ids[0]].versionIds[0]
     const { data, acts } = split(d0, ids[0], [3, 6])
@@ -899,7 +899,8 @@ describe('分けた・つないだ稿の元の稿の指紋', () => {
     const a1v = data.pieces[acts[0]].activeVersionId!
     const joined = joinActWithNext(data, acts[0])
     expect(joined.data.versions[joined.result]).toMatchObject({ sourceVersionId: a1v, sourceHash: textHash('ABC') })
+    // 解除した稿は、分けた時の話の採用稿（分けている間は書き換えられない）
     const un = unseparatePiece(data, ids[0])
-    expect(un.data.versions[un.result].sourceHash).toBeUndefined()
+    expect(un.data.versions[un.result]).toMatchObject({ sourceVersionId: ev, sourceHash: textHash('ABCDEFGHI') })
   })
 })

@@ -324,6 +324,9 @@ export function unseparatePiece(data: AppData, pieceId: ID): { data: AppData; re
     const own = adoptedOf(tx, p)
     const v: Version = {
       ...makeVersion(p, seq, body, own?.id ?? null, `第${seq}稿${UNSEPARATED_VERSION_SUFFIX}`),
+      // 分けた元の話の採用稿の本文の指紋（分けている間は書き換えられないので、分けた時の本文。同期で、分けてから解除するまでの
+      // 間に別の端末で元の稿が書き換えられていたのに気付けるように）
+      ...(own ? { sourceHash: textHash(own.body) } : {}),
       // 消える各幕の採用稿の推敲メモを残す
       note: carriedNote(parts.map((x) => ({ number: x.number, version: x.version! }))),
       createdAt: ts,

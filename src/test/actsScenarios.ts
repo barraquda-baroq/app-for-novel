@@ -200,6 +200,18 @@ export const ACTS_SCENARIOS: ActsScenario[] = [
     check: onEpisode('ABCDEF+Y'),
   },
   {
+    name: '分けて解除する / 話の採用稿を書き換える',
+    emu: true,
+    body: 'ABCDEF',
+    splitAt: null,
+    x: (d, ep) => unseparate(split([3])(d, ep), ep),
+    y: (d, ep) => S.updateVersion(d, adopted(d, ep), { body: 'ABCDEF+Y' }),
+    text: 'ABCDEF',
+    acts: 0,
+    notes: () => ({ y: ['stale'] }),
+    check: onEpisode('ABCDEF+Y'),
+  },
+  {
     name: '分ける / 話の別の稿を採用する',
     body: 'ABCDEF',
     splitAt: null,

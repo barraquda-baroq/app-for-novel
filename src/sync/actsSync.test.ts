@@ -279,3 +279,29 @@ describe('バックアップからの復元と幕', () => {
     }
   }
 })
+
+describe('分けてから解除した話と、元の稿の書き換え', () => {
+  it('解除の後で書き換えられた元の稿と解除した稿をまとめて受け取った端末には、知らせを出さない', async () => {
+    const start = scenarioStart({ body: 'ABCDEF', splitAt: null })
+    const ep = start.ep
+    const cloud = new FakeCloud()
+    const x = new FakeDevice('X', cloud)
+    const y = new FakeDevice('Y', cloud)
+    const z = new FakeDevice('Z', cloud)
+    await x.edit(() => start.data)
+    await settle(x, y, z)
+    const ev = start.data.pieces[ep].activeVersionId!
+    z.notes = []
+    z.offline()
+    // X が分けてから解除し、それを受け取った Y が、採用していない元の稿を書き換えた（解除より後の書き換え）
+    await x.edit((d) => A.unseparatePiece(A.separatePiece(d, ep, [3]).data, ep).data)
+    await settle(x, y)
+    await y.edit((d) => S.updateVersion(d, ev, { body: 'ABCDEF+後で' }))
+    await settle(x, y)
+    // Z は長くオフラインで、両方をまとめて受け取る
+    await settle(x, y, z)
+    expect(await sameData(x, z)).toBe(true)
+    expect(z.notes.filter((n) => n.kind === 'acts')).toEqual([])
+    expect(y.notes.filter((n) => n.kind === 'acts')).toEqual([])
+  })
+})

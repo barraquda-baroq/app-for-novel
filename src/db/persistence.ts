@@ -559,7 +559,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
    * 5. この端末で消した幕・話の下に届いた稿・幕を控えて片付ける
    * 6. 消えた親の子を片付ける
    * 7. 控える幕の稿を、残る幕・話の稿（競合の名前付き）かゴミ箱に残す
-   * 8. 書き換えられる前の稿から分けた・つないだ稿が届いたら知らせる
+   * 8. 書き換えられる前の稿から分けた・つないだ稿が届いたら知らせる（8b: 分けてから解除した話の、幕をつないだ稿も）
    */
   async function applyRemoteTx(
     changes: Change[],
@@ -1078,6 +1078,22 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           break
         }
       }
+    }
+
+    // ---------- 8b. セパレートを解除した話の採用稿が、書き換えられる前の話の稿から分けた本文だった ----------
+    // 別の端末が分けてから解除した（この端末ではずっと分けていない）時は、どの記録の幕の並びも空なので、まとまりはできない
+    for (const vid of newVersions) {
+      const v = await getVersion(vid)
+      if (!v || typeof v.sourceHash !== 'string' || typeof v.sourceVersionId !== 'string') continue
+      const piece = await getPiece(String(v.pieceId))
+      if (!piece || !isEpisodeRecord(piece) || actIdsOf(piece).length > 0 || piece.activeVersionId !== v.id) continue
+      // 同じ反映で別の端末から届いた元の稿の書き換えは見ない（解除より後に書き換えられたことがある。
+      // 長くオフラインだった端末が、両方をまとめて受け取った時）
+      const srcChange = incoming.get(outboxKey('versions', v.sourceVersionId))
+      if (srcChange && !srcChange.own) continue
+      const src = await getVersion(v.sourceVersionId)
+      if (!src || src.pieceId !== piece.id || typeof src.body !== 'string') continue
+      if (textHash(src.body) !== v.sourceHash) noteActs(piece.id, 'stale')
     }
 
     // 話が消えた知らせがあれば、その話の幕の採用・編集が入らなかった知らせは出さない（話ごと消えたので）

@@ -251,7 +251,7 @@ export function actsNoteMessage(detail: ActsNoteDetail, label: string, kept?: { 
     case 'theirsDropped':
       return `${label}の幕の操作と同時に別の端末で書き換えられた・採用された稿は、採用原稿に入れていません${where ? `（${where}に残しました）` : ''}`
     case 'stale':
-      return `${label}の幕は、書き換えられる前の稿から分けられた・つながれたため、その書き換えが採用原稿に入っていません（書き換えた稿は稿の一覧に残っています）`
+      return `${label}の幕は、書き換えられる前の稿から分けられた・つながれた（セパレート解除で話の稿にまとめられた時も）ため、その書き換えが採用原稿に入っていません（書き換えた稿は稿の一覧に残っています）`
     case 'source':
       return `${label}の分ける前の採用稿が別の端末で書き換えられていました。書き換えた本文は幕に入っていません（分ける前の稿に残っています）`
   }
