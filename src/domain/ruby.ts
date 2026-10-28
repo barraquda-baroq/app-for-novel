@@ -124,10 +124,28 @@ export function parseRuby(text: string): RubySegment[] {
   return out
 }
 
-/** 記号とルビの読みを除いた本文（文字数を数える・検索する時に使う） */
+/**
+ * 記号とルビの読みを除いた本文（文字数を数える・検索する時に使う）。
+ * 1回だけ当てること（｜《 は《になるので、2回当てると結果が変わることがある）。
+ */
 export function stripRuby(text: string): string {
   if (!hasRubyMarkup(text)) return text
   let out = ''
   for (const s of parseRuby(text)) out += s.type === 'ruby' ? s.base : s.text
   return out
+}
+
+const strippedCache = new WeakMap<object, string>()
+
+/**
+ * 本文を持つ不変のレコード（推敲バージョン・本文の控え）の、記号とルビの読みを除いた本文。レコードごとに1回だけ作る
+ * （文字数・段落の形の見積もり・通し読みの遠くの話の表示で、同じ本文を何度も分け直さないため）。
+ */
+export function strippedBody(record: { body: string }): string {
+  let s = strippedCache.get(record)
+  if (s === undefined) {
+    s = stripRuby(record.body)
+    strippedCache.set(record, s)
+  }
+  return s
 }

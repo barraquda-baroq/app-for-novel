@@ -15,6 +15,7 @@ import { DraftInput, DraftTextarea } from '../../ui/DraftField'
 import { useDocumentTitle } from '../../ui/hooks'
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, EditIcon, FolderIcon, PlusIcon, StarIcon, XIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
+import { NearViewportContext, useNearViewportWatcher } from '../../ui/nearViewport'
 import { NotFound } from '../../ui/NotFound'
 import { AddDialog, type AddKind } from '../title/story/AddDialog'
 import { CHAPTER_ADD_BLOCKED_REASON, releaseChapter } from '../title/story/ChapterBlock'
@@ -56,6 +57,8 @@ export function ChapterPage() {
     [story, titleId, chapterId],
   )
   const siblings = useMemo(() => chaptersOf(story, titleId), [story, titleId])
+  // 抜粋のルビ・傍点は、画面の近くに来た行だけに作る（スクロールは画面全体）
+  const { register: registerNear } = useNearViewportWatcher(() => null, [])
 
   /** ↑↓ で章の外へ出たら知らせる */
   const onMoved = useCallback(
@@ -233,11 +236,13 @@ export function ChapterPage() {
               <p className="small muted story-progress-legend" data-testid="progress-legend">
                 右の％は、その話の終わりがタイトル全体（採用原稿）のどこにあるかです（章の中での割合ではありません）。
               </p>
-              <ol className="story-list" data-testid="story-list">
-                {rows.map((row) => (
-                  <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
-                ))}
-              </ol>
+              <NearViewportContext.Provider value={registerNear}>
+                <ol className="story-list" data-testid="story-list">
+                  {rows.map((row) => (
+                    <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
+                  ))}
+                </ol>
+              </NearViewportContext.Provider>
             </>
           )}
 

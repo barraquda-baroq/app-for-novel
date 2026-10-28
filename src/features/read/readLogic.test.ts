@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createTitle } from '../../domain/entityOps'
 import { buildReadThrough, readThroughText } from '../../domain/readthrough'
+import { strippedBody } from '../../domain/ruby'
 import {
   addChapter,
   addEpisode,
@@ -96,6 +97,14 @@ describe('ルビ・傍点', () => {
     expect(lineShapeOf('記法なし\n二行目')).toEqual({ chars: 7, paras: 2, blank: 0 })
     // 本文の控え・稿ごとに覚えておく値も同じ
     expect(lineShape({ body: '漢字《かんじ》' })).toEqual({ chars: 2, paras: 1, blank: 0 })
+  })
+
+  it('稿ごとの見積もりは、遠くの話に置く「記号と読みを除いた本文」と同じものを数える（除くのは1回だけ）', () => {
+    const record = { body: '漢字｜《かな》\n東京《とうきょう》' }
+    // 漢字《かな》（6字）・東京（2字）。2回除くと 漢字（2字）になってしまう
+    expect(lineShape(record)).toEqual({ chars: 8, paras: 2, blank: 0 })
+    expect(strippedBody(record)).toBe('漢字《かな》\n東京')
+    expect(lineShapeOf(record.body)).toEqual(lineShape(record))
   })
 })
 

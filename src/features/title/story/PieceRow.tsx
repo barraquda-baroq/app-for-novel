@@ -1,8 +1,9 @@
 // 本編の一覧の1行（第n話 / 特殊ブロック）。行全体が原稿画面へのリンク。
 // 編集モードでは並べ替え・移動・削除のボタンが出る。
 // 長編でも1か所の変更で全行を描き直さないよう、行ごとの値（PieceRowData）だけを受け取って React.memo で包む。
-// 行には進捗（この話の終わりがタイトル全体の何 % の位置か）を出す。抜粋のルビ・傍点は読むための表示にする。
-import { memo, useState } from 'react'
+// 行には進捗（この話の終わりがタイトル全体の何 % の位置か）を出す。抜粋のルビ・傍点は読むための表示にする
+// （行が画面の近くに来てから。一覧に NearViewportContext の見張り役があれば）。
+import { memo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { formatCount } from '../../../domain/text'
 import { trashNotice } from '../../../domain/trash'
@@ -12,7 +13,7 @@ import { actions } from '../../../store/actions'
 import { attempt, notify, notifyError } from '../../../store/uiStore'
 import { confirmDialog } from '../../../ui/dialogs'
 import { ChevronRightIcon, DownIcon, MoveIcon, TrashIcon, UpIcon } from '../../../ui/icons'
-import { RubySegments } from '../../../ui/RubyText'
+import { LazyRubySegments } from '../../../ui/RubyText'
 import { MoveDialog } from './MoveDialog'
 import { progressDescription, progressLabel, summarize, type PieceRowData } from './storyLogic'
 import { useKeepMovedInPlace } from './useKeepMovedInPlace'
@@ -170,6 +171,7 @@ const PieceRowLink = memo(function PieceRowLink({
 }: Pick<PieceRowData, 'piece' | 'version' | 'versionCount' | 'label' | 'progress'>) {
   const { active, excerpt } = summarize(version, versionCount)
   const special = piece.kind === 'special'
+  const excerptRef = useRef<HTMLSpanElement>(null)
   return (
     <Link to={paths.piece(piece.titleId, piece.id)} className="story-row-link">
       <span className="story-row-head">
@@ -199,8 +201,9 @@ const PieceRowLink = memo(function PieceRowLink({
         <ProgressMeter percent={progress} hasActive={version !== null} />
       </span>
       {excerpt.length > 0 ? (
-        <span className="story-row-excerpt" data-testid="piece-excerpt">
-          <RubySegments segments={excerpt} />
+        <span ref={excerptRef} className="story-row-excerpt" data-testid="piece-excerpt">
+          {/* ルビ・傍点は、この行が画面の近くに来てから表示する（数百行の一覧でも開くのを重くしない） */}
+          <LazyRubySegments segments={excerpt} watch={excerptRef} />
         </span>
       ) : null}
       <ChevronRightIcon className="icon story-row-chevron" />

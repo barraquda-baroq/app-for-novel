@@ -15,6 +15,13 @@
   font-feature-settings: normal;
 }
 
+/* 選んでコピーした時は親文字だけ（画面から遠い話＝読みなしの文字 と同じにする。記法つきは「コピー」ボタンで） */
+.rb-ruby rt,
+.rb-ruby rp {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* 傍点は黒ゴマ（﹅）。縦書きでは右、横書きでは上 */
 .rb-bouten {
   font-style: normal;

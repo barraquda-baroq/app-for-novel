@@ -1,7 +1,7 @@
 // 文字数カウント。コンテストの規定に合わせやすいよう、空白・改行を除いた文字数を基本にする。
 // ルビ・傍点の記法（｜漢字《かんじ》・《《強調》》）は、記号とルビの読みを除いて数える。
 // 長編（数百万字）でも重くならないよう、文字コードを1回なめるだけで数える。
-import { stripRuby } from './ruby'
+import { strippedBody, stripRuby } from './ruby'
 
 export interface TextStats {
   /** 空白・改行を除いた文字数 */
@@ -47,7 +47,11 @@ export function countChars(source: string): number {
 }
 
 export function textStats(source: string): TextStats {
-  const text = stripRuby(source)
+  return plainTextStats(stripRuby(source))
+}
+
+/** 記号とルビの読みを除いた後の本文（stripRuby の結果）を数える */
+function plainTextStats(text: string): TextStats {
   let chars = 0
   let withSpaces = 0
   let lines = text.length === 0 ? 0 : 1
@@ -116,7 +120,8 @@ const metricsCache = new WeakMap<object, BodyMetrics>()
 export function bodyMetrics(record: { body: string }): BodyMetrics {
   let m = metricsCache.get(record)
   if (!m) {
-    m = { ...textStats(record.body), hash: textHash(record.body) }
+    // 記号と読みを除いた本文はレコードごとに覚えておき、通し読みの見積もり・表示と分け合う（strippedBody）
+    m = { ...plainTextStats(strippedBody(record)), hash: textHash(record.body) }
     metricsCache.set(record, m)
   }
   return m

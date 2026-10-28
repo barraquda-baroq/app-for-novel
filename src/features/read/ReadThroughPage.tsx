@@ -16,6 +16,7 @@ import {
 import { flushSync } from 'react-dom'
 import { Link, useHref, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { buildReadThrough, NO_ACTIVE_MESSAGE, readThroughText, type ReadBlock } from '../../domain/readthrough'
+import { strippedBody } from '../../domain/ruby'
 import { chaptersOf, flatten } from '../../domain/structure'
 import { formatCount } from '../../domain/text'
 import type { ID } from '../../domain/types'
@@ -69,6 +70,12 @@ function fullLabel(b: PieceBlock): string {
   return b.subtitle.trim() ? `${b.label}　${b.subtitle.trim()}` : b.label
 }
 
+/** 1話分の、画面の外にある間に使うもの（稿ごとに覚えておいた値なので、開き直しても作り直さない） */
+interface PieceLayout {
+  shape: LineShape
+  plain: string
+}
+
 /** 本文の字間（read.css の .rt-text の letter-spacing と合わせる） */
 const TEXT_LETTER_SPACING = 0.02
 
@@ -77,11 +84,14 @@ const PieceSection = memo(function PieceSection({
   block: b,
   titleId,
   shape,
+  plain,
 }: {
   block: PieceBlock
   titleId: ID
   /** 画面の外にある間の大きさの見積もり用（採用原稿がなければ null） */
   shape: LineShape | null
+  /** 記号とルビの読みを除いた本文（画面から遠い間に置く。稿ごとに覚えておいたもの） */
+  plain?: string
 }) {
   const state = b.body === null ? 'missing' : b.body.trim() === '' ? 'blank' : 'text'
   // ルビ・傍点の要素は、この話が画面の近くに来てから作る（ルビの多い長編でも軽く開けるように）
@@ -127,7 +137,7 @@ const PieceSection = memo(function PieceSection({
         <p className="rt-blank">（本文はまだありません）</p>
       ) : (
         <div className="rt-text" data-testid="read-text">
-          <LazyRubyText text={b.body} watch={sectionRef} />
+          <LazyRubyText text={b.body} plain={plain} watch={sectionRef} />
         </div>
       )}
     </section>
@@ -137,13 +147,13 @@ const PieceSection = memo(function PieceSection({
 /** 本文（タイトル・章見出し・各話）。データが変わらない限り描き直さない */
 const DocContent = memo(function DocContent({
   blocks,
-  shapes,
+  layouts,
   titleId,
   titleName,
   chapterName,
 }: {
   blocks: ReadBlock[]
-  shapes: Map<ID, LineShape>
+  layouts: Map<ID, PieceLayout>
   titleId: ID
   titleName: string
   chapterName: string | null
@@ -163,7 +173,13 @@ const DocContent = memo(function DocContent({
           // 章が終わり、どの章にも入っていない話が続く
           <hr key={`end-${b.chapterId}`} className="rt-chapter-end" aria-label="章の終わり" data-testid="read-chapter-end" />
         ) : (
-          <PieceSection key={b.pieceId} block={b} titleId={titleId} shape={shapes.get(b.pieceId) ?? null} />
+          <PieceSection
+            key={b.pieceId}
+            block={b}
+            titleId={titleId}
+            shape={layouts.get(b.pieceId)?.shape ?? null}
+            plain={layouts.get(b.pieceId)?.plain}
+          />
         ),
       )}
     </>
@@ -251,13 +267,13 @@ export function ReadThroughPage() {
   const stats = useMemo(() => readStats(data, blocks), [data, blocks])
   // 各話テキスト書き出しは範囲に関係なくタイトル全体を書き出すので、タイトル全体に話があるかで判断する
   const titleHasPieces = useMemo(() => flatten(data, titleId).length > 0, [data, titleId])
-  // 画面の外にある話の大きさの見積もりに使う、段落の形（稿ごとに1回だけ数える）
-  const shapes = useMemo(() => {
-    const out = new Map<ID, LineShape>()
+  // 画面の外にある話の大きさの見積もりに使う段落の形と、遠くの話に置く記号と読みを除いた本文（どちらも稿ごとに1回だけ作る）
+  const layouts = useMemo(() => {
+    const out = new Map<ID, PieceLayout>()
     for (const b of blocks) {
       if (b.type !== 'piece' || b.body === null) continue
       const v = pieceVersion(data, b.pieceId)
-      if (v) out.set(b.pieceId, lineShape(v))
+      if (v) out.set(b.pieceId, { shape: lineShape(v), plain: strippedBody(v) })
     }
     return out
   }, [data, blocks])
@@ -291,8 +307,9 @@ export function ReadThroughPage() {
     return () => ro.disconnect()
   }, [title])
 
-  // 開いた時・範囲を変えた時は先頭から読めるようにする（前の画面のスクロール位置を引き継がない）
-  useEffect(() => {
+  // 開いた時・範囲を変えた時は先頭から読めるようにする（前の画面のスクロール位置を引き継がない）。
+  // 描く前に戻しておく（先頭の話のルビ・傍点を、最初の描画から出せるように）
+  useLayoutEffect(() => {
     window.scrollTo?.(0, 0)
     if (docRef.current) docRef.current.scrollLeft = 0
   }, [titleId, chapterId])
@@ -301,7 +318,8 @@ export function ReadThroughPage() {
   useCharsPerLine(docRef, TEXT_LETTER_SPACING, [vertical, fontSize, stats.pieces === 0])
 
   // 画面の近くに来た話だけルビ・傍点を表示する見張り役。縦書きでは本文の枠の中を横にスクロールするので、枠を基準にする
-  const registerNear = useNearViewportWatcher(() => (vertical ? docRef.current : null), [vertical, stats.pieces === 0])
+  const near = useNearViewportWatcher(() => (vertical ? docRef.current : null), [vertical, stats.pieces === 0])
+  const { check: checkNear, scheduleCheck: scheduleNearCheck } = near
 
   // 縦書き・文字の大きさを切り替えたら、切り替える前に読んでいた所を出す
   useLayoutEffect(() => {
@@ -312,7 +330,9 @@ export function ReadThroughPage() {
     if (!target) return
     cancelSettle.current?.()
     cancelSettle.current = settleScrollTo(target, docRef.current, vertical, anchor.fraction)
-  }, [vertical, fontSize])
+    // 出した所の近くの話は、描く前にルビ・傍点の表示にする（コミットの途中なので、終わってから）
+    scheduleNearCheck()
+  }, [vertical, fontSize, scheduleNearCheck])
 
   useEffect(() => () => cancelSettle.current?.(), [])
 
@@ -339,17 +359,22 @@ export function ReadThroughPage() {
     verticalRef.current = vertical
   }, [vertical])
   const toggleToc = useCallback(() => setTocOpen((v) => !v), [])
-  const jumpTo = useCallback((e: MouseEvent<HTMLAnchorElement>, pieceId: ID) => {
-    e.preventDefault()
-    // スマホでは目次を先に閉じる（閉じて本文の位置が動いてから移動する）
-    flushSync(() => setTocOpen(false))
-    const target = document.getElementById(pieceAnchorId(pieceId))
-    if (!target) return
-    // 途中の話はまだ組んでいない（見積もりの大きさ）ので、すぐに移動し、組み上がってずれたら合わせ直す
-    cancelSettle.current?.()
-    cancelSettle.current = settleScrollTo(target, docRef.current, verticalRef.current, 0)
-    target.querySelector<HTMLElement>('[data-heading]')?.focus({ preventScroll: true })
-  }, [])
+  const jumpTo = useCallback(
+    (e: MouseEvent<HTMLAnchorElement>, pieceId: ID) => {
+      e.preventDefault()
+      // スマホでは目次を先に閉じる（閉じて本文の位置が動いてから移動する）
+      flushSync(() => setTocOpen(false))
+      const target = document.getElementById(pieceAnchorId(pieceId))
+      if (!target) return
+      // 途中の話はまだ組んでいない（見積もりの大きさ）ので、すぐに移動し、組み上がってずれたら合わせ直す
+      cancelSettle.current?.()
+      cancelSettle.current = settleScrollTo(target, docRef.current, verticalRef.current, 0)
+      // 移動した先とその近くの話は、描く前にルビ・傍点の表示にする（読みが後から現れないように）
+      checkNear()
+      target.querySelector<HTMLElement>('[data-heading]')?.focus({ preventScroll: true })
+    },
+    [checkNear],
+  )
 
   if (!title) return <NotFound message="タイトルが見つかりません。" />
 
@@ -535,10 +560,10 @@ export function ReadThroughPage() {
               tabIndex={vertical ? 0 : undefined}
               data-testid="read-body"
             >
-              <NearViewportContext.Provider value={registerNear}>
+              <NearViewportContext.Provider value={near.register}>
                 <DocContent
                   blocks={blocks}
-                  shapes={shapes}
+                  layouts={layouts}
                   titleId={titleId}
                   titleName={titleName}
                   chapterName={chapter ? chapterName : null}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseRuby, stripRuby } from './ruby'
-import { countChars, textStats } from './text'
+import { parseRuby, strippedBody, stripRuby } from './ruby'
+import { bodyMetrics, countChars, textStats } from './text'
 
 describe('ルビ・傍点の記法', () => {
   it('｜で始まるルビ・漢字の直後のルビ・傍点を分ける', () => {
@@ -40,5 +40,26 @@ describe('ルビ・傍点の記法', () => {
     expect(countChars('｜魔法使い《ウィザード》と《《東京》》')).toBe(7)
     expect(countChars('東京《とうきょう》')).toBe(2)
     expect(textStats('｜魔法《まほう》\n《《傍点》》').chars).toBe(4)
+  })
+
+  it('稿などのレコードの、記号と読みを除いた本文はレコードごとに1回だけ作り、文字数と分け合う', () => {
+    const record = { body: '｜魔法使い《ウィザード》と《《東京》》' }
+    const first = strippedBody(record)
+    expect(first).toBe('魔法使いと東京')
+    expect(strippedBody(record)).toBe(first)
+    // 同じ本文でも別のレコードなら作り直す（編集すると稿は新しいオブジェクトになる）
+    expect(strippedBody({ body: '東京《とうきょう》' })).toBe('東京')
+    // 記法のない本文は、そのままの文字列（写しを持たない）
+    const plain = { body: 'ただの本文' }
+    expect(strippedBody(plain)).toBe(plain.body)
+  })
+
+  it('記号を除くのは1回だけ（｜《 の後ろに漢字があっても、2回目の除き方でルビにしない）', () => {
+    // 漢字｜《かな》 → 漢字《かな》（もう一度除くと「漢字」になってしまう）
+    const record = { body: '漢字｜《かな》' }
+    expect(strippedBody(record)).toBe('漢字《かな》')
+    expect(bodyMetrics(record).chars).toBe(6)
+    expect(textStats(record.body).chars).toBe(6)
+    expect(bodyMetrics({ body: '漢字｜《かな》' }).chars).toBe(6)
   })
 })

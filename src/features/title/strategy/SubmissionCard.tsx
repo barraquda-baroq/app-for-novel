@@ -11,6 +11,7 @@ import {
   type SnapshotCounts,
   type SubmissionPatch,
 } from '../../../domain/entityOps'
+import { strippedBody } from '../../../domain/ruby'
 import { formatCount } from '../../../domain/text'
 import { trashNotice } from '../../../domain/trash'
 import type {
@@ -882,7 +883,7 @@ function SnapshotReader({
   const readerRef = useRef<HTMLDivElement>(null)
   useCharsPerLine(readerRef, 0, [], READER_FONT_SIZE)
   // ルビ・傍点の要素は画面の近くに来た話だけに作る（ダイアログの本文の枠の中をスクロールする）
-  const registerNear = useNearViewportWatcher(() => readerRef.current?.closest('.modal-body') ?? null, [])
+  const { register: registerNear } = useNearViewportWatcher(() => readerRef.current?.closest('.modal-body') ?? null, [])
   return (
     <Modal
       title={`応募時の原稿（${contest}）`}
@@ -933,7 +934,8 @@ function SnapshotReaderPiece({ piece: p }: { piece: SnapshotPiece }) {
         <p className="muted sg-reader-none">採用原稿がありません。</p>
       ) : (
         <div className="sg-reader-body">
-          <LazyRubyText text={body} watch={ref} />
+          {/* 記号と読みを除いた本文は本文の控えごとに覚えておく（開き直しても全文を分け直さない） */}
+          <LazyRubyText text={body} plain={record ? strippedBody(record) : undefined} watch={ref} />
         </div>
       )}
     </article>

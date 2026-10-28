@@ -200,6 +200,136 @@ test.describe('ルビ・傍点', () => {
   })
 })
 
+test.describe('ルビ・傍点（長い原稿・一覧・応募時の原稿）', () => {
+  const PARA = '　｜彼女《かのじょ》は振り返らずに、静かに扉《とびら》を閉めた。《《待って》》と言う声がした。\n'
+
+  test('通し読みを開いた最初の描画から、画面の近くの話はルビ付き。選んでコピーした文字に読みは入らない', async ({ page }) => {
+    test.setTimeout(90_000)
+    await openApp(page)
+    const titleId = await seed(
+      page,
+      ({ actions, getData }, a: { para: string }) => {
+        const id = actions.createTitle('長い物語')
+        for (let i = 0; i < 30; i++) {
+          const p = actions.addEpisode(id)
+          actions.updateVersion(getData().pieces[p].versionIds[0], { body: a.para.repeat(30) })
+        }
+        return id
+      },
+      { para: PARA },
+    )
+    await openApp(page, `/t/${titleId}`)
+    // 通し読みへ移り、本文が初めて描かれるフレームで、最初の話にもうルビがあるかを見る
+    await page.evaluate((hash) => {
+      const w = window as unknown as { __firstFrameRuby?: number }
+      const sample = () => {
+        const first = document.querySelector('[data-testid="read-piece"]')
+        if (first) w.__firstFrameRuby = first.querySelectorAll('ruby').length
+        else requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+      location.hash = hash
+    }, `#/t/${titleId}/read`)
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __firstFrameRuby?: number }).__firstFrameRuby)).toBe(60)
+    const pieces = page.getByTestId('read-piece')
+    await expect(pieces).toHaveCount(30)
+    // 遠くの話はまだ読みなし
+    expect(await pieces.nth(25).locator('ruby').count()).toBe(0)
+
+    // 全体を選んでコピーすると、近くの話（ルビ付き）も遠くの話も親文字だけ（読み・括弧は入らない）
+    const selected = await page.getByTestId('read-body').evaluate((el) => {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const sel = window.getSelection()!
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return sel.toString()
+    })
+    expect(selected).toContain('彼女は振り返らずに、静かに扉を閉めた。待ってと言う声がした。')
+    expect(selected).not.toMatch(/かのじょ|とびら|（|）/)
+    expect(selected.split('彼女は').length - 1).toBe(30 * 30)
+  })
+
+  test('本編の一覧の抜粋は、画面の近くの行だけルビ・傍点の要素を作り、スクロールで近づいた行も表示する', async ({ page }) => {
+    test.setTimeout(90_000)
+    await openApp(page)
+    const titleId = await seed(
+      page,
+      ({ actions, getData }, a: { para: string }) => {
+        const id = actions.createTitle('長い一覧')
+        for (let i = 0; i < 120; i++) {
+          const p = actions.addEpisode(id)
+          // 抜粋（90字まで）に収まる1段落
+          actions.updateVersion(getData().pieces[p].versionIds[0], { body: a.para })
+        }
+        return id
+      },
+      { para: PARA },
+    )
+    await openApp(page, `/t/${titleId}`)
+    const rows = page.getByTestId('piece-row')
+    await expect(rows).toHaveCount(120)
+    const first = rows.first().getByTestId('piece-excerpt')
+    await expect(first.locator('ruby rt')).toHaveText(['かのじょ', 'とびら'])
+    await expect(first.locator('em.rb-bouten')).toHaveText('待って')
+    // 遠くの行の抜粋は、親文字だけ（要素はまだない）
+    const far = rows.nth(115).getByTestId('piece-excerpt')
+    expect(await far.locator('ruby, em').count()).toBe(0)
+    expect(await far.textContent()).toContain('彼女は振り返らずに、静かに扉を閉めた。待ってと言う声がした。')
+    // 画面の近くの行だけに作る
+    const withRuby = await page
+      .getByTestId('piece-excerpt')
+      .evaluateAll((els) => els.filter((e) => e.querySelector('ruby')).length)
+    expect(withRuby).toBeGreaterThan(0)
+    expect(withRuby).toBeLessThan(120)
+    await rows.nth(115).scrollIntoViewIfNeeded()
+    await expect(far.locator('ruby rt')).toHaveText(['かのじょ', 'とびら'])
+    await expect(far.locator('em.rb-bouten')).toHaveText('待って')
+  })
+
+  test('応募時の原稿を読む画面でもルビ・傍点を表示し、遠くの話はダイアログの中をスクロールして近づいた時に表示する', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000)
+    await openApp(page)
+    const titleId = await seed(
+      page,
+      ({ actions, getData }, a: { para: string; body: string }) => {
+        const id = actions.createTitle('灯の記録')
+        for (let i = 0; i < 16; i++) {
+          const p = actions.addEpisode(id)
+          // 先頭の2話は短いルビ付きの本文、後は長い本文（最後の話は画面からずっと遠くに来る）
+          actions.updateVersion(getData().pieces[p].versionIds[0], { body: i < 2 ? a.body : a.para.repeat(40) })
+        }
+        const sub = actions.addSubmission(id, '灯台文学賞')
+        actions.recordSubmissionSnapshot(sub)
+        return id
+      },
+      { para: PARA, body: BODY },
+    )
+    await openApp(page, `/t/${titleId}?tab=strategy`)
+    await page.getByTestId('submission-toggle').click()
+    await page.getByTestId('snapshot-read').click()
+    const reader = page.getByTestId('snapshot-reader')
+    await expect(reader).toBeVisible()
+    const readerPieces = reader.locator('.sg-reader-piece')
+    await expect(readerPieces).toHaveCount(16)
+    await expect(readerPieces.first().locator('ruby rt')).toHaveText(['ウィザード', 'とうきょう'])
+    await expect(readerPieces.first().locator('em.rb-bouten')).toHaveText('星')
+    // 文字数は記号と読みを除く
+    await expect(reader.locator('.sg-reader-info')).toContainText(
+      `・${(BODY_CHARS * 2 + 30 * 14 * 40).toLocaleString('ja-JP')}字`,
+    )
+
+    const last = readerPieces.last()
+    expect(await last.locator('ruby').count()).toBe(0)
+    await expect(last).toContainText('彼女は振り返らずに、静かに扉を閉めた。')
+    await page.locator('.modal-body').evaluate((el) => (el.scrollTop = el.scrollHeight))
+    await expect.poll(() => last.locator('ruby rt').count()).toBe(80)
+    await expect(last.locator('em.rb-bouten')).toHaveCount(40)
+  })
+})
+
 test.describe('各話の進捗', () => {
   test('本編の一覧と章ページの各話に、その話の終わりがタイトル全体（採用原稿）の何 % の位置かを出す', async ({ page }) => {
     await openApp(page)

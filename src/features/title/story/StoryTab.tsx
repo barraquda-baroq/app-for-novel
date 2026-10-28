@@ -8,6 +8,7 @@ import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
 import { EditIcon, FolderIcon, PlusIcon } from '../../../ui/icons'
+import { NearViewportContext, useNearViewportWatcher } from '../../../ui/nearViewport'
 import { EpisodeExportDialog } from '../../episodeExport/EpisodeExportDialog'
 import { FilesIcon } from '../../episodeExport/exportIcons'
 import { AddDialog, type AddKind } from './AddDialog'
@@ -35,6 +36,8 @@ export function StoryTab({ titleId }: { titleId: ID }) {
   const [adding, setAdding] = useState<AddRequest | null>(null)
   const [exporting, setExporting] = useState(false)
   const { collapsed, toggle: toggleCollapsed, expand } = useCollapsedChapters(titleId)
+  // 抜粋のルビ・傍点は、画面の近くに来た行だけに作る（数百行あっても開くのを重くしない。スクロールは画面全体）
+  const { register: registerNear } = useNearViewportWatcher(() => null, [])
 
   const flat = useMemo(() => flatten(story, titleId), [story, titleId])
   // 各話の進捗は本編が変わった時だけ数える（編集モードの切り替えでは数え直さない）
@@ -189,38 +192,40 @@ export function StoryTab({ titleId }: { titleId: ID }) {
             <p className="small muted story-progress-legend" data-testid="progress-legend">
               右の％は、その話の終わりがタイトル全体（採用原稿）のどこにあるかを示します（転機の位置を見るための目安）。
             </p>
-            <ol className={`story-list${chaptersOn ? ' is-tree' : ''}`} data-testid="story-list">
-              {chaptersOn
-                ? title.structure.map((node) => {
-                    if (node.type === 'piece') {
-                      const row = rows[node.id]
-                      if (!row) return null
-                      return <PieceRow key={node.id} {...row} edit={edit} onMoved={onPieceMoved} />
-                    }
-                    const chapter = data.chapters[node.id]
-                    if (!chapter) return null
-                    const chStep = edit ? chapterStepAvailability(story, chapter.id) : null
-                    return (
-                      <ChapterBlock
-                        key={chapter.id}
-                        chapter={chapter}
-                        rows={rowsFor(rows, chapter.pieceIds)}
-                        edit={edit}
-                        canUp={chStep?.up ?? false}
-                        canDown={chStep?.down ?? false}
-                        collapsed={collapsed.has(chapter.id)}
-                        onToggleCollapsed={toggleCollapsed}
-                        canAddEpisode={targetIds.has(chapter.id)}
-                        onAddEpisode={addEpisodeTo}
-                        onPieceMoved={onPieceMoved}
-                      />
-                    )
-                  })
-                : flat.map((f) => {
-                    const row = rows[f.pieceId]
-                    return row ? <PieceRow key={f.pieceId} {...row} edit={edit} onMoved={onPieceMoved} /> : null
-                  })}
-            </ol>
+            <NearViewportContext.Provider value={registerNear}>
+              <ol className={`story-list${chaptersOn ? ' is-tree' : ''}`} data-testid="story-list">
+                {chaptersOn
+                  ? title.structure.map((node) => {
+                      if (node.type === 'piece') {
+                        const row = rows[node.id]
+                        if (!row) return null
+                        return <PieceRow key={node.id} {...row} edit={edit} onMoved={onPieceMoved} />
+                      }
+                      const chapter = data.chapters[node.id]
+                      if (!chapter) return null
+                      const chStep = edit ? chapterStepAvailability(story, chapter.id) : null
+                      return (
+                        <ChapterBlock
+                          key={chapter.id}
+                          chapter={chapter}
+                          rows={rowsFor(rows, chapter.pieceIds)}
+                          edit={edit}
+                          canUp={chStep?.up ?? false}
+                          canDown={chStep?.down ?? false}
+                          collapsed={collapsed.has(chapter.id)}
+                          onToggleCollapsed={toggleCollapsed}
+                          canAddEpisode={targetIds.has(chapter.id)}
+                          onAddEpisode={addEpisodeTo}
+                          onPieceMoved={onPieceMoved}
+                        />
+                      )
+                    })
+                  : flat.map((f) => {
+                      const row = rows[f.pieceId]
+                      return row ? <PieceRow key={f.pieceId} {...row} edit={edit} onMoved={onPieceMoved} /> : null
+                    })}
+              </ol>
+            </NearViewportContext.Provider>
           </>
         )}
 
