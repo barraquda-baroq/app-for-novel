@@ -3,11 +3,16 @@ import { addIdea, createTitle, updateTitle } from '../../domain/entityOps'
 import { addEpisode, addSpecial, setActiveVersion, setChaptersEnabled, updateVersion } from '../../domain/storyOps'
 import { emptyData, type AppData } from '../../domain/types'
 import {
+  BACKUP_REMIND_AFTER_MS,
+  BACKUP_SNOOZE_MS,
+  backupReminderDue,
   charsLabel,
   deleteTitleMessage,
   episodesLabel,
+  hasManuscriptText,
   missingLabel,
   parseHomeView,
+  parseTimestamp,
   synopsisExcerpt,
   titleCardInfo,
 } from './homeLogic'
@@ -103,7 +108,7 @@ describe('タイトル削除の確認文', () => {
       versionCount: 7,
       ideaCount: 2,
     })
-    expect(msg).toContain('すべての話・推敲バージョン・設定・戦略・メモが削除されます')
+    expect(msg).toContain('すべての話・推敲バージョン・設定項目・戦略・メモが削除されます')
     expect(msg).toContain('全4話、特殊ブロック1件、推敲バージョン7稿')
     expect(msg).toContain('アイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります')
   })
@@ -117,5 +122,47 @@ describe('タイトル削除の確認文', () => {
     expect(msg).toContain('全0話、推敲バージョン0稿')
     expect(msg).not.toContain('特殊ブロック')
     expect(msg).toContain('「どのタイトルにも属さない」へ移ります')
+  })
+})
+
+describe('バックアップのお知らせ', () => {
+  const now = Date.parse('2026-10-28T12:00:00Z')
+  const day = 24 * 60 * 60 * 1000
+
+  it('原稿の本文に空白以外の文字があるか', () => {
+    let data = emptyData()
+    const t = createTitle(data, '星の海')
+    data = t.data
+    expect(hasManuscriptText(data)).toBe(false)
+    const e = addEpisode(data, t.result)
+    data = e.data
+    const vid = data.pieces[e.result].versionIds[0]
+    expect(hasManuscriptText(data)).toBe(false)
+    expect(hasManuscriptText(updateVersion(data, vid, { body: ' \n　\t' }))).toBe(false)
+    expect(hasManuscriptText(updateVersion(data, vid, { body: '\n　月' }))).toBe(true)
+  })
+
+  it('原稿があり、まだ書き出していないか14日以上前なら出す。「後で」から7日間は出さない', () => {
+    const due = (o: { hasManuscript?: boolean; lastBackup?: number | null; snoozedAt?: number | null }) =>
+      backupReminderDue({ hasManuscript: true, lastBackup: null, snoozedAt: null, now, ...o })
+    expect(BACKUP_REMIND_AFTER_MS).toBe(14 * day)
+    expect(BACKUP_SNOOZE_MS).toBe(7 * day)
+    expect(due({})).toBe(true)
+    expect(due({ hasManuscript: false })).toBe(false)
+    expect(due({ lastBackup: now - 13 * day })).toBe(false)
+    expect(due({ lastBackup: now - 14 * day })).toBe(true)
+    expect(due({ lastBackup: now - 30 * day, snoozedAt: now - 6 * day })).toBe(false)
+    expect(due({ lastBackup: now - 30 * day, snoozedAt: now - 7 * day })).toBe(true)
+    expect(due({ snoozedAt: now - 1000 })).toBe(false)
+    // 時計が戻された（未来の日時）時は、経っていないものとして扱う
+    expect(due({ lastBackup: now + day })).toBe(false)
+    expect(due({ snoozedAt: now + day })).toBe(false)
+  })
+
+  it('保存値の日時を読む', () => {
+    expect(parseTimestamp(String(now))).toBe(now)
+    expect(parseTimestamp(null)).toBeNull()
+    expect(parseTimestamp('')).toBeNull()
+    expect(parseTimestamp('abc')).toBeNull()
   })
 })

@@ -1,15 +1,15 @@
 // データ: 端末内にだけ保存されていることの説明、バックアップの書き出し・復元、保存領域の情報。
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
-import { parseBackup, toBackup } from '../../domain/backup'
+import { parseBackup } from '../../domain/backup'
 import { DomainError, type AppData } from '../../domain/types'
-import { getData, replaceAllData, useData } from '../../store/appStore'
+import { replaceAllData, useData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
-import { downloadFile, formatDateTime, pickTextFile } from '../../ui/browser'
+import { formatDateTime, pickTextFile } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DownloadIcon, UploadIcon } from '../../ui/icons'
-import { readLocal, writeLocal } from '../ideas/storage'
-import { clearLocalState, LOCAL_STATE_CLEARED } from './localState'
-import { LAST_BACKUP_KEY, backupFileName, countsSummary, dataCounts, formatBytes, readExportedAt } from './settingsLogic'
+import { useBackupExport, useLastBackup } from './backupExport'
+import { clearLocalState } from './localState'
+import { countsSummary, dataCounts, formatBytes, readExportedAt } from './settingsLogic'
 
 interface StorageInfo {
   usage?: number
@@ -43,39 +43,15 @@ function useStorageInfo(): [StorageInfo, () => void] {
   return [info, refresh]
 }
 
-function readLastBackup(): number | null {
-  const raw = readLocal(LAST_BACKUP_KEY)
-  const n = raw ? Number(raw) : NaN
-  return Number.isFinite(n) ? n : null
-}
-
 export function DataSettings() {
   const id = useId()
   const data = useData()
   const counts = useMemo(() => dataCounts(data), [data])
   const [storage, refreshStorage] = useStorageInfo()
-  const [lastBackup, setLastBackup] = useState<number | null>(readLastBackup)
+  // すべてのデータを削除すると「最後に書き出した日時」も消えるので、その時も読み直される
+  const lastBackup = useLastBackup()
+  const { exporting, run: exportBackup } = useBackupExport()
   const [busy, setBusy] = useState(false)
-
-  // すべてのデータを削除すると「最後に書き出した日時」も消えるので読み直す
-  useEffect(() => {
-    const reread = () => setLastBackup(readLastBackup())
-    window.addEventListener(LOCAL_STATE_CLEARED, reread)
-    return () => window.removeEventListener(LOCAL_STATE_CLEARED, reread)
-  }, [])
-
-  const exportBackup = () => {
-    const now = new Date()
-    try {
-      downloadFile(backupFileName(now), JSON.stringify(toBackup(getData(), now), null, 2), 'application/json')
-    } catch (e) {
-      notifyError(`書き出せませんでした: ${e instanceof Error ? e.message : String(e)}`)
-      return
-    }
-    writeLocal(LAST_BACKUP_KEY, String(now.getTime()))
-    setLastBackup(now.getTime())
-    notify('バックアップを書き出しました')
-  }
 
   const restore = async () => {
     const text = await pickTextFile()
@@ -147,11 +123,24 @@ export function DataSettings() {
       </dl>
 
       <div className="aset-actions">
-        <button type="button" className="btn btn-primary" onClick={exportBackup} data-testid="export-backup">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void exportBackup()}
+          aria-disabled={exporting || undefined}
+          aria-busy={exporting || undefined}
+          data-testid="export-backup"
+        >
           <DownloadIcon />
-          バックアップを書き出す
+          {exporting ? '書き出し中…' : 'バックアップを書き出す'}
         </button>
-        <button type="button" className="btn" onClick={() => void restore()} disabled={busy} data-testid="restore-backup">
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void restore()}
+          disabled={busy || exporting}
+          data-testid="restore-backup"
+        >
           <UploadIcon />
           {busy ? '復元しています…' : 'バックアップから復元'}
         </button>

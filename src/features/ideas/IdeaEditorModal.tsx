@@ -95,7 +95,9 @@ export function IdeaEditorModal({
       initialFocus={focusBody ? 'textarea' : undefined}
       footer={
         <>
-          <span className="idea-editor-hint hide-mobile">{submitShortcutLabel()} で保存</span>
+          <span className="idea-editor-hint hide-mobile hint-keyboard" data-testid="idea-editor-hint">
+            {submitShortcutLabel()} で保存
+          </span>
           <button type="button" className="btn" onClick={() => void requestClose()} data-testid="idea-cancel">
             キャンセル
           </button>

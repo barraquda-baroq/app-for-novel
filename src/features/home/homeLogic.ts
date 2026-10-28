@@ -71,7 +71,7 @@ export function deleteTitleMessage(info: Pick<TitleCardInfo, 'summary' | 'versio
   if (specials > 0) parts.push(`特殊ブロック${specials}件`)
   parts.push(`推敲バージョン${info.versionCount}稿`)
   const lines = [
-    `このタイトルのすべての話・推敲バージョン・設定・戦略・メモが削除されます（${parts.join('、')}）。元に戻すことはできません。`,
+    `このタイトルのすべての話・推敲バージョン・設定項目・戦略・メモが削除されます（${parts.join('、')}）。元に戻すことはできません。`,
   ]
   lines.push(
     info.ideaCount > 0
@@ -79,4 +79,46 @@ export function deleteTitleMessage(info: Pick<TitleCardInfo, 'summary' | 'versio
       : 'このタイトルのアイデアがあった場合は、削除されずに「どのタイトルにも属さない」へ移ります。',
   )
   return lines.join('\n\n')
+}
+
+// ---------- バックアップのお知らせ ----------
+
+const DAY_MS = 24 * 60 * 60 * 1000
+/** 最後の書き出しからこれだけ経ったら、ホームでバックアップを勧める */
+export const BACKUP_REMIND_AFTER_MS = 14 * DAY_MS
+/** 「後で」を押してから再び勧めるまで */
+export const BACKUP_SNOOZE_MS = 7 * DAY_MS
+/** 「後で」を押した日時（この端末） */
+export const BACKUP_SNOOZE_KEY = 'novel-studio:backup-reminder-snoozed'
+
+/** 原稿（推敲バージョンの本文）に、空白以外の文字が1つでもあるか */
+export function hasManuscriptText(data: Pick<AppData, 'versions'>): boolean {
+  for (const v of Object.values(data.versions)) if (/\S/u.test(v.body)) return true
+  return false
+}
+
+/** 端末の時計が戻された時（未来の日時）は、経っていないものとして扱う */
+function within(ts: number | null, span: number, now: number): boolean {
+  return ts !== null && now - ts < span
+}
+
+/**
+ * ホームでバックアップを勧めるか。原稿があって、まだ書き出していないか最後の書き出しから14日以上経っている時。
+ * 「後で」を押してから7日間は出さない。
+ */
+export function backupReminderDue(opts: {
+  hasManuscript: boolean
+  lastBackup: number | null
+  snoozedAt: number | null
+  now: number
+}): boolean {
+  if (!opts.hasManuscript) return false
+  if (within(opts.lastBackup, BACKUP_REMIND_AFTER_MS, opts.now)) return false
+  return !within(opts.snoozedAt, BACKUP_SNOOZE_MS, opts.now)
+}
+
+/** 保存値の日時（読めなければ null） */
+export function parseTimestamp(raw: string | null): number | null {
+  const n = raw ? Number(raw) : NaN
+  return Number.isFinite(n) ? n : null
 }

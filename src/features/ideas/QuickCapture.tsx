@@ -135,7 +135,9 @@ export function QuickCapture({ sections = [], fixedTitleId, fixedName, draftKey,
           </span>
         )}
         {fixed ? null : <span className="grow" />}
-        <span className="idea-capture-hint hide-mobile">{submitShortcutLabel()}</span>
+        <span className="idea-capture-hint hide-mobile hint-keyboard" data-testid="quick-idea-hint">
+          {submitShortcutLabel()}
+        </span>
         <button type="submit" className="btn btn-primary idea-capture-add" disabled={!canAdd} data-testid="quick-idea-add">
           <PlusIcon />
           追加

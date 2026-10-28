@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { parseBackup, toBackup } from '../../domain/backup'
 import { addIdea, createTitle } from '../../domain/entityOps'
 import { emptyData } from '../../domain/types'
+import { addEpisode, updateVersion } from '../../domain/storyOps'
 import {
+  backupChunks,
   backupFileName,
+  backupTextLength,
+  COMPACT_BACKUP_CHARS,
   confirmsDeleteAll,
   countsSummary,
   dataCounts,
@@ -46,11 +50,63 @@ describe('件数', () => {
     expect(countsSummary(counts)).toMatch(/^タイトル 1件、話 0件、推敲バージョン 0件、章 0件、アイデア 1件、/)
   })
 
+  it('応募時の原稿の控え（snapshotTexts）は内部の表なので、件数・確認文に出さない', () => {
+    const data = createTitle(emptyData(), '星の海').data
+    data.snapshotTexts = { k1: { id: 'k1', body: '応募した本文' } }
+    const counts = dataCounts(data)
+    expect(counts.map((c) => c.table)).not.toContain('snapshotTexts')
+    expect(countsSummary(counts)).not.toContain('控え')
+  })
+
   it('バックアップから読み込んだ（一部のテーブルしかない）データも数えられる', () => {
     const data = parseBackup(JSON.stringify({ app: 'novel-studio', schemaVersion: 1, data: { ideas: {} } }))
     expect(dataCounts(data).every((c) => c.count === 0)).toBe(true)
     expect(isEmptyData(data)).toBe(true)
     expect(isEmptyData(createTitle(emptyData(), 'x').data)).toBe(false)
+  })
+})
+
+describe('バックアップの書き出し', () => {
+  function sample() {
+    let data = emptyData()
+    const t = createTitle(data, '星の海')
+    data = t.data
+    const e = addEpisode(data, t.result)
+    data = e.data
+    data = updateVersion(data, data.pieces[e.result].versionIds[0], { body: '本文\n「台詞」\t"引用"\\' })
+    data = addIdea(data, null, '案', '内容').data
+    data.snapshotTexts = { '1': { id: '1', body: '数字のキー' }, k: { id: 'k', body: '控え' } }
+    return data
+  }
+
+  it('小分けにしてつなげると JSON.stringify と同じ（インデントなし）。読み込み直すと元のデータ', () => {
+    const data = sample()
+    const file = toBackup(data, new Date('2026-01-02T03:04:05Z'))
+    const parts = [...backupChunks(file, false)]
+    expect(parts.length).toBeGreaterThan(5)
+    const json = parts.join('')
+    expect(json).toBe(JSON.stringify(file))
+    expect(json).not.toContain('\n')
+    // インデントを付けた書き出しと同じ内容として読み込める
+    expect(parseBackup(json)).toEqual(parseBackup([...backupChunks(file, true)].join('')))
+    expect(Object.values(parseBackup(json).versions)[0].body).toBe('本文\n「台詞」\t"引用"\\')
+    expect(readExportedAt(json)).toBe(Date.parse('2026-01-02T03:04:05Z'))
+  })
+
+  it('空のデータも書き出せる。小さいデータはインデントを付けて読みやすく', () => {
+    const file = toBackup(emptyData(), new Date(0))
+    expect([...backupChunks(file, false)].join('')).toBe(JSON.stringify(file))
+    expect([...backupChunks(file, true)]).toEqual([JSON.stringify(file, null, 2)])
+  })
+
+  it('文字列の長さの合計で、大きいデータかどうかを決める', () => {
+    const data = sample()
+    const small = backupTextLength(data)
+    expect(small).toBeGreaterThan(0)
+    expect(small).toBeLessThan(COMPACT_BACKUP_CHARS)
+    const v = Object.values(data.versions)[0]
+    const big = updateVersion(data, v.id, { body: 'あ'.repeat(COMPACT_BACKUP_CHARS) })
+    expect(backupTextLength(big)).toBeGreaterThan(COMPACT_BACKUP_CHARS)
   })
 })
 

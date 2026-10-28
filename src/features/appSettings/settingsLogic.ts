@@ -1,4 +1,5 @@
 // アプリ設定・バックアップ画面で使う純粋な計算。
+import type { BackupFile } from '../../domain/backup'
 import { TABLE_NAMES, type AppData, type TableName } from '../../domain/types'
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -23,7 +24,10 @@ export const TABLE_LABELS: Record<TableName, string> = {
   snapshotTexts: '応募時の原稿の控え',
 }
 
-/** 表示の順番（主要なものから） */
+/**
+ * 表示の順番（主要なものから）。snapshotTexts（応募時の原稿の控え）は応募計画の一部として内部で持つ表なので、
+ * 件数の一覧・確認文には出さない（同じ本文は1つにまとめて保存するため、件数を見せても意味が伝わらない）。
+ */
 const DISPLAY_ORDER: TableName[] = [
   'titles',
   'pieces',
@@ -57,6 +61,51 @@ export function countsSummary(counts: TableCount[]): string {
 
 export function isEmptyData(data: AppData): boolean {
   return TABLE_NAMES.every((t) => Object.keys(data[t] ?? {}).length === 0)
+}
+
+// ---------- バックアップの書き出し ----------
+
+/** 本文などの文字がこれより多いデータは、インデントなし（1行）の JSON で書き出す（大長編で数十 MB になるため） */
+export const COMPACT_BACKUP_CHARS = 1_000_000
+
+/** データに含まれる文字列のおおよその長さ（本文・メモなど、すべてのレコードの文字列の項目の合計） */
+export function backupTextLength(data: AppData): number {
+  let total = 0
+  for (const table of TABLE_NAMES) {
+    for (const record of Object.values(data[table] ?? {}) as object[]) {
+      for (const value of Object.values(record)) if (typeof value === 'string') total += value.length
+    }
+  }
+  return total
+}
+
+/**
+ * バックアップの JSON を小分けにして返す（つなげると JSON.stringify(file) と同じ）。
+ * 小さいデータは読みやすいようにインデントを付けて1つで返す。
+ * 大きいデータはインデントを付けず、レコードごとに分けて返す（書き出し中に画面を止めないよう、間で処理を譲れる）。
+ */
+export function* backupChunks(file: BackupFile, pretty: boolean): Generator<string> {
+  if (pretty) {
+    yield JSON.stringify(file, null, 2)
+    return
+  }
+  const { data, ...head } = file
+  // '{"app":…,"exportedAt":"…"' の後ろに data を続ける
+  yield `${JSON.stringify(head).slice(0, -1)},"data":{`
+  let firstTable = true
+  for (const [table, records] of Object.entries(data)) {
+    if (records === undefined) continue
+    yield `${firstTable ? '' : ','}${JSON.stringify(table)}:{`
+    firstTable = false
+    let first = true
+    for (const [id, record] of Object.entries(records as Record<string, unknown>)) {
+      if (record === undefined) continue
+      yield `${first ? '' : ','}${JSON.stringify(id)}:${JSON.stringify(record)}`
+      first = false
+    }
+    yield '}'
+  }
+  yield '}}'
 }
 
 export function formatBytes(bytes: number | undefined): string {

@@ -19,7 +19,7 @@ export interface IdeaSectionViewProps {
   collapsible?: boolean
   collapsed?: boolean
   onToggleCollapsed?: () => void
-  /** 見出しの横に「開く」（タイトル画面へのリンク）を出す */
+  /** 見出しの横に「タイトルへ」（タイトル画面へのリンク）を出す */
   showOpenLink?: boolean
   /** 見出しの表記を変える（省略時は仕切りの名前） */
   heading?: string
@@ -90,9 +90,12 @@ export function IdeaSectionView({
           <Link
             to={paths.title(section.titleId)}
             className="btn btn-sm btn-ghost idea-section-open"
-            aria-label={`タイトル「${name}」を開く`}
+            aria-label={`タイトルへ（${name}）`}
+            title={`タイトル「${name}」の画面へ移動`}
+            data-testid="idea-section-open"
           >
-            開く
+            タイトルへ
+            <ChevronRightIcon />
           </Link>
         ) : null}
         <button
