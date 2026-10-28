@@ -1,7 +1,7 @@
 // 本編タブ: 設定項目の帯・本編（章／第n話／特殊ブロック）・メモ（一番下）。
-import { useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { episodeTargets } from '../../../domain/storyOps'
-import { effectiveNumbering, episodeNumbers, flatten, locatePiece, pieceFullLabel } from '../../../domain/structure'
+import { effectiveNumbering, flatten, locatePiece, pieceFullLabel } from '../../../domain/structure'
 import type { ID, NumberingMode } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
@@ -13,8 +13,9 @@ import { NUMBERING_LABELS, changeNumbering, toggleChapters } from './chapterFlow
 import { MemoSection } from './MemoSection'
 import { PieceRow } from './PieceRow'
 import { SettingStrip } from './SettingStrip'
-import { chapterName, stepAvailability } from './storyLogic'
+import { chapterName, chapterStepAvailability, deletePermissions, pieceRows, rowsFor, stepAvailability } from './storyLogic'
 import { useCollapsedChapters } from './useCollapsed'
+import { useStoryData } from './useStoryData'
 import './story.css'
 
 interface AddRequest {
@@ -25,31 +26,49 @@ interface AddRequest {
 export function StoryTab({ titleId }: { titleId: ID }) {
   const data = useData()
   const title = data.titles[titleId]
+  // 本編の一覧・集計は、本編に関わるデータが変わった時だけ作り直す（あらすじ等の入力では作り直さない）
+  const story = useStoryData(titleId)
   const [edit, setEdit] = useState(false)
   const [adding, setAdding] = useState<AddRequest | null>(null)
   const { collapsed, toggle: toggleCollapsed, expand } = useCollapsedChapters(titleId)
 
-  const numbers = useMemo(() => episodeNumbers(data, titleId), [data, titleId])
-  const flat = useMemo(() => flatten(data, titleId), [data, titleId])
-  const steps = useMemo(() => (edit ? stepAvailability(data, titleId) : {}), [edit, data, titleId])
-  const targetIds = useMemo(() => new Set(episodeTargets(data, titleId).map((t) => t.chapterId)), [data, titleId])
+  const flat = useMemo(() => flatten(story, titleId), [story, titleId])
+  const rows = useMemo(
+    () =>
+      pieceRows(story, titleId, {
+        steps: edit ? stepAvailability(story, titleId) : null,
+        deletable: edit ? deletePermissions(story, titleId) : null,
+      }),
+    [story, titleId, edit],
+  )
+  const targetIds = useMemo(() => new Set(episodeTargets(story, titleId).map((t) => t.chapterId)), [story, titleId])
+
+  // 行・章に渡す関数は同じものを渡し続ける（変わると全行が描き直される）
+  const collapsedRef = useRef(collapsed)
+  useLayoutEffect(() => {
+    collapsedRef.current = collapsed
+  })
+
+  /** 折りたたんだ章に話を動かしたら、見えなくならないようにその章を開いて知らせる */
+  const onPieceMoved = useCallback(
+    (pieceId: ID, via: 'step' | 'dialog') => {
+      const d = getData()
+      const slot = locatePiece(d, pieceId)
+      if (!d.titles[titleId]?.chaptersEnabled || !slot?.chapterId || !collapsedRef.current.has(slot.chapterId)) return
+      expand(slot.chapterId)
+      // 「移動…」はダイアログ側で知らせるので、↑↓ の時だけ
+      if (via !== 'step') return
+      const p = d.pieces[pieceId]
+      notify(`「${p ? pieceFullLabel(d, p) : '話'}」を「${chapterName(d.chapters[slot.chapterId])}」へ移動しました`)
+    },
+    [titleId, expand],
+  )
+  const addEpisodeTo = useCallback((chapterId: ID) => setAdding({ kind: 'episode', chapterId }), [])
 
   if (!title) return null
   const chaptersOn = title.chaptersEnabled
   const perChapter = effectiveNumbering(title) === 'perChapter'
   const isEmpty = chaptersOn ? title.structure.length === 0 : flat.length === 0
-
-  /** 折りたたんだ章に話を動かしたら、見えなくならないようにその章を開いて知らせる */
-  const onPieceMoved = (pieceId: ID, via: 'step' | 'dialog') => {
-    const d = getData()
-    const slot = locatePiece(d, pieceId)
-    if (!d.titles[titleId]?.chaptersEnabled || !slot?.chapterId || !collapsed.has(slot.chapterId)) return
-    expand(slot.chapterId)
-    // 「移動…」はダイアログ側で知らせるので、↑↓ の時だけ
-    if (via !== 'step') return
-    const p = d.pieces[pieceId]
-    notify(`「${p ? pieceFullLabel(d, p) : '話'}」を「${chapterName(d.chapters[slot.chapterId])}」へ移動しました`)
-  }
 
   const addChapter = () => {
     const id = attempt(() => actions.addChapter(titleId))
@@ -146,52 +165,32 @@ export function StoryTab({ titleId }: { titleId: ID }) {
             {chaptersOn
               ? title.structure.map((node) => {
                   if (node.type === 'piece') {
-                    const piece = data.pieces[node.id]
-                    if (!piece) return null
-                    return (
-                      <PieceRow
-                        key={piece.id}
-                        data={data}
-                        piece={piece}
-                        numbers={numbers}
-                        edit={edit}
-                        canUp={steps[piece.id]?.up ?? false}
-                        canDown={steps[piece.id]?.down ?? false}
-                        onMoved={onPieceMoved}
-                      />
-                    )
+                    const row = rows[node.id]
+                    if (!row) return null
+                    return <PieceRow key={node.id} {...row} edit={edit} onMoved={onPieceMoved} />
                   }
                   const chapter = data.chapters[node.id]
                   if (!chapter) return null
+                  const chStep = edit ? chapterStepAvailability(story, chapter.id) : null
                   return (
                     <ChapterBlock
                       key={chapter.id}
-                      data={data}
                       chapter={chapter}
-                      numbers={numbers}
+                      rows={rowsFor(rows, chapter.pieceIds)}
                       edit={edit}
-                      steps={steps}
+                      canUp={chStep?.up ?? false}
+                      canDown={chStep?.down ?? false}
                       collapsed={collapsed.has(chapter.id)}
-                      onToggleCollapsed={() => toggleCollapsed(chapter.id)}
+                      onToggleCollapsed={toggleCollapsed}
                       canAddEpisode={targetIds.has(chapter.id)}
-                      onAddEpisode={(chapterId) => setAdding({ kind: 'episode', chapterId })}
+                      onAddEpisode={addEpisodeTo}
                       onPieceMoved={onPieceMoved}
                     />
                   )
                 })
               : flat.map((f) => {
-                  const piece = data.pieces[f.pieceId]
-                  return (
-                    <PieceRow
-                      key={piece.id}
-                      data={data}
-                      piece={piece}
-                      numbers={numbers}
-                      edit={edit}
-                      canUp={steps[piece.id]?.up ?? false}
-                      canDown={steps[piece.id]?.down ?? false}
-                    />
-                  )
+                  const row = rows[f.pieceId]
+                  return row ? <PieceRow key={f.pieceId} {...row} edit={edit} onMoved={onPieceMoved} /> : null
                 })}
           </ol>
         )}

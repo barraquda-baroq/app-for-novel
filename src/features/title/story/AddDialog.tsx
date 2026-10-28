@@ -42,6 +42,18 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
   const formId = useId()
   const title = data.titles[titleId]
   const [kind, setKind] = useState<AddKind | null>(presetKind ?? null)
+  // 種類を選んだら入力欄が見えるようにスクロールする（横持ちのスマホなど、高さが低いと入力欄が下に隠れるため）
+  const formRef = useRef<HTMLFormElement>(null)
+  const revealForm = useRef(false)
+  useEffect(() => {
+    if (!revealForm.current) return
+    revealForm.current = false
+    formRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [kind])
+  const chooseKind = (next: AddKind) => {
+    revealForm.current = next !== kind
+    setKind(next)
+  }
 
   // 話数追加
   const targets = useMemo(() => episodeTargets(data, titleId), [data, titleId])
@@ -172,7 +184,7 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
                 type="button"
                 className={`choice story-add-choice is-${k.kind}`}
                 aria-pressed={kind === k.kind}
-                onClick={() => setKind(k.kind)}
+                onClick={() => chooseKind(k.kind)}
                 data-testid={`add-kind-${k.kind}`}
                 {...(i === 0 ? { 'data-choice-autofocus': true } : {})}
               >
@@ -189,6 +201,7 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
         </div>
 
         <form
+          ref={formRef}
           id={formId}
           className="story-add-form stack"
           onSubmit={(e) => {

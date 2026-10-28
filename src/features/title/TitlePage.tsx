@@ -1,4 +1,4 @@
-// タイトル画面: タイトル名・あらすじ・集計と、本編／設定／戦略／アイデアのタブ。
+// タイトル画面: タイトル名・あらすじ・集計と、本編／設定項目／戦略／アイデアのタブ。
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { missingActiveLabel } from '../../domain/entityOps'
@@ -16,12 +16,13 @@ import { TitleIdeasTab } from './ideas/TitleIdeasTab'
 import { SettingsTab } from './settings/SettingsTab'
 import { StoryTab } from './story/StoryTab'
 import { titleStats } from './story/storyLogic'
+import { useStoryData } from './story/useStoryData'
 import { StrategyTab } from './strategy/StrategyTab'
 import './title.css'
 
 const TABS: { id: TitleTab; label: string }[] = [
   { id: 'story', label: '本編' },
-  { id: 'settings', label: '設定' },
+  { id: 'settings', label: '設定項目' },
   { id: 'strategy', label: '戦略' },
   { id: 'ideas', label: 'アイデア' },
 ]
@@ -37,7 +38,9 @@ export function TitlePage() {
   const [params, setParams] = useSearchParams()
   const rawTab = params.get('tab')
   const tab: TitleTab = isTab(rawTab) ? rawTab : 'story'
-  const stats = useMemo(() => titleStats(data, titleId), [data, titleId])
+  // 集計は本編に関わるデータが変わった時だけ数え直す（あらすじ・設定項目・戦略の入力では数え直さない）
+  const story = useStoryData(titleId)
+  const stats = useMemo(() => titleStats(story, titleId), [story, titleId])
   const [synopsisOpen, setSynopsisOpen] = useState(false)
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const baseId = useId()
@@ -129,7 +132,7 @@ export function TitlePage() {
               <span className="tpage-synopsis-label">あらすじ</span>
               {!synopsisOpen ? (
                 <span className={`tpage-synopsis-preview${synopsis ? '' : ' is-empty'}`}>
-                  {synopsis ? synopsis.replace(/\s+/gu, ' ') : '未記入（クリックして書く）'}
+                  {synopsis ? synopsis.replace(/\s+/gu, ' ') : '未記入（押して書く）'}
                 </span>
               ) : null}
             </button>

@@ -1,27 +1,40 @@
 // 章フォルダ（本編タブのツリー表示）。中に話を並べ、章ごとの操作を持つ。
+import { memo } from 'react'
 import { Link } from 'react-router-dom'
 import { missingActiveLabel } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
 import type { AppData, Chapter, ID } from '../../../domain/types'
 import { paths } from '../../../routes'
 import { actions } from '../../../store/actions'
+import { getData } from '../../../store/appStore'
 import { attempt, notify, notifyError } from '../../../store/uiStore'
 import { confirmDialog, promptDialog } from '../../../ui/dialogs'
 import { ChevronRightIcon, DownIcon, EditIcon, FolderIcon, PlusIcon, UpIcon, XIcon } from '../../../ui/icons'
 import { PieceRow } from './PieceRow'
-import { chapterName, chapterStats, chapterStepAvailability, formatRenumbering, renumberingOnRelease } from './storyLogic'
+import {
+  chapterName,
+  formatRenumbering,
+  renumberingOnRelease,
+  sameRows,
+  shallowEqual,
+  statsOf,
+  type PieceRowData,
+} from './storyLogic'
+import { useKeepMovedInPlace } from './useKeepMovedInPlace'
 
 export const CHAPTER_ADD_BLOCKED_REASON =
   '通し番号では、新しい話は必ず最新の話数になるため、最新話より前の章には話数追加できません。最新話のある章以降に追加してから、並べ替えで移動してください。'
 
 export interface ChapterBlockProps {
-  data: AppData
   chapter: Chapter
-  numbers: Record<ID, number>
+  /** 章の中の話（並び順）。行ごとの値なので、変わった行だけが描き直される */
+  rows: PieceRowData[]
   edit: boolean
-  steps: Record<ID, { up: boolean; down: boolean }>
+  /** 章をタイトル直下の並びの中で上/下に動かせるか */
+  canUp: boolean
+  canDown: boolean
   collapsed: boolean
-  onToggleCollapsed: () => void
+  onToggleCollapsed: (chapterId: ID) => void
   /** この章に話数追加できるか（episodeTargets に含まれるか） */
   canAddEpisode: boolean
   onAddEpisode: (chapterId: ID) => void
@@ -68,26 +81,37 @@ export async function releaseChapter(data: AppData, chapter: Chapter): Promise<b
   return true
 }
 
-export function ChapterBlock({
-  data,
+function ChapterBlockView({
   chapter,
-  numbers,
+  rows,
   edit,
-  steps,
+  canUp,
+  canDown,
   collapsed,
   onToggleCollapsed,
   canAddEpisode,
   onAddEpisode,
   onPieceMoved,
 }: ChapterBlockProps) {
-  const stats = chapterStats(data, chapter.id)
-  const chStep = chapterStepAvailability(data, chapter.id)
+  const stats = statsOf(rows)
   const name = chapterName(chapter)
-  const pieces = chapter.pieceIds.map((id) => data.pieces[id]).filter(Boolean)
   const bodyId = `chapter-body-${chapter.id}`
+  const { ref, move } = useKeepMovedInPlace<HTMLLIElement>(chapter.id)
+
+  // 動かした章が押した指の下に残るように（続けて押すとそのまま動かし続けられる）
+  const step = (dir: -1 | 1) => {
+    const same = dir < 0 ? '[data-testid="chapter-up"]' : '[data-testid="chapter-down"]'
+    const other = dir < 0 ? '[data-testid="chapter-down"]' : '[data-testid="chapter-up"]'
+    move(() => attempt(() => (actions.moveChapterStep(chapter.id, dir), true)), [same, other])
+  }
 
   return (
-    <li className={`story-chapter${collapsed ? ' is-collapsed' : ''}`} data-testid="chapter-block" data-chapter-id={chapter.id}>
+    <li
+      ref={ref}
+      className={`story-chapter${collapsed ? ' is-collapsed' : ''}`}
+      data-testid="chapter-block"
+      data-chapter-id={chapter.id}
+    >
       <div className="story-chapter-head">
         <button
           type="button"
@@ -95,7 +119,7 @@ export function ChapterBlock({
           aria-expanded={!collapsed}
           aria-controls={bodyId}
           aria-label={collapsed ? `${name}を開く` : `${name}を折りたたむ`}
-          onClick={onToggleCollapsed}
+          onClick={() => onToggleCollapsed(chapter.id)}
           data-testid="chapter-collapse"
         >
           <ChevronRightIcon />
@@ -135,13 +159,13 @@ export function ChapterBlock({
         <div className="story-chapter-edit" role="group" aria-label={`${name}の操作`}>
           <button type="button" className="btn btn-sm" onClick={() => void renameChapter(chapter)} data-testid="chapter-rename">
             <EditIcon />
-            名前変更
+            名前を変更
           </button>
           <button
             type="button"
             className="icon-btn"
-            onClick={() => attempt(() => actions.moveChapterStep(chapter.id, -1))}
-            disabled={!chStep.up}
+            onClick={() => step(-1)}
+            disabled={!canUp}
             aria-label="章を上へ"
             title="章を1つ上へ"
             data-testid="chapter-up"
@@ -151,8 +175,8 @@ export function ChapterBlock({
           <button
             type="button"
             className="icon-btn"
-            onClick={() => attempt(() => actions.moveChapterStep(chapter.id, 1))}
-            disabled={!chStep.down}
+            onClick={() => step(1)}
+            disabled={!canDown}
             aria-label="章を下へ"
             title="章を1つ下へ"
             data-testid="chapter-down"
@@ -163,7 +187,7 @@ export function ChapterBlock({
           <button
             type="button"
             className="btn btn-sm btn-danger"
-            onClick={() => void releaseChapter(data, chapter)}
+            onClick={() => void releaseChapter(getData(), chapter)}
             data-testid="chapter-remove"
           >
             <XIcon />
@@ -173,21 +197,12 @@ export function ChapterBlock({
       ) : null}
 
       <div id={bodyId} className="story-chapter-body" hidden={collapsed}>
-        {pieces.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="story-chapter-empty">この章にはまだ話がありません。</p>
         ) : (
           <ol className="story-list story-chapter-list">
-            {pieces.map((p) => (
-              <PieceRow
-                key={p.id}
-                data={data}
-                piece={p}
-                numbers={numbers}
-                edit={edit}
-                canUp={steps[p.id]?.up ?? false}
-                canDown={steps[p.id]?.down ?? false}
-                onMoved={onPieceMoved}
-              />
+            {rows.map((row) => (
+              <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onPieceMoved} />
             ))}
           </ol>
         )}
@@ -195,3 +210,12 @@ export function ChapterBlock({
     </li>
   )
 }
+
+/** 章の中の行は要素ごとに比べ、ほかの値はそのまま比べる（変わった章だけを描き直す） */
+function sameProps(a: ChapterBlockProps, b: ChapterBlockProps): boolean {
+  const { rows: ra, ...restA } = a
+  const { rows: rb, ...restB } = b
+  return shallowEqual(restA, restB) && sameRows(ra, rb)
+}
+
+export const ChapterBlock = memo(ChapterBlockView, sameProps)

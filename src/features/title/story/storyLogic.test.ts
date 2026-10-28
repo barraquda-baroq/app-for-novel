@@ -15,23 +15,28 @@ import {
   setNumbering,
   updateVersion,
 } from '../../../domain/storyOps'
-import { locatePiece } from '../../../domain/structure'
+import { canDeletePiece, locatePiece } from '../../../domain/structure'
 import { emptyData, type AppData, type ID } from '../../../domain/types'
 import {
   chapterStats,
   chapterStepAvailability,
   defaultEpisodeTarget,
+  deletePermissions,
   entryCounts,
   excerptOf,
   findSlotIndex,
   formatRenumbering,
   memoExcerpt,
   optionsWithinChapter,
+  pieceRows,
   pieceSummary,
   previewEpisode,
   previewMoveLabel,
   renumberingOnRelease,
+  rowsFor,
+  sameRows,
   specialPositionPreference,
+  statsOfPieces,
   stepAvailability,
   titleStats,
 } from './storyLogic'
@@ -324,5 +329,106 @@ describe('要約と集計', () => {
       [cats[1].id]: 0,
       [extra.result]: 0,
     })
+  })
+})
+
+describe('抜粋（本文の先頭だけを見る）', () => {
+  /** 以前の実装（本文全体を詰めてから切り詰める）。結果が同じであること */
+  function reference(text: string, max = 90): string {
+    const flat = text.replace(/\s+/gu, ' ').trim()
+    const chars = Array.from(flat)
+    return chars.length > max ? `${chars.slice(0, max).join('')}…` : flat
+  }
+
+  it('空白の詰め方・切り詰め・サロゲートペアが以前と同じ', () => {
+    const samples = [
+      '',
+      '   ',
+      '　月の光が\n\n差し込む。　',
+      'あ'.repeat(90),
+      'あ'.repeat(91),
+      `${'あ'.repeat(89)} い`,
+      `${'あ'.repeat(90)}   `,
+      `${'あ'.repeat(90)}  い`,
+      '𠮷'.repeat(95),
+      '\t先頭の\r\n空白　と 途中の空白',
+    ]
+    for (const t of samples) {
+      for (const max of [1, 5, 89, 90, 91]) expect(excerptOf(t, max), JSON.stringify([t, max])).toBe(reference(t, max))
+    }
+    let seed = 7
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    const alphabet = ['あ', 'い', ' ', '\n', '　', '\t', '𠮷', 'a']
+    for (let i = 0; i < 300; i++) {
+      const t = Array.from({ length: Math.floor(rnd() * 40) }, () => alphabet[Math.floor(rnd() * alphabet.length)]).join('')
+      const max = 1 + Math.floor(rnd() * 20)
+      expect(excerptOf(t, max), JSON.stringify([t, max])).toBe(reference(t, max))
+    }
+  })
+})
+
+describe('一覧の各行', () => {
+  /** 章あり・特殊ブロック・章の後ろのタイトル直下の話を含む構成 */
+  function complex(): { data: AppData; titleId: ID } {
+    const { data, titleId } = setup(4)
+    let d = addSpecial(data, titleId, { chapterId: null, index: 0 }, 'プロローグ').data
+    d = setChaptersEnabled(d, titleId, true)
+    const ch2 = addChapter(d, titleId, '第二部')
+    d = ch2.data
+    d = addEpisode(d, titleId, ch2.result).data
+    d = addEpisode(d, titleId, ch2.result).data
+    d = addSpecial(d, titleId, { chapterId: ch2.result, index: 1 }, '幕間').data
+    d = addEpisode(d, titleId, null).data
+    return { data: d, titleId }
+  }
+
+  it('削除できるかは canDeletePiece と同じ（通し番号・章ごと・章を隠した時）', () => {
+    const { data, titleId } = complex()
+    for (const d of [data, setNumbering(data, titleId, 'perChapter'), setChaptersEnabled(data, titleId, false)]) {
+      const perms = deletePermissions(d, titleId)
+      const ids = Object.keys(d.pieces).filter((id) => d.pieces[id].titleId === titleId)
+      expect(Object.keys(perms).sort()).toEqual([...ids].sort())
+      for (const id of ids) expect(perms[id], id).toEqual(canDeletePiece(d, id))
+    }
+  })
+
+  it('行の値: 表記・採用中の稿・稿の数。編集モードの値は渡した時だけ', () => {
+    const { data, titleId, ids } = setup(3)
+    let d = addVersion(data, ids[0], { body: '別案' }).data
+    d = setActiveVersion(d, ids[1], null)
+    d = movePiece(d, ids[2], { chapterId: null, index: 0 })
+    const plain = pieceRows(d, titleId)
+    expect(Object.keys(plain)).toEqual([ids[2], ids[0], ids[1]])
+    expect(plain[ids[2]]).toMatchObject({ label: '第1話', fullLabel: '第1話', canUp: false, canDown: false, canDelete: false })
+    expect(plain[ids[0]]).toMatchObject({ label: '第2話', versionCount: 2, version: d.versions[d.pieces[ids[0]].versionIds[0]] })
+    expect(plain[ids[1]].version).toBeNull()
+
+    const editing = pieceRows(d, titleId, { steps: stepAvailability(d, titleId), deletable: deletePermissions(d, titleId) })
+    expect(editing[ids[2]]).toMatchObject({ canUp: false, canDown: true, canDelete: false })
+    expect(editing[ids[2]].deleteReason).toContain('途中の話数は削除できません')
+    expect(editing[ids[1]]).toMatchObject({ canUp: true, canDown: false, canDelete: true, deleteReason: undefined })
+  })
+
+  it('変わっていない行は同じ内容と判定され、話数が変わった行だけが変わる', () => {
+    const { data, titleId, ids } = setup(5)
+    const before = pieceRows(data, titleId)
+    const after = pieceRows(movePieceStep(data, ids[3], -1), titleId)
+    const same = [ids[0], ids[1], ids[4]]
+    expect(sameRows(rowsFor(before, same), rowsFor(after, same))).toBe(true)
+    expect(sameRows(rowsFor(before, [ids[2]]), rowsFor(after, [ids[2]]))).toBe(false)
+    expect(sameRows(rowsFor(before, ids), rowsFor(before, ids.slice(0, 4)))).toBe(false)
+    // 見つからない話は飛ばす
+    expect(rowsFor(before, ['none', ids[0]]).map((r) => r.piece.id)).toEqual([ids[0]])
+  })
+
+  it('集計は本文を数え直した結果と同じ（稿ごとのキャッシュを使う）', () => {
+    const { data, titleId, ids } = setup(3)
+    let d = updateVersion(data, data.pieces[ids[0]].versionIds[0], { body: 'あい う\nえお' })
+    d = updateVersion(d, d.pieces[ids[1]].versionIds[0], { body: 'か'.repeat(450) })
+    expect(statsOfPieces(d, ids)).toMatchObject({ pieces: 3, chars: 455, pages: 1 + 2, missingActive: 0 })
+    // 本文を編集すると新しい稿のレコードになるので、数え直される
+    d = updateVersion(d, d.pieces[ids[0]].versionIds[0], { body: 'あ' })
+    expect(statsOfPieces(d, ids).chars).toBe(451)
+    expect(titleStats(d, titleId).chars).toBe(451)
   })
 })

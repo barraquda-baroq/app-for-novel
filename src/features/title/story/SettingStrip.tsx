@@ -47,7 +47,7 @@ export function SettingStrip({ titleId }: { titleId: ID }) {
         })}
       </ul>
       <Link to={settingsPath} className="btn btn-ghost btn-sm story-settings-open">
-        設定を開く
+        設定項目を開く
         <ChevronRightIcon />
       </Link>
     </section>
