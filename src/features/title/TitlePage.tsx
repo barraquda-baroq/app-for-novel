@@ -1,6 +1,7 @@
 // タイトル画面: タイトル名・あらすじ・集計と、本編／設定／戦略／アイデアのタブ。
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { missingActiveLabel } from '../../domain/entityOps'
 import { formatCount } from '../../domain/text'
 import { paths, type TitleTab } from '../../routes'
 import { actions } from '../../store/actions'
@@ -105,7 +106,7 @@ export function TitlePage() {
             </li>
             {stats.missingActive > 0 ? (
               <li className="tpage-chip is-warn" data-testid="stat-missing">
-                採用原稿なし {stats.missingActive}話
+                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials)}
               </li>
             ) : null}
             {title.chaptersEnabled ? (

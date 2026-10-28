@@ -7,7 +7,9 @@ import {
   addVersion,
   episodeTargets,
   insertOptions,
+  movePiece,
   movePieceStep,
+  removeChapter,
   setActiveVersion,
   setChaptersEnabled,
   setNumbering,
@@ -22,11 +24,13 @@ import {
   entryCounts,
   excerptOf,
   findSlotIndex,
+  formatRenumbering,
   memoExcerpt,
   optionsWithinChapter,
   pieceSummary,
   previewEpisode,
   previewMoveLabel,
+  renumberingOnRelease,
   specialPositionPreference,
   stepAvailability,
   titleStats,
@@ -80,6 +84,40 @@ describe('previewEpisode', () => {
     expect(previewEpisode(d, titleId, r.result)?.description).toBe('「第2章」の第2話')
     expect(previewEpisode(d, titleId, null)?.description).toBe('タイトル直下の第1話')
   })
+
+  it('どこに入るか（前後の話）も説明する。末尾のエピローグより前に入ることがわかる', () => {
+    const { data, titleId } = setup(2)
+    expect(previewEpisode(data, titleId)?.placement).toBe('「第2話」の後に入ります。')
+    const d = addSpecial(data, titleId, { chapterId: null, index: 2 }, 'エピローグ').data
+    expect(previewEpisode(d, titleId)?.placement).toBe('「第2話」の後（「エピローグ」の前）に入ります。')
+    // 話がまだなければ、前後の説明はない
+    const empty = setup()
+    expect(previewEpisode(empty.data, empty.titleId)?.placement).toBeNull()
+    const onlyPrologue = addSpecial(empty.data, empty.titleId, { chapterId: null, index: 0 }, 'プロローグ').data
+    expect(previewEpisode(onlyPrologue, empty.titleId)?.placement).toBe('「プロローグ」の後に入ります。')
+  })
+
+  it('後ろにしか何もなければ「先頭（…の前）」と説明する', () => {
+    const empty = setup()
+    let d = addSpecial(empty.data, empty.titleId, { chapterId: null, index: 0 }, 'エピローグ').data
+    d = setChaptersEnabled(d, empty.titleId, true)
+    // 章を解除して [エピローグ]（章管理はオン・章なし）にする
+    d = removeChapter(d, d.titles[empty.titleId].structure[0].id)
+    expect(previewEpisode(d, empty.titleId)?.placement).toBe('タイトル直下の先頭（「エピローグ」の前）に入ります。')
+  })
+
+  it('章ありでは、章の中（またはタイトル直下）の前後で説明する', () => {
+    const { data, titleId } = setup(2)
+    let d = setChaptersEnabled(data, titleId, true)
+    const ch1 = d.titles[titleId].structure[0].id
+    d = addSpecial(d, titleId, { chapterId: ch1, index: 2 }, '幕間').data
+    expect(previewEpisode(d, titleId, ch1)?.placement).toBe('「第1章」の中の「第2話」の後（「幕間」の前）に入ります。')
+    const r = addChapter(d, titleId)
+    d = r.data
+    expect(previewEpisode(d, titleId, r.result)?.placement).toBe('「第2章」に入ります。')
+    d = addSpecial(d, titleId, { chapterId: null, index: d.titles[titleId].structure.length }, 'エピローグ').data
+    expect(previewEpisode(d, titleId, null)?.placement).toBe('タイトル直下の「第2章」の後（「エピローグ」の前）に入ります。')
+  })
 })
 
 describe('defaultEpisodeTarget', () => {
@@ -127,6 +165,47 @@ describe('特殊追加の位置', () => {
     const current = findSlotIndex(opts, locatePiece(data, ids[1]))
     expect(opts[current].label).toContain('第1話')
     expect(findSlotIndex(opts, null)).toBe(-1)
+  })
+})
+
+describe('章の解除で振り直される話数', () => {
+  it('章ごとの話数では、中の話が章の外の話として数え直される', () => {
+    const { data, titleId, ids } = setup(3)
+    let d = setChaptersEnabled(data, titleId, true)
+    // [第1話（直下）, 第1章[第1話, 第2話]]
+    d = movePiece(d, ids[0], { chapterId: null, index: 0 })
+    d = setNumbering(d, titleId, 'perChapter')
+    const ch1 = d.titles[titleId].structure[1].id
+    const r = renumberingOnRelease(d, ch1)
+    expect(r.map((x) => [x.pieceId, x.before, x.after])).toEqual([
+      [ids[1], '第1話', '第2話'],
+      [ids[2], '第2話', '第3話'],
+    ])
+    // データは変わらない
+    expect(d.chapters[ch1]).toBeDefined()
+  })
+
+  it('章の後ろにある章の外の話の話数が変わる場合も含める', () => {
+    const { data, titleId, ids } = setup(3)
+    let d = setChaptersEnabled(data, titleId, true)
+    // [第1章[第1話, 第2話], 第1話（直下）]
+    d = movePiece(d, ids[2], { chapterId: null, index: 1 })
+    d = setNumbering(d, titleId, 'perChapter')
+    const ch1 = d.titles[titleId].structure[0].id
+    expect(renumberingOnRelease(d, ch1).map((x) => [x.pieceId, x.before, x.after])).toEqual([[ids[2], '第1話', '第3話']])
+  })
+
+  it('通し番号では話数は変わらない', () => {
+    const { data, titleId } = setup(3)
+    const d = setChaptersEnabled(data, titleId, true)
+    expect(renumberingOnRelease(d, d.titles[titleId].structure[0].id)).toEqual([])
+    expect(renumberingOnRelease(d, 'none')).toEqual([])
+  })
+
+  it('説明は題を添え、多ければ「ほか n話」にまとめる', () => {
+    const items = [1, 2, 3].map((n) => ({ pieceId: `p${n}`, before: `第${n}話`, after: `第${n + 1}話`, subtitle: n === 1 ? '旅立ち' : '' }))
+    expect(formatRenumbering(items)).toBe('第1話「旅立ち」→第2話、第2話→第3話、第3話→第4話')
+    expect(formatRenumbering(items, 2)).toBe('第1話「旅立ち」→第2話、第2話→第3話 ほか1話')
   })
 })
 
@@ -199,6 +278,14 @@ describe('要約と集計', () => {
 
     const stats = titleStats(d, titleId)
     expect(stats).toMatchObject({ pieces: 2, episodes: 2, specials: 0, missingActive: 1, chars: 4, pages: 1 })
+  })
+
+  it('採用原稿なしは話と特殊ブロックを分けて数える', () => {
+    const { data, titleId, ids } = setup(2)
+    const sp = addSpecial(data, titleId, { chapterId: null, index: 0 }, 'プロローグ')
+    let d = setActiveVersion(sp.data, sp.result, null)
+    d = setActiveVersion(d, ids[0], null)
+    expect(titleStats(d, titleId)).toMatchObject({ missingActive: 2, missingEpisodes: 1, missingSpecials: 1 })
   })
 
   it('章ごとの集計', () => {

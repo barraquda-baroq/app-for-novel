@@ -14,7 +14,22 @@ function load(titleId: ID): ID[] {
   }
 }
 
-export function useCollapsedChapters(titleId: ID): [Set<ID>, (chapterId: ID) => void] {
+function save(titleId: ID, collapsed: Set<ID>): void {
+  try {
+    sessionStorage.setItem(KEY(titleId), JSON.stringify([...collapsed]))
+  } catch {
+    /* 保存できなくても動作は続ける */
+  }
+}
+
+export interface CollapsedChapters {
+  collapsed: Set<ID>
+  toggle: (chapterId: ID) => void
+  /** 章を開く（折りたたまれていなければ何もしない） */
+  expand: (chapterId: ID) => void
+}
+
+export function useCollapsedChapters(titleId: ID): CollapsedChapters {
   const [collapsed, setCollapsed] = useState<Set<ID>>(() => new Set(load(titleId)))
   const toggle = useCallback(
     (chapterId: ID) => {
@@ -22,15 +37,23 @@ export function useCollapsedChapters(titleId: ID): [Set<ID>, (chapterId: ID) => 
         const next = new Set(prev)
         if (next.has(chapterId)) next.delete(chapterId)
         else next.add(chapterId)
-        try {
-          sessionStorage.setItem(KEY(titleId), JSON.stringify([...next]))
-        } catch {
-          /* 保存できなくても動作は続ける */
-        }
+        save(titleId, next)
         return next
       })
     },
     [titleId],
   )
-  return [collapsed, toggle]
+  const expand = useCallback(
+    (chapterId: ID) => {
+      setCollapsed((prev) => {
+        if (!prev.has(chapterId)) return prev
+        const next = new Set(prev)
+        next.delete(chapterId)
+        save(titleId, next)
+        return next
+      })
+    },
+    [titleId],
+  )
+  return { collapsed, toggle, expand }
 }

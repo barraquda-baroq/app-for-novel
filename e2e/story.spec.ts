@@ -414,6 +414,236 @@ test.describe('タイトル画面・本編', () => {
   })
 })
 
+test.describe('タイトル画面・本編（細部）', () => {
+  test('同じ見出しの特殊ブロックが並んでも、移動先は現在の位置が選ばれ、差し込み位置は区別できる', async ({ page }) => {
+    await openApp(page)
+    const titleId = await seed(page, ({ actions }) => {
+      const id = actions.createTitle('幕間つき')
+      for (let i = 0; i < 4; i++) actions.addEpisode(id)
+      actions.addSpecial(id, { chapterId: null, index: 1 }, '幕間')
+      actions.addSpecial(id, { chapterId: null, index: 3 }, '幕間')
+      return id
+    })
+    await openTitle(page, titleId)
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '幕間', '第2話', '幕間', '第3話', '第4話'])
+
+    await page.getByTestId('edit-toggle').click()
+    await rows(page).nth(4).getByTestId('piece-move').click()
+    const select = page.getByTestId('move-target')
+    await expect(select.locator('option:checked')).toContainText('（現在の位置）')
+    await expect(select.locator('option:checked')).toContainText('「幕間」の後（「第4話」の前）')
+    await expect(page.getByTestId('move-submit')).toBeDisabled()
+    const moveOptions = await select.locator('option').allTextContents()
+    expect(new Set(moveOptions).size).toBe(moveOptions.length)
+    await page.keyboard.press('Escape')
+    await expect(dialog(page)).toHaveCount(0)
+
+    await page.getByTestId('add-button').click()
+    await page.getByTestId('add-kind-special').click()
+    const position = page.getByTestId('special-position')
+    const options = await position.locator('option').allTextContents()
+    expect(new Set(options).size).toBe(options.length)
+    expect(options).toContain('「幕間」の後（「第3話」の前）')
+    expect(options).toContain('「幕間」の後（「第2話」の前）')
+    await page.getByTestId('special-label').fill('回想')
+    await position.selectOption({ label: '「幕間」の後（「第3話」の前）' })
+    await page.getByTestId('add-submit').click()
+    await expect(page).toHaveURL(/#\/t\/[^/]+\/p\//)
+    await page.goBack()
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '幕間', '第2話', '幕間', '回想', '第3話', '第4話'])
+  })
+
+  test('スマホ幅（360px）: 長い設定項目名は省略表示され、横スクロールしない（全文は title で読める）', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 740 })
+    await openApp(page)
+    const longName = '世界観・歴史・地理・魔法体系・用語をまとめた総合資料'
+    expect(Array.from(longName)).toHaveLength(26)
+    const titleId = await seed(
+      page,
+      ({ actions }, a: { name: string }) => {
+        const id = actions.createTitle('設定の多い作品')
+        actions.addCategory(id, a.name)
+        return id
+      },
+      { name: longName },
+    )
+    await openTitle(page, titleId)
+    const chip = page.getByTestId('setting-chip').filter({ hasText: '世界観・歴史' })
+    await expect(chip).toHaveAttribute('title', longName)
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(0)
+    const box = await chip.boundingBox()
+    expect(box!.x + box!.width).toBeLessThanOrEqual(360)
+    // 件数のバッジは省略されずに見えている
+    await expect(chip.locator('.story-settings-chip-count')).toBeVisible()
+    const countBox = await chip.locator('.story-settings-chip-count').boundingBox()
+    expect(countBox!.x + countBox!.width).toBeLessThanOrEqual(360)
+  })
+
+  test('↑↓で折りたたんだ章へ入ると、その章が開いて知らせが出る', async ({ page }) => {
+    await openApp(page)
+    const { titleId, chapterId } = await seed(page, ({ actions }) => {
+      const id = actions.createTitle('第二部あり')
+      for (let i = 0; i < 4; i++) actions.addEpisode(id)
+      actions.setChaptersEnabled(id, true)
+      const ch = actions.addChapter(id, '第二部')
+      // 第二部の後ろ（タイトル直下）に第5話
+      actions.addEpisode(id, null)
+      return { titleId: id, chapterId: ch }
+    })
+    await openTitle(page, titleId)
+    const second = page.locator(`[data-testid="chapter-block"][data-chapter-id="${chapterId}"]`)
+    await second.getByTestId('chapter-collapse').click()
+    await expect(second.getByTestId('chapter-collapse')).toHaveAttribute('aria-expanded', 'false')
+
+    await page.getByTestId('edit-toggle').click()
+    const root = storyList(page).locator(':scope > [data-testid="piece-row"]')
+    await expect(root).toHaveCount(1)
+    await root.getByTestId('piece-up').click()
+    await expect(page.getByRole('status').filter({ hasText: '「第5話」を「第二部」へ移動しました' })).toBeVisible()
+    await expect(second.getByTestId('chapter-collapse')).toHaveAttribute('aria-expanded', 'true')
+    await expect(second.getByTestId('piece-row')).toBeVisible()
+    await expect.poll(() => labelsIn(second)).toEqual(['第5話'])
+    // 行が章の中に作り直されても、押したボタンにフォーカスが戻る
+    await expect(second.getByTestId('piece-up')).toBeFocused()
+
+    // 「移動…」で折りたたんだ章へ動かしても、その章が開く
+    await second.getByTestId('chapter-collapse').click()
+    await expect(second.getByTestId('chapter-collapse')).toHaveAttribute('aria-expanded', 'false')
+    const first = page.getByTestId('chapter-block').first()
+    await first.getByTestId('piece-row').last().getByTestId('piece-move').click()
+    await page.getByTestId('move-target').selectOption({ label: '「第二部」の先頭' })
+    await page.getByTestId('move-submit').click()
+    await expect(second.getByTestId('chapter-collapse')).toHaveAttribute('aria-expanded', 'true')
+    await expect.poll(() => labelsIn(second)).toEqual(['第4話', '第5話'])
+  })
+
+  test('特殊追加: 見出しに「エピローグ」と入力しても末尾が選ばれる（位置を自分で選んだ後は変えない）', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seedTitleWithEpisodes(page, '見出し入力', ['一', '二', '三'])
+    await openTitle(page, titleId)
+    await page.getByTestId('add-button').click()
+    await page.getByTestId('add-kind-special').click()
+    const position = page.getByTestId('special-position')
+    await expect(position.locator('option:checked')).toContainText('先頭')
+
+    await page.getByTestId('special-label').fill('エピローグ')
+    await expect(position.locator('option:checked')).toContainText('末尾')
+    await page.getByTestId('special-label').fill('プロローグ')
+    await expect(position.locator('option:checked')).toContainText('先頭')
+
+    // 位置を自分で選んだら、見出しを打ち直しても位置は変わらない
+    await position.selectOption({ index: 1 })
+    await page.getByTestId('special-label').fill('あとがき')
+    await expect(position.locator('option:checked')).toContainText('「第1話」の後')
+  })
+
+  test('章ごとの話数で章を解除すると、振り直される話数が確認とトーストに出る', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seed(page, ({ actions, getData }) => {
+      const id = actions.createTitle('章ごと')
+      const ids = [0, 1, 2].map(() => actions.addEpisode(id))
+      actions.updatePiece(ids[1], { subtitle: '旅立ち' })
+      actions.updatePiece(ids[2], { subtitle: '嵐' })
+      actions.setChaptersEnabled(id, true)
+      actions.movePiece(ids[0], { chapterId: null, index: 0 })
+      actions.setNumbering(id, 'perChapter')
+      return { titleId: id, chapterId: getData().titles[id].structure[1].id }
+    })
+    await openTitle(page, titleId)
+    const block = page.getByTestId('chapter-block')
+    await expect.poll(() => labelsIn(block)).toEqual(['第1話', '第2話'])
+
+    await page.getByTestId('edit-toggle').click()
+    await block.getByTestId('chapter-remove').click()
+    await expect(dialog(page)).toContainText('話数が振り直されます')
+    await expect(dialog(page)).toContainText('第1話「旅立ち」→第2話')
+    await expect(dialog(page)).toContainText('第2話「嵐」→第3話')
+    await confirmIn(page, '章を解除')
+    await expect(page.getByRole('status').filter({ hasText: '話数を振り直しました' })).toContainText('第1話「旅立ち」→第2話')
+    await expect.poll(() => labelsIn(storyList(page))).toEqual(['第1話', '第2話', '第3話'])
+  })
+
+  test('通し番号で章を解除しても話数は変わらないので、振り直しの説明は出ない', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seed(page, ({ actions }) => {
+      const id = actions.createTitle('通し')
+      actions.addEpisode(id)
+      actions.addEpisode(id)
+      actions.setChaptersEnabled(id, true)
+      return { titleId: id }
+    })
+    await openTitle(page, titleId)
+    await page.getByTestId('edit-toggle').click()
+    await page.getByTestId('chapter-remove').click()
+    await expect(dialog(page)).toContainText('削除されません')
+    await expect(dialog(page)).not.toContainText('振り直')
+    await dialog(page).getByRole('button', { name: 'キャンセル' }).click()
+  })
+
+  test('メモの「並べ替え・削除」は本編の編集モードとは別に切り替わる', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seed(page, ({ actions }) => {
+      const id = actions.createTitle('メモ編集')
+      actions.addEpisode(id)
+      actions.addMemo(id, '一つ目')
+      actions.addMemo(id, '二つ目')
+      return { titleId: id }
+    })
+    await openTitle(page, titleId)
+    const memoToggle = page.getByTestId('memo-edit-toggle')
+    await memoToggle.click()
+    await expect(memoToggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('memo-delete')).toHaveCount(2)
+    // 本編は編集モードにならない
+    await expect(page.getByTestId('edit-toggle')).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.getByTestId('edit-help')).toHaveCount(0)
+    await expect(rows(page).first().getByTestId('piece-up')).toHaveCount(0)
+
+    // 本編の編集はメモに影響しない
+    await memoToggle.click()
+    await page.getByTestId('edit-toggle').click()
+    await expect(page.getByTestId('edit-help')).toBeVisible()
+    await expect(page.getByTestId('memo-delete')).toHaveCount(0)
+    await expect(memoToggle).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('採用原稿なしは話と特殊ブロックを分けて数える（タイトル・章ブロック・章ページ）', async ({ page }) => {
+    await openApp(page)
+    const { titleId, chapterId } = await seed(page, ({ actions, getData }) => {
+      const id = actions.createTitle('未採用の内訳')
+      const e1 = actions.addEpisode(id)
+      actions.addEpisode(id)
+      const sp = actions.addSpecial(id, { chapterId: null, index: 0 }, 'プロローグ')
+      actions.setActiveVersion(e1, null)
+      actions.setActiveVersion(sp, null)
+      actions.setChaptersEnabled(id, true)
+      return { titleId: id, chapterId: getData().titles[id].structure[0].id }
+    })
+    await openTitle(page, titleId)
+    await expect(page.getByTestId('stat-missing')).toHaveText('採用原稿なし 1話＋特殊1')
+    await expect(page.getByTestId('chapter-block').getByTestId('chapter-missing')).toHaveText('採用原稿なし 1話＋特殊1')
+    await openApp(page, `/t/${titleId}/c/${chapterId}`)
+    await expect(page.getByTestId('chapter-stat-missing')).toHaveText('採用原稿なし 1話＋特殊1')
+  })
+
+  test('話数追加のプレビューは、どこに入るかも表示する', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seed(page, ({ actions }) => {
+      const id = actions.createTitle('配置')
+      actions.addEpisode(id)
+      actions.addEpisode(id)
+      actions.addSpecial(id, { chapterId: null, index: 2 }, 'エピローグ')
+      return { titleId: id }
+    })
+    await openTitle(page, titleId)
+    await page.getByTestId('add-button').click()
+    await page.getByTestId('add-kind-episode').click()
+    await expect(page.getByTestId('episode-preview')).toContainText('第3話が作成されます')
+    await expect(page.getByTestId('episode-placement')).toHaveText('「第2話」の後（「エピローグ」の前）に入ります。')
+  })
+})
+
 test('スマホ幅（360px）でも横スクロールしない', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 740 })
   await openApp(page)

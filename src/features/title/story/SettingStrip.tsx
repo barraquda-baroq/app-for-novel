@@ -21,19 +21,23 @@ export function SettingStrip({ titleId }: { titleId: ID }) {
       </h2>
       <ul className="story-settings-chips">
         {categories.length === 0 ? <li className="small muted">まだありません</li> : null}
-        {categories.map((c) => (
-          <li key={c.id}>
-            <Link
-              to={`${settingsPath}&cat=${encodeURIComponent(c.id)}`}
-              className="story-settings-chip"
-              data-testid="setting-chip"
-              aria-label={`${c.name.trim() || '無題の設定項目'}（${counts[c.id] ?? 0}件）`}
-            >
-              <span className="story-settings-chip-name">{c.name.trim() || '無題の設定項目'}</span>
-              <span className="story-settings-chip-count">{counts[c.id] ?? 0}</span>
-            </Link>
-          </li>
-        ))}
+        {categories.map((c) => {
+          const name = c.name.trim() || '無題の設定項目'
+          return (
+            <li key={c.id}>
+              <Link
+                to={`${settingsPath}&cat=${encodeURIComponent(c.id)}`}
+                className="story-settings-chip"
+                data-testid="setting-chip"
+                aria-label={`${name}（${counts[c.id] ?? 0}件）`}
+                title={name}
+              >
+                <span className="story-settings-chip-name">{name}</span>
+                <span className="story-settings-chip-count">{counts[c.id] ?? 0}</span>
+              </Link>
+            </li>
+          )
+        })}
       </ul>
       <Link to={settingsPath} className="btn btn-ghost btn-sm story-settings-open">
         設定を開く

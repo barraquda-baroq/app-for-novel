@@ -1,5 +1,6 @@
 // 章フォルダ（本編タブのツリー表示）。中に話を並べ、章ごとの操作を持つ。
 import { Link } from 'react-router-dom'
+import { missingActiveLabel } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
 import type { AppData, Chapter, ID } from '../../../domain/types'
 import { paths } from '../../../routes'
@@ -8,7 +9,7 @@ import { attempt, notify, notifyError } from '../../../store/uiStore'
 import { confirmDialog, promptDialog } from '../../../ui/dialogs'
 import { ChevronRightIcon, DownIcon, EditIcon, FolderIcon, PlusIcon, UpIcon, XIcon } from '../../../ui/icons'
 import { PieceRow } from './PieceRow'
-import { chapterName, chapterStats, chapterStepAvailability } from './storyLogic'
+import { chapterName, chapterStats, chapterStepAvailability, formatRenumbering, renumberingOnRelease } from './storyLogic'
 
 export const CHAPTER_ADD_BLOCKED_REASON =
   '通し番号では、新しい話は必ず最新の話数になるため、最新話より前の章には話数追加できません。最新話のある章以降に追加してから、並べ替えで移動してください。'
@@ -24,6 +25,8 @@ export interface ChapterBlockProps {
   /** この章に話数追加できるか（episodeTargets に含まれるか） */
   canAddEpisode: boolean
   onAddEpisode: (chapterId: ID) => void
+  /** 中の話を ↑↓・移動… で動かした後に呼ばれる */
+  onPieceMoved?: (pieceId: ID, via: 'step' | 'dialog') => void
 }
 
 export async function renameChapter(chapter: Chapter): Promise<void> {
@@ -36,18 +39,32 @@ export async function renameChapter(chapter: Chapter): Promise<void> {
 export async function releaseChapter(data: AppData, chapter: Chapter): Promise<boolean> {
   const count = chapter.pieceIds.filter((id) => data.pieces[id]).length
   const name = chapterName(chapter)
+  // 章ごとに第1話から数えている時は、中の話（と後ろの章の外の話）の話数が変わる
+  const renumbered = renumberingOnRelease(data, chapter.id)
   const ok = await confirmDialog({
     title: `「${name}」を解除しますか？`,
     message:
       (count > 0
         ? `中の話（${count}件）は削除されません。章があった位置に、そのままの並び順で章の外に置かれます。`
-        : 'この章には話がありません。') + (chapter.note.trim() ? '\n\n章のメモは削除されます。' : ''),
+        : 'この章には話がありません。') +
+      (renumbered.length > 0
+        ? `\n\n話数を章ごとに数えているため、章の外の話として数え直され、話数が振り直されます（${formatRenumbering(renumbered)}）。`
+        : '') +
+      (chapter.note.trim() ? '\n\n章のメモは削除されます。' : ''),
     confirmLabel: '章を解除',
     danger: true,
   })
   if (!ok) return false
-  attempt(() => actions.removeChapter(chapter.id))
-  notify(`「${name}」を解除しました`)
+  const removed = attempt(() => {
+    actions.removeChapter(chapter.id)
+    return true
+  })
+  if (!removed) return false
+  notify(
+    renumbered.length > 0
+      ? `「${name}」を解除しました。話数を振り直しました（${formatRenumbering(renumbered, 2)}）`
+      : `「${name}」を解除しました`,
+  )
   return true
 }
 
@@ -61,6 +78,7 @@ export function ChapterBlock({
   onToggleCollapsed,
   canAddEpisode,
   onAddEpisode,
+  onPieceMoved,
 }: ChapterBlockProps) {
   const stats = chapterStats(data, chapter.id)
   const chStep = chapterStepAvailability(data, chapter.id)
@@ -91,7 +109,11 @@ export function ChapterBlock({
             <span>{stats.episodes}話</span>
             {stats.specials > 0 ? <span>特殊 {stats.specials}</span> : null}
             <span>{formatCount(stats.chars)}字</span>
-            {stats.missingActive > 0 ? <span className="badge badge-missing">採用なし {stats.missingActive}</span> : null}
+            {stats.missingActive > 0 ? (
+              <span className="badge badge-missing" data-testid="chapter-missing">
+                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials)}
+              </span>
+            ) : null}
           </span>
         </div>
         <div className="story-chapter-actions">
@@ -164,6 +186,7 @@ export function ChapterBlock({
                 edit={edit}
                 canUp={steps[p.id]?.up ?? false}
                 canDown={steps[p.id]?.down ?? false}
+                onMoved={onPieceMoved}
               />
             ))}
           </ol>

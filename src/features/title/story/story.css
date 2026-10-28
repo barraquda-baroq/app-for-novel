@@ -57,6 +57,12 @@
   list-style: none;
 }
 
+/* 長い項目名でも li が縮めるようにして、チップ内で省略（…）させる */
+.story-settings-chips > li {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .story-settings-chip {
   display: inline-flex;
   align-items: center;
@@ -79,12 +85,14 @@
 }
 
 .story-settings-chip-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .story-settings-chip-count {
+  flex-shrink: 0;
   min-width: 22px;
   padding: 0 6px;
   border-radius: 999px;
@@ -642,6 +650,12 @@
   color: var(--accent);
   font-size: 18px;
   margin-right: 4px;
+}
+
+.story-add-placement {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .story-add-note {

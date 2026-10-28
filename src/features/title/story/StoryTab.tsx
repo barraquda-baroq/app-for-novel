@@ -1,7 +1,7 @@
 // 本編タブ: 設定項目の帯・本編（章／第n話／特殊ブロック）・メモ（一番下）。
 import { useMemo, useState } from 'react'
 import { episodeTargets } from '../../../domain/storyOps'
-import { effectiveNumbering, episodeNumbers, flatten } from '../../../domain/structure'
+import { effectiveNumbering, episodeNumbers, flatten, locatePiece, pieceFullLabel } from '../../../domain/structure'
 import type { ID, NumberingMode } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
@@ -13,7 +13,7 @@ import { NUMBERING_LABELS, changeNumbering, toggleChapters } from './chapterFlow
 import { MemoSection } from './MemoSection'
 import { PieceRow } from './PieceRow'
 import { SettingStrip } from './SettingStrip'
-import { stepAvailability } from './storyLogic'
+import { chapterName, stepAvailability } from './storyLogic'
 import { useCollapsedChapters } from './useCollapsed'
 import './story.css'
 
@@ -27,7 +27,7 @@ export function StoryTab({ titleId }: { titleId: ID }) {
   const title = data.titles[titleId]
   const [edit, setEdit] = useState(false)
   const [adding, setAdding] = useState<AddRequest | null>(null)
-  const [collapsed, toggleCollapsed] = useCollapsedChapters(titleId)
+  const { collapsed, toggle: toggleCollapsed, expand } = useCollapsedChapters(titleId)
 
   const numbers = useMemo(() => episodeNumbers(data, titleId), [data, titleId])
   const flat = useMemo(() => flatten(data, titleId), [data, titleId])
@@ -38,6 +38,18 @@ export function StoryTab({ titleId }: { titleId: ID }) {
   const chaptersOn = title.chaptersEnabled
   const perChapter = effectiveNumbering(title) === 'perChapter'
   const isEmpty = chaptersOn ? title.structure.length === 0 : flat.length === 0
+
+  /** 折りたたんだ章に話を動かしたら、見えなくならないようにその章を開いて知らせる */
+  const onPieceMoved = (pieceId: ID, via: 'step' | 'dialog') => {
+    const d = getData()
+    const slot = locatePiece(d, pieceId)
+    if (!d.titles[titleId]?.chaptersEnabled || !slot?.chapterId || !collapsed.has(slot.chapterId)) return
+    expand(slot.chapterId)
+    // 「移動…」はダイアログ側で知らせるので、↑↓ の時だけ
+    if (via !== 'step') return
+    const p = d.pieces[pieceId]
+    notify(`「${p ? pieceFullLabel(d, p) : '話'}」を「${chapterName(d.chapters[slot.chapterId])}」へ移動しました`)
+  }
 
   const addChapter = () => {
     const id = attempt(() => actions.addChapter(titleId))
@@ -144,6 +156,7 @@ export function StoryTab({ titleId }: { titleId: ID }) {
                         edit={edit}
                         canUp={steps[piece.id]?.up ?? false}
                         canDown={steps[piece.id]?.down ?? false}
+                        onMoved={onPieceMoved}
                       />
                     )
                   }
@@ -161,6 +174,7 @@ export function StoryTab({ titleId }: { titleId: ID }) {
                       onToggleCollapsed={() => toggleCollapsed(chapter.id)}
                       canAddEpisode={targetIds.has(chapter.id)}
                       onAddEpisode={(chapterId) => setAdding({ kind: 'episode', chapterId })}
+                      onPieceMoved={onPieceMoved}
                     />
                   )
                 })
@@ -189,7 +203,7 @@ export function StoryTab({ titleId }: { titleId: ID }) {
         ) : null}
       </section>
 
-      <MemoSection titleId={titleId} edit={edit} onToggleEdit={() => setEdit((v) => !v)} />
+      <MemoSection titleId={titleId} />
 
       {adding ? (
         <AddDialog titleId={titleId} presetKind={adding.kind} chapterId={adding.chapterId} onClose={() => setAdding(null)} />

@@ -62,6 +62,8 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
   )
   const [label, setLabel] = useState('プロローグ')
   const [position, setPosition] = useState(0)
+  // 差し込む位置を自分で選んだら、見出しを打ち直しても位置は自動で変えない
+  const [positionTouched, setPositionTouched] = useState(false)
   const positionIndex = Math.min(position, Math.max(0, options.length - 1))
 
   // メモ
@@ -78,8 +80,10 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
 
   if (!title) return null
 
-  const applyLabel = (next: string) => {
+  /** 見出しに合わせて既定の位置を選ぶ（プロローグは先頭、エピローグ・あとがきは末尾） */
+  const applyLabel = (next: string, { force }: { force: boolean }) => {
     setLabel(next)
+    if (!force && positionTouched) return
     const pref = specialPositionPreference(next)
     if (pref === 'first') setPosition(0)
     else if (pref === 'last') setPosition(options.length - 1)
@@ -194,6 +198,11 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
                     <span>
                       <strong>{preview.description}</strong>が作成されます。
                     </span>
+                    {preview.placement ? (
+                      <span className="story-add-placement" data-testid="episode-placement">
+                        {preview.placement}
+                      </span>
+                    ) : null}
                     <span className="small muted">話数は自動で決まり、後から変更できません。</span>
                   </>
                 ) : (
@@ -243,7 +252,7 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
                 <input
                   className="input"
                   value={label}
-                  onChange={(e) => setLabel(e.target.value)}
+                  onChange={(e) => applyLabel(e.target.value, { force: false })}
                   data-testid="special-label"
                   {...(presetKind ? { 'data-kind-autofocus': true } : {})}
                 />
@@ -255,7 +264,7 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
                     type="button"
                     className="story-add-suggest-chip"
                     aria-pressed={label.trim() === s}
-                    onClick={() => applyLabel(s)}
+                    onClick={() => applyLabel(s, { force: true })}
                   >
                     {s}
                   </button>
@@ -266,7 +275,10 @@ export function AddDialog({ titleId, onClose, presetKind, chapterId }: AddDialog
                 <select
                   className="select"
                   value={positionIndex}
-                  onChange={(e) => setPosition(Number(e.target.value))}
+                  onChange={(e) => {
+                    setPosition(Number(e.target.value))
+                    setPositionTouched(true)
+                  }}
                   data-testid="special-position"
                 >
                   {options.map((o, i) => (

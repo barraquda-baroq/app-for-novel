@@ -9,14 +9,15 @@ import { attempt, notify } from '../../../store/uiStore'
 import { Modal } from '../../../ui/Modal'
 import { findSlotIndex, previewMoveLabel } from './storyLogic'
 
-export function MoveDialog({ pieceId, onClose }: { pieceId: ID; onClose: () => void }) {
+export function MoveDialog({ pieceId, onClose, onMoved }: { pieceId: ID; onClose: () => void; onMoved?: () => void }) {
   const data = useData()
   const formId = useId()
   const piece = data.pieces[pieceId]
   const options = useMemo(() => (piece ? insertOptions(data, piece.titleId, piece.id) : []), [data, piece])
   const currentIndex = useMemo(() => findSlotIndex(options, locatePiece(data, pieceId)), [data, options, pieceId])
-  const [selected, setSelected] = useState(() => Math.max(0, currentIndex))
-  const option = options[selected]
+  // 現在の位置が見つからない時は何も選ばない（先頭などへ黙って動かさないため）
+  const [selected, setSelected] = useState<number | null>(() => (currentIndex >= 0 ? currentIndex : null))
+  const option = selected === null ? undefined : options[selected]
   const afterLabel = useMemo(
     () => (option && piece ? previewMoveLabel(data, piece.id, option.slot) : null),
     [data, option, piece],
@@ -24,12 +25,18 @@ export function MoveDialog({ pieceId, onClose }: { pieceId: ID; onClose: () => v
 
   if (!piece) return null
   const name = pieceFullLabel(data, piece)
-  const unchanged = selected === currentIndex
+  const unchanged = selected !== null && selected === currentIndex
 
   const submit = () => {
     if (!option || unchanged) return
-    attempt(() => actions.movePiece(piece.id, option.slot))
-    notify(piece.kind === 'episode' && afterLabel ? `移動しました（${afterLabel}になりました）` : '移動しました')
+    const moved = attempt(() => {
+      actions.movePiece(piece.id, option.slot)
+      return true
+    })
+    if (moved) {
+      notify(piece.kind === 'episode' && afterLabel ? `移動しました（${afterLabel}になりました）` : '移動しました')
+      onMoved?.()
+    }
     onClose()
   }
 
@@ -59,7 +66,17 @@ export function MoveDialog({ pieceId, onClose }: { pieceId: ID; onClose: () => v
       >
         <label className="field">
           <span>移動先</span>
-          <select className="select" value={selected} onChange={(e) => setSelected(Number(e.target.value))} data-testid="move-target">
+          <select
+            className="select"
+            value={selected ?? ''}
+            onChange={(e) => setSelected(e.target.value === '' ? null : Number(e.target.value))}
+            data-testid="move-target"
+          >
+            {selected === null ? (
+              <option value="" disabled>
+                移動先を選んでください
+              </option>
+            ) : null}
             {options.map((o, i) => (
               <option key={i} value={i}>
                 {o.label}
@@ -71,9 +88,11 @@ export function MoveDialog({ pieceId, onClose }: { pieceId: ID; onClose: () => v
         <p className="small muted" style={{ margin: 0 }} role="status">
           {unchanged
             ? '現在の位置です。移動先を選んでください。'
-            : piece.kind === 'episode'
-              ? `移動すると、この話は「${afterLabel ?? '?'}」になります。ほかの話の話数も並び順どおりに振り直されます。`
-              : '特殊ブロックは話数に数えないので、ほかの話の話数は変わりません。'}
+            : !option
+              ? '移動先を選んでください。'
+              : piece.kind === 'episode'
+                ? `移動すると、この話は「${afterLabel ?? '?'}」になります。ほかの話の話数も並び順どおりに振り直されます。`
+                : '特殊ブロックは話数に数えないので、ほかの話の話数は変わりません。'}
         </p>
       </form>
     </Modal>
