@@ -16,6 +16,7 @@ import {
   type PointerEvent,
   type TextareaHTMLAttributes,
 } from 'react'
+import { revealCaret } from './caret'
 import { useSessionValue, type EditorHub, type FieldHandle } from './editorHub'
 import type { Sel } from './history'
 import type { FieldKey } from './session'
@@ -65,6 +66,7 @@ function useFieldEditor<E extends FieldEl>({ hub, fieldKey, stored, symbols = fa
       if (el && el.value === session.display(fieldKey, latest.current.stored)) {
         pendingSel.current = null
         el.setSelectionRange(sel.start, sel.end)
+        revealCaret(el)
       }
     }
     return {
@@ -108,6 +110,8 @@ function useFieldEditor<E extends FieldEl>({ hub, fieldKey, stored, symbols = fa
     pendingSel.current = null
     try {
       el.setSelectionRange(sel.start, sel.end)
+      // 戻した位置が見えるようにスクロールする（ブラウザは setSelectionRange ではスクロールしない）
+      revealCaret(el)
     } catch {
       /* 種類によっては選択範囲を持たない */
     }

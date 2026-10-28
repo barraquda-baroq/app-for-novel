@@ -2,8 +2,8 @@
 // いま書いている欄（最後にフォーカスした本文・推敲メモ）に働く。押してもフォーカスを奪わない
 // （pointerdown / mousedown を止めるので、スマホのキーボードも閉じない）。
 // デスクトップは編集画面のいちばん下、スマホはキーボードのすぐ上（閉じている時は画面の下）に常に出す。
-import type { SyntheticEvent } from 'react'
-import { useHubTarget, useSessionField, type EditorHub } from './editorHub'
+import { useSyncExternalStore, type SyntheticEvent } from 'react'
+import { useHubTarget, type EditorHub } from './editorHub'
 import { HistoryRedoIcon, HistoryUndoIcon } from './pieceIcons'
 import { SYMBOLS } from './symbols'
 
@@ -16,9 +16,10 @@ const REDO_KEY = MAC ? '⌘⇧Z' : 'Ctrl+Y'
 
 export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boolean; onSave: () => void }) {
   const target = useHubTarget(hub)
-  const state = useSessionField(hub.session, target?.key ?? null)
-  const canUndo = (state?.history.undo.length ?? 0) > 0
-  const canRedo = (state?.history.redo.length ?? 0) > 0
+  const key = target?.key ?? null
+  // 入力のたびには描き直さない（戻せるか・進めるかが変わった時だけ）
+  const canUndo = useSyncExternalStore(hub.session.subscribe, () => (key ? hub.session.canUndo(key) : false))
+  const canRedo = useSyncExternalStore(hub.session.subscribe, () => (key ? hub.session.canRedo(key) : false))
   const symbolsOn = target?.symbols ?? false
 
   return (
@@ -67,7 +68,7 @@ export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boole
           {s.label}
         </button>
       ))}
-      <span className="pw-sym-space" aria-hidden="true" />
+      <span className="pw-sym-fill" aria-hidden="true" />
       {/* スマホで書いている間（画面上部を畳んでいる間）の保存ボタン */}
       <button
         type="button"

@@ -38,7 +38,7 @@
 }
 
 .pw-root .pw-save .btn {
-  min-height: 32px;
+  min-height: 34px;
 }
 
 .pw-root .pw-save-btn {
@@ -108,7 +108,7 @@
   background: var(--border);
 }
 
-.pw-root .pw-sym-space {
+.pw-root .pw-sym-fill {
   flex: 1;
   min-width: 4px;
 }
@@ -1181,7 +1181,7 @@
 
   .pw-root.is-focus-mode .pw-sym-save {
     display: inline-flex;
-    min-width: 56px;
+    min-width: 52px;
   }
 
   .pw-root .pw-symbols {
@@ -1196,6 +1196,33 @@
   }
 }
 
+/* 幅 360〜420px のスマホ: 8つのボタン（巻き戻し・進む・記号5つ・保存）を1行に収める */
+@media (max-width: 420px) {
+  .pw-root .pw-symbols {
+    gap: 2px;
+    padding-inline: 6px;
+  }
+
+  .pw-root .pw-sym {
+    min-width: 34px;
+    padding-inline: 4px;
+    font-size: 13px;
+  }
+
+  .pw-root .pw-sym-dash,
+  .pw-root .pw-sym-ellipsis {
+    font-size: 14px;
+  }
+
+  .pw-root .pw-sym-sep {
+    margin-inline: 2px;
+  }
+
+  .pw-root.is-focus-mode .pw-sym-save {
+    min-width: 46px;
+  }
+}
+
 /* ---------- スマホ ---------- */
 @media (max-width: 720px) {
   /* ヘッダーが狭いので、保存していない編集がある時だけ「破棄」「保存」を出す（「未保存」は保存ボタンの印で示す） */
@@ -1205,7 +1232,6 @@
   }
 
   .pw-root .pw-save .btn {
-    min-height: 34px;
     padding-inline: 10px;
   }
 
@@ -1347,6 +1373,12 @@
 @media (max-height: 500px) {
   .pw-root > .app-header {
     min-height: calc(44px + var(--safe-top));
+  }
+
+  /* 記号バーも上下の余白を詰める（ボタンの高さ 34px は保つ） */
+  .pw-root .pw-symbols {
+    padding-top: 1px;
+    padding-bottom: max(1px, calc(var(--safe-bottom) - var(--kb-inset, 0px)));
   }
 
   .pw-root .pw-head {
