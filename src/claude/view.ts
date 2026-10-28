@@ -387,8 +387,8 @@ interface Pos {
 }
 
 /**
- * 本文の pos より前で、段落の切れ目（改行の直後）の位置。無ければ記法・サロゲートペアの途中でない位置。
- * min より前には戻らない（1文字も進まない時は pos のまま）
+ * 本文を min から読んだ時に、pos あたりで切る位置。pos より前の段落の切れ目（改行の直後）があればそこ、
+ * 無ければ（改行の無い長い段落）ルビ・傍点の記法とサロゲートペアの途中でない位置（戻ると進まない時は記法の終わりまで進める）
  */
 export function cutPoint(body: string, min: number, pos: number): number {
   if (pos >= body.length) return body.length
@@ -405,9 +405,10 @@ export function cutPoint(body: string, min: number, pos: number): number {
     if (m.end[mid] <= p) lo = mid + 1
     else hi = mid
   }
-  if (lo < m.start.length && m.start[lo] < p && m.end[lo] > p && m.start[lo] > min) p = m.start[lo]
+  // 記法の始まりが min なら、戻ると1文字も進まないので、記法の終わりまで入れる
+  if (lo < m.start.length && m.start[lo] < p && m.end[lo] > p) p = m.start[lo] > min ? m.start[lo] : m.end[lo]
   const c = body.charCodeAt(p)
-  if (c >= 0xdc00 && c <= 0xdfff && p > min) p -= 1
+  if (c >= 0xdc00 && c <= 0xdfff) p = p - 1 > min ? p - 1 : p + 1
   return p
 }
 
