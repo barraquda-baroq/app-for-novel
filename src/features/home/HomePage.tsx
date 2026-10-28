@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useData } from '../../store/appStore'
 import { useDocumentTitle, useMediaQuery } from '../../ui/hooks'
 import { AppHeader } from '../../ui/Layout'
+import { BackupReminder } from './BackupReminder'
 import { parseHomeView, type HomeView } from './homeLogic'
 import { IdeaArea } from './IdeaArea'
 import { useHomeScrollMemory } from './scrollMemory'
@@ -110,6 +111,8 @@ export function HomePage() {
             </div>
           </nav>
         ) : null}
+
+        <BackupReminder onDone={() => document.getElementById(titleHeadingId)?.focus({ preventScroll: true })} />
 
         <div className="home-grid">
           <section

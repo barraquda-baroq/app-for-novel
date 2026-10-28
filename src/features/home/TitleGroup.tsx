@@ -6,7 +6,7 @@ import { paths } from '../../routes'
 import { actions } from '../../store/actions'
 import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
-import { formatDateTime, formatRelative } from '../../ui/browser'
+import { formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { BookIcon, BulbIcon, ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
 import { useKeepInPlace } from '../../ui/keepInPlace'
@@ -155,7 +155,9 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
           ) : null}
         </span>
         <span className="home-title-foot">
-          <span title={formatDateTime(info.lastEdited)}>{formatRelative(info.lastEdited)}に更新</span>
+          <span title={formatDateTime(info.lastEdited)} data-testid="title-card-updated">
+            {formatUpdated(info.lastEdited)}
+          </span>
           {info.ideaCount > 0 ? (
             <span className="home-title-ideas">
               <BulbIcon />

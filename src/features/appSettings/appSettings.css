@@ -370,3 +370,8 @@
     width: 100%;
   }
 }
+
+.aset-actions .btn[aria-busy='true'] {
+  cursor: progress;
+  opacity: 0.8;
+}

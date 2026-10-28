@@ -8,12 +8,12 @@ import { InstallHelp } from './InstallHelp'
 import './appSettings.css'
 
 export function AppSettingsPage() {
-  useDocumentTitle('設定')
+  useDocumentTitle('アプリの設定')
   return (
     <>
-      <AppHeader crumbs={[{ label: '設定' }]} />
+      <AppHeader crumbs={[{ label: 'アプリの設定' }]} />
       <main className="page page-narrow aset-page" data-testid="app-settings">
-        <h1 className="aset-title">設定</h1>
+        <h1 className="aset-title">アプリの設定</h1>
         <DisplaySettings />
         <DataSettings />
         <InstallHelp />

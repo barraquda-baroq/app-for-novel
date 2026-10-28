@@ -260,6 +260,106 @@ test.describe('ホーム', () => {
     await expect(cardsIn(section(page, 'none')).first()).toBeVisible()
   })
 
+  test('タイトルの仕切りの「タイトルへ」でタイトル画面に入れる（「開く」は折りたたみの意味で使うので使わない）', async ({
+    page,
+  }) => {
+    await openApp(page)
+    const titleId = await seed(page, ({ actions }) => actions.createTitle('星の海'))
+    await showIdeas(page)
+    const link = section(page, titleId).getByTestId('idea-section-open')
+    await expect(link).toHaveText('タイトルへ')
+    await expect(link).toHaveAccessibleName('タイトルへ（星の海）')
+    await expect(section(page, 'none').getByTestId('idea-section-open')).toHaveCount(0)
+    await noHorizontalScroll(page)
+    await link.click()
+    await expect(page).toHaveURL(new RegExp(`#/t/${titleId}$`))
+    await expect(page.getByTestId('title-name')).toHaveValue('星の海')
+  })
+
+  test('Ctrl/⌘+Enter の案内は、指で操作する端末では横向きの広い画面でも出さない', async ({ page }, info) => {
+    await openApp(page)
+    const touch = info.project.name === 'mobile'
+    // スマホの横向き（幅が 720px を超える）
+    if (touch) await page.setViewportSize({ width: 844, height: 390 })
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(touch)
+    await showIdeas(page)
+    const hint = page.getByTestId('quick-idea-hint')
+    await expect(hint).toHaveCount(1)
+    if (touch) await expect(hint).toBeHidden()
+    else await expect(hint).toHaveText(/^(Ctrl|⌘)\+Enter$/)
+    await section(page, 'none').getByTestId('idea-add').click()
+    const editorHint = dialog(page).getByTestId('idea-editor-hint')
+    await expect(editorHint).toHaveCount(1)
+    if (touch) await expect(editorHint).toBeHidden()
+    else await expect(editorHint).toBeVisible()
+  })
+
+  test('原稿があるのにバックアップを書き出していない時は、ホームで書き出しを勧める（「後で」で7日間出さない）', async ({
+    page,
+  }) => {
+    await openApp(page)
+    const reminder = page.getByTestId('backup-reminder')
+    // 原稿の本文がないうちは出さない
+    const titleId = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の海')
+      actions.addEpisode(t)
+      actions.addIdea(null, '', 'アイデアだけ')
+      return t
+    })
+    await expect(page.getByTestId('title-card')).toHaveCount(1)
+    await expect(reminder).toHaveCount(0)
+
+    await seed(
+      page,
+      ({ actions, getData }, id: string) => {
+        const piece = Object.values(getData().pieces).find((p) => p.titleId === id)!
+        actions.updateVersion(piece.versionIds[0], { body: '大切な本文' })
+      },
+      titleId,
+    )
+    await expect(reminder).toBeVisible()
+    await expect(reminder).toContainText('この端末にだけ保存されています。バックアップを書き出しておきましょう')
+    await expect(page.getByTestId('backup-reminder-last')).toHaveText('まだ一度も書き出していません')
+    await noHorizontalScroll(page)
+
+    // 「後で」: 消えて、押したボタンの代わりにタイトルの見出しへフォーカスが移る。再読み込みしても出ない
+    await page.getByTestId('backup-reminder-later').click()
+    await expect(reminder).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'タイトル', exact: true })).toBeFocused()
+    await page.reload()
+    await expect(page.getByTestId('title-card')).toHaveCount(1)
+    await expect(reminder).toHaveCount(0)
+
+    // 7日を過ぎるとまた出る。最後の書き出しが14日以上前の時も出す
+    await page.evaluate(() => {
+      const day = 24 * 60 * 60 * 1000
+      localStorage.setItem('novel-studio:backup-reminder-snoozed', String(Date.now() - 8 * day))
+      localStorage.setItem('novel-studio:last-backup', String(Date.now() - 20 * day))
+    })
+    await page.reload()
+    await expect(reminder).toBeVisible()
+    await expect(page.getByTestId('backup-reminder-last')).toHaveText(/^最後の書き出し: \d{4}\/\d{2}\/\d{2}$/)
+
+    // 「書き出す」は設定画面と同じバックアップを書き出し、お知らせは消える
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByTestId('backup-reminder-export').click()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toMatch(/^novel-studio-backup-\d{8}-\d{4}\.json$/)
+    const json = JSON.parse(await readFile(await download.path(), 'utf8')) as {
+      app: string
+      data: { versions: Record<string, { body: string }> }
+    }
+    expect(json.app).toBe('novel-studio')
+    expect(Object.values(json.data.versions).map((v) => v.body)).toEqual(['大切な本文'])
+    await expect(reminder).toHaveCount(0)
+    await expect(page.getByRole('status').filter({ hasText: 'バックアップを書き出しました' })).toBeVisible()
+    await page.reload()
+    await expect(page.getByTestId('title-card')).toHaveCount(1)
+    await expect(reminder).toHaveCount(0)
+    await openApp(page, '/settings')
+    await expect(page.getByTestId('last-backup')).toContainText('最後に書き出した日時')
+  })
+
   test('すばやく追加: 追加先を選んで Ctrl+Enter かボタンで追加できる', async ({ page }) => {
     await openApp(page)
     const titleId = await seed(page, ({ actions }) => actions.createTitle('星の海'))
@@ -348,7 +448,7 @@ test.describe('ホーム', () => {
     await page.getByTestId('titles-edit-toggle').click()
     await page.getByTestId('title-card').filter({ hasText: '消える物語' }).getByTestId('title-delete').click()
     await expect(dialog(page)).toContainText('「消える物語」を削除しますか？')
-    await expect(dialog(page)).toContainText('すべての話・推敲バージョン・設定・戦略・メモが削除されます')
+    await expect(dialog(page)).toContainText('すべての話・推敲バージョン・設定項目・戦略・メモが削除されます')
     await expect(dialog(page)).toContainText('全2話')
     await expect(dialog(page)).toContainText('アイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります')
     await clickInDialog(page, '削除')
@@ -395,7 +495,8 @@ test.describe('ホーム', () => {
     await expect(card.getByTestId('title-card-chapters')).toHaveText('章あり')
     await expect(card).toContainText('星の海を渡る少年の物語。')
     await expect(card).toContainText('アイデア 1')
-    await expect(card).toContainText('更新')
+    // 「たった今に更新」ではなく「たった今更新」
+    await expect(card.getByTestId('title-card-updated')).toHaveText('たった今更新')
 
     // 特殊ブロックは「話」に数えない
     await seed(
@@ -811,8 +912,9 @@ test.describe('タイトル画面のアイデアタブ', () => {
 test.describe('アプリの設定', () => {
   test('表示の設定を変えるとすぐに反映され、再読み込みしても残る', async ({ page }) => {
     await openApp(page, '/settings')
-    await expect(page).toHaveTitle('設定 — Novel Studio')
-    await expect(page.getByRole('navigation', { name: '現在地' })).toContainText('設定')
+    await expect(page).toHaveTitle('アプリの設定 — Novel Studio')
+    await expect(page.getByRole('navigation', { name: '現在地' })).toContainText('アプリの設定')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('アプリの設定')
     const html = page.locator('html')
 
     await page.getByTestId('theme-dark').click()
@@ -867,7 +969,10 @@ test.describe('アプリの設定', () => {
     const download = await downloadPromise
     expect(download.suggestedFilename()).toMatch(/^novel-studio-backup-\d{8}-\d{4}\.json$/)
     const file = await download.path()
-    const json = JSON.parse(await readFile(file, 'utf8')) as {
+    const text = await readFile(file, 'utf8')
+    // 小さいデータは読みやすいようにインデントを付ける
+    expect(text).toContain('\n  "app": "novel-studio"')
+    const json = JSON.parse(text) as {
       app: string
       schemaVersion: number
       data: {
@@ -882,6 +987,47 @@ test.describe('アプリの設定', () => {
     expect(Object.values(json.data.versions).map((v) => v.body)).toEqual(['大切な本文'])
     expect(Object.values(json.data.ideas).map((i) => i.heading)).toEqual(['控えの案'])
     await expect(page.getByTestId('last-backup')).toContainText('最後に書き出した日時')
+    // 件数に内部の表（応募時の原稿の控え）は出さない
+    await expect(page.getByTestId('data-counts')).not.toContainText('控え')
+  })
+
+  test('大きいデータはインデントなしで書き出し、書き出している間は「書き出し中…」と表示する', async ({ page }) => {
+    await openApp(page)
+    await seed(page, ({ actions, getData }) => {
+      const t = actions.createTitle('大長編')
+      for (let i = 0; i < 3; i++) {
+        const id = actions.addEpisode(t)
+        actions.updateVersion(getData().pieces[id].versionIds[0], { body: `${'あ'.repeat(400_000)}${i + 1}` })
+      }
+    })
+    await openApp(page, '/settings')
+    const button = page.getByTestId('export-backup')
+    // すぐに終わることもあるので、ボタンの表記の移り変わりを記録しておく
+    await button.evaluate((el) => {
+      const w = window as unknown as { __exportLabels: string[] }
+      w.__exportLabels = []
+      new MutationObserver(() => w.__exportLabels.push(el.textContent ?? '')).observe(el, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      })
+    })
+    const downloadPromise = page.waitForEvent('download')
+    await button.click()
+    const download = await downloadPromise
+    const text = await readFile(await download.path(), 'utf8')
+    expect(text.startsWith('{"app":"novel-studio","schemaVersion":1,"exportedAt":"')).toBe(true)
+    expect(text).not.toContain('\n')
+    const json = JSON.parse(text) as { data: { versions: Record<string, { body: string }> } }
+    expect(
+      Object.values(json.data.versions)
+        .map((v) => v.body.slice(-1))
+        .sort(),
+    ).toEqual(['1', '2', '3'])
+    expect(Object.values(json.data.versions).every((v) => v.body.length === 400_001)).toBe(true)
+    expect(await page.evaluate(() => (window as unknown as { __exportLabels: string[] }).__exportLabels)).toContain('書き出し中…')
+    await expect(button).toHaveText('バックアップを書き出す')
+    await expect(page.getByRole('status').filter({ hasText: 'バックアップを書き出しました' })).toBeVisible()
   })
 
   test('バックアップから復元すると、確認のうえ現在のデータが置き換わる。壊れたファイルはエラーになる', async ({ page }) => {

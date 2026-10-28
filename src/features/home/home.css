@@ -73,6 +73,59 @@
   min-height: 34px;
 }
 
+/* ---------- バックアップのお知らせ（原稿があるのにしばらく書き出していない時） ---------- */
+.home-backup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 16px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+
+.home-backup-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--warn);
+}
+
+.home-backup-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.home-backup-message {
+  font-weight: 700;
+}
+
+.home-backup-last {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.home-backup-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.home-backup .btn[aria-busy='true'] {
+  cursor: progress;
+  opacity: 0.8;
+}
+
 /* ---------- スマホの切り替え（どちらの領域の先頭へも移れる。領域は隠さない） ---------- */
 .home-jump {
   position: sticky;
@@ -410,6 +463,24 @@
 
 /* ---------- スマホ: タイトル（小さめのカード）→ アイデアの順に上下に積む ---------- */
 @media (max-width: 720px) {
+  .home-backup {
+    align-items: flex-start;
+    margin-bottom: 14px;
+  }
+
+  .home-backup-icon {
+    margin-top: 2px;
+  }
+
+  .home-backup-text {
+    flex-basis: calc(100% - 40px);
+    font-size: 13.5px;
+  }
+
+  .home-backup-actions .btn-sm {
+    min-height: 36px;
+  }
+
   .home-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 28px;
