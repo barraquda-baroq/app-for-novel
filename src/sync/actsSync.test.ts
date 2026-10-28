@@ -107,6 +107,16 @@ function possibleOps(r: () => number, d: AppData, ep: ID): RandomOp[] {
       run: (x) => S.updateVersion(x, x.pieces[at(x)].activeVersionId!, { body: `${body}+${i}`, note: `メモ${i}` }),
     })
     out.push({ name: `第${i + 1}幕に稿を足す`, run: (x) => S.addVersion(x, at(x), { body: `別稿${i}` }).data })
+    // 採用していない稿があれば、削除する・書き換える（削除と書き換えが重なった稿は、幕の属する話も控えてゴミ箱へ）
+    const other = (x: AppData) => x.pieces[at(x)].versionIds.find((id) => id !== x.pieces[at(x)].activeVersionId)
+    if (other(d)) {
+      out.push({ name: `第${i + 1}幕の採用していない稿を削除する`, run: (x) => S.deleteVersion(x, other(x)!) })
+      out.push({
+        name: `第${i + 1}幕の採用していない稿を書き換える`,
+        // 前の本文は残す（片方だけの書き換えで前の本文が消えるのは正しいので、文章の確かめで消えたことにしない）
+        run: (x) => S.updateVersion(x, other(x)!, { body: `${x.versions[other(x)!].body}+別稿${i}`, note: `別稿のメモ${i}` }),
+      })
+    }
     out.push({
       name: `第${i + 1}幕で別の稿を採用する`,
       run: (x) => {
@@ -125,7 +135,12 @@ describe('幕の操作の組み合わせ（決まった種）', () => {
     const failures: string[] = []
     for (let seed = 1; seed <= 60; seed++) {
       const r = seeded(seed)
-      const start = scenarioStart({ body: 'ABCDEFGHI', splitAt: r() < 0.7 ? [3, 6] : null })
+      // 分けていれば、第2幕には採用していない稿もある
+      const start = scenarioStart({
+        body: 'ABCDEFGHI',
+        splitAt: r() < 0.7 ? [3, 6] : null,
+        prepare: (d, ep) => (d.pieces[ep].actIds?.length ? S.addVersion(d, actsIds(d, ep)[1], { body: 'DEF別稿' }).data : d),
+      })
       const ep = start.ep
       const cloud = new FakeCloud()
       const x = new FakeDevice('X', cloud)

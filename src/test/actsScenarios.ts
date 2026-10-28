@@ -409,6 +409,36 @@ export const ACTS_SCENARIOS: ActsScenario[] = [
     acts: 0,
     notes: (o) => (o === 'x-first' ? { y: ['deletedHere'] } : { x: ['deletedThere'] }),
   },
+  {
+    name: '第2幕の採用していない稿を削除する / 同じ稿を書き換える',
+    emu: true,
+    body: FULL,
+    splitAt: [3, 6],
+    prepare: (d, ep) => S.addVersion(d, actsIds(d, ep)[1], { body: 'DEF別稿' }).data,
+    x: (d) => S.deleteVersion(d, versionOf(d, 'DEF別稿')),
+    y: (d) => S.updateVersion(d, versionOf(d, 'DEF別稿'), { body: 'DEF別稿+Y', note: 'Yメモ' }),
+    text: FULL,
+    acts: 3,
+    notes: quiet,
+    check: (d, ep) => {
+      // 削除と書き換えが重なった稿はゴミ箱に（幕の属する話も控えるので、幕が後でつながれても戻せる）
+      const kept = Object.values(d.trashRecords).find((r) => (r.record as { body?: string }).body === 'DEF別稿+Y')
+      const entry = kept && d.trashEntries[kept.entryId]
+      return entry?.origin?.parentId === ep ? null : '書き換えた稿のゴミ箱の件に属する話が無い'
+    },
+  },
+  {
+    name: '第1幕と第2幕をつなぐ / 第2幕の採用していない稿を書き換える',
+    body: FULL,
+    splitAt: [3, 6],
+    prepare: (d, ep) => S.addVersion(d, actsIds(d, ep)[1], { body: 'DEF別稿' }).data,
+    x: join(0),
+    y: (d) => S.updateVersion(d, versionOf(d, 'DEF別稿'), { body: 'DEF別稿+Y', note: 'Yメモ' }),
+    text: FULL,
+    acts: 2,
+    notes: dropped,
+    check: onAct('DEF別稿+Y', 0),
+  },
   // 重なっても結果が同じ・別々の項目なので、幕の知らせは出さない
   {
     name: 'セパレート解除 / セパレート解除',
