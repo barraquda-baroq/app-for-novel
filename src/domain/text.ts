@@ -1,5 +1,7 @@
 // 文字数カウント。コンテストの規定に合わせやすいよう、空白・改行を除いた文字数を基本にする。
+// ルビ・傍点の記法（｜漢字《かんじ》・《《強調》》）は、記号とルビの読みを除いて数える。
 // 長編（数百万字）でも重くならないよう、文字コードを1回なめるだけで数える。
+import { stripRuby } from './ruby'
 
 export interface TextStats {
   /** 空白・改行を除いた文字数 */
@@ -32,7 +34,8 @@ function isSpace(c: number): boolean {
 const isHighSurrogate = (c: number) => c >= 0xd800 && c <= 0xdbff
 const isLowSurrogate = (c: number) => c >= 0xdc00 && c <= 0xdfff
 
-export function countChars(text: string): number {
+export function countChars(source: string): number {
+  const text = stripRuby(source)
   let n = 0
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i)
@@ -43,7 +46,8 @@ export function countChars(text: string): number {
   return n
 }
 
-export function textStats(text: string): TextStats {
+export function textStats(source: string): TextStats {
+  const text = stripRuby(source)
   let chars = 0
   let withSpaces = 0
   let lines = text.length === 0 ? 0 : 1
