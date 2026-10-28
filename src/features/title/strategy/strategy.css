@@ -204,7 +204,7 @@
   border-left: 3px solid var(--sg-tone);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgb(30 30 40 / 4%);
+  box-shadow: var(--shadow-sm);
 }
 
 .sg-card.is-accent {
@@ -806,7 +806,7 @@
   margin-bottom: 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-size: 17px;
 }
 
@@ -829,7 +829,7 @@
 }
 
 .sg-reader-body {
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-size: 16px;
   line-height: 1.9;
   white-space: pre-wrap;

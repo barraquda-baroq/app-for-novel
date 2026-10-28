@@ -1,27 +1,38 @@
-/* ===== デザイントークン ===== */
+/* ===== デザイントークン =====
+   外観は3種類。<html data-theme> で切り替える（「端末の設定に合わせる」は white か dark が入る）。
+   - white（ホワイト）: 白基調。領域ごとのタブは色分けする
+   - dark（ダーク）: 黒基調。白い面は使わない。タブは色分けする
+   - deep-dark（ディープダーク）: ダークよりさらに暗く、色も抑える。タブもほぼ黒（人目のある場所でも目立たないように）
+   文字色は背景・面の上で 4.5:1 以上になるようにしている。 */
 :root {
-  --bg: #f4f2ec;
+  --bg: #f6f6f3;
   --surface: #ffffff;
-  --surface-2: #f9f8f4;
-  --surface-3: #efece4;
-  --border: #dedad0;
-  --border-strong: #c9c3b6;
+  --surface-2: #fafaf8;
+  --surface-3: #efeeea;
+  --border: #e0dfd9;
+  --border-strong: #c9c7bf;
   --text: #24272e;
-  --text-muted: #6b6f78;
-  /* 文字に使うので白・背景色の上でも読める濃さにする（4.5:1 前後） */
-  --text-faint: #6e727b;
+  --text-muted: #5f636c;
+  /* 文字に使うので白・背景色の上でも読める濃さにする（4.5:1 以上） */
+  --text-faint: #686c75;
   --accent: #35598f;
   --accent-strong: #284673;
   --accent-soft: #e4ebf5;
   --on-accent: #ffffff;
-  --active: #2c7a55;
+  /* 主ボタン（btn-primary）と採用ボタン（btn-active）の塗り */
+  --primary: var(--accent);
+  --primary-hover: var(--accent-strong);
+  --primary-border: var(--primary);
+  --on-primary: var(--on-accent);
+  --active: #28744f;
   --active-soft: #e2f1e8;
+  --active-fill: var(--active);
   --on-active: #ffffff;
   --danger: #b0402d;
   --danger-soft: #f8e6e2;
-  --warn: #9a6a12;
+  --warn: #8d6110;
   --warn-soft: #f8efd9;
-  --memo: #8a6812;
+  --memo: #80600f;
   --memo-soft: #fbf3d6;
   --special: #7a4f9c;
   --special-soft: #f0e8f6;
@@ -29,87 +40,205 @@
   --diff-add-text: #17603a;
   --diff-del: #f6d9d4;
   --diff-del-text: #8d2c1d;
+  /* セグメントの選んでいる項目（溝 --surface-3 より明るく浮かせる） */
+  --segmented-on: var(--surface);
+  --switch-knob: #ffffff;
+  --switch-on: var(--accent);
+  --toast-bg: #2b2f38;
+  --toast-text: #ffffff;
+  --toast-border: transparent;
+  --toast-error-bg: #8e2f20;
+  --toast-error-text: #ffffff;
+  --backdrop: rgb(15 17 22 / 45%);
+  --selection: #cddcf3;
+  --brand-filter: none;
   --shadow: 0 1px 2px rgb(30 30 40 / 6%), 0 4px 16px rgb(30 30 40 / 6%);
+  --shadow-sm: 0 1px 2px rgb(30 30 40 / 4%);
   --shadow-lg: 0 10px 40px rgb(20 20 30 / 22%);
+
+  /* 領域ごとの色（タブ・領域の見出し）。--area-*-text はタブの文字色で、背景・*-soft の上で 4.5:1 以上 */
+  --area-story: #3b6fc4;
+  --area-story-text: #2b5597;
+  --area-story-soft: #e8effb;
+  --area-settings: #16917f;
+  --area-settings-text: #0d6659;
+  --area-settings-soft: #e1f4f0;
+  --area-strategy: #cf4a78;
+  --area-strategy-text: #a52f5a;
+  --area-strategy-soft: #fcebf1;
+  --area-ideas: #c98a12;
+  --area-ideas-text: #83590a;
+  --area-ideas-soft: #fcf2db;
+
   --radius: 10px;
   --radius-sm: 6px;
-  --font-ui:
-    'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', Meiryo, system-ui, sans-serif;
+  /* 各端末の標準のゴシック体。iOS・Mac はヒラギノ角ゴ、Windows は游ゴシック UI（なければメイリオ）、
+     Android は sans-serif（<html lang="ja"> なので Noto Sans CJK JP）になる */
+  --font-gothic: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans JP', system-ui, sans-serif;
   --font-mincho: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', 'BIZ UDPMincho', serif;
+  --font-ui: var(--font-gothic);
+  /* 原稿・題名・通し読みの書体。設定の「原稿の書体」で明朝に切り替えられる（PrefsEffect が <html> に設定する） */
+  --editor-font: var(--font-gothic);
   --header-h: 52px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #15171c;
-    --surface: #1d2027;
-    --surface-2: #22262e;
-    --surface-3: #2a2e37;
-    --border: #343944;
-    --border-strong: #464c59;
-    --text: #e7e4dd;
-    --text-muted: #a4a7ae;
-    --text-faint: #767a83;
-    --accent: #8db0e8;
-    --accent-strong: #b3cbf2;
-    --accent-soft: #263248;
-    --on-accent: #10151f;
-    --active: #6fcf9c;
-    --active-soft: #1d3329;
-    --on-active: #0f1a14;
-    --danger: #f08a77;
-    --danger-soft: #3c2420;
-    --warn: #e6b65a;
-    --warn-soft: #3a2f18;
-    --memo: #e3c35c;
-    --memo-soft: #353015;
-    --special: #c9a2e6;
-    --special-soft: #2f2639;
-    --diff-add: #1f3d2b;
-    --diff-add-text: #9be0b5;
-    --diff-del: #47241f;
-    --diff-del-text: #f3a99b;
-    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 16px rgb(0 0 0 / 25%);
-    --shadow-lg: 0 10px 40px rgb(0 0 0 / 55%);
-    color-scheme: dark;
-  }
-}
-
 :root[data-theme='dark'] {
-  --bg: #15171c;
-  --surface: #1d2027;
-  --surface-2: #22262e;
-  --surface-3: #2a2e37;
-  --border: #343944;
-  --border-strong: #464c59;
-  --text: #e7e4dd;
-  --text-muted: #a4a7ae;
-  --text-faint: #767a83;
+  --bg: #0f1012;
+  --surface: #17181b;
+  --surface-2: #1c1d21;
+  --surface-3: #25272c;
+  --border: #2e3036;
+  --border-strong: #43464e;
+  --text: #e6e4de;
+  --text-muted: #a6a8ae;
+  --text-faint: #8e9198;
   --accent: #8db0e8;
   --accent-strong: #b3cbf2;
-  --accent-soft: #263248;
-  --on-accent: #10151f;
+  --accent-soft: #1e293b;
+  --on-accent: #0d121b;
+  /* 黒地で明るい塗りが浮かないよう、ボタンは落ち着いた色に明るい文字 */
+  --primary: #34558c;
+  --primary-hover: #3d62a0;
+  --on-primary: #eef3fb;
   --active: #6fcf9c;
-  --active-soft: #1d3329;
-  --on-active: #0f1a14;
+  --active-soft: #15291e;
+  --active-fill: #2a6b4a;
+  --on-active: #eaf6ef;
   --danger: #f08a77;
-  --danger-soft: #3c2420;
+  --danger-soft: #331d19;
   --warn: #e6b65a;
-  --warn-soft: #3a2f18;
+  --warn-soft: #2e2512;
   --memo: #e3c35c;
-  --memo-soft: #353015;
+  --memo-soft: #2a2611;
   --special: #c9a2e6;
-  --special-soft: #2f2639;
-  --diff-add: #1f3d2b;
+  --special-soft: #271e31;
+  --diff-add: #1a3626;
   --diff-add-text: #9be0b5;
-  --diff-del: #47241f;
+  --diff-del: #42211c;
   --diff-del-text: #f3a99b;
-  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 16px rgb(0 0 0 / 25%);
-  --shadow-lg: 0 10px 40px rgb(0 0 0 / 55%);
+  --segmented-on: #383b43;
+  --switch-knob: #d6d4ce;
+  --switch-on: #4f78bd;
+  --toast-bg: #2a2c31;
+  --toast-text: #e6e4de;
+  --toast-border: #43464e;
+  --toast-error-bg: #4a201a;
+  --toast-error-text: #ffd9d0;
+  --backdrop: rgb(0 0 0 / 62%);
+  --selection: #2f4a73;
+  --brand-filter: brightness(0.9);
+  --shadow: 0 1px 2px rgb(0 0 0 / 35%), 0 4px 16px rgb(0 0 0 / 30%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-lg: 0 10px 40px rgb(0 0 0 / 60%);
+
+  --area-story: #6d9be8;
+  --area-story-text: #a8c5f5;
+  --area-story-soft: #1a2539;
+  --area-settings: #3dbfab;
+  --area-settings-text: #86dccf;
+  --area-settings-soft: #112926;
+  --area-strategy: #e46f99;
+  --area-strategy-text: #f4a8c4;
+  --area-strategy-soft: #2e1722;
+  --area-ideas: #e2b04a;
+  --area-ideas-text: #efcd86;
+  --area-ideas-soft: #2a2211;
   color-scheme: dark;
+}
+
+:root[data-theme='deep-dark'] {
+  --bg: #08090a;
+  --surface: #0e0f11;
+  --surface-2: #121315;
+  --surface-3: #191a1d;
+  --border: #202125;
+  --border-strong: #2d2f33;
+  --text: #aeaca6;
+  --text-muted: #8a8984;
+  --text-faint: #858480;
+  --accent: #8a96a8;
+  --accent-strong: #a3adbc;
+  --accent-soft: #15181d;
+  --on-accent: #0b0c0e;
+  --primary: #1b1e24;
+  --primary-hover: #22262d;
+  --primary-border: #2e333c;
+  --on-primary: #b1bac7;
+  --active: #86a592;
+  --active-soft: #111915;
+  --active-fill: #18211b;
+  --on-active: #9dbba8;
+  --danger: #b98a82;
+  --danger-soft: #1c1412;
+  --warn: #a99766;
+  --warn-soft: #18160f;
+  --memo: #a59a6c;
+  --memo-soft: #17150f;
+  --special: #a395b0;
+  --special-soft: #16141a;
+  --diff-add: #14211a;
+  --diff-add-text: #93b5a0;
+  --diff-del: #261714;
+  --diff-del-text: #c3978f;
+  --segmented-on: #26282c;
+  --switch-knob: #9a9893;
+  --switch-on: #4a5262;
+  --toast-bg: #141518;
+  --toast-text: #aeaca6;
+  --toast-border: #2d2f33;
+  --toast-error-bg: #1d1412;
+  --toast-error-text: #c9a39b;
+  --backdrop: rgb(0 0 0 / 70%);
+  --selection: #262c36;
+  /* アイコンの鮮やかな色も抑える */
+  --brand-filter: grayscale(0.85) brightness(0.6);
+  --shadow: 0 1px 2px rgb(0 0 0 / 50%);
+  --shadow-sm: none;
+  --shadow-lg: 0 10px 40px rgb(0 0 0 / 70%);
+
+  /* タブもほぼ黒。色味はごくわずかに残し、選んでいるタブは明るさで見分ける */
+  --area-story: #4a5160;
+  --area-story-text: #aeaca6;
+  --area-story-soft: #1b1d22;
+  --area-settings: #475450;
+  --area-settings-text: #aeaca6;
+  --area-settings-soft: #1a1d1c;
+  --area-strategy: #574b51;
+  --area-strategy-text: #aeaca6;
+  --area-strategy-soft: #1e1b1d;
+  --area-ideas: #57503d;
+  --area-ideas-text: #aeaca6;
+  --area-ideas-soft: #1d1c18;
+  color-scheme: dark;
+}
+
+/* 領域ごとの色を --area / --area-text / --area-soft として使えるようにする（data-area を付けた要素の中） */
+[data-area='story'],
+[data-area='titles'] {
+  --area: var(--area-story);
+  --area-text: var(--area-story-text);
+  --area-soft: var(--area-story-soft);
+}
+
+[data-area='settings'] {
+  --area: var(--area-settings);
+  --area-text: var(--area-settings-text);
+  --area-soft: var(--area-settings-soft);
+}
+
+[data-area='strategy'] {
+  --area: var(--area-strategy);
+  --area-text: var(--area-strategy-text);
+  --area-soft: var(--area-strategy-soft);
+}
+
+[data-area='ideas'] {
+  --area: var(--area-ideas);
+  --area-text: var(--area-ideas-text);
+  --area-soft: var(--area-ideas-soft);
 }
 
 /* ===== ベース ===== */
@@ -132,6 +261,8 @@ body {
   font-family: var(--font-ui);
   font-size: 15px;
   line-height: 1.6;
+  /* チェックボックス・スライダーなどの標準部品も外観の色に合わせる */
+  accent-color: var(--accent);
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
 }
@@ -160,6 +291,10 @@ h4 {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+::selection {
+  background: var(--selection);
 }
 
 .visually-hidden {
@@ -206,6 +341,7 @@ h4 {
   width: 26px;
   height: 26px;
   border-radius: 6px;
+  filter: var(--brand-filter);
 }
 
 .app-header .spacer {
@@ -366,24 +502,24 @@ h4 {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--primary);
+  border-color: var(--primary-border);
+  color: var(--on-primary);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
+  background: var(--primary-hover);
+  border-color: color-mix(in srgb, var(--primary-hover) 70%, var(--primary-border));
 }
 
 .btn-active {
-  background: var(--active);
-  border-color: var(--active);
+  background: var(--active-fill);
+  border-color: var(--active-fill);
   color: var(--on-active);
 }
 
 .btn-active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--active) 85%, black);
+  background: color-mix(in srgb, var(--active-fill) 85%, black);
 }
 
 .btn-danger {
@@ -548,13 +684,13 @@ h4 {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--switch-knob);
   box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
   transition: transform 0.15s;
 }
 
 .switch input:checked + .track {
-  background: var(--accent);
+  background: var(--switch-on);
 }
 
 .switch input:checked + .track::after {
@@ -590,7 +726,7 @@ h4 {
 
 .segmented button[aria-pressed='true'],
 .segmented button[aria-selected='true'] {
-  background: var(--surface);
+  background: var(--segmented-on);
   color: var(--text);
   box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
 }
@@ -713,7 +849,8 @@ h4 {
 .tabs a {
   padding: 10px 14px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: transparent;
   color: var(--text-muted);
   font-weight: 600;
@@ -722,11 +859,42 @@ h4 {
   white-space: nowrap;
   text-decoration: none;
   margin-bottom: -1px;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    border-color 0.12s;
+}
+
+.tabs button:hover,
+.tabs a:hover {
+  color: var(--text);
 }
 
 .tabs [aria-selected='true'] {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* 領域ごとに色分けしたタブ（data-area）。どのタブも下線に領域の色を淡く敷き、
+   選んでいるタブは領域の色の下線・淡い背景・その色の文字にする。
+   タブの並びの下線（data-area を付けた .tabs）は、選んでいる領域の色を少し混ぜる */
+.tabs[data-area] {
+  border-bottom-color: color-mix(in srgb, var(--area) 35%, var(--border));
+}
+
+.tabs [data-area] {
+  border-bottom-color: color-mix(in srgb, var(--area) 40%, transparent);
+}
+
+.tabs [data-area]:hover {
+  background: color-mix(in srgb, var(--area-soft) 70%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--area) 75%, transparent);
+}
+
+.tabs [data-area][aria-selected='true'] {
+  color: var(--area-text);
+  background: var(--area-soft);
+  border-bottom-color: var(--area);
 }
 
 /* ===== モーダル ===== */
@@ -738,7 +906,7 @@ h4 {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgb(15 17 22 / 45%);
+  background: var(--backdrop);
   animation: fade-in 0.12s ease-out;
 }
 
@@ -856,9 +1024,10 @@ h4 {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 14px;
+  border: 1px solid var(--toast-border);
   border-radius: 10px;
-  background: #2b2f38;
-  color: #fff;
+  background: var(--toast-bg);
+  color: var(--toast-text);
   box-shadow: var(--shadow-lg);
   font-size: 14px;
   pointer-events: auto;
@@ -866,7 +1035,8 @@ h4 {
 }
 
 .toast.error {
-  background: #8e2f20;
+  background: var(--toast-error-bg);
+  color: var(--toast-error-text);
 }
 
 .toast p {
@@ -952,7 +1122,7 @@ h4 {
   line-height: 1.95;
   letter-spacing: 0.02em;
   font-size: var(--editor-size, 17px);
-  font-family: var(--editor-font, var(--font-mincho));
+  font-family: var(--editor-font);
   font-feature-settings: 'palt' 0;
 }
 

@@ -15,7 +15,7 @@ function clearStorage(storage: Storage, keep: readonly string[]): void {
 }
 
 /**
- * 表示の設定（テーマ・文字サイズなど）以外の、この端末の状態を消す。
+ * 表示の設定（外観・文字サイズなど）以外の、この端末の状態を消す。
  * keepLastBackup: 「最後に書き出した日時」を残す（復元の時。書き出した事実は変わらないので）
  */
 export function clearLocalState({ keepLastBackup }: { keepLastBackup: boolean }): void {

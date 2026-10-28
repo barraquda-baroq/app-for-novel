@@ -1,16 +1,17 @@
-// 表示の設定（この端末だけに保存）: テーマ・原稿の書体と文字サイズ・比較画面の分割・差分ハイライト。
+// 表示の設定（この端末だけに保存。同期しない）: 外観・原稿の書体と文字サイズ・比較画面の分割・差分ハイライト。
 import { useId } from 'react'
 import { DEFAULT_PREFS, usePrefs, type EditorFont, type SplitOrientation, type ThemeMode } from '../../store/uiStore'
 
 const THEMES: { value: ThemeMode; label: string }[] = [
-  { value: 'system', label: 'システムに合わせる' },
-  { value: 'light', label: 'ライト' },
+  { value: 'system', label: '端末の設定に合わせる' },
+  { value: 'white', label: 'ホワイト' },
   { value: 'dark', label: 'ダーク' },
+  { value: 'deep-dark', label: 'ディープダーク' },
 ]
 
 const FONTS: { value: EditorFont; label: string }[] = [
-  { value: 'mincho', label: '明朝' },
   { value: 'gothic', label: 'ゴシック' },
+  { value: 'mincho', label: '明朝' },
 ]
 
 const SPLITS: { value: SplitOrientation; label: string }[] = [
@@ -31,15 +32,17 @@ function Choices<T extends string>({
   value,
   onChange,
   testid,
+  className,
 }: {
   labelId: string
   options: { value: T; label: string }[]
   value: T
   onChange: (v: T) => void
   testid: string
+  className?: string
 }) {
   return (
-    <div className="segmented aset-seg" role="group" aria-labelledby={labelId}>
+    <div className={`segmented aset-seg${className ? ` ${className}` : ''}`} role="group" aria-labelledby={labelId}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -73,7 +76,10 @@ export function DisplaySettings() {
 
       <div className="aset-row">
         <div className="aset-row-label">
-          <span id={`${id}-theme`}>テーマ</span>
+          <span id={`${id}-theme`}>外観</span>
+          <span className="aset-row-desc">
+            端末の設定に合わせると、端末がダークモードの時はダーク、それ以外はホワイトになります。ディープダークはタブもほぼ黒にして、明るい色を抑えます。
+          </span>
         </div>
         <div className="aset-row-control">
           <Choices
@@ -82,6 +88,7 @@ export function DisplaySettings() {
             value={theme}
             onChange={(v) => setPrefs({ theme: v })}
             testid="theme"
+            className="aset-seg-theme"
           />
         </div>
       </div>
@@ -89,6 +96,10 @@ export function DisplaySettings() {
       <div className="aset-row">
         <div className="aset-row-label">
           <span id={`${id}-font`}>原稿の書体</span>
+          <span className="aset-row-desc">
+            原稿・題名・通し読みの書体です。ゴシックは端末の標準の書体（iPhone・Mac はヒラギノ角ゴシック、Windows
+            は游ゴシック）を使います。
+          </span>
         </div>
         <div className="aset-row-control">
           <Choices

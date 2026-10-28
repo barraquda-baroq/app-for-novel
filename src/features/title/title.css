@@ -9,7 +9,7 @@
 
 /* グローバルの .input-bare / .tabs / .textarea より後に読み込まれないことがあるので、クラスを重ねて詳細度を上げる */
 .input-bare.tpage-name {
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-size: 28px;
   font-weight: 700;
   line-height: 1.3;

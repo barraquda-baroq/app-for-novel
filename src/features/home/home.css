@@ -18,12 +18,17 @@
   min-width: 0;
 }
 
+/* 領域の見出し。領域の色（タイトル・アイデア。styles.css の data-area）を左端の線と淡い背景で示す */
 .home-pane-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   min-height: 40px;
+  padding: 3px 0 3px 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--area-soft, transparent), transparent 70%);
+  box-shadow: inset 3px 0 0 var(--area, transparent);
 }
 
 .home-pane-head h2 {
@@ -34,11 +39,7 @@
 .home-pane-icon {
   width: 20px;
   height: 20px;
-  color: var(--accent);
-}
-
-.home-pane-icon.is-idea {
-  color: var(--memo);
+  color: var(--area-text, var(--accent));
 }
 
 .home-pane-count {
@@ -153,10 +154,17 @@
   font-size: 14px;
 }
 
+/* 領域の色をタブと同じように示す（下線を淡く敷き、表示中の領域はその色の背景・下線・文字） */
+.segmented.home-jump-seg button {
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--area) 40%, transparent);
+}
+
 .segmented.home-jump-seg button[aria-current='true'] {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+  background: var(--area-soft);
+  color: var(--area-text);
+  box-shadow:
+    inset 0 -3px 0 var(--area),
+    0 1px 2px rgb(0 0 0 / 12%);
 }
 
 .home-jump-count {
@@ -170,8 +178,8 @@
 }
 
 .segmented.home-jump-seg button[aria-current='true'] .home-jump-count {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--area) 22%, transparent);
+  color: var(--area-text);
 }
 
 /* 切り替えで移った時に、見出しがヘッダーと切り替えの下に隠れないように */
@@ -360,7 +368,7 @@
 .home-title-name {
   flex: 1;
   min-width: 0;
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   font-size: 19px;
   font-weight: 700;
   line-height: 1.4;

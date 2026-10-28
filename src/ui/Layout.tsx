@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigationType } from 'react-router-dom'
 import { flushNow, reloadFromDisk, useApp } from '../store/appStore'
 import { flushAllDrafts } from '../store/draftRegistry'
-import { notify, notifyError, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
+import { notify, notifyError, resolveAppearance, THEME_COLORS, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost, cancelAllDialogs } from './dialogs'
 import { GearIcon, XIcon } from './icons'
 import { SyncIndicator } from './SyncIndicator'
@@ -167,18 +167,38 @@ function RecoveryNotice() {
   return null
 }
 
-/** テーマ・エディタフォントを <html> に反映する */
+/**
+ * 外観・原稿の書体と文字サイズを <html> に反映する。
+ * data-theme には実際の外観（white / dark / deep-dark）を入れる。「端末の設定に合わせる」の間は端末の切り替えにも追従する。
+ * ブラウザの枠の色（<meta name="theme-color">）も外観に合わせる。最初の描画前は index.html のスクリプトが同じことをする。
+ */
 function PrefsEffect() {
   const theme = usePrefs((s) => s.theme)
   const font = usePrefs((s) => s.editorFont)
   const size = usePrefs((s) => s.editorFontSize)
   useEffect(() => {
     const root = document.documentElement
-    if (theme === 'system') root.removeAttribute('data-theme')
-    else root.setAttribute('data-theme', theme)
-    root.style.setProperty('--editor-font', font === 'mincho' ? 'var(--font-mincho)' : 'var(--font-ui)')
+    const query = theme === 'system' ? window.matchMedia?.('(prefers-color-scheme: dark)') : undefined
+    const apply = () => {
+      const appearance = resolveAppearance(theme, query?.matches ?? false)
+      root.setAttribute('data-theme', appearance)
+      let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      if (!meta) {
+        meta = document.createElement('meta')
+        meta.name = 'theme-color'
+        document.head.appendChild(meta)
+      }
+      meta.content = THEME_COLORS[appearance]
+    }
+    apply()
+    query?.addEventListener?.('change', apply)
+    return () => query?.removeEventListener?.('change', apply)
+  }, [theme])
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--editor-font', font === 'mincho' ? 'var(--font-mincho)' : 'var(--font-gothic)')
     root.style.setProperty('--editor-size', `${size}px`)
-  }, [theme, font, size])
+  }, [font, size])
   return null
 }
 

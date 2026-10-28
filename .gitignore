@@ -7,3 +7,4 @@ coverage
 e2e/artifacts
 .claude/worktrees
 .firebase
+test-results

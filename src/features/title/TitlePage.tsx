@@ -153,7 +153,8 @@ export function TitlePage() {
           </div>
         </header>
 
-        <div className="tabs tpage-tabs" role="tablist" aria-label="タイトルの内容">
+        {/* タブは領域ごとに色分けする（data-area。色は styles.css の --area-*） */}
+        <div className="tabs tpage-tabs" role="tablist" aria-label="タイトルの内容" data-area={tab}>
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -168,6 +169,7 @@ export function TitlePage() {
               tabIndex={tab === t.id ? 0 : -1}
               onClick={() => selectTab(t.id)}
               onKeyDown={onTabKey}
+              data-area={t.id}
               data-testid={`tab-${t.id}`}
             >
               {t.label}
@@ -175,7 +177,13 @@ export function TitlePage() {
           ))}
         </div>
 
-        <div role="tabpanel" id={`${baseId}-panel`} aria-labelledby={`${baseId}-tab-${tab}`} className="tpage-panel">
+        <div
+          role="tabpanel"
+          id={`${baseId}-panel`}
+          aria-labelledby={`${baseId}-tab-${tab}`}
+          className="tpage-panel"
+          data-area={tab}
+        >
           {tab === 'story' ? <StoryTab titleId={titleId} /> : null}
           {tab === 'settings' ? <SettingsTab titleId={titleId} /> : null}
           {tab === 'strategy' ? <StrategyTab titleId={titleId} /> : null}

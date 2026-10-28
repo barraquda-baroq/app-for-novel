@@ -98,7 +98,7 @@
 }
 
 .aset-size-mark {
-  font-family: var(--font-mincho);
+  font-family: var(--editor-font);
   color: var(--text-muted);
   line-height: 1;
 }
@@ -141,7 +141,7 @@
 .aset-preview {
   margin: 0;
   color: var(--text);
-  font-family: var(--editor-font, var(--font-mincho));
+  font-family: var(--editor-font);
   font-size: var(--editor-size, 17px);
   line-height: 1.95;
   letter-spacing: 0.02em;
@@ -345,6 +345,13 @@
 
   .aset-row-control {
     flex: 1 1 100%;
+  }
+
+  /* 外観の4つの選択肢は2列に並べる（折り返して1つだけ次の行に残らないように） */
+  .segmented.aset-seg-theme {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
   }
 
   .aset-range {

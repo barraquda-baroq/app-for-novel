@@ -103,6 +103,7 @@ export function HomePage() {
                   aria-current={current === a.id ? 'true' : undefined}
                   aria-controls={paneIds[a.id]}
                   onClick={() => jumpTo(a.id)}
+                  data-area={a.id}
                   data-testid={`home-jump-${a.id}`}
                 >
                   {a.label}
@@ -120,6 +121,7 @@ export function HomePage() {
             id={paneIds.titles}
             className="home-pane home-titles"
             aria-labelledby={titleHeadingId}
+            data-area="titles"
             data-testid="title-group"
           >
             <TitleGroup headingId={titleHeadingId} />
@@ -129,6 +131,7 @@ export function HomePage() {
             id={paneIds.ideas}
             className="home-pane home-ideas"
             aria-labelledby={ideaHeadingId}
+            data-area="ideas"
             data-testid="idea-area"
           >
             <IdeaArea headingId={ideaHeadingId} focusSection={focus} />

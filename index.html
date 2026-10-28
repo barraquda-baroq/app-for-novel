@@ -5,10 +5,29 @@
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#2f3a4f" />
+    <meta name="theme-color" content="#ffffff" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>Novel Studio</title>
+    <script>
+      // 最初の描画の前に外観（ホワイト／ダーク／ディープダーク）を決め、暗い外観で白い画面が一瞬出ないようにする。
+      // 起動後は src/ui/Layout.tsx の PrefsEffect が同じ規則で反映する（色は src/store/uiStore.ts の THEME_COLORS と同じ）。
+      ;(function () {
+        var mode = 'system'
+        try {
+          var prefs = JSON.parse(localStorage.getItem('novel-studio:prefs') || '{}')
+          if (prefs && typeof prefs.theme === 'string') mode = prefs.theme === 'light' ? 'white' : prefs.theme
+        } catch (e) {}
+        var colors = { white: '#ffffff', dark: '#17181b', 'deep-dark': '#0e0f11' }
+        if (!colors.hasOwnProperty(mode)) {
+          var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+          mode = dark ? 'dark' : 'white'
+        }
+        document.documentElement.setAttribute('data-theme', mode)
+        var meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.setAttribute('content', colors[mode])
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

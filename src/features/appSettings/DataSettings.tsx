@@ -75,7 +75,7 @@ export function DataSettings() {
       exportedAt ? `書き出し日時: ${formatDateTime(exportedAt)}` : null,
       `バックアップの内容: ${countsSummary(dataCounts(next))}`,
       '',
-      'この端末の書きかけ（アイデアの入力欄など）や折りたたみの状態も消えます。表示の設定（テーマ・文字サイズなど）は残ります。',
+      'この端末の書きかけ（アイデアの入力欄など）や折りたたみの状態も消えます。表示の設定（外観・文字サイズなど）は残ります。',
     ].filter((l): l is string => l !== null)
     const ok = await confirmDialog({
       title: 'バックアップから復元しますか？',
