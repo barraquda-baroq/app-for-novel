@@ -361,6 +361,8 @@ interface Keep {
   reason: 'edit' | 'acts'
   /** 端末内に残っている稿（同じ幕・話に名前を変えて残すか、移す） */
   live: boolean
+  /** 知らせの種類（無ければ、まとまりと mine から決める） */
+  detail?: ActsNoteDetail
 }
 
 /** 応募計画が使っている応募時の原稿の本文のキー */
@@ -552,6 +554,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
    * 1. 幕の構成のまとまりを決める（届いた話・幕と、幕の構成を変えた話の送信待ちから。話ごとに、両方で変わった・片方だけ）
    * 2. 1件ずつ反映する（3者マージ）。両方で幕の構成が変わった話・幕は後で丸ごと合わせる。片方だけなら、その側の採用稿を採る
    * 3. 応募時の原稿の本文の削除
+   * 3b. 別の端末がバックアップから戻した話・幕の下に、この端末だけの幕・稿があれば控えて片付ける
    * 4. 両方で幕の構成が変わった話を、どちらかの構成に合わせる（resolveActsPieces）。採らなかった側の稿を控える
    * 5. この端末で消した幕・話の下に届いた稿・幕を控えて片付ける
    * 6. 消えた親の子を片付ける
@@ -857,6 +860,38 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           await w.del(ch.table, ch.id)
           await db.outbox.delete(k)
         }
+      }
+    }
+
+    // ---------- 3b. 別の端末がバックアップから戻した話・幕の下の、この端末だけの幕・稿 ----------
+    // 戻した内容を正とする（この端末の送信待ちは 2 で消した）。この端末で分けた・つないだまま送っていない幕・稿は
+    // クラウドに無いので、戻した端末は消さない。話の幕の並び・稿の一覧に載らないまま残らないように、稿を控えて片付ける
+    // （稿は 7 で、残る幕・話の稿「（競合: ○○での幕の操作）」か、採用原稿にそのまま入っていればゴミ箱の1件に）
+    const localOnly = async (table: TableName, id: string) => (await rowOf(table, id))?.base === null
+    for (const ch of changes) {
+      if (!ch.reset || ch.table !== 'pieces' || !ch.record || skip.has(outboxKey(ch.table, ch.id))) continue
+      const rec = ch.record as PieceRec
+      const ep = isEpisodeRecord(rec) ? ch.id : isActRecord(rec) ? parentIdOf(rec) : null
+      if (!ep) continue
+      const keepLocal = (v: AnyRecord, pieceId: string) =>
+        keeps.push({ record: v, episodeId: ep, pieceId, mine: true, reason: 'acts', live: true, detail: 'lost' })
+      if (isEpisodeRecord(rec)) {
+        const listed = new Set(actIdsOf(rec))
+        const acts = await piecesT.filter((r) => isActRecord(r) && parentIdOf(r) === ch.id && !listed.has(r.id)).toArray()
+        for (const a of acts) {
+          if (!(await localOnly('pieces', a.id))) continue
+          for (const v of await versionsT.filter((r) => (r as VersionRec).pieceId === a.id).toArray()) keepLocal(v, a.id)
+          await w.delLocal('pieces', a.id)
+          noteActs(ep, 'lost')
+        }
+        // 話の幕の構成は戻した内容になった（この端末の構成の変更は残っていない）
+        units.delete(ch.id)
+      }
+      const listedVersions = new Set(Array.isArray(rec.versionIds) ? rec.versionIds : [])
+      for (const v of await versionsT.filter((r) => (r as VersionRec).pieceId === ch.id && !listedVersions.has(r.id)).toArray()) {
+        if (!(await localOnly('versions', v.id))) continue
+        keepLocal(v, ch.id)
+        noteActs(ep, 'lost')
       }
     }
 
@@ -1176,7 +1211,14 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       let trashTarget: AnyRecord | null = null
       for (const k of pending) {
         const detail: ActsNoteDetail =
-          u?.kind === 'conflict' && u.verdict ? (u.verdict === 'mine' ? 'won' : 'lost') : k.mine ? 'mineDropped' : 'theirsDropped'
+          k.detail ??
+          (u?.kind === 'conflict' && u.verdict
+            ? u.verdict === 'mine'
+              ? 'won'
+              : 'lost'
+            : k.mine
+              ? 'mineDropped'
+              : 'theirsDropped')
         const own = await c.getPiece(k.pieceId)
         const ownLive = own !== null && (own.id === ep || live.includes(own.id))
         if (k.reason === 'edit' && !k.live && ownLive) {

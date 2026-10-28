@@ -3,6 +3,8 @@
 //   1回の書き込み（同じ時刻）で書く。幕のまとまりは全部書けるか1つも書かない
 // - 受信: クラウドの書き込みを、オフラインから戻った最初はまとめて1回、その後は書き込みごとに1回ずつ applyRemote で反映する
 //   （Firestore は1回の書き込みを1つの通知で届ける）
+// - バックアップからの復元・すべて削除: 送る前に、この端末に無いクラウドのレコードを消し（pushAuthoritative）、
+//   「必ず上書き」の送信待ちは reset の印付きで書く。それまでの受信は反映せずに、後で受け取り直す
 // - 端末内の保存・3者マージは本物（src/db/persistence.ts。fake-indexeddb）
 import { createPersistence, type Change, type ConflictNote, type OutboxItem, type Persistence } from '../db/persistence'
 import { repairData } from '../domain/repair'
@@ -20,6 +22,8 @@ interface CloudDoc {
   hash: string
   ts: number
   device: string
+  /** 復元・すべて削除で書いた（その内容を正とする） */
+  reset?: boolean
 }
 
 export class FakeCloud {
@@ -56,6 +60,28 @@ export class FakeDevice {
     await this.p.save(prev, fn(prev))
   }
 
+  /** バックアップからの復元・すべて削除（次に送る時に、クラウドもこの内容に揃える） */
+  async restore(data: AppData): Promise<void> {
+    // 同期したことのある端末として（クラウドもこの内容に揃える）
+    if (!(await this.p.getMeta('uid'))) await this.p.setMeta('uid', 'fake-user')
+    await this.p.replaceAll(data)
+  }
+
+  /** エンジンの pushAuthoritative と同じ: 復元の後、この端末に無いクラウドのレコードを消す（1回の書き込み） */
+  private async pushAuthoritative(): Promise<void> {
+    if (!(await this.p.getMeta('authoritative'))) return
+    const local = await this.p.localKeys()
+    const ts = ++this.cloud.ts
+    const gone: string[] = []
+    for (const [key, d] of this.cloud.docs) {
+      if (!d.record || local.has(`${d.table}/${d.id}`)) continue
+      this.cloud.docs.set(key, { ...d, record: null, hash: hashRecord(null), ts, device: this.name, reset: true })
+      gone.push(key)
+    }
+    this.cloud.log.push(`${this.name}@${ts}: 復元で消した ${gone.map((k) => k.slice(0, k.indexOf(':') + 5)).join(' ')}`)
+    await this.p.setMeta('authoritative', null)
+  }
+
   /** オフラインにする（戻った最初の受信は、それまでの書き込みをまとめて受け取る） */
   offline(): void {
     this.catchingUp = true
@@ -80,7 +106,15 @@ export class FakeDevice {
       if (!decision.write[i]) return
       const key = `${b.it.table}:${b.it.id}`
       const hash = hashRecord(b.it.local)
-      this.cloud.docs.set(key, { table: b.it.table, id: b.it.id, record: b.it.local, hash, ts, device: this.name })
+      this.cloud.docs.set(key, {
+        table: b.it.table,
+        id: b.it.id,
+        record: b.it.local,
+        hash,
+        ts,
+        device: this.name,
+        ...(b.it.force ? { reset: true } : {}),
+      })
       const list = this.sent.get(key) ?? []
       list.push(hash)
       this.sent.set(key, list.slice(-20))
@@ -114,10 +148,12 @@ export class FakeDevice {
       id: d.id,
       record: d.record as Change['record'],
       ...(d.device === this.name ? { own: true } : {}),
+      ...(d.reset ? { reset: true } : {}),
     }
   }
 
-  private async apply(changes: Change[], cursor: number | undefined, direct = false): Promise<void> {
+  /** 反映する（復元をまだクラウドに当てていなければ反映せずに null） */
+  private async apply(changes: Change[], cursor: number | undefined, direct = false): Promise<Change[] | null> {
     // 控えの表記は、反映する前の表示用の内容で作る（ストアと同じ）
     const before = repairData(await this.p.load()).data
     const hooks = createConflictHooks({
@@ -126,7 +162,7 @@ export class FakeDevice {
       newId,
       report: (n) => this.notes.push(n),
     })
-    await this.p.applyRemote(changes, { cursor, ...hooks, ...(direct ? { direct: true } : {}) })
+    return this.p.applyRemote(changes, { cursor, ...hooks, ...(direct ? { direct: true } : {}) })
   }
 
   /** 受け取っていない書き込みを反映する。戻った最初はまとめて、その後は書き込みごとに */
@@ -148,7 +184,8 @@ export class FakeDevice {
     for (const g of groups) {
       const changes = g.map(([k, d]) => this.changeOf(k, d)).filter((c): c is Change => c !== null)
       const cursor = g[g.length - 1][1].ts
-      await this.apply(changes, cursor)
+      // 復元をクラウドに当てるまでは受け取らない（当てた後で、記録した位置から受け取り直す）
+      if ((await this.apply(changes, cursor)) === null) return false
       this.cursor = cursor
     }
     return true
@@ -172,6 +209,7 @@ export class FakeDevice {
 
   /** エンジンの uploadAll と同じ: 送り終わるまで送る。書けなければ受信してから送り直す */
   async sync(): Promise<void> {
+    await this.pushAuthoritative()
     let stuck = 0
     for (let round = 0; round < 50; round++) {
       const r = await this.uploadBatch()

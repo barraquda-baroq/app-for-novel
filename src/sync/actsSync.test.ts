@@ -221,3 +221,61 @@ describe('初めてのログイン（共通の履歴が無い）と幕', () => {
     })
   }
 })
+
+describe('バックアップからの復元と幕', () => {
+  // X がバックアップから戻す間に、Y がオフラインで幕の構成を変えた（Y の幕・稿はクラウドに無いので、X の復元では消えない）
+  const variants: [string, number[] | null, (d: AppData, ep: ID) => AppData, number][] = [
+    ['第2幕をさらに分けた', [3, 6], (d, ep) => A.separatePiece(d, actsIds(d, ep)[1], [1]).data, 3],
+    ['第1幕と第2幕をつないだ', [3, 6], (d, ep) => A.joinActWithNext(d, actsIds(d, ep)[0]).data, 3],
+    ['分けた', null, (d, ep) => A.separatePiece(d, ep, [3]).data, 0],
+  ]
+  for (const [name, splitAt, op, acts] of variants) {
+    for (const restoreFirst of [true, false]) {
+      it(`${name}端末と、バックアップから戻した端末（${restoreFirst ? '戻した方' : '幕の操作'}が先に送る）`, async () => {
+        const start = scenarioStart({ body: 'ABCDEFGHI', splitAt })
+        const ep = start.ep
+        const cloud = new FakeCloud()
+        const x = new FakeDevice('X', cloud)
+        const y = new FakeDevice('Y', cloud)
+        await x.edit(() => start.data)
+        await settle(x, y)
+        const backup = await x.load()
+        x.notes = []
+        y.notes = []
+        x.offline()
+        y.offline()
+        await y.edit((d) => op(d, ep))
+        const seen = [...texts(await x.load()), ...texts(await y.load())]
+        if (restoreFirst) {
+          await x.restore(backup)
+          await x.sync()
+          // Y はつながって、先に復元を受け取った（Y の幕・稿はクラウドに無いので、復元の削除には入っていない）
+          await y.receive()
+          await y.sync()
+        } else {
+          await y.sync()
+          await x.restore(backup)
+          await x.sync()
+        }
+        await settle(x, y)
+        expect(await sameData(x, y)).toBe(true)
+        const d = await x.load()
+        const all = [...Object.values(d.versions).flatMap((v) => [v.body, v.note])]
+        for (const tr of Object.values(d.trashRecords)) {
+          const rec = tr.record as { body?: unknown; note?: unknown }
+          for (const t of [rec.body, rec.note]) if (typeof t === 'string') all.push(t)
+        }
+        // 戻した端末が先なら、Y の送っていない幕の稿も残る（後なら、復元は Y が送った後の内容も戻す）
+        if (restoreFirst) expect([...new Set(seen)].filter((t) => !all.some((q) => q.includes(t)))).toEqual([])
+        expect([...structureProblems(d), ...restoreProblems(d, ep)]).toEqual([])
+        const v = repairData(d).data
+        expect(activeBody(v, v.pieces[ep])).toBe('ABCDEFGHI')
+        expect(isSplit(v.pieces[ep]) ? actsIds(d, ep).length : 0).toBe(acts)
+        if (restoreFirst)
+          expect(y.notes.filter((n) => n.kind === 'acts').map((n) => [n.id, 'detail' in n ? n.detail : ''])).toEqual([
+            [ep, 'lost'],
+          ])
+      })
+    }
+  }
+})

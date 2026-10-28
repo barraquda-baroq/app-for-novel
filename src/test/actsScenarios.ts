@@ -465,7 +465,9 @@ export function structureProblems(d: AppData): string[] {
     if (l.length > 1) p.push(`幕 ${short(a.id)} が2つの話に載っている`)
   }
   for (const v of Object.values(d.versions)) {
-    if (!d.pieces[v.pieceId]) p.push(`稿 ${short(v.id)}（${v.body}）の話・幕が無い`)
+    const owner = d.pieces[v.pieceId]
+    if (!owner) p.push(`稿 ${short(v.id)}（${v.body}）の話・幕が無い`)
+    else if (!owner.versionIds.includes(v.id)) p.push(`稿 ${short(v.id)}（${v.body}）が話・幕の稿の一覧に載っていない`)
   }
   for (const piece of Object.values(d.pieces)) {
     for (const id of piece.versionIds) if (!d.versions[id]) p.push(`話・幕 ${short(piece.id)} の稿の一覧に無い稿 ${short(id)}`)
