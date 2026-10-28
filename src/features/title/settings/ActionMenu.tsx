@@ -11,7 +11,18 @@ export interface MenuItem {
   testId?: string
 }
 
-export function ActionMenu({ label, items, testId }: { label: string; items: MenuItem[]; testId?: string }) {
+export function ActionMenu({
+  label,
+  items,
+  testId,
+  triggerClassName,
+}: {
+  label: string
+  items: MenuItem[]
+  testId?: string
+  /** 開くボタンに足すクラス（置き場所に合わせて見た目を変える） */
+  triggerClassName?: string
+}) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -60,7 +71,7 @@ export function ActionMenu({ label, items, testId }: { label: string; items: Men
       <button
         ref={trigger}
         type="button"
-        className="icon-btn st-menu-trigger"
+        className={`icon-btn st-menu-trigger${triggerClassName ? ` ${triggerClassName}` : ''}`}
         aria-label={label}
         title={label}
         aria-haspopup="menu"

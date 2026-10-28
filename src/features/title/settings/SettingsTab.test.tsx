@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence } from '../../../db/persistence'
 import type { ID } from '../../../domain/types'
 import { actions } from '../../../store/actions'
@@ -127,11 +127,68 @@ describe('設定タブ', () => {
     await user.tab()
     expect(getData().settingEntries[entryId].fields.map((f) => f.key)).toEqual(['高度', '人口'])
 
-    await user.click(screen.getAllByTestId('field-up')[1])
+    // 並べ替え・削除はフィールドごとの「…」メニューから
+    await user.click(screen.getAllByTestId('field-menu')[1])
+    await user.click(screen.getByTestId('field-up'))
     expect(getData().settingEntries[entryId].fields.map((f) => f.key)).toEqual(['人口', '高度'])
     // 空のフィールドは確認なしで削除
-    await user.click(screen.getAllByTestId('field-remove')[0])
+    await user.click(screen.getAllByTestId('field-menu')[0])
+    await user.click(screen.getByTestId('field-remove'))
     expect(getData().settingEntries[entryId].fields.map((f) => f.key)).toEqual(['高度'])
+  })
+
+  it('同じ行の項目名と内容の欄で key が重ならない（重複キーの警告を出さない）', async () => {
+    const user = userEvent.setup()
+    const titleId = actions.createTitle('作品')
+    actions.addEntry(categoryOf(titleId, 'キャラクター'), '澪')
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      renderTab(titleId)
+      await user.click(screen.getByTestId('entry-toggle'))
+      expect(screen.getAllByTestId('entry-field')).toHaveLength(7)
+      const duplicateKey = errors.mock.calls.filter((args) => args.some((a) => String(a).includes('same key')))
+      expect(duplicateKey).toEqual([])
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('キーボードだけでフィールドを続けて入力できる（Enter で内容へ、Tab は1行に3か所）', async () => {
+    const user = userEvent.setup()
+    const titleId = actions.createTitle('作品')
+    const entryId = actions.addEntry(categoryOf(titleId, 'キャラクター'), '澪')
+    renderTab(titleId)
+    await user.click(screen.getByTestId('entry-toggle'))
+    const keys = () => screen.getAllByTestId('field-key')
+    const values = () => screen.getAllByTestId('field-value')
+    const menus = () => screen.getAllByTestId('field-menu')
+
+    // 項目名で Enter → 同じ行の内容へ
+    await user.click(keys()[0])
+    await user.clear(keys()[0])
+    await user.type(keys()[0], 'よみがな{Enter}')
+    expect(document.activeElement).toBe(values()[0])
+    await user.type(values()[0], 'みお')
+    // 内容 → 「…」メニュー → 次の行の項目名
+    await user.tab()
+    expect(document.activeElement).toBe(menus()[0])
+    await user.tab()
+    expect(document.activeElement).toBe(keys()[1])
+    await user.tab()
+    expect(document.activeElement).toBe(values()[1])
+    await user.type(values()[1], '26')
+    await user.tab()
+    const fields = getData().settingEntries[entryId].fields
+    expect(fields[0]).toMatchObject({ key: 'よみがな', value: 'みお' })
+    expect(fields[1]).toMatchObject({ key: '年齢', value: '26' })
+
+    // メニューはキーボードで操作でき、並べ替えた後もその行のメニューにフォーカスが残る
+    expect(document.activeElement).toBe(menus()[1])
+    await user.keyboard('{Enter}')
+    expect(document.activeElement).toBe(screen.getByTestId('field-up'))
+    await user.keyboard('{ArrowDown}{Enter}')
+    expect(getData().settingEntries[entryId].fields.slice(0, 3).map((f) => f.key)).toEqual(['よみがな', '性別', '年齢'])
+    await waitFor(() => expect(document.activeElement).toBe(menus()[2]))
   })
 
   it('エントリの並べ替えと、別の項目への移動', async () => {

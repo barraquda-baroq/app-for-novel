@@ -1,6 +1,6 @@
 // 戦略タブ: 書籍化に向けた全体方針、現在の採用原稿の規模、コンテストへの応募計画（応募順）と結果・改稿/再応募方針。
 import { useEffect, useMemo, useState } from 'react'
-import { submissionsOf } from '../../../domain/entityOps'
+import { missingActiveLabel, submissionsOf } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
 import type { ID } from '../../../domain/types'
 import { actions } from '../../../store/actions'
@@ -11,6 +11,7 @@ import { PlusIcon, TargetIcon } from '../../../ui/icons'
 import { GrowTextarea } from '../settings/GrowTextarea'
 import { SubmissionCard } from './SubmissionCard'
 import { manuscriptSummary, sortByDeadline } from './strategyLogic'
+import { useToday } from './useToday'
 import './strategy.css'
 
 type SortMode = 'order' | 'deadline'
@@ -21,10 +22,15 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
   const summary = useMemo(() => manuscriptSummary(data, titleId), [data, titleId])
   const submissions = useMemo(() => submissionsOf(data, titleId), [data, titleId])
   const [sort, setSort] = useState<SortMode>('order')
-  const shown = useMemo(() => (sort === 'deadline' ? sortByDeadline(submissions) : submissions), [sort, submissions])
+  // 開いたまま日付が変わっても、締切・結果発表までの日数を更新する
+  const today = useToday()
+  const shown = useMemo(
+    () => (sort === 'deadline' ? sortByDeadline(submissions, today) : submissions),
+    [sort, submissions, today],
+  )
+  const current = useMemo(() => ({ chars: summary.chars, pages: summary.pages }), [summary])
   const [expanded, setExpanded] = useState<ReadonlySet<ID>>(() => new Set())
   const [reveal, setReveal] = useState<ID | null>(null)
-  const today = new Date()
 
   useEffect(() => {
     if (!reveal) return
@@ -94,7 +100,7 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
             <span className="tiny faint">採用原稿のみ</span>
           </div>
           <dl className="sg-stats">
-            <div className="sg-stat">
+            <div className="sg-stat sg-stat-chars">
               <dt>総文字数</dt>
               <dd data-testid="summary-chars">
                 {formatCount(summary.chars)}
@@ -120,11 +126,12 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
           </dl>
           {summary.missingActive > 0 ? (
             <p className="sg-missing" data-testid="summary-missing">
-              採用原稿なし {summary.missingActive}話<span>（文字数に含まれていません）</span>
+              {missingActiveLabel(summary.missingEpisodes, summary.missingSpecials)}
+              <span>（文字数に含まれていません）</span>
             </p>
           ) : null}
           <p className="tiny faint sg-current-note">
-            文字数は空白・改行を除いて数えています。応募先の規定文字数との比較にも使います。
+            文字数は空白・改行を除いて数えています。応募前の応募先の規定（文字数・枚数）との比較にも使います。
           </p>
         </section>
       </div>
@@ -159,7 +166,7 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
 
         {sort === 'deadline' && submissions.length > 1 ? (
           <p className="small muted sg-sort-note" data-testid="sort-note">
-            締切が近い順に表示しています（番号は応募順のままです）。並べ替えるときは「応募順」に戻してください。
+            応募前で締切が近いもの → 応募済み・選考中 → 結果が出たもの・締切を過ぎたもの の順に表示しています（番号は応募順のままです）。並べ替えるときは「応募順」に戻してください。
           </p>
         ) : null}
 
@@ -184,7 +191,7 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
                   canReorder={sort === 'order'}
                   expanded={expanded.has(s.id)}
                   onToggle={() => toggle(s.id)}
-                  totalChars={summary.chars}
+                  current={current}
                   today={today}
                 />
               )

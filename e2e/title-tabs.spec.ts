@@ -112,10 +112,12 @@ test.describe('設定タブ', () => {
     await expect(fields.nth(7).getByTestId('field-key')).toBeFocused()
     await fields.nth(7).getByTestId('field-key').fill('口癖')
     await fields.nth(7).getByTestId('field-value').fill('「まあ、なんとかなるさ」')
-    // 空のフィールドは確認なしで削除できる
+    // 空のフィールドは確認なしで削除できる（並べ替え・削除はフィールドごとの「…」メニュー）
+    await fields.nth(2).getByTestId('field-menu').click()
     await fields.nth(2).getByTestId('field-remove').click()
     await expect(fields).toHaveCount(7)
     // 並べ替え（口癖を1つ上へ）
+    await fields.nth(6).getByTestId('field-menu').click()
     await fields.nth(6).getByTestId('field-up').click()
     await expect(fields.nth(5).getByTestId('field-key')).toHaveValue('口癖')
     await card.getByTestId('entry-close').click()
@@ -244,6 +246,57 @@ test.describe('設定タブ', () => {
     await expect(page.getByTestId('category-title')).toHaveText('キャラクター')
     await expectNoHorizontalScroll(page)
   })
+
+  test('キーボードでフィールドを続けて入力できる（Enter で内容へ、操作は「…」メニュー1か所）。重複キーの警告を出さない', async ({
+    page,
+  }) => {
+    const errors: string[] = []
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text())
+    })
+    await openApp(page)
+    const ids = await seed(page, ({ actions, getData }) => {
+      const titleId = actions.createTitle('鍵盤')
+      const chara = Object.values(getData().settingCategories).find((c) => c.titleId === titleId && c.name === 'キャラクター')!.id
+      const entryId = actions.addEntry(chara, '澪')
+      return { titleId, entryId }
+    })
+    await openApp(page, `/t/${ids.titleId}?tab=settings`)
+    await page.getByTestId('entry-toggle').click()
+    const fields = page.getByTestId('entry-field')
+    await expect(fields).toHaveCount(7)
+
+    // 項目名で Enter → 内容 → Tab で「…」→ Tab で次の項目名
+    await fields.nth(0).getByTestId('field-key').fill('よみがな')
+    await fields.nth(0).getByTestId('field-key').press('Enter')
+    await expect(fields.nth(0).getByTestId('field-value')).toBeFocused()
+    await page.keyboard.type('みお')
+    await page.keyboard.press('Tab')
+    await expect(fields.nth(0).getByTestId('field-menu')).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(fields.nth(1).getByTestId('field-key')).toBeFocused()
+    await page.keyboard.press('Tab')
+    await page.keyboard.type('26')
+    await page.keyboard.press('Tab')
+    await expect(fields.nth(1).getByTestId('field-menu')).toBeFocused()
+
+    // メニューもキーボードで操作できる（年齢を下へ）
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('field-up')).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await expect(fields.nth(2).getByTestId('field-key')).toHaveValue('年齢')
+    await expect(fields.nth(2).getByTestId('field-menu')).toBeFocused()
+
+    await page.evaluate(() => window.__ns.flushNow())
+    const saved = await page.evaluate((id) => window.__ns.getData().settingEntries[id].fields, ids.entryId)
+    expect(saved.slice(0, 3).map((f) => [f.key, f.value])).toEqual([
+      ['よみがな', 'みお'],
+      ['性別', ''],
+      ['年齢', '26'],
+    ])
+    expect(errors.filter((e) => e.includes('same key'))).toEqual([])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -309,8 +362,14 @@ test.describe('戦略タブ', () => {
     const deadline = daysFromToday(65)
     await first.getByTestId('submission-deadline-input').fill(ymd(deadline))
     await expect(first.getByTestId('submission-deadline')).toHaveText(`締切 ${ymd(deadline).replace(/-/g, '/')}（あと65日）`)
+    // 応募済みにすると応募時の原稿の記録をすすめられる（ここでは記録しない）
     await first.getByTestId('submission-status-select').selectOption('submitted')
+    await expect(dialog(page)).toContainText('応募した原稿として記録します')
+    await dialog(page).getByRole('button', { name: '記録しない' }).click()
+    await expect(dialog(page)).toHaveCount(0)
     await expect(first.getByTestId('submission-status')).toHaveText('応募済み')
+    // 応募後は締切を出さない
+    await expect(first.getByTestId('submission-deadline')).toHaveCount(0)
     await first.getByTestId('submission-stage').fill('一次選考通過')
     await first.getByTestId('submission-stage').press('Enter')
     await first.getByTestId('submission-url').fill('https://example.com/contest')
@@ -322,7 +381,7 @@ test.describe('戦略タブ', () => {
 
     // 応募時の原稿を記録
     await first.getByTestId('snapshot-record').click()
-    await expect(first.getByTestId('snapshot-info')).toContainText('記録・2,000字・3話')
+    await expect(first.getByTestId('snapshot-info')).toContainText('記録・2,000字・約5枚・3話')
     await expect(first.getByTestId('snapshot-diff')).toContainText('変わっていません')
     // 採用原稿を変えると、変わった話の数が出る
     await seed(
@@ -334,7 +393,8 @@ test.describe('戦略タブ', () => {
       },
       pieceIds[2],
     )
-    await expect(first.getByTestId('snapshot-diff')).toContainText('記録した後に採用原稿が変わった話：1話')
+    await expect(first.getByTestId('snapshot-diff')).toContainText('記録した後に変わったもの：稿の切り替え 1件')
+    await expect(first.getByTestId('snapshot-piece').nth(2)).toContainText('稿が変わった')
     // 記録し直すときは確認する
     await first.getByTestId('snapshot-record').click()
     await expect(dialog(page)).toContainText('上書きされます')
@@ -361,10 +421,10 @@ test.describe('戦略タブ', () => {
     await expect(cards.nth(1).getByTestId('submission-number')).toContainText('2')
     await expect(cards.nth(0).getByRole('button', { name: '応募順を上げる' })).toBeDisabled()
 
-    // 締切順で見ても応募順は変わらない
+    // 締切順（応募前で締切が近いもの → 締切未定 → 応募済み → 締切を過ぎたもの）で見ても応募順は変わらない
     await page.getByTestId('sort-deadline').click()
-    await expect.poll(contestNames).toEqual(['灯火ネット小説コン', '海風小説大賞', '潮騒文庫新人賞'])
-    await expect(cards.nth(0).getByTestId('submission-number')).toContainText('2')
+    await expect.poll(contestNames).toEqual(['潮騒文庫新人賞', '海風小説大賞', '灯火ネット小説コン'])
+    await expect(cards.nth(0).getByTestId('submission-number')).toContainText('3')
     await expect(page.getByRole('button', { name: '応募順を上げる' })).toHaveCount(0)
     await page.getByTestId('sort-order').click()
     await expect.poll(contestNames).toEqual(['海風小説大賞', '灯火ネット小説コン', '潮騒文庫新人賞'])
@@ -393,6 +453,105 @@ test.describe('戦略タブ', () => {
     })
     expect(subs[0].snapshot?.charCount).toBe(2005)
     await expectNoHorizontalScroll(page)
+  })
+
+  test('応募済みにすると応募した原稿を記録でき、内訳・読む・書き出し・状態ごとの見出し・枚数の規定が使える', async ({ page }) => {
+    await openApp(page)
+    const { titleId, pieceIds } = await seedTitleWithEpisodes(page, '灯台守', ['一話の本文。', 'あ'.repeat(1992)])
+    const ids = await seed(
+      page,
+      ({ actions, getData }, a: { titleId: string; pieceIds: string[] }) => {
+        actions.updatePiece(a.pieceIds[0], { subtitle: '霧笛' })
+        const pro = actions.addSpecial(a.titleId, { chapterId: null, index: 0 }, 'プロローグ')
+        actions.updateVersion(getData().pieces[pro].versionIds[0], { body: '序。' })
+        const sub = actions.addSubmission(a.titleId, '潮風文学賞')
+        actions.updateSubmission(sub, { status: 'planned', minChars: 2100 })
+        const done = actions.addSubmission(a.titleId, '去年の賞')
+        actions.updateSubmission(done, { status: 'rejected', deadline: '2020-01-01', minChars: 999999, result: '一次落選。会話が多いとの講評。' })
+        return { sub, done }
+      },
+      { titleId, pieceIds },
+    )
+    await openApp(page, `/t/${titleId}?tab=strategy`)
+    const cards = page.getByTestId('submission-card')
+    const card = cards.nth(0)
+    // 応募前は現在の原稿（2,000字）で判定
+    await expect(card.getByTestId('submission-limit')).toHaveText('あと100字必要')
+    // 終了した応募先は締切・規定の注意を出さず、結果の抜粋を出す
+    await expect(cards.nth(1).getByTestId('submission-deadline')).toHaveCount(0)
+    await expect(cards.nth(1).getByTestId('submission-limit')).toHaveCount(0)
+    await expect(cards.nth(1).getByTestId('submission-followup').nth(0)).toHaveText('結果・講評一次落選。会話が多いとの講評。')
+
+    // 応募済みにして、応募した原稿を記録する（応募日に今日が入る）
+    await card.getByTestId('submission-toggle').click()
+    await card.getByTestId('submission-status-select').selectOption('submitted')
+    await expect(dialog(page)).toContainText('現在の採用原稿（2,000字・2話＋特殊1）')
+    await dialog(page).getByRole('button', { name: '記録する' }).click()
+    await expect(card.getByTestId('snapshot-info')).toContainText('記録・2,000字・約7枚・2話＋特殊1')
+    await expect(card.getByTestId('submission-submitted-input')).toHaveValue(ymd(new Date()))
+    await expect(card.getByTestId('snapshot-piece')).toHaveText(['プロローグ第1稿・2字', '第1話霧笛第1稿・6字', '第2話第1稿・1,992字'])
+
+    // 応募後に原稿を直しても、規定の判定は応募した原稿で行い、変わった話に印が付く
+    await seed(
+      page,
+      ({ actions, getData }, id: string) => actions.updateVersion(getData().pieces[id].activeVersionId!, { body: 'あ'.repeat(2200) }),
+      pieceIds[1],
+    )
+    await expect(card.getByTestId('snapshot-piece').nth(2)).toContainText('本文を編集')
+    await expect(card.getByTestId('submission-limit')).toHaveText('あと100字必要')
+    await expect(card.getByTestId('submission-limit-detail')).toHaveText('応募時の原稿 2,000字 → あと100字必要')
+
+    // 書き出しと読む
+    const exported = await exportAndRead(page, card.getByTestId('snapshot-export'))
+    expect(exported.name).toBe('灯台守_潮風文学賞_応募時の原稿.txt')
+    expect(exported.text).toBe(`灯台守\n\nプロローグ\n\n序。\n\n\n第1話　霧笛\n\n一話の本文。\n\n\n第2話\n\n${'あ'.repeat(1992)}\n`)
+    await card.getByTestId('snapshot-read').click()
+    await expect(page.getByTestId('snapshot-reader')).toContainText('一話の本文。')
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('snapshot-reader')).toHaveCount(0)
+
+    // 規定を原稿用紙換算の枚数にする
+    await card.getByTestId('limit-unit-pages').click()
+    await card.getByTestId('submission-min').fill('10')
+    await card.getByTestId('submission-min').press('Enter')
+    await expect(card.getByTestId('submission-limit')).toHaveText('あと3枚必要')
+    await expect(card.getByTestId('submission-limit-detail')).toHaveText('応募時の原稿 約7枚 → あと3枚必要')
+    // 数字でない値を入れて Tab で移っても、移った先の欄にフォーカスが残る
+    await card.getByTestId('submission-min').fill('たくさん')
+    await page.keyboard.press('Tab')
+    await expect(card.getByTestId('submission-max')).toBeFocused()
+    await expect(card.getByTestId('submission-min')).toHaveValue('10')
+
+    // 結果発表までの日数
+    await card.getByTestId('submission-result-on-input').fill(ymd(daysFromToday(12)))
+    await expect(card.getByTestId('submission-result-on')).toContainText('結果発表まであと12日')
+
+    await page.evaluate(() => window.__ns.flushNow())
+    const saved = await page.evaluate((id) => window.__ns.getData().submissions[id], ids.sub)
+    expect(saved).toMatchObject({ status: 'submitted', limitUnit: 'pages', minChars: 10, submittedOn: ymd(new Date()) })
+    expect(saved.snapshot?.pieces && Object.keys(saved.snapshot.pieces)).toHaveLength(3)
+    await expectNoHorizontalScroll(page)
+  })
+
+  test('現在の原稿の数字は桁の途中で折り返さない', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seedTitleWithEpisodes(page, '大長編', ['あ'.repeat(1_234_567)])
+    for (const width of [1400, 1024, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await openApp(page, `/t/${titleId}?tab=strategy`)
+      const chars = page.getByTestId('summary-chars')
+      await expect(chars).toHaveText('1,234,567字')
+      const box = await chars.evaluate((el) => {
+        const lineHeight = parseFloat(getComputedStyle(el).lineHeight)
+        const parent = el.parentElement!.getBoundingClientRect()
+        const self = el.getBoundingClientRect()
+        return { height: self.height, lineHeight, overflow: self.right - parent.right }
+      })
+      // 1行に収まり、枠からはみ出さない
+      expect(box.height).toBeLessThan(box.lineHeight * 1.5)
+      expect(box.overflow).toBeLessThanOrEqual(0)
+      await expectNoHorizontalScroll(page)
+    }
   })
 })
 
@@ -685,6 +844,9 @@ test.describe('スクリーンショット', () => {
       await page.getByTestId('category-menu').click()
       await shot('settings-menu')
       await page.keyboard.press('Escape')
+      await page.getByTestId('entry-field').nth(1).getByTestId('field-menu').click()
+      await shot('settings-field-menu')
+      await page.keyboard.press('Escape')
       await page.getByTestId('add-category').click()
       await dialog(page)
         .getByRole('button', { name: /キャラクター/ })
@@ -700,6 +862,12 @@ test.describe('スクリーンショット', () => {
       await page.getByTestId('submission-card').nth(1).getByTestId('submission-toggle').click()
       await shot('strategy-open', true)
       await expectNoHorizontalScroll(page)
+      await page.getByTestId('submission-card').nth(1).getByTestId('snapshot-read').click()
+      await shot('strategy-snapshot-read')
+      await page.keyboard.press('Escape')
+      await page.getByTestId('sort-deadline').click()
+      await shot('strategy-deadline', true)
+      await page.getByTestId('sort-order').click()
 
       // 通し読み
       await openApp(page, `/t/${ids.titleId}/read`)
