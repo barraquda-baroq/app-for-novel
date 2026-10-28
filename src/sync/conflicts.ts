@@ -26,7 +26,8 @@ export function deviceLabel(ua = typeof navigator === 'undefined' ? '' : navigat
   if (/Android/.test(ua)) return 'Android'
   if (/Windows/.test(ua)) return 'Windows'
   if (/Macintosh/.test(ua)) return 'Mac'
-  return 'この端末'
+  // 名前は同期されてほかの端末でも見えるので、「この端末」とは書かない
+  return 'ブラウザ'
 }
 
 export function conflictVersionName(name: string, device: string): string {
