@@ -63,6 +63,11 @@ test.describe('タイトル画面・本編', () => {
     })
     await openTitle(page, titleId)
 
+    // タブと帯は「設定項目」（アプリの設定と区別する）。あらすじは押して書く
+    await expect(page.getByTestId('tab-settings')).toHaveText('設定項目')
+    await expect(page.getByTestId('settings-strip').getByRole('link', { name: '設定項目を開く' })).toBeVisible()
+    await expect(page.getByTestId('synopsis-toggle')).toContainText('未記入（押して書く）')
+
     // 設定項目の帯
     const chips = page.getByTestId('setting-chip')
     await expect(chips).toHaveCount(2)
@@ -257,7 +262,7 @@ test.describe('タイトル画面・本編', () => {
     await openTitle(page, titleId)
     await expect(rows(page).nth(0).getByTestId('piece-adopted')).toContainText('採用: 第1稿・8字')
     await expect(rows(page).nth(0)).toContainText('一話の本文です。')
-    await expect(rows(page).nth(1).getByTestId('piece-missing')).toHaveText('採用原稿がありません')
+    await expect(rows(page).nth(1).getByTestId('piece-missing')).toHaveText('採用原稿なし')
     await expect(page.getByTestId('stat-missing')).toContainText('採用原稿なし 1話')
     await expect(page.getByTestId('stat-chars')).toContainText('採用原稿 8字')
   })
@@ -371,7 +376,7 @@ test.describe('タイトル画面・本編', () => {
     await expect(page.getByTestId('chapter-block')).toHaveCount(2)
   })
 
-  test('章ページ: 章のメモ・話数追加（この章）・特殊追加（この章内）', async ({ page }) => {
+  test('章ページ: 章のメモ・話数追加（この章）・特殊追加（この章の中）', async ({ page }) => {
     await openApp(page)
     const { titleId, chapterId } = await seed(page, ({ actions, getData }) => {
       const id = actions.createTitle('章ページ')
@@ -382,12 +387,15 @@ test.describe('タイトル画面・本編', () => {
     })
     await openApp(page, `/t/${titleId}/c/${chapterId}`)
     await expect(page.getByTestId('chapter-page')).toBeVisible()
+    // スマホでも「章を通し読み」（タイトル全体の通し読みと区別する）
+    await expect(page.getByTestId('chapter-read-link')).toHaveText('章を通し読み')
     await page.getByTestId('chapter-note').fill('この章では主人公が旅に出る')
     await page.getByTestId('chapter-note').blur()
 
     await page.getByTestId('chapter-page-add-special').click()
     await expect(page.getByTestId('add-kind-special')).toHaveAttribute('aria-pressed', 'true')
     // 差し込み位置はこの章の中だけ
+    await expect(dialog(page).getByText('差し込む位置（この章の中）')).toBeVisible()
     const options = await page.getByTestId('special-position').locator('option').allTextContents()
     expect(options.every((o) => o.includes('「第1章」'))).toBe(true)
     await page.getByTestId('special-label').fill('幕間')
@@ -644,6 +652,151 @@ test.describe('タイトル画面・本編（細部）', () => {
     await expect(page.getByTestId('episode-preview')).toContainText('第3話が作成されます')
     await expect(page.getByTestId('episode-placement')).toHaveText('「第2話」の後（「エピローグ」の前）に入ります。')
   })
+
+  test('↑を続けて押すと、動かした話が押した指の下に残り、第6話を第2話まで動かせる（章の出入りも）', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seed(page, ({ actions }) => {
+      const id = actions.createTitle('並べ替え続けて')
+      for (const s of ['A', 'B', 'C', 'D', 'E', 'F']) {
+        const pid = actions.addEpisode(id)
+        actions.updatePiece(pid, { subtitle: s })
+      }
+      // 下にスクロールできる余地を作る
+      for (let i = 0; i < 24; i++) actions.addMemo(id, `メモ${i + 1}`)
+      return { titleId: id }
+    })
+    await openTitle(page, titleId)
+    await page.getByTestId('edit-toggle').click()
+    const moved = rows(page).filter({ hasText: 'F' })
+    // 上へ動かせる余地を作るため、動かす行を画面の上の方へ
+    await moved.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 120))
+    const up = (await moved.getByTestId('piece-up').boundingBox())!
+    const expected = [
+      ['A', 'B', 'C', 'D', 'F', 'E'],
+      ['A', 'B', 'C', 'F', 'D', 'E'],
+      ['A', 'B', 'F', 'C', 'D', 'E'],
+      ['A', 'F', 'B', 'C', 'D', 'E'],
+    ]
+    for (const order of expected) {
+      // 同じ場所を押し続ける
+      await page.mouse.click(up.x + up.width / 2, up.y + up.height / 2)
+      await expect.poll(() => subtitlesIn(storyList(page))).toEqual(order)
+    }
+    await expect(moved.getByTestId('piece-label')).toHaveText('第2話')
+    const after = (await moved.getByTestId('piece-up').boundingBox())!
+    expect(Math.abs(after.y - up.y)).toBeLessThan(2)
+    await expect(moved.getByTestId('piece-up')).toBeFocused()
+
+    // キーボードでも続けて動かせる。端に着いて押せなくなったら反対向きのボタンにフォーカスが移る
+    await page.keyboard.press('Enter')
+    await expect.poll(() => subtitlesIn(storyList(page))).toEqual(['F', 'A', 'B', 'C', 'D', 'E'])
+    await expect(moved.getByTestId('piece-up')).toBeDisabled()
+    await expect(moved.getByTestId('piece-down')).toBeFocused()
+  })
+
+  test('章の出入りで行が作り直されても、動かした話は指の下に残る。章の↑↓・メモの↑↓も同じ', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seed(page, ({ actions, getData }) => {
+      const id = actions.createTitle('章をまたぐ')
+      for (const s of ['A', 'B', 'C']) actions.updatePiece(actions.addEpisode(id), { subtitle: s })
+      actions.setChaptersEnabled(id, true)
+      const ch2 = actions.addChapter(id, '第二部')
+      for (const s of ['D', 'E', 'F']) actions.updatePiece(actions.addEpisode(id, ch2), { subtitle: s })
+      actions.addChapter(id, '第三部')
+      actions.addChapter(id, '第四部')
+      for (let i = 0; i < 24; i++) actions.addMemo(id, `メモ${i + 1}`)
+      actions.updateChapter(getData().titles[id].structure[0].id, { name: '第一部' })
+      return { titleId: id }
+    })
+    await openTitle(page, titleId)
+    await page.getByTestId('edit-toggle').click()
+    const blocks = page.getByTestId('chapter-block')
+    const moved = storyList(page).locator('[data-testid="piece-row"]').filter({ hasText: 'D' })
+    await moved.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 160))
+    const up = (await moved.getByTestId('piece-up').boundingBox())!
+    const checkInPlace = async () => {
+      const box = (await moved.getByTestId('piece-up').boundingBox())!
+      expect(Math.abs(box.y - up.y)).toBeLessThan(2)
+      await expect(moved.getByTestId('piece-up')).toBeFocused()
+    }
+
+    // 第二部の先頭から↑: 章の外（第一部と第二部の間）へ出る
+    await page.mouse.click(up.x + up.width / 2, up.y + up.height / 2)
+    await expect(storyList(page).locator(':scope > [data-testid="piece-row"]')).toHaveText(/D/)
+    await checkInPlace()
+    // もう一度↑: 第一部の末尾に入る
+    await page.mouse.click(up.x + up.width / 2, up.y + up.height / 2)
+    await expect.poll(() => subtitlesIn(blocks.nth(0))).toEqual(['A', 'B', 'C', 'D'])
+    await checkInPlace()
+    // もう一度↑: 第一部の中で C の前へ
+    await page.mouse.click(up.x + up.width / 2, up.y + up.height / 2)
+    await expect.poll(() => subtitlesIn(blocks.nth(0))).toEqual(['A', 'B', 'D', 'C'])
+    await expect(moved.getByTestId('piece-label')).toHaveText('第3話')
+    await checkInPlace()
+
+    // 章の↓も、動かした章が指の下に残る
+    const chapterNames = () => blocks.getByTestId('chapter-name').allTextContents()
+    const first = blocks.filter({ has: page.getByRole('link', { name: '第一部', exact: true }) })
+    await first.evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 80))
+    const down = (await first.getByTestId('chapter-down').boundingBox())!
+    await page.mouse.click(down.x + down.width / 2, down.y + down.height / 2)
+    await expect.poll(chapterNames).toEqual(['第二部', '第一部', '第三部', '第四部'])
+    await page.mouse.click(down.x + down.width / 2, down.y + down.height / 2)
+    await expect.poll(chapterNames).toEqual(['第二部', '第三部', '第一部', '第四部'])
+    const afterDown = (await first.getByTestId('chapter-down').boundingBox())!
+    expect(Math.abs(afterDown.y - down.y)).toBeLessThan(2)
+    await expect(first.getByTestId('chapter-down')).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect.poll(chapterNames).toEqual(['第二部', '第三部', '第四部', '第一部'])
+    await expect(first.getByTestId('chapter-up')).toBeFocused()
+
+    // メモの↑↓: 押したボタンにフォーカスが残り、続けて動かせる
+    const memoNames = async () => (await page.getByTestId('memo-card').locator('.story-memo-name').allTextContents()).slice(0, 4)
+    await page.getByTestId('memo-edit-toggle').click()
+    const memo = page.getByTestId('memo-card').filter({ has: page.locator('.story-memo-name', { hasText: /^メモ1$/ }) })
+    await memo.getByTestId('memo-down').focus()
+    await page.keyboard.press('Enter')
+    await expect.poll(memoNames).toEqual(['メモ2', 'メモ1', 'メモ3', 'メモ4'])
+    await expect(memo.getByTestId('memo-down')).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect.poll(memoNames).toEqual(['メモ2', 'メモ3', 'メモ1', 'メモ4'])
+    await expect(memo.getByTestId('memo-down')).toBeFocused()
+  })
+
+  test('メモの削除の確認は「この操作は取り消せません。」で終わり、更新日時は「…に更新」と表示する', async ({ page }) => {
+    await openApp(page)
+    const { titleId } = await seed(page, ({ actions }) => {
+      const id = actions.createTitle('メモ削除')
+      actions.addMemo(id, '消すメモ')
+      return { titleId: id }
+    })
+    await openTitle(page, titleId)
+    await expect(page.getByTestId('memo-card')).toContainText('たった今更新')
+    await page.getByTestId('memo-edit-toggle').click()
+    await page.getByTestId('memo-delete').click()
+    await expect(dialog(page)).toContainText('この操作は取り消せません。')
+    await confirmIn(page, '削除')
+    await expect(page.getByTestId('memo-card')).toHaveCount(0)
+  })
+
+  test('横持ちのスマホ（高さ 390px）: 追加の種類を選ぶと、入力欄が見える位置に出る', async ({ page }) => {
+    await page.setViewportSize({ width: 844, height: 390 })
+    await openApp(page)
+    const { titleId } = await seedTitleWithEpisodes(page, '横持ち', ['一', '二'])
+    await openTitle(page, titleId)
+    await page.getByTestId('add-button').click()
+    const scrollBehind = await page.evaluate(() => window.scrollY)
+    await page.getByTestId('add-kind-special').click()
+    await expect(page.getByTestId('special-label')).toBeInViewport()
+    await page.getByTestId('add-kind-episode').click()
+    await expect(page.getByTestId('episode-preview')).toBeInViewport()
+    await expect(page.getByTestId('add-subtitle')).toBeInViewport()
+    await page.getByTestId('add-kind-memo').click()
+    await expect(page.getByTestId('memo-name')).toBeInViewport()
+    await expect(page.getByTestId('memo-name')).toBeFocused()
+    // 後ろの画面はスクロールしない
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrollBehind)
+  })
 })
 
 test('スマホ幅（360px）でも横スクロールしない', async ({ page }) => {
@@ -667,6 +820,12 @@ test('スマホ幅（360px）でも横スクロールしない', async ({ page }
   }
   await openTitle(page, titleId)
   await noHorizontalScroll()
+  // 章の名前（章ページへのリンク）も指で押せる高さ
+  for (const box of await page
+    .getByTestId('chapter-name')
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) {
+    expect(box).toBeGreaterThanOrEqual(34)
+  }
   await page.getByTestId('edit-toggle').click()
   await noHorizontalScroll()
   await page.getByTestId('add-button').click()
@@ -675,6 +834,7 @@ test('スマホ幅（360px）でも横スクロールしない', async ({ page }
   await page.keyboard.press('Escape')
   await openApp(page, `/t/${titleId}/c/${chapterId}`)
   await expect(page.getByTestId('chapter-page')).toBeVisible()
+  await expect(page.getByTestId('chapter-read-link')).toHaveText('章を通し読み')
   await page.getByTestId('edit-toggle').click()
   await noHorizontalScroll()
 })

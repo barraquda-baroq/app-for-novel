@@ -1,9 +1,9 @@
 // 章ページ: タイトル → 章 → 第n話 の真ん中の階層。章の名前・メモ・中の話の一覧。
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { missingActiveLabel } from '../../domain/entityOps'
 import { episodeTargets } from '../../domain/storyOps'
-import { chaptersOf, episodeNumbers, locatePiece, pieceFullLabel } from '../../domain/structure'
+import { chaptersOf, locatePiece, pieceFullLabel } from '../../domain/structure'
 import { formatCount } from '../../domain/text'
 import type { ID } from '../../domain/types'
 import { paths } from '../../routes'
@@ -19,7 +19,8 @@ import { AddDialog, type AddKind } from '../title/story/AddDialog'
 import { CHAPTER_ADD_BLOCKED_REASON, releaseChapter } from '../title/story/ChapterBlock'
 import { toggleChapters } from '../title/story/chapterFlows'
 import { PieceRow } from '../title/story/PieceRow'
-import { chapterName, chapterStats, stepAvailability } from '../title/story/storyLogic'
+import { chapterName, deletePermissions, pieceRows, rowsFor, statsOf, stepAvailability } from '../title/story/storyLogic'
+import { useStoryData } from '../title/story/useStoryData'
 import '../title/story/story.css'
 import '../title/title.css'
 import './chapter.css'
@@ -33,14 +34,39 @@ export function ChapterPage() {
   const [edit, setEdit] = useState(false)
   const [adding, setAdding] = useState<AddKind | null>(null)
 
-  const numbers = useMemo(() => episodeNumbers(data, titleId), [data, titleId])
-  const stats = useMemo(() => chapterStats(data, chapterId), [data, chapterId])
-  const steps = useMemo(() => (edit ? stepAvailability(data, titleId) : {}), [edit, data, titleId])
-  const canAddEpisode = useMemo(
-    () => episodeTargets(data, titleId).some((t) => t.chapterId === chapterId),
-    [data, titleId, chapterId],
+  // 一覧・集計は本編に関わるデータが変わった時だけ作り直す（章のメモの入力などでは数え直さない）
+  const story = useStoryData(titleId)
+  const allRows = useMemo(
+    () =>
+      pieceRows(story, titleId, {
+        steps: edit ? stepAvailability(story, titleId) : null,
+        deletable: edit ? deletePermissions(story, titleId) : null,
+      }),
+    [story, titleId, edit],
   )
-  const siblings = useMemo(() => chaptersOf(data, titleId), [data, titleId])
+  const pieceIds = chapter?.pieceIds
+  const rows = useMemo(() => rowsFor(allRows, pieceIds ?? []), [allRows, pieceIds])
+  const stats = useMemo(() => statsOf(rows), [rows])
+  const canAddEpisode = useMemo(
+    () => episodeTargets(story, titleId).some((t) => t.chapterId === chapterId),
+    [story, titleId, chapterId],
+  )
+  const siblings = useMemo(() => chaptersOf(story, titleId), [story, titleId])
+
+  /** ↑↓ で章の外へ出たら知らせる */
+  const onMoved = useCallback(
+    (pieceId: ID, via: 'step' | 'dialog') => {
+      if (via !== 'step') return
+      const d = getData()
+      const slot = locatePiece(d, pieceId)
+      if (slot && slot.chapterId !== chapterId) {
+        const p = d.pieces[pieceId]
+        const where = slot.chapterId ? `「${chapterName(d.chapters[slot.chapterId])}」` : '章の外（タイトル直下）'
+        notify(`「${p ? pieceFullLabel(d, p) : '話'}」を${where}へ移動しました`)
+      }
+    },
+    [chapterId],
+  )
   useDocumentTitle(chapter ? `${chapterName(chapter)}（${title?.name.trim() || '無題のタイトル'}）` : undefined)
 
   if (!title || !chapter || chapter.titleId !== titleId) return <NotFound message="章が見つかりません。" />
@@ -81,21 +107,9 @@ export function ChapterPage() {
     )
   }
 
-  const pieces = chapter.pieceIds.map((id) => data.pieces[id]).filter(Boolean)
   const index = siblings.findIndex((c) => c.id === chapter.id)
   const prev = index > 0 ? siblings[index - 1] : null
   const next = index >= 0 && index < siblings.length - 1 ? siblings[index + 1] : null
-
-  /** ↑↓ で章の外へ出たら知らせる */
-  const onStepped = (pieceId: ID) => {
-    const d = getData()
-    const slot = locatePiece(d, pieceId)
-    if (slot && slot.chapterId !== chapter.id) {
-      const p = d.pieces[pieceId]
-      const where = slot.chapterId ? `「${chapterName(d.chapters[slot.chapterId])}」` : '章の外（タイトル直下）'
-      notify(`「${p ? pieceFullLabel(d, p) : '話'}」を${where}へ移動しました`)
-    }
-  }
 
   const release = async () => {
     if (await releaseChapter(data, chapter)) navigate(paths.title(titleId), { replace: true })
@@ -108,9 +122,7 @@ export function ChapterPage() {
         actions={
           <Link to={paths.read(titleId, chapter.id)} className="btn btn-sm tpage-header-btn" data-testid="chapter-read-link">
             <BookIcon />
-            <span>
-              <span className="hide-mobile">この章を</span>通し読み
-            </span>
+            章を通し読み
           </Link>
         }
       />
@@ -176,7 +188,7 @@ export function ChapterPage() {
               <button type="button" className="btn" onClick={() => setAdding('special')} data-testid="chapter-page-add-special">
                 <StarIcon />
                 <span>
-                  特殊追加<span className="hide-mobile">（この章内）</span>
+                  特殊追加<span className="hide-mobile">（この章の中）</span>
                 </span>
               </button>
               <button
@@ -207,25 +219,14 @@ export function ChapterPage() {
             </div>
           ) : null}
 
-          {pieces.length === 0 ? (
+          {rows.length === 0 ? (
             <div className="empty" data-testid="chapter-empty">
               この章にはまだ話がありません。{canAddEpisode ? '「＋話数追加」から話を追加しましょう。' : ''}
             </div>
           ) : (
             <ol className="story-list" data-testid="story-list">
-              {pieces.map((p) => (
-                <PieceRow
-                  key={p.id}
-                  data={data}
-                  piece={p}
-                  numbers={numbers}
-                  edit={edit}
-                  canUp={steps[p.id]?.up ?? false}
-                  canDown={steps[p.id]?.down ?? false}
-                  onMoved={(id, via) => {
-                    if (via === 'step') onStepped(id)
-                  }}
-                />
+              {rows.map((row) => (
+                <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
               ))}
             </ol>
           )}

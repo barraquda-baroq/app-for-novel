@@ -3,16 +3,20 @@ import { entriesOf } from '../../../domain/entityOps'
 import * as S from '../../../domain/storyOps'
 import type { InsertOption } from '../../../domain/storyOps'
 import {
-  activeBody,
+  activeVersion,
+  canDeletePiece,
   effectiveNumbering,
   episodeLabel,
   episodeNumbers,
   flatten,
   locatePiece,
+  pieceFullLabel,
   pieceLabel,
+  scopeKey,
+  type Permission,
 } from '../../../domain/structure'
-import { countChars, textStats } from '../../../domain/text'
-import type { AppData, Chapter, ID, Piece, Slot } from '../../../domain/types'
+import { bodyMetrics } from '../../../domain/text'
+import type { AppData, Chapter, ID, Piece, Slot, Version } from '../../../domain/types'
 
 // ---------- 話数追加のプレビュー ----------
 
@@ -237,6 +241,8 @@ export function formatRenumbering(items: Renumbered[], max = 5): string {
 }
 
 // ---------- 一覧の表示用の要約 ----------
+// 長編（数百話・数百万字）でも一覧の操作が重くならないよう、本文の文字数・枚数は稿ごとにキャッシュされる
+// bodyMetrics を使い、抜粋は本文の先頭だけを見る。
 
 export interface PieceSummary {
   versionCount: number
@@ -246,10 +252,30 @@ export interface PieceSummary {
   excerpt: string
 }
 
+const SPACE = /\s/u
+
+/** 本文の冒頭 max 文字（空白・改行の並びは1つの空白に詰める）。本文全体は処理せず、必要な先頭だけを見る */
 export function excerptOf(text: string, max = 90): string {
-  const flat = text.replace(/\s+/gu, ' ').trim()
-  const chars = Array.from(flat)
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : flat
+  let out = ''
+  let count = 0
+  let pendingSpace = false
+  for (const ch of text) {
+    if (SPACE.test(ch)) {
+      // 先頭と末尾の空白は捨て、途中の空白の並びは次の文字の前に1つだけ入れる
+      if (count > 0) pendingSpace = true
+      continue
+    }
+    if (pendingSpace) {
+      if (count >= max) return `${out}…`
+      out += ' '
+      count += 1
+      pendingSpace = false
+    }
+    if (count >= max) return `${out}…`
+    out += ch
+    count += 1
+  }
+  return out
 }
 
 /** メモの抜粋。改行は残し（付箋らしく箇条書きが読めるように）、空行と行頭・行末の空白は詰める */
@@ -264,11 +290,21 @@ export function memoExcerpt(text: string, maxLines = 4, maxChars = 140): string 
   return chars.length > maxChars ? `${chars.slice(0, maxChars).join('')}…` : joined
 }
 
+/** 話の推敲バージョンの数（参照切れは数えない） */
+export function versionCountOf(data: AppData, piece: Piece): number {
+  let n = 0
+  for (const id of piece.versionIds) if (data.versions[id]) n += 1
+  return n
+}
+
+/** 採用中の稿と稿の数から一覧の要約を作る（文字数は稿ごとのキャッシュを使う） */
+export function summarize(version: Version | null, versionCount: number): PieceSummary {
+  if (!version) return { versionCount, active: null, excerpt: '' }
+  return { versionCount, active: { name: version.name, chars: bodyMetrics(version).chars }, excerpt: excerptOf(version.body) }
+}
+
 export function pieceSummary(data: AppData, piece: Piece): PieceSummary {
-  const versionCount = piece.versionIds.filter((id) => data.versions[id]).length
-  const v = piece.activeVersionId ? data.versions[piece.activeVersionId] : undefined
-  if (!v) return { versionCount, active: null, excerpt: '' }
-  return { versionCount, active: { name: v.name, chars: countChars(v.body) }, excerpt: excerptOf(v.body) }
+  return summarize(activeVersion(data, piece), versionCountOf(data, piece))
 }
 
 export interface PieceGroupStats {
@@ -287,7 +323,8 @@ export interface PieceGroupStats {
   pages: number
 }
 
-export function statsOfPieces(data: AppData, pieceIds: ID[]): PieceGroupStats {
+/** 話と採用中の稿の組から集計する（文字数・枚数は稿ごとのキャッシュを使うので、本文を数え直さない） */
+export function statsOf(entries: readonly { piece: Piece; version: Version | null }[]): PieceGroupStats {
   const s: PieceGroupStats = {
     pieces: 0,
     episodes: 0,
@@ -298,23 +335,30 @@ export function statsOfPieces(data: AppData, pieceIds: ID[]): PieceGroupStats {
     chars: 0,
     pages: 0,
   }
-  for (const id of pieceIds) {
-    const p = data.pieces[id]
-    if (!p) continue
+  for (const { piece, version } of entries) {
     s.pieces += 1
-    if (p.kind === 'episode') s.episodes += 1
+    if (piece.kind === 'episode') s.episodes += 1
     else s.specials += 1
-    const body = activeBody(data, p)
-    if (body === null) {
+    if (!version) {
       s.missingActive += 1
-      if (p.kind === 'episode') s.missingEpisodes += 1
+      if (piece.kind === 'episode') s.missingEpisodes += 1
       else s.missingSpecials += 1
       continue
     }
-    s.chars += countChars(body)
-    s.pages += textStats(body).manuscriptPages
+    const m = bodyMetrics(version)
+    s.chars += m.chars
+    s.pages += m.manuscriptPages
   }
   return s
+}
+
+export function statsOfPieces(data: AppData, pieceIds: ID[]): PieceGroupStats {
+  const entries: { piece: Piece; version: Version | null }[] = []
+  for (const id of pieceIds) {
+    const piece = data.pieces[id]
+    if (piece) entries.push({ piece, version: activeVersion(data, piece) })
+  }
+  return statsOf(entries)
 }
 
 export function chapterStats(data: AppData, chapterId: ID): PieceGroupStats {
@@ -326,6 +370,112 @@ export function titleStats(data: AppData, titleId: ID): PieceGroupStats {
     data,
     flatten(data, titleId).map((f) => f.pieceId),
   )
+}
+
+// ---------- 一覧の各行 ----------
+
+/**
+ * 一覧の1行（PieceRow）に渡す値。レコードと文字列・真偽値だけにしてあるので、
+ * 行を React.memo で包むと、並べ替えや入力で変わった行だけが描き直される。
+ */
+export interface PieceRowData {
+  piece: Piece
+  /** 採用中の稿（なければ null） */
+  version: Version | null
+  versionCount: number
+  /** 第n話・特殊ブロックの見出し */
+  label: string
+  /** 「第3話　旅立ち」のような表記 */
+  fullLabel: string
+  /** 編集モードで1つ上/下へ動かせるか */
+  canUp: boolean
+  canDown: boolean
+  /** 編集モードで削除できるか（できない時の理由は deleteReason） */
+  canDelete: boolean
+  deleteReason?: string
+}
+
+/**
+ * 各話を削除できるか（canDeletePiece と同じ結果）を、一覧の全行分まとめて求める。
+ * 1行ずつ canDeletePiece を呼ぶと話数の2乗かかるので、採番スコープごとの最後の話を1回で求める。
+ */
+export function deletePermissions(data: AppData, titleId: ID): Record<ID, Permission> {
+  const title = data.titles[titleId]
+  const out: Record<ID, Permission> = {}
+  if (!title) return out
+  const flat = flatten(data, titleId)
+  const last = new Map<string, ID>()
+  for (const f of flat) {
+    if (data.pieces[f.pieceId].kind === 'episode') last.set(scopeKey(title, f.chapterId), f.pieceId)
+  }
+  const ok: Permission = { ok: true }
+  // 削除できない理由はスコープごとに同じ
+  const denied = new Map<string, Permission>()
+  for (const f of flat) {
+    const id = f.pieceId
+    const key = scopeKey(title, f.chapterId)
+    if (data.pieces[id].kind === 'special' || last.get(key) === id) {
+      out[id] = ok
+      continue
+    }
+    let perm = denied.get(key)
+    if (!perm) {
+      perm = canDeletePiece(data, id)
+      denied.set(key, perm)
+    }
+    out[id] = perm
+  }
+  return out
+}
+
+export interface PieceRowOptions {
+  /** 編集モードの時だけ渡す（なければ動かせない扱い） */
+  steps?: Record<ID, { up: boolean; down: boolean }> | null
+  /** 編集モードの時だけ渡す（なければ削除できない扱い） */
+  deletable?: Record<ID, Permission> | null
+}
+
+/** タイトルの全行（読む順の pieceId → 行の値） */
+export function pieceRows(data: AppData, titleId: ID, opts: PieceRowOptions = {}): Record<ID, PieceRowData> {
+  const numbers = episodeNumbers(data, titleId)
+  const out: Record<ID, PieceRowData> = {}
+  for (const f of flatten(data, titleId)) {
+    const piece = data.pieces[f.pieceId]
+    const step = opts.steps?.[piece.id]
+    const del = opts.deletable?.[piece.id]
+    out[piece.id] = {
+      piece,
+      version: activeVersion(data, piece),
+      versionCount: versionCountOf(data, piece),
+      label: pieceLabel(data, piece, numbers),
+      fullLabel: pieceFullLabel(data, piece, numbers),
+      canUp: step?.up ?? false,
+      canDown: step?.down ?? false,
+      canDelete: del?.ok ?? false,
+      deleteReason: del && !del.ok ? del.reason : undefined,
+    }
+  }
+  return out
+}
+
+/** ids の順に行を取り出す（見つからない話は飛ばす） */
+export function rowsFor(rows: Record<ID, PieceRowData>, ids: readonly ID[]): PieceRowData[] {
+  const out: PieceRowData[] = []
+  for (const id of ids) if (rows[id]) out.push(rows[id])
+  return out
+}
+
+/** 浅い比較（React.memo の比較用） */
+export function shallowEqual<T extends object>(a: T, b: T): boolean {
+  if (a === b) return true
+  const keys = Object.keys(a) as (keyof T)[]
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every((k) => Object.prototype.hasOwnProperty.call(b, k) && Object.is(a[k], b[k]))
+}
+
+/** 行の並びが同じ内容か（要素ごとに浅く比較する） */
+export function sameRows(a: readonly PieceRowData[], b: readonly PieceRowData[]): boolean {
+  return a === b || (a.length === b.length && a.every((r, i) => shallowEqual(r, b[i])))
 }
 
 /** 設定項目ごとのエントリ数 */

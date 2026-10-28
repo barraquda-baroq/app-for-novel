@@ -1,5 +1,5 @@
 // タイトル内のメモ（付箋）。表示優先度が最も低く、常に本編の一番下に置く。
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { memosOf } from '../../../domain/entityOps'
 import type { ID, Memo } from '../../../domain/types'
@@ -7,10 +7,11 @@ import { paths } from '../../../routes'
 import { actions } from '../../../store/actions'
 import { useData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
-import { formatRelative } from '../../../ui/browser'
+import { formatUpdated } from '../../../ui/browser'
 import { confirmDialog, promptDialog } from '../../../ui/dialogs'
 import { DownIcon, NoteIcon, PlusIcon, TrashIcon, UpIcon } from '../../../ui/icons'
 import { memoExcerpt } from './storyLogic'
+import { useKeepMovedInPlace } from './useKeepMovedInPlace'
 
 export async function addMemoFlow(titleId: ID): Promise<ID | undefined> {
   const name = await promptDialog({
@@ -27,7 +28,9 @@ export async function addMemoFlow(titleId: ID): Promise<ID | undefined> {
 
 export function MemoSection({ titleId }: { titleId: ID }) {
   const data = useData()
-  const memos = useMemo(() => memosOf(data, titleId), [data, titleId])
+  // memosOf はメモの表だけを読むので、メモ以外（本編・あらすじなど）の変更では一覧を作り直さない
+  // （カードを React.memo で包んであるので、作り直さなければ描き直しもされない）
+  const memos = useMemo(() => memosOf(data, titleId), [data.memos, titleId])
   // 本編の編集モードとは別に切り替える（本編の行が広がってメモの位置がずれないように）
   const [edit, setEdit] = useState(false)
   const editing = edit && memos.length > 0
@@ -70,14 +73,34 @@ export function MemoSection({ titleId }: { titleId: ID }) {
   )
 }
 
-function MemoCard({ memo, edit, first, last }: { memo: Memo; edit: boolean; first: boolean; last: boolean }) {
+const MEMO_UP = '[data-testid="memo-up"]'
+const MEMO_DOWN = '[data-testid="memo-down"]'
+
+const MemoCard = memo(function MemoCard({
+  memo,
+  edit,
+  first,
+  last,
+}: {
+  memo: Memo
+  edit: boolean
+  first: boolean
+  last: boolean
+}) {
   const name = memo.name.trim() || '無題のメモ'
   const excerpt = memoExcerpt(memo.body)
+  const { ref, move } = useKeepMovedInPlace<HTMLLIElement>(memo.id)
+
+  // 動かしたカードが押した指の下に残るように（続けて押すとそのまま動かし続けられる）
+  const step = (dir: -1 | 1) => {
+    const focus = dir < 0 ? [MEMO_UP, MEMO_DOWN] : [MEMO_DOWN, MEMO_UP]
+    move(() => attempt(() => (actions.moveMemoStep(memo.id, dir), true)), focus)
+  }
 
   const remove = async () => {
     const ok = await confirmDialog({
       title: `メモ「${name}」を削除しますか？`,
-      message: '元に戻すことはできません。',
+      message: 'この操作は取り消せません。',
       danger: true,
       confirmLabel: '削除',
     })
@@ -86,7 +109,7 @@ function MemoCard({ memo, edit, first, last }: { memo: Memo; edit: boolean; firs
   }
 
   return (
-    <li className="story-memo" data-testid="memo-card">
+    <li ref={ref} className="story-memo" data-testid="memo-card" data-memo-id={memo.id}>
       <Link to={paths.memo(memo.titleId, memo.id)} className="story-memo-link">
         <span className="story-memo-name">{name}</span>
         {excerpt ? (
@@ -94,27 +117,29 @@ function MemoCard({ memo, edit, first, last }: { memo: Memo; edit: boolean; firs
         ) : (
           <span className="story-memo-body is-empty">（まだ何も書かれていません）</span>
         )}
-        <span className="story-memo-time">更新: {formatRelative(memo.updatedAt)}</span>
+        <span className="story-memo-time">{formatUpdated(memo.updatedAt)}</span>
       </Link>
       {edit ? (
         <div className="story-memo-edit" role="group" aria-label={`${name}の操作`}>
           <button
             type="button"
             className="icon-btn"
-            onClick={() => attempt(() => actions.moveMemoStep(memo.id, -1))}
+            onClick={() => step(-1)}
             disabled={first}
             aria-label="上へ"
             title="1つ前へ"
+            data-testid="memo-up"
           >
             <UpIcon />
           </button>
           <button
             type="button"
             className="icon-btn"
-            onClick={() => attempt(() => actions.moveMemoStep(memo.id, 1))}
+            onClick={() => step(1)}
             disabled={last}
             aria-label="下へ"
             title="1つ後ろへ"
+            data-testid="memo-down"
           >
             <DownIcon />
           </button>
@@ -133,4 +158,4 @@ function MemoCard({ memo, edit, first, last }: { memo: Memo; edit: boolean; firs
       ) : null}
     </li>
   )
-}
+})

@@ -787,3 +787,49 @@
     padding: 10px 12px;
   }
 }
+
+/* 指で操作する画面: 章の名前（章ページへのリンク）も 34px 以上の高さで押せるようにする */
+@media (max-width: 720px), (pointer: coarse) {
+  .story-chapter-name {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+  }
+}
+
+/* 横持ちのスマホなど高さが低い画面: 追加ダイアログの種類のカードを1行にまとめ、選んだ後の入力欄が見えるようにする */
+@media (max-height: 500px) {
+  .story-add-lead {
+    margin-bottom: 6px;
+  }
+
+  .story-add-choices {
+    gap: 8px;
+  }
+
+  .choice.story-add-choice {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+  }
+
+  .story-add-choice-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  /* 説明は読み上げには残し、画面からは省く（選んだ後の入力欄にも同じ説明がある） */
+  .story-add-choice-text span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .story-add-form {
+    margin-top: 12px;
+  }
+}
