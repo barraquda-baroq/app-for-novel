@@ -12,7 +12,7 @@ import { repairData } from '../domain/repair'
 import * as S from '../domain/storyOps'
 import { activeBody, actsOf, isSplit } from '../domain/structure'
 import { restoreTrashEntry } from '../domain/trash'
-import { emptyData, type AppData, type ID } from '../domain/types'
+import { emptyData, type AppData, type ID, type Version } from '../domain/types'
 
 export type Order = 'x-first' | 'y-first'
 export type Op = (d: AppData, ep: ID) => AppData
@@ -65,6 +65,13 @@ const editAct =
   (n: number, body: string, note?: string): Op =>
   (d, ep) =>
     S.updateVersion(d, adopted(d, actsIds(d, ep)[n]), { body, ...(note !== undefined ? { note } : {}) })
+
+/** 本文が body の稿の id */
+const versionOf = (d: AppData, body: string): ID => {
+  const v = Object.values(d.versions).find((x) => x.body === body)
+  if (!v) throw new Error(`「${body}」の稿がありません`)
+  return v.id
+}
 
 /** 生きている稿で、本文が body のもの（あれば属する話・幕の id） */
 function liveVersionPiece(d: AppData, body: string): ID | null {
@@ -127,6 +134,21 @@ export const ACTS_SCENARIOS: ActsScenario[] = [
       const inTrash = Object.values(d.trashRecords).filter((r) => (r.record as { body?: string }).body === back)
       return inTrash.length ? `「${back}」がゴミ箱にも残っている` : null
     },
+  },
+  {
+    name: '第2幕の別稿を書き換えて削除し、第2幕と第3幕をつなぐ / 第1幕と第2幕をつなぐ',
+    body: FULL,
+    splitAt: [3, 6],
+    prepare: (d, ep) => S.addVersion(d, actsIds(d, ep)[1], { body: 'DEF別稿' }).data,
+    x: (d, ep) => {
+      const id = versionOf(d, 'DEF別稿')
+      const edited = S.updateVersion(d, id, { body: 'DEF別稿+X', note: 'Xだけのメモ' })
+      return join(1)(S.deleteVersion(edited, id), ep)
+    },
+    y: join(0),
+    text: FULL,
+    acts: 2,
+    notes: lostOnSecond,
   },
   {
     name: '第1幕と第2幕をつなぐ / 第2幕をさらに分ける',
@@ -435,9 +457,58 @@ export function scenarioStart(s: Pick<ActsScenario, 'body' | 'splitAt' | 'prepar
 
 /** 稿・ゴミ箱にある本文と推敲メモ（空でないもの） */
 export function texts(d: AppData): string[] {
-  const out: string[] = []
-  for (const v of Object.values(d.versions)) out.push(v.body, v.note)
-  return out.filter((t) => t.trim() !== '')
+  return pool(d).filter((t) => t.trim() !== '')
+}
+
+/** 稿と、ゴミ箱の中の稿 */
+function versionRecords(d: AppData): Version[] {
+  return [
+    ...Object.values(d.versions),
+    ...Object.values(d.trashRecords)
+      .filter((r) => r.table === 'versions')
+      .map((r) => r.record as Version),
+  ]
+}
+
+/** 同期する前に端末にあった稿（changed = 場面の最初の状態から変わった・作った・ゴミ箱に入れた稿） */
+export interface SeenVersion {
+  id: ID
+  body: string
+  note: string
+  changed: boolean
+}
+
+/** 同期する前の端末の稿とゴミ箱の稿（start = 場面の最初の状態） */
+export function seenVersions(d: AppData, start: AppData): SeenVersion[] {
+  const trashed = new Set(
+    Object.values(d.trashRecords)
+      .filter((r) => r.table === 'versions')
+      .map((r) => (r.record as Version).id),
+  )
+  return versionRecords(d).map((v) => {
+    const s = start.versions[v.id]
+    const body = v.body ?? ''
+    const note = v.note ?? ''
+    return { id: v.id, body, note, changed: trashed.has(v.id) || !s || s.body !== body || (s.note ?? '') !== note }
+  })
+}
+
+/**
+ * I1（稿ごと）: 同期する前に変わっていた稿が、揃った後に同じ本文で、稿かゴミ箱に残っているか（同じ id か、その控え）。
+ * 推敲メモは、両方で書き換えられるとつないで残すので、含まれていればよい。場面の最初のままの稿は見ない（勝った側の
+ * つなぐ・解除で消えるのは正しい）
+ */
+export function lostVersions(seen: readonly SeenVersion[], d: AppData): string[] {
+  const all = versionRecords(d)
+  return seen
+    .filter(
+      (s) =>
+        s.changed &&
+        !all.some(
+          (v) => (v.id === s.id || v.sourceVersionId === s.id) && (v.body ?? '') === s.body && (v.note ?? '').includes(s.note),
+        ),
+    )
+    .map((s) => `I1 稿が消えた: ${JSON.stringify(s.body)}（推敲メモ ${JSON.stringify(s.note)}）`)
 }
 
 function pool(d: AppData): string[] {
@@ -553,6 +624,7 @@ export function scenarioProblems(
   d: AppData,
   ep: ID,
   seen: readonly string[],
+  seenV: readonly SeenVersion[],
   notes: {
     x: readonly { detail?: string; id: string; kind: string }[]
     y: readonly { detail?: string; id: string; kind: string }[]
@@ -561,6 +633,7 @@ export function scenarioProblems(
   const out: string[] = []
   const all = pool(d)
   for (const t of new Set(seen)) if (!all.some((q) => q.includes(t))) out.push(`I1 文章が消えた: ${JSON.stringify(t)}`)
+  out.push(...lostVersions(seenV, d))
   out.push(...structureProblems(d).map((m) => `I3 ${m}`))
   const v = view(d)
   const episode = v.pieces[ep]

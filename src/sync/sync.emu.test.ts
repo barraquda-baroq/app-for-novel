@@ -26,7 +26,15 @@ import { repairData } from '../domain/repair'
 import * as S from '../domain/storyOps'
 import { emptyData, type AppData } from '../domain/types'
 import { newId } from '../domain/util'
-import { ACTS_SCENARIOS, scenarioProblems, scenarioStart, texts, type ActsScenario, type Order } from '../test/actsScenarios'
+import {
+  ACTS_SCENARIOS,
+  scenarioProblems,
+  scenarioStart,
+  seenVersions,
+  texts,
+  type ActsScenario,
+  type Order,
+} from '../test/actsScenarios'
 import { appModelRef, type AppModel } from './appModel'
 import { createConflictHooks } from './conflicts'
 import { createSyncEngine, type SyncEngine, type SyncTarget } from './engine'
@@ -729,9 +737,10 @@ async function runActsScenario(s: ActsScenario, order: Order): Promise<string[]>
   await settle(first)
   await second.edit((d) => opOf(second)(d, ep))
   const seen = [...texts(await x.load()), ...texts(await y.load())]
+  const seenV = [...seenVersions(await x.load(), start.data), ...seenVersions(await y.load(), start.data)]
   await second.online()
   await settle(x, y)
-  const problems = scenarioProblems(s, order, await x.load(), ep, seen, { x: x.notes, y: y.notes })
+  const problems = scenarioProblems(s, order, await x.load(), ep, seen, seenV, { x: x.notes, y: y.notes })
   if (problems.length) problems.push(`知らせ: x=${JSON.stringify(x.notes)} y=${JSON.stringify(y.notes)}`)
   return problems
 }

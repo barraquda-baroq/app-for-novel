@@ -10,9 +10,11 @@ import type { AppData, ID } from '../domain/types'
 import {
   ACTS_SCENARIOS,
   actsIds,
+  lostVersions,
   restoreProblems,
   scenarioProblems,
   scenarioStart,
+  seenVersions,
   structureProblems,
   texts,
   type ActsScenario,
@@ -38,6 +40,7 @@ async function run(s: ActsScenario, order: Order, mode: Mode): Promise<string[]>
   await x.edit((d) => s.x(d, ep))
   await y.edit((d) => s.y(d, ep))
   const seen = [...texts(await x.load()), ...texts(await y.load())]
+  const seenV = [...seenVersions(await x.load(), start.data), ...seenVersions(await y.load(), start.data)]
   if (mode === '片方がオフライン') {
     await first.sync()
     await second.sync()
@@ -49,7 +52,7 @@ async function run(s: ActsScenario, order: Order, mode: Mode): Promise<string[]>
   await settle(x, y)
   const problems: string[] = []
   if (!(await sameData(x, y))) problems.push('I2 両方の端末の内容が違う')
-  problems.push(...scenarioProblems(s, order, await x.load(), ep, seen, { x: x.notes as never, y: y.notes as never }))
+  problems.push(...scenarioProblems(s, order, await x.load(), ep, seen, seenV, { x: x.notes as never, y: y.notes as never }))
   if (problems.length) problems.push(`---\n${cloud.log.join('\n')}`)
   return problems
 }
@@ -148,6 +151,7 @@ describe('幕の操作の組み合わせ（決まった種）', () => {
         }
       }
       const seen = [...texts(await x.load()), ...texts(await y.load())]
+      const seenV = [...seenVersions(await x.load(), start.data), ...seenVersions(await y.load(), start.data)]
       if (together) {
         await first.uploadBatch()
         await second.uploadBatch()
@@ -165,6 +169,7 @@ describe('幕の操作の組み合わせ（決まった種）', () => {
         for (const t of [rec.body, rec.note]) if (typeof t === 'string') pool.push(t)
       }
       for (const t of new Set(seen)) if (!pool.some((q) => q.includes(t))) problems.push(`I1 文章が消えた: ${t}`)
+      problems.push(...lostVersions(seenV, d))
       problems.push(...structureProblems(d).map((m) => `I3 ${m}`))
       const v = repairData(d).data
       const text = v.pieces[ep] ? (activeBody(v, v.pieces[ep]) ?? '') : ''
@@ -204,6 +209,7 @@ describe('初めてのログイン（共通の履歴が無い）と幕', () => {
       if (opX) await x.edit((d) => opX(d, ep))
       if (opY) await y.edit((d) => opY(d, ep))
       const seen = [...texts(await x.load()), ...texts(await y.load())]
+      const seenV = [...seenVersions(await x.load(), start.data), ...seenVersions(await y.load(), start.data)]
       await x.sync()
       await y.sync()
       await settle(x, y)
@@ -215,6 +221,7 @@ describe('初めてのログイン（共通の履歴が無い）と幕', () => {
         for (const t of [rec.body, rec.note]) if (typeof t === 'string') pool.push(t)
       }
       expect([...new Set(seen)].filter((t) => !pool.some((q) => q.includes(t)))).toEqual([])
+      expect(lostVersions(seenV, d)).toEqual([])
       expect([...structureProblems(d), ...restoreProblems(d, ep)]).toEqual([])
       const v = repairData(d).data
       expect(activeBody(v, v.pieces[ep])).toBe('ABCDEFGHI')
@@ -246,6 +253,7 @@ describe('バックアップからの復元と幕', () => {
         y.offline()
         await y.edit((d) => op(d, ep))
         const seen = [...texts(await x.load()), ...texts(await y.load())]
+        const seenV = seenVersions(await y.load(), backup)
         if (restoreFirst) {
           await x.restore(backup)
           await x.sync()
@@ -266,7 +274,10 @@ describe('バックアップからの復元と幕', () => {
           for (const t of [rec.body, rec.note]) if (typeof t === 'string') all.push(t)
         }
         // 戻した端末が先なら、Y の送っていない幕の稿も残る（後なら、復元は Y が送った後の内容も戻す）
-        if (restoreFirst) expect([...new Set(seen)].filter((t) => !all.some((q) => q.includes(t)))).toEqual([])
+        if (restoreFirst) {
+          expect([...new Set(seen)].filter((t) => !all.some((q) => q.includes(t)))).toEqual([])
+          expect(lostVersions(seenV, d)).toEqual([])
+        }
         expect([...structureProblems(d), ...restoreProblems(d, ep)]).toEqual([])
         const v = repairData(d).data
         expect(activeBody(v, v.pieces[ep])).toBe('ABCDEFGHI')
