@@ -222,12 +222,32 @@ test.describe('各話の進捗', () => {
     await openApp(page, `/t/${titleId}`)
     const progress = page.getByTestId('piece-progress')
     await expect(progress).toHaveText(['10%', '30%', '30%', '100%'])
+    // ％の意味（達成率ではなく位置）は、マウスを乗せられないスマホでも読めるように一覧の上に出す
+    const legend = page.getByTestId('progress-legend')
+    await expect(legend).toBeVisible()
+    await expect(legend).toContainText('タイトル全体（採用原稿）のどこにあるか')
     const second = progress.nth(1)
     await expect(second).toHaveAttribute('aria-label', 'この話の終わりは、タイトル全体（採用原稿）の 30% の位置です')
     await expect(second).toHaveAttribute('title', 'この話の終わりは、タイトル全体（採用原稿）の 30% の位置です')
     await expect(second).toHaveAttribute('role', 'img')
-    // 採用原稿のない話も位置を出す（0字として数える）
+    // 採用原稿のない話も位置を出す（0字として数える）。書き上がった話に見えないよう棒は淡い色
     await expect(progress.nth(2)).toHaveAttribute('aria-label', /0字として数えています/)
+    const fillColor = (i: number) =>
+      progress
+        .nth(i)
+        .locator('.story-row-progress-fill')
+        .evaluate((el) => getComputedStyle(el).backgroundColor)
+    expect(await fillColor(2)).not.toBe(await fillColor(1))
+    expect(await fillColor(2)).toBe(
+      await page.evaluate(() => {
+        const probe = document.createElement('span')
+        probe.style.color = 'var(--text-faint)'
+        document.body.append(probe)
+        const c = getComputedStyle(probe).color
+        probe.remove()
+        return c
+      }),
+    )
     // 細い棒は位置の分だけ伸びる
     const fill = await second
       .locator('.story-row-progress-fill')
@@ -238,6 +258,11 @@ test.describe('各話の進捗', () => {
     // 章ページでも、タイトル全体の中での位置
     await openApp(page, `/t/${titleId}/c/${chapterId}`)
     await expect(page.getByTestId('chapter-page').getByTestId('piece-progress')).toHaveText(['30%', '100%'])
+    // 章の中での割合ではなく、タイトル全体での位置
+    const chapterLegend = page.getByTestId('chapter-page').getByTestId('progress-legend')
+    await expect(chapterLegend).toBeVisible()
+    await expect(chapterLegend).toContainText('全体')
+    await expect(chapterLegend).toContainText('章の中での割合ではありません')
   })
 
   test('幅 360px でも進捗は行からはみ出さない', async ({ page }) => {

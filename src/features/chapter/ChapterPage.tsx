@@ -228,11 +228,17 @@ export function ChapterPage() {
               この章にはまだ話がありません。{canAddEpisode ? '「＋話数追加」から話を追加しましょう。' : ''}
             </div>
           ) : (
-            <ol className="story-list" data-testid="story-list">
-              {rows.map((row) => (
-                <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
-              ))}
-            </ol>
+            <>
+              {/* 進捗の％は章の中ではなくタイトル全体での位置（スマホではマウスを乗せた時の説明が出ないので書いておく） */}
+              <p className="small muted story-progress-legend" data-testid="progress-legend">
+                右の％は、その話の終わりがタイトル全体（採用原稿）のどこにあるかです（章の中での割合ではありません）。
+              </p>
+              <ol className="story-list" data-testid="story-list">
+                {rows.map((row) => (
+                  <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
+                ))}
+              </ol>
+            </>
           )}
 
           {edit ? (

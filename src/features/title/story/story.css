@@ -346,6 +346,17 @@
   background: var(--special);
 }
 
+/* 採用原稿のない話（0字として数える）は、書き上がった話に見えないよう棒を淡くする */
+.story-row.is-missing .story-row-progress-fill {
+  background: var(--text-faint);
+}
+
+/* 一覧の上の、進捗の％の意味（位置であって達成率ではない） */
+.story-progress-legend {
+  margin: 0;
+  line-height: 1.6;
+}
+
 .story-row-progress-value {
   min-width: 3.2em;
   text-align: right;

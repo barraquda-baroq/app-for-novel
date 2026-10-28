@@ -135,6 +135,8 @@ describe('タイトル画面の描き直し', () => {
     expect(screen.getAllByTestId('piece-progress')[1].getAttribute('aria-label')).toBe(
       'この話の終わりは、タイトル全体（採用原稿）の 30% の位置です',
     )
+    // ％の意味は一覧の上にも書いておく（マウスを乗せられないスマホのため）
+    expect(screen.getByTestId('progress-legend').textContent).toContain('タイトル全体（採用原稿）のどこにあるか')
     clearCounts()
     act(() => actions.updateTitle(titleId, { synopsis: 'あらすじ' }))
     await user.click(screen.getByTestId('edit-toggle'))

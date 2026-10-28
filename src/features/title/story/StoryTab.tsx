@@ -182,38 +182,44 @@ export function StoryTab({ titleId }: { titleId: ID }) {
             まだ話がありません。「＋追加」から第1話を作成しましょう。
           </div>
         ) : (
-          <ol className={`story-list${chaptersOn ? ' is-tree' : ''}`} data-testid="story-list">
-            {chaptersOn
-              ? title.structure.map((node) => {
-                  if (node.type === 'piece') {
-                    const row = rows[node.id]
-                    if (!row) return null
-                    return <PieceRow key={node.id} {...row} edit={edit} onMoved={onPieceMoved} />
-                  }
-                  const chapter = data.chapters[node.id]
-                  if (!chapter) return null
-                  const chStep = edit ? chapterStepAvailability(story, chapter.id) : null
-                  return (
-                    <ChapterBlock
-                      key={chapter.id}
-                      chapter={chapter}
-                      rows={rowsFor(rows, chapter.pieceIds)}
-                      edit={edit}
-                      canUp={chStep?.up ?? false}
-                      canDown={chStep?.down ?? false}
-                      collapsed={collapsed.has(chapter.id)}
-                      onToggleCollapsed={toggleCollapsed}
-                      canAddEpisode={targetIds.has(chapter.id)}
-                      onAddEpisode={addEpisodeTo}
-                      onPieceMoved={onPieceMoved}
-                    />
-                  )
-                })
-              : flat.map((f) => {
-                  const row = rows[f.pieceId]
-                  return row ? <PieceRow key={f.pieceId} {...row} edit={edit} onMoved={onPieceMoved} /> : null
-                })}
-          </ol>
+          <>
+            {/* 進捗の％の意味（達成率ではなく位置）。スマホではマウスを乗せた時の説明が出ないので、一覧の上に書いておく */}
+            <p className="small muted story-progress-legend" data-testid="progress-legend">
+              右の％は、その話の終わりがタイトル全体（採用原稿）のどこにあるかを示します（転機の位置を見るための目安）。
+            </p>
+            <ol className={`story-list${chaptersOn ? ' is-tree' : ''}`} data-testid="story-list">
+              {chaptersOn
+                ? title.structure.map((node) => {
+                    if (node.type === 'piece') {
+                      const row = rows[node.id]
+                      if (!row) return null
+                      return <PieceRow key={node.id} {...row} edit={edit} onMoved={onPieceMoved} />
+                    }
+                    const chapter = data.chapters[node.id]
+                    if (!chapter) return null
+                    const chStep = edit ? chapterStepAvailability(story, chapter.id) : null
+                    return (
+                      <ChapterBlock
+                        key={chapter.id}
+                        chapter={chapter}
+                        rows={rowsFor(rows, chapter.pieceIds)}
+                        edit={edit}
+                        canUp={chStep?.up ?? false}
+                        canDown={chStep?.down ?? false}
+                        collapsed={collapsed.has(chapter.id)}
+                        onToggleCollapsed={toggleCollapsed}
+                        canAddEpisode={targetIds.has(chapter.id)}
+                        onAddEpisode={addEpisodeTo}
+                        onPieceMoved={onPieceMoved}
+                      />
+                    )
+                  })
+                : flat.map((f) => {
+                    const row = rows[f.pieceId]
+                    return row ? <PieceRow key={f.pieceId} {...row} edit={edit} onMoved={onPieceMoved} /> : null
+                  })}
+            </ol>
+          </>
         )}
 
         {!isEmpty ? (
