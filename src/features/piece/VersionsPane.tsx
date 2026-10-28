@@ -42,7 +42,7 @@ export interface WorkspaceApi {
   select: (versionId: ID | null) => void
   /** 話の構成を変える操作の前に呼ぶ（保存していない編集があれば保存するか聞く。続けてよければ true） */
   ensureSaved: () => Promise<boolean>
-  /** コピーの見出し（「第3話　題」など。編集中の見出し・話の題を使う） */
+  /** コピーの見出し（「第3話　題」「第3話　題　第2幕」など。編集中の見出し・話の題を使う） */
   heading: () => string
 }
 

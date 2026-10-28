@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { separatePiece } from '../../../domain/acts'
 import {
   addSubmission,
   compareSnapshotWithCurrent,
@@ -322,6 +323,7 @@ describe('現在の原稿', () => {
       missingActive: 2,
       missingEpisodes: 1,
       missingSpecials: 1,
+      missingActs: 0,
     })
   })
 
@@ -529,5 +531,18 @@ describe('応募時スナップショットとの比較', () => {
     expect(snapshotPages(old, data)).toBeNull()
     // 文字数は記録した数のまま
     expect(snapshotCounts(data, old)).toEqual({ charCount: full.charCount, pages: null, chars: {} })
+  })
+})
+
+describe('幕に分けた話の現在の原稿', () => {
+  it('文字数はつないだ本文で数え、採用稿のない幕を「採用原稿なし 1幕」として数える', () => {
+    const t = createTitle(emptyData(), '作品')
+    const e = addEpisode(t.data, t.result)
+    let data = updateVersion(e.data, e.data.pieces[e.result].versionIds[0], { body: 'あいうえお' })
+    const s = separatePiece(data, e.result, [2])
+    data = s.data
+    expect(manuscriptSummary(data, t.result)).toMatchObject({ chars: 5, episodes: 1, missingActive: 0, missingActs: 0 })
+    data = setActiveVersion(data, s.result[0], null)
+    expect(manuscriptSummary(data, t.result)).toMatchObject({ chars: 3, missingActive: 1, missingActs: 1, missingEpisodes: 0 })
   })
 })

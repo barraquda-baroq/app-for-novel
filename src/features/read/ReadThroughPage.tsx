@@ -1,5 +1,6 @@
 // 通し読み: タイトル（または章）を、採用（アクティブ）原稿だけで最初から最後まで読む画面。
 // 採用原稿がない話には「採用原稿がありません。」と表示する。
+// 幕に分けた話は、話の見出しの下に幕の見出し（第1幕…）と各幕の採用稿を並べる（目次にも幕を出す）。
 // 本文のルビ・傍点の記法は読むための表示にする（コピー・テキストの書き出しは記法のまま）。
 // 長編（数百話・数百万字）でも軽く開けるよう、画面の外の話は組版せず、見積もった大きさで場所だけ取る（lineEstimate.ts）。
 import {
@@ -35,11 +36,14 @@ import { FilesIcon } from '../episodeExport/exportIcons'
 import { lineShape, lineShapeStyle, useCharsPerLine, type LineShape } from './lineEstimate'
 import { VerticalTextIcon } from './readIcons'
 import {
+  actAnchorId,
+  actVersion,
   clampFontSize,
   FONT_MAX,
   FONT_MIN,
   pieceAnchorId,
   pieceVersion,
+  readMissingLabel,
   readStats,
   resolveChapterScope,
   splitTcy,
@@ -73,8 +77,13 @@ function fullLabel(b: PieceBlock): string {
 /** 1話分の、画面の外にある間に使うもの（稿ごとに覚えておいた値なので、開き直しても作り直さない） */
 interface PieceLayout {
   shape: LineShape
-  plain: string
+  /** 記号とルビの読みを除いた本文（幕に分けた話は幕ごと: actPlain） */
+  plain?: string
+  actPlain?: Map<ID, string>
 }
+
+/** 幕の見出しの分の見積もり（空行の数で数える） */
+const ACT_HEAD_LINES = 3
 
 /** 本文の字間（read.css の .rt-text の letter-spacing と合わせる） */
 const TEXT_LETTER_SPACING = 0.02
@@ -85,6 +94,7 @@ const PieceSection = memo(function PieceSection({
   titleId,
   shape,
   plain,
+  actPlain,
 }: {
   block: PieceBlock
   titleId: ID
@@ -92,8 +102,10 @@ const PieceSection = memo(function PieceSection({
   shape: LineShape | null
   /** 記号とルビの読みを除いた本文（画面から遠い間に置く。稿ごとに覚えておいたもの） */
   plain?: string
+  /** 幕に分けた話: 幕ごとの plain */
+  actPlain?: Map<ID, string>
 }) {
-  const state = b.body === null ? 'missing' : b.body.trim() === '' ? 'blank' : 'text'
+  const state = b.acts ? 'text' : b.body === null ? 'missing' : b.body.trim() === '' ? 'blank' : 'text'
   // ルビ・傍点の要素は、この話が画面の近くに来てから作る（ルビの多い長編でも軽く開けるように）
   const sectionRef = useRef<HTMLElement>(null)
   return (
@@ -105,6 +117,7 @@ const PieceSection = memo(function PieceSection({
       data-testid="read-piece"
       data-kind={b.kind}
       data-state={state}
+      data-split={b.acts ? 'true' : undefined}
       aria-label={fullLabel(b)}
     >
       <div className="rt-piece-head">
@@ -129,7 +142,38 @@ const PieceSection = memo(function PieceSection({
           編集
         </Link>
       </div>
-      {b.body === null ? (
+      {b.acts ? (
+        b.acts.map((a) => (
+          <div key={a.pieceId} id={actAnchorId(a.pieceId)} className="rt-act" data-testid="read-act">
+            <div className="rt-act-head">
+              <h4 className="rt-act-title" tabIndex={-1} data-heading data-testid="read-act-label">
+                <Tcy text={a.label} />
+              </h4>
+              <Link
+                to={paths.piece(titleId, a.pieceId)}
+                className="rt-edit"
+                aria-label={`${fullLabel(b)}　${a.label}を編集`}
+                title={a.versionName ? `採用中：${a.versionName}` : '幕を開く'}
+                data-testid="read-act-edit"
+              >
+                <EditIcon />
+                編集
+              </Link>
+            </div>
+            {a.body === null ? (
+              <p className="rt-missing" data-testid="no-active">
+                {NO_ACTIVE_MESSAGE}
+              </p>
+            ) : a.body.trim() === '' ? (
+              <p className="rt-blank">（本文はまだありません）</p>
+            ) : (
+              <div className="rt-text" data-testid="read-text">
+                <LazyRubyText text={a.body} plain={actPlain?.get(a.pieceId)} watch={sectionRef} />
+              </div>
+            )}
+          </div>
+        ))
+      ) : b.body === null ? (
         <p className="rt-missing" data-testid="no-active">
           {NO_ACTIVE_MESSAGE}
         </p>
@@ -179,6 +223,7 @@ const DocContent = memo(function DocContent({
             titleId={titleId}
             shape={layouts.get(b.pieceId)?.shape ?? null}
             plain={layouts.get(b.pieceId)?.plain}
+            actPlain={layouts.get(b.pieceId)?.actPlain}
           />
         ),
       )}
@@ -186,7 +231,8 @@ const DocContent = memo(function DocContent({
   )
 })
 
-type JumpHandler = (e: MouseEvent<HTMLAnchorElement>, pieceId: ID) => void
+/** 目次から移動する（anchorId は話・幕の見出しの要素の id） */
+type JumpHandler = (e: MouseEvent<HTMLAnchorElement>, anchorId: string) => void
 
 /** 目次（スマホでは開閉できる） */
 function ReadToc({
@@ -233,17 +279,38 @@ const TocBody = memo(function TocBody({ groups, onJump, href }: { groups: TocGro
                 <a
                   href={href}
                   className={`rt-toc-link${b.kind === 'special' ? ' is-special' : ''}`}
-                  onClick={(e) => onJump(e, b.pieceId)}
+                  onClick={(e) => onJump(e, pieceAnchorId(b.pieceId))}
                   data-testid="toc-link"
                 >
                   <span className="rt-toc-label">{b.label}</span>
                   {b.subtitle.trim() ? <span className="rt-toc-subtitle">{b.subtitle.trim()}</span> : null}
-                  {b.body === null ? (
+                  {b.body === null && !b.acts ? (
                     <span className="rt-toc-missing" title={NO_ACTIVE_MESSAGE} data-testid="toc-missing">
                       採用原稿なし
                     </span>
                   ) : null}
                 </a>
+                {b.acts ? (
+                  <ol className="rt-toc-acts" aria-label={`${b.label}の幕`}>
+                    {b.acts.map((a) => (
+                      <li key={a.pieceId}>
+                        <a
+                          href={href}
+                          className="rt-toc-link rt-toc-act"
+                          onClick={(e) => onJump(e, actAnchorId(a.pieceId))}
+                          data-testid="toc-act-link"
+                        >
+                          <span className="rt-toc-label">{a.label}</span>
+                          {a.body === null ? (
+                            <span className="rt-toc-missing" title={NO_ACTIVE_MESSAGE} data-testid="toc-missing">
+                              採用原稿なし
+                            </span>
+                          ) : null}
+                        </a>
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
               </li>
             ))}
           </ol>
@@ -271,7 +338,25 @@ export function ReadThroughPage() {
   const layouts = useMemo(() => {
     const out = new Map<ID, PieceLayout>()
     for (const b of blocks) {
-      if (b.type !== 'piece' || b.body === null) continue
+      if (b.type !== 'piece') continue
+      if (b.acts) {
+        // 幕に分けた話: 各幕の段落の形を足し、幕の見出しの分を空行として足す
+        const shape: LineShape = { chars: 0, paras: 0, blank: 0 }
+        const actPlain = new Map<ID, string>()
+        for (const a of b.acts) {
+          shape.blank += ACT_HEAD_LINES
+          const v = a.body === null ? null : actVersion(data, a.pieceId)
+          if (!v) continue
+          const s = lineShape(v)
+          shape.chars += s.chars
+          shape.paras += s.paras
+          shape.blank += s.blank
+          actPlain.set(a.pieceId, strippedBody(v))
+        }
+        out.set(b.pieceId, { shape, actPlain })
+        continue
+      }
+      if (b.body === null) continue
       const v = pieceVersion(data, b.pieceId)
       if (v) out.set(b.pieceId, { shape: lineShape(v), plain: strippedBody(v) })
     }
@@ -360,11 +445,11 @@ export function ReadThroughPage() {
   }, [vertical])
   const toggleToc = useCallback(() => setTocOpen((v) => !v), [])
   const jumpTo = useCallback(
-    (e: MouseEvent<HTMLAnchorElement>, pieceId: ID) => {
+    (e: MouseEvent<HTMLAnchorElement>, anchorId: string) => {
       e.preventDefault()
       // スマホでは目次を先に閉じる（閉じて本文の位置が動いてから移動する）
       flushSync(() => setTocOpen(false))
-      const target = document.getElementById(pieceAnchorId(pieceId))
+      const target = document.getElementById(anchorId)
       if (!target) return
       // 途中の話はまだ組んでいない（見積もりの大きさ）ので、すぐに移動し、組み上がってずれたら合わせ直す
       cancelSettle.current?.()
@@ -485,9 +570,9 @@ export function ReadThroughPage() {
             <span className="rt-total" data-testid="read-total">
               採用原稿 <strong>{formatCount(stats.chars)}</strong>字
             </span>
-            {stats.missing > 0 ? (
+            {stats.missing + stats.missingActs > 0 ? (
               <span className="badge badge-missing" data-testid="read-missing">
-                採用原稿なし {stats.missing}話
+                {readMissingLabel(stats)}
               </span>
             ) : null}
           </div>

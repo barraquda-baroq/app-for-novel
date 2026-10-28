@@ -62,9 +62,14 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
     if (!(await api.ensureSaved())) return
     // 保存した後の名前（保存していなかった名前の編集も入っている）
     const current = getData().versions[active.id] ?? active
+    const isAct = api.piece.kind === 'act'
     const ok = await confirmDialog({
       title: '採用を解除しますか？',
-      message: `この話には採用原稿がなくなり、章・タイトルの通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。\n\n「${current.name.trim() || '無題の稿'}」は削除されず、推敲バージョンの一覧に残ります。あとで「採用する」で戻せます。`,
+      message:
+        (isAct
+          ? `この幕には採用稿がなくなり、通し読みではこの幕に「${NO_ACTIVE_MESSAGE}」と表示されます。採用稿のない幕があると、セパレートを解除できません。`
+          : `この話には採用原稿がなくなり、章・タイトルの通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。`) +
+        `\n\n「${current.name.trim() || '無題の稿'}」は削除されず、推敲バージョンの一覧に残ります。あとで「採用する」で戻せます。`,
       confirmLabel: '採用を解除',
     })
     if (!ok) return

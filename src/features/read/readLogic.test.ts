@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { separatePiece } from '../../domain/acts'
 import { createTitle } from '../../domain/entityOps'
 import { buildReadThrough, readThroughText } from '../../domain/readthrough'
 import { strippedBody } from '../../domain/ruby'
@@ -13,7 +14,7 @@ import {
 } from '../../domain/storyOps'
 import { emptyData, type AppData } from '../../domain/types'
 import { lineShape, lineShapeOf } from './lineEstimate'
-import { clampFontSize, readStats, resolveChapterScope, splitTcy, tocGroups } from './readLogic'
+import { clampFontSize, readMissingLabel, readStats, resolveChapterScope, splitTcy, tocGroups } from './readLogic'
 
 function setup(): { data: AppData; titleId: string; pieces: string[] } {
   let data = emptyData()
@@ -68,7 +69,13 @@ describe('目次と集計', () => {
     expect(groups[1].chapterId).toBe(first)
 
     // プロローグは空の稿（0字・0枚）、第2話は採用原稿なし
-    expect(readStats(data, buildReadThrough(data, titleId))).toEqual({ pieces: 4, missing: 1, chars: 6, pages: 2 })
+    expect(readStats(data, buildReadThrough(data, titleId))).toEqual({
+      pieces: 4,
+      missing: 1,
+      missingActs: 0,
+      chars: 6,
+      pages: 2,
+    })
     // 章で絞り込むと、その章だけ
     expect(tocGroups(buildReadThrough(data, titleId, c2.result)).map((g) => g.name)).toEqual(['第二章'])
   })
@@ -122,5 +129,29 @@ describe('表示', () => {
     expect(clampFontSize(40)).toBe(28)
     expect(clampFontSize(17.4)).toBe(17)
     expect(clampFontSize(Number.NaN)).toBe(17)
+  })
+})
+
+describe('幕に分けた話の通し読み', () => {
+  it('文字数はつないだ本文で数え、採用稿のない幕は「1幕」として数える', () => {
+    const { data: d0, titleId, pieces } = setup()
+    const s = separatePiece(d0, pieces[0], [2])
+    let data = s.data
+    expect(readStats(data, buildReadThrough(data, titleId))).toEqual({
+      pieces: 3,
+      missing: 0,
+      missingActs: 0,
+      chars: 10,
+      pages: 3,
+    })
+    data = setActiveVersion(data, s.result[1], null)
+    const stats = readStats(data, buildReadThrough(data, titleId))
+    expect(stats).toMatchObject({ pieces: 3, missing: 0, missingActs: 1, chars: 8 })
+    expect(readMissingLabel(stats)).toBe('採用原稿なし 1幕')
+    data = setActiveVersion(data, pieces[1], null)
+    expect(readMissingLabel(readStats(data, buildReadThrough(data, titleId)))).toBe('採用原稿なし 1話＋1幕')
+    // 目次は話ごと（幕は話の中に並ぶ）
+    const groups = tocGroups(buildReadThrough(data, titleId))
+    expect(groups[0].items[0].acts?.map((a) => a.label)).toEqual(['第1幕', '第2幕'])
   })
 })

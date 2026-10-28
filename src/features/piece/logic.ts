@@ -1,6 +1,6 @@
 // 原稿画面（採用原稿と推敲バージョンの比較）で使う純粋な計算。
 import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
-import { flatten } from '../../domain/structure'
+import { actsOf, flatten } from '../../domain/structure'
 import { trashNotice } from '../../domain/trash'
 import { bodyMetrics, formatCount, textStats, type TextStats } from '../../domain/text'
 import type { AppData, ID, Piece, PieceKind, Submission, Version } from '../../domain/types'
@@ -36,6 +36,14 @@ export function neighborPieces(data: AppData, titleId: ID, pieceId: ID): { prev:
   const i = flat.findIndex((f) => f.pieceId === pieceId)
   if (i < 0) return { prev: null, next: null }
   return { prev: flat[i - 1]?.pieceId ?? null, next: flat[i + 1]?.pieceId ?? null }
+}
+
+/** 幕に分けた話の中での前後の幕 */
+export function actNeighbors(data: AppData, parent: Piece, actId: ID): { prev: ID | null; next: ID | null } {
+  const acts = actsOf(data, parent)
+  const i = acts.findIndex((a) => a.id === actId)
+  if (i < 0) return { prev: null, next: null }
+  return { prev: acts[i - 1]?.id ?? null, next: acts[i + 1]?.id ?? null }
 }
 
 /** 採用原稿との文字数の差（例: +120字 / −35字 / ±0字） */

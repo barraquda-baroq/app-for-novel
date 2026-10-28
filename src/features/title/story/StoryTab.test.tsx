@@ -22,6 +22,7 @@ vi.mock('./storyLogic', async (importOriginal) => {
   return {
     ...mod,
     summarize: vi.fn(mod.summarize),
+    excerptSegments: vi.fn(mod.excerptSegments),
     titleStats: vi.fn(mod.titleStats),
     pieceRows: vi.fn(mod.pieceRows),
   }
@@ -63,6 +64,7 @@ function renderTitle(titleId: ID) {
 
 function clearCounts() {
   vi.mocked(logic.summarize).mockClear()
+  vi.mocked(logic.excerptSegments).mockClear()
   vi.mocked(logic.titleStats).mockClear()
   vi.mocked(logic.pieceRows).mockClear()
   vi.mocked(progress.titleProgress).mockClear()
@@ -148,5 +150,41 @@ describe('タイトル画面の描き直し', () => {
     expect(progressTexts()).toEqual(['10%', '40%', '60%', '100%'])
     expect(progress.titleProgress).toHaveBeenCalledTimes(1)
     expect(logic.summarize).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('幕に分けた話の行', () => {
+  it('フォルダのような行の下に幕の行が並ぶ。開閉では行を作り直さず、幕の本文の編集では変わった幕の行だけを描き直す', async () => {
+    const user = userEvent.setup()
+    const { titleId, ids } = seed(6)
+    const body = getData().versions[getData().pieces[ids[0]].versionIds[0]].body
+    const third = Math.floor(body.length / 3)
+    const acts = actions.separatePiece(ids[0], [third, third * 2])
+    renderTitle(titleId)
+    expect(screen.getAllByTestId('piece-row')).toHaveLength(6)
+    expect(screen.getAllByTestId('act-row')).toHaveLength(3)
+    expect(screen.getAllByTestId('act-label').map((el) => el.textContent)).toEqual(['第1幕', '第2幕', '第3幕'])
+    expect(screen.getByTestId('piece-act-count').textContent).toBe('3幕')
+    expect(screen.getByTestId('piece-total').textContent).toBe('3幕の合計 350字')
+
+    // 開閉: 行の値も要約も作り直さない
+    clearCounts()
+    await user.click(screen.getByTestId('acts-toggle'))
+    expect(screen.getByTestId('acts-toggle').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByTestId('act-list').hidden).toBe(true)
+    await user.click(screen.getByTestId('acts-toggle'))
+    expect(screen.getByTestId('act-list').hidden).toBe(false)
+    expect(logic.pieceRows).not.toHaveBeenCalled()
+    expect(logic.summarize).not.toHaveBeenCalled()
+    expect(logic.excerptSegments).not.toHaveBeenCalled()
+
+    // 第2幕の本文を同じ字数で書き換える: 描き直すのは第2幕の行だけ（ほかの話・幕の行はそのまま）
+    clearCounts()
+    const v = getData().pieces[acts[1]].activeVersionId!
+    const old = getData().versions[v].body
+    act(() => actions.updateVersion(v, { body: `改${old.slice(1)}` }))
+    expect(logic.pieceRows).toHaveBeenCalledTimes(1)
+    expect(logic.summarize).not.toHaveBeenCalled()
+    expect(logic.excerptSegments).toHaveBeenCalledTimes(1)
   })
 })

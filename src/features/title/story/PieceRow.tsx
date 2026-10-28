@@ -1,22 +1,31 @@
 // 本編の一覧の1行（第n話 / 特殊ブロック）。行全体が原稿画面へのリンク。
 // 編集モードでは並べ替え・移動・削除のボタンが出る。
+// 右クリック（デスクトップ）・長押し（スマホ）・行の「…」で操作メニュー（セパレート／セパレート解除・移動…・削除。RowMenu.tsx）。
+// 幕に分けた話はフォルダのような行（話数・題・幕の数・合計の文字数・開閉）で、下に幕の行（第1幕…）が並ぶ。
 // 長編でも1か所の変更で全行を描き直さないよう、行ごとの値（PieceRowData）だけを受け取って React.memo で包む。
 // 行には進捗（この話の終わりがタイトル全体の何 % の位置か）を出す。抜粋のルビ・傍点は読むための表示にする
 // （行が画面の近くに来てから。一覧に NearViewportContext の見張り役があれば）。
 import { memo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { formatCount } from '../../../domain/text'
-import { trashNotice } from '../../../domain/trash'
+import { missingActiveLabel } from '../../../domain/entityOps'
+import { bodyMetrics, formatCount } from '../../../domain/text'
 import type { ID } from '../../../domain/types'
 import { paths } from '../../../routes'
+import { attempt, notifyError } from '../../../store/uiStore'
 import { actions } from '../../../store/actions'
-import { attempt, notify, notifyError } from '../../../store/uiStore'
-import { confirmDialog } from '../../../ui/dialogs'
-import { ChevronRightIcon, DownIcon, MoveIcon, TrashIcon, UpIcon } from '../../../ui/icons'
+import { ChevronRightIcon, DownIcon, MoreIcon, MoveIcon, TrashIcon, UpIcon } from '../../../ui/icons'
 import { LazyRubySegments } from '../../../ui/RubyText'
+import { ActsIcon } from '../../acts/actIcons'
+import { ActRow } from './ActRow'
+import { toggleActsCollapsed, useActsCollapsed } from './actsCollapse'
 import { MoveDialog } from './MoveDialog'
-import { progressDescription, progressLabel, summarize, type PieceRowData } from './storyLogic'
+import { confirmDeletePiece } from './pieceFlows'
+import { ProgressMeter } from './ProgressMeter'
+import { useRowMenu } from './RowMenu'
+import { summarize, type PieceRowData } from './storyLogic'
 import { useKeepMovedInPlace } from './useKeepMovedInPlace'
+
+export { ProgressMeter }
 
 export interface PieceRowProps extends PieceRowData {
   edit: boolean
@@ -34,6 +43,8 @@ const DOWN = '[data-testid="piece-down"]'
 function PieceRowView({
   piece,
   version,
+  text,
+  acts,
   versionCount,
   label,
   fullLabel,
@@ -49,6 +60,9 @@ function PieceRowView({
   const special = piece.kind === 'special'
   const pieceId = piece.id
   const { ref, move } = useKeepMovedInPlace<HTMLLIElement>(pieceId)
+  const menu = useRowMenu({ type: 'piece', id: pieceId })
+  const collapsed = useActsCollapsed(pieceId)
+  const actsId = `acts-${pieceId}`
 
   // 動かした行が押した指の下に残るように（続けて押すとそのまま動かし続けられる）。
   // 端に着いて押せなくなったら反対向きのボタンにフォーカスする
@@ -68,25 +82,52 @@ function PieceRowView({
       notifyError(deleteReason ?? '削除できません')
       return
     }
-    const ok = await confirmDialog({
-      title: `「${fullLabel}」を削除しますか？`,
-      message: trashNotice(`この話のすべての推敲バージョン（${versionCount}稿）もいっしょに`),
-      danger: true,
-      confirmLabel: '削除',
-    })
-    if (!ok) return
-    if (attempt(() => (actions.deletePiece(pieceId), true))) notify(`「${fullLabel}」をゴミ箱に移しました`)
+    await confirmDeletePiece(pieceId)
   }
 
+  const missing = acts ? acts.some((a) => !a.version) : !version
   return (
     <li
       ref={ref}
-      className={`story-row${special ? ' is-special' : ''}${version ? '' : ' is-missing'}${edit ? ' is-editing' : ''}`}
+      className={`story-row${special ? ' is-special' : ''}${missing ? ' is-missing' : ''}${edit ? ' is-editing' : ''}${acts ? ' is-split' : ''}`}
       data-testid="piece-row"
       data-kind={piece.kind}
       data-piece-id={pieceId}
+      data-split={acts ? 'true' : undefined}
     >
-      <PieceRowLink piece={piece} version={version} versionCount={versionCount} label={label} progress={progress} />
+      <div className="story-row-main" {...menu?.handlers}>
+        {acts ? (
+          <button
+            type="button"
+            className="icon-btn story-acts-toggle"
+            aria-expanded={!collapsed}
+            aria-controls={actsId}
+            aria-label={collapsed ? `${fullLabel}の幕を開く` : `${fullLabel}の幕を折りたたむ`}
+            onClick={() => toggleActsCollapsed(pieceId)}
+            data-testid="acts-toggle"
+          >
+            <ChevronRightIcon />
+          </button>
+        ) : null}
+        {acts ? (
+          <FolderRowLink piece={piece} text={text} acts={acts} label={label} progress={progress} />
+        ) : (
+          <PieceRowLink piece={piece} version={version} versionCount={versionCount} label={label} progress={progress} />
+        )}
+        {menu ? (
+          <button
+            type="button"
+            className="icon-btn story-row-more"
+            aria-label={`${fullLabel}の操作`}
+            title={piece.kind === 'episode' ? '操作（セパレート・移動・削除）' : '操作（移動・削除）'}
+            aria-haspopup="menu"
+            onClick={(e) => menu.openFrom(e.currentTarget)}
+            data-testid="piece-more"
+          >
+            <MoreIcon />
+          </button>
+        ) : null}
+      </div>
 
       {edit ? (
         <div className="story-row-edit" role="group" aria-label={`${fullLabel}の操作`}>
@@ -130,6 +171,13 @@ function PieceRowView({
           </button>
         </div>
       ) : null}
+      {acts ? (
+        <ol id={actsId} className="story-acts" hidden={collapsed} aria-label={`${fullLabel}の幕`} data-testid="act-list">
+          {acts.map((a) => (
+            <ActRow key={a.act.id} {...a} />
+          ))}
+        </ol>
+      ) : null}
       {moving ? (
         <MoveDialog pieceId={pieceId} onClose={() => setMoving(false)} onMoved={() => onMoved?.(pieceId, 'dialog')} />
       ) : null}
@@ -138,28 +186,6 @@ function PieceRowView({
 }
 
 export const PieceRow = memo(PieceRowView)
-
-/** 進捗の細い棒と「34%」。説明は読み上げとマウスを乗せた時に出す */
-function ProgressMeter({ percent, hasActive }: { percent: number | null; hasActive: boolean }) {
-  const description = progressDescription(percent, hasActive)
-  return (
-    <span
-      className="story-row-progress"
-      role="img"
-      aria-label={description}
-      title={description}
-      data-testid="piece-progress"
-      data-progress={percent ?? ''}
-    >
-      <span className="story-row-progress-bar" aria-hidden="true">
-        <span className="story-row-progress-fill" style={{ width: `${percent ?? 0}%` }} />
-      </span>
-      <span className="story-row-progress-value" aria-hidden="true">
-        {progressLabel(percent)}
-      </span>
-    </span>
-  )
-}
 
 /** 行のリンク部分（見出し・採用中の稿・進捗・抜粋）。編集モードの切り替えでは描き直さない */
 const PieceRowLink = memo(function PieceRowLink({
@@ -206,6 +232,50 @@ const PieceRowLink = memo(function PieceRowLink({
           <LazyRubySegments segments={excerpt} watch={excerptRef} />
         </span>
       ) : null}
+      <ChevronRightIcon className="icon story-row-chevron" />
+    </Link>
+  )
+})
+
+/** 幕に分けた話の行のリンク部分（話数・題・幕の数・合計の文字数・進捗）。リンクは話の画面（幕の一覧）へ */
+const FolderRowLink = memo(function FolderRowLink({
+  piece,
+  text,
+  acts,
+  label,
+  progress,
+}: Pick<PieceRowData, 'piece' | 'text' | 'label' | 'progress'> & { acts: NonNullable<PieceRowData['acts']> }) {
+  const chars = text ? bodyMetrics(text).chars : 0
+  const missing = acts.reduce((n, a) => n + (a.version ? 0 : 1), 0)
+  return (
+    <Link to={paths.piece(piece.titleId, piece.id)} className="story-row-link">
+      <span className="story-row-head">
+        <span className="story-row-label" data-testid="piece-label">
+          {label}
+        </span>
+        <span className="badge badge-accent story-acts-badge" data-testid="piece-act-count">
+          <ActsIcon />
+          {acts.length}幕
+        </span>
+        {piece.subtitle.trim() ? (
+          <span className="story-row-subtitle" data-testid="piece-subtitle">
+            {piece.subtitle.trim()}
+          </span>
+        ) : (
+          <span className="story-row-subtitle is-empty">（題なし）</span>
+        )}
+      </span>
+      <span className="story-row-meta">
+        <span className="badge badge-active" data-testid="piece-total">
+          {acts.length}幕の合計 {formatCount(chars)}字
+        </span>
+        {missing > 0 ? (
+          <span className="badge badge-missing" data-testid="piece-missing">
+            {missingActiveLabel(0, 0, missing)}
+          </span>
+        ) : null}
+        <ProgressMeter percent={progress} hasActive={text !== null} />
+      </span>
       <ChevronRightIcon className="icon story-row-chevron" />
     </Link>
   )

@@ -218,6 +218,60 @@
   font-size: 16px;
 }
 
+/* 幕の画面の「第2幕」（番号は話の中の並び順で決まる） */
+.pw-root .pw-act-label {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--editor-font);
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* 「幕」メニュー（幕に分ける・さらに分ける・次の幕とつなぐ・セパレート解除） */
+.pw-root .pw-acts-btn {
+  flex: none;
+  min-height: 34px;
+  min-width: 36px;
+  padding: 4px 10px;
+  font-size: 13px;
+  gap: 5px;
+}
+
+.pw-root .pw-acts-btn[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pw-root .pw-acts-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* 狭い画面では印だけ（名前は読み上げとマウスを乗せた時に出す） */
+@media (max-width: 720px) {
+  .pw-root .pw-acts-btn {
+    padding: 4px 8px;
+  }
+
+  .pw-root .pw-acts-btn-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
 .pw-root .pw-view {
   display: flex;
   align-items: center;

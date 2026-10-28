@@ -109,7 +109,7 @@ export function TitlePage() {
             </li>
             {stats.missingActive > 0 ? (
               <li className="tpage-chip is-warn" data-testid="stat-missing">
-                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials)}
+                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials, stats.missingActs)}
               </li>
             ) : null}
             {title.chaptersEnabled ? (

@@ -57,8 +57,10 @@ export function episodesLabel(summary: Pick<TitleSummary, 'episodes' | 'specials
 }
 
 /** 「採用原稿なし 2話＋特殊1」（特殊ブロックは話数に数えない）。なければ空文字 */
-export function missingLabel(summary: Pick<TitleSummary, 'missingEpisodes' | 'missingSpecials'>): string {
-  return missingActiveLabel(summary.missingEpisodes, summary.missingSpecials)
+export function missingLabel(
+  summary: Pick<TitleSummary, 'missingEpisodes' | 'missingSpecials'> & { missingActs?: number },
+): string {
+  return missingActiveLabel(summary.missingEpisodes, summary.missingSpecials, summary.missingActs ?? 0)
 }
 
 export function charsLabel(chars: number): string {

@@ -10,6 +10,8 @@ export const paths = {
   title: (titleId: ID, tab?: TitleTab) => (tab && tab !== 'story' ? `/t/${titleId}?tab=${tab}` : `/t/${titleId}`),
   chapter: (titleId: ID, chapterId: ID) => `/t/${titleId}/c/${chapterId}`,
   piece: (titleId: ID, pieceId: ID, versionId?: ID) => `/t/${titleId}/p/${pieceId}${versionId ? `?v=${versionId}` : ''}`,
+  /** セパレート（幕に分ける・幕をさらに分ける）の画面 */
+  separate: (titleId: ID, pieceId: ID) => `/t/${titleId}/p/${pieceId}/separate`,
   memo: (titleId: ID, memoId: ID) => `/t/${titleId}/m/${memoId}`,
   read: (titleId: ID, chapterId?: ID) => `/t/${titleId}/read${chapterId ? `?chapter=${chapterId}` : ''}`,
 }

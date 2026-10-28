@@ -1,5 +1,6 @@
 // 戦略タブの表示用の純粋な計算（締切・結果発表までの日数・規定の判定・応募時スナップショットとの比較など）。
 import { snapshotCounts, takeSnapshot, type SnapshotCounts, type SnapshotDiff } from '../../../domain/entityOps'
+import { flatten, missingActs } from '../../../domain/structure'
 import { formatCount } from '../../../domain/text'
 import type {
   AppData,
@@ -23,11 +24,15 @@ export interface CurrentManuscript extends SubmissionSnapshot {
   pages: number
   order: ID[]
   pieces: Record<ID, SnapshotPiece>
+  /** 幕に分けた話のうち、採用稿のない幕の数（応募時の記録には残さない） */
+  missingActs: number
 }
 
 export function currentManuscript(data: AppData, titleId: ID): CurrentManuscript {
   const { texts: _texts, ...snapshot } = takeSnapshot(data, titleId, false)
-  return snapshot as CurrentManuscript
+  let acts = 0
+  for (const item of flatten(data, titleId)) acts += missingActs(data, data.pieces[item.pieceId])
+  return { ...(snapshot as Omit<CurrentManuscript, 'missingActs'>), missingActs: acts }
 }
 
 /** 現在の原稿の作り直しが要るかどうかを決める値（本文・稿・章・並び・話数の振り方が変わった時だけ変わる） */
@@ -49,17 +54,21 @@ export interface ManuscriptSummary {
   missingEpisodes: number
   /** 採用原稿がない特殊ブロックの数 */
   missingSpecials: number
+  /** 幕に分けた話のうち、採用稿のない幕の数（missingActive にも入る） */
+  missingActs: number
 }
 
 export function summarizeManuscript(current: CurrentManuscript): ManuscriptSummary {
+  const acts = current.missingActs ?? 0
   const s: ManuscriptSummary = {
     chars: current.charCount,
     pages: current.pages,
     episodes: 0,
     specials: 0,
-    missingActive: 0,
+    missingActive: acts,
     missingEpisodes: 0,
     missingSpecials: 0,
+    missingActs: acts,
   }
   for (const id of current.order) {
     const p = current.pieces[id]

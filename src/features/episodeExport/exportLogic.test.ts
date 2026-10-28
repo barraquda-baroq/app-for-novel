@@ -1,5 +1,6 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
+import { separatePiece } from '../../domain/acts'
 import { createTitle } from '../../domain/entityOps'
 import { addEpisode, addSpecial, setActiveVersion, updatePiece, updateVersion } from '../../domain/storyOps'
 import { emptyData, type AppData, type ID } from '../../domain/types'
@@ -218,5 +219,27 @@ describe('フォルダを選んで書く（Edge・Chrome のデスクトップ�
     expect(exportErrorMessage(abort)).toBe('フォルダを選ばなかったので、書き出していません')
     expect(exportErrorKind(new DOMException('x', 'SecurityError'))).toBe('permission')
     expect(exportErrorKind(new Error('x'))).toBe('error')
+  })
+})
+
+describe('幕に分けた話の書き出し', () => {
+  it('1話1ファイルで各幕の前に幕の見出しを入れ、採用稿のない幕は飛ばして数える', () => {
+    const t = createTitle(emptyData(), '星の海')
+    const e = addEpisode(t.data, t.result)
+    let d = updateVersion(e.data, e.data.pieces[e.result].versionIds[0], { body: '一幕。\n二幕。\n三幕。' })
+    const s = separatePiece(d, e.result, [4, 8])
+    d = setActiveVersion(s.data, s.result[1], null)
+    const p = exportPreview(d, t.result, DATE)
+    expect(p.skippedActs).toBe(1)
+    expect(p.skippedEpisodes).toBe(0)
+    expect(skippedNotice(p.skippedEpisodes, p.skippedSpecials, p.skippedActs)).toBe('採用原稿のない1幕は書き出しません。')
+    const [file] = [...outFiles(p.entries, true)]
+    expect(file.name).toBe('20261028星の海_第1話.txt')
+    expect(file.text).toBe('第1話\r\n\r\n第1幕\r\n\r\n一幕。\r\n\r\n第3幕\r\n\r\n三幕。')
+    // どの幕にも採用稿がなければ、話ごと飛ばす
+    const none = setActiveVersion(setActiveVersion(d, s.result[0], null), s.result[2], null)
+    const q = exportPreview(none, t.result, DATE)
+    expect(q.entries).toHaveLength(0)
+    expect(q.skippedEpisodes).toBe(1)
   })
 })

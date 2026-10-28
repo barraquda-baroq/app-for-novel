@@ -1,0 +1,436 @@
+/* ===== セパレート（幕） ===== */
+
+/* ---------- セパレート画面: ページ自体はスクロールさせず、本文の欄の中だけをスクロールさせる ----------
+   --kb-inset は iOS の画面キーボードに隠れる高さ（keyboardInset.ts）。その分だけ詰めて、
+   いちばん下の「ここで区切る」をキーボードのすぐ上に出す（原稿画面の記号バーと同じ） */
+.app:has(> .sep-root) {
+  height: calc(100dvh - var(--kb-inset, 0px));
+  min-height: 0;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.sep-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overflow: clip;
+}
+
+@supports not selector(:has(*)) {
+  .sep-root {
+    height: calc(100dvh - var(--kb-inset, 0px));
+    flex: none;
+  }
+}
+
+.sep-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.sep-head-actions .btn {
+  min-height: 34px;
+}
+
+.sep-intro {
+  flex: none;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.sep-title {
+  margin: 0;
+  font-family: var(--editor-font);
+  font-size: 17px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.sep-help {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.sep-help kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.sep-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+}
+
+.sep-text {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 0 24px;
+  background: var(--surface);
+}
+
+.sep-act-head {
+  padding: 6px 20px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.sep-segment {
+  display: flex;
+  flex-direction: column;
+}
+
+.manuscript.sep-area {
+  height: auto;
+  min-height: 3em;
+  padding: 6px 20px 10px;
+  overflow: hidden;
+  /* 読み取り専用でもカーソル（キャレット）を置けることが分かるように */
+  caret-color: var(--accent);
+  cursor: text;
+}
+
+.manuscript.sep-area:focus {
+  background: color-mix(in srgb, var(--accent-soft) 25%, transparent);
+}
+
+/* 分割点の区切り線（「ここから第2幕」） */
+.sep-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 12px;
+  padding: 0 0 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sep-divider::before,
+.sep-divider::after {
+  content: '';
+  flex: 1;
+  height: 0;
+  border-top: 2px dashed var(--accent);
+}
+
+.sep-divider::before {
+  flex: 0 0 16px;
+}
+
+.sep-divider-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.icon-btn.sep-divider-remove {
+  order: 3;
+  width: 36px;
+  height: 36px;
+  color: var(--accent);
+}
+
+/* 分けた後の幕の一覧 */
+.sep-preview {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border-left: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.sep-preview-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.sep-preview-summary {
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+
+.sep-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sep-preview-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.sep-preview-label {
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.sep-preview-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--editor-font);
+}
+
+.sep-preview-count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sep-preview-details > summary {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sep-preview-details[open] > summary {
+  margin-bottom: 6px;
+}
+
+/* いちばん下の「ここで区切る」（押してもカーソルを動かさない） */
+.sep-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 12px;
+  /* キーボードが閉じている時は、ホームインジケーターの分を空ける */
+  padding-bottom: max(6px, calc(var(--safe-bottom) - var(--kb-inset, 0px)));
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.sep-message {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.btn.sep-decide {
+  flex: none;
+  min-height: 40px;
+}
+
+@media (max-width: 899px) {
+  .sep-main {
+    display: flex;
+    flex-direction: column-reverse;
+  }
+
+  .sep-text {
+    flex: 1;
+  }
+
+  .sep-preview {
+    flex: none;
+    max-height: 40vh;
+    padding: 4px 12px;
+    border-left: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 520px) {
+  .sep-intro {
+    padding: 8px 12px 6px;
+  }
+
+  .sep-title {
+    font-size: 15px;
+  }
+
+  .sep-help {
+    font-size: 12px;
+  }
+
+  .manuscript.sep-area {
+    padding-inline: 14px;
+  }
+
+  .sep-act-head {
+    padding-inline: 14px;
+  }
+
+  .sep-divider {
+    margin-inline: 8px;
+  }
+}
+
+/* ---------- 幕に分けた話の画面（フォルダ） ---------- */
+.ef-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.ef-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.ef-kicker .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ef-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  font-family: var(--editor-font);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.ef-label {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.ef-subtitle {
+  overflow-wrap: anywhere;
+}
+
+.ef-subtitle.is-empty {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.ef-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ef-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.ef-section {
+  margin-top: 22px;
+}
+
+.ef-section-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.ef-frozen {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.ef-frozen > summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ef-frozen-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.ef-version {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.ef-version > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-height: 40px;
+  padding: 6px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.ef-version-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ef-version .manuscript {
+  height: 40vh;
+  min-height: 160px;
+  border-top: 1px solid var(--border);
+  font-size: 15px;
+}
+
+.ef-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.story-acts.ef-acts {
+  padding: 0;
+  border-top: 0;
+  background: transparent;
+}

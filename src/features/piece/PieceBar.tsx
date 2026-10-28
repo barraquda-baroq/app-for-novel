@@ -1,9 +1,12 @@
 // 原稿画面の上部バー: 第n話（変更不可）／特殊ブロックの見出し、話の題、前後の話、表示の設定。
+// 幕の画面では「第3話　話の題　第2幕」（話の題は属する話のもの）、前後は同じ話の中の幕。
 import { useId, useRef, useState } from 'react'
 import type { ID, Piece } from '../../domain/types'
 import { usePrefs, type SplitOrientation } from '../../store/uiStore'
 import { useMediaQuery } from '../../ui/hooks'
 import { ChevronLeftIcon, ChevronRightIcon } from '../../ui/icons'
+import { PopupMenu, type PopupMenuItem } from '../../ui/PopupMenu'
+import { ActsIcon } from '../acts/actIcons'
 import { useDismiss } from './editing'
 import type { EditorHub } from './editorHub'
 import { COMPACT_QUERY, RATIO_MAX, RATIO_MIN, ratioToSlider, sliderToRatio } from './logic'
@@ -26,6 +29,12 @@ interface NavTarget {
 
 export interface PieceBarProps {
   piece: Piece
+  /** 話数・題を出す話（幕なら属する話。それ以外は piece と同じ） */
+  episode: Piece
+  /** 幕なら「第2幕」 */
+  actLabel: string | null
+  /** 「幕」メニューの項目（開いた時に作る）。幕に分けられない話（特殊ブロック・採用原稿なし）は null */
+  actMenu: (() => PopupMenuItem[]) | null
   /** 話の題・見出しの編集（保存ボタンで確定する） */
   hub: EditorHub
   label: string
@@ -41,6 +50,9 @@ export interface PieceBarProps {
 
 export function PieceBar({
   piece,
+  episode,
+  actLabel,
+  actMenu,
   hub,
   label,
   prev,
@@ -56,6 +68,7 @@ export function PieceBar({
   const ratio = usePrefs((s) => s.splitRatio)
   const setPrefs = usePrefs((s) => s.setPrefs)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [acts, setActs] = useState<{ anchor: HTMLElement; items: PopupMenuItem[] } | null>(null)
   const viewRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
   useDismiss(menuOpen, viewRef, () => setMenuOpen(false))
@@ -64,6 +77,7 @@ export function PieceBar({
   const compact = useMediaQuery(COMPACT_QUERY)
 
   const sliderValue = ratioToSlider(ratio)
+  const noun = actLabel ? '幕' : '話'
   const compareHint = comparing ? undefined : '推敲バージョンを選んで比較するときに使えます'
 
   const ratioControl = (
@@ -93,16 +107,16 @@ export function PieceBar({
         className="btn pw-nav pw-prev"
         disabled={!prev}
         onClick={() => prev && onNavigate(prev.id)}
-        aria-label={prev ? `前の話（${prev.label}）` : '前の話'}
-        title={prev ? `前の話：${prev.label}` : '前の話はありません'}
+        aria-label={prev ? `前の${noun}（${prev.label}）` : `前の${noun}`}
+        title={prev ? `前の${noun}：${prev.label}` : `前の${noun}はありません`}
         data-testid="prev-piece"
       >
         <ChevronLeftIcon />
-        <span className="pw-nav-text">前の話</span>
+        <span className="pw-nav-text">前の{noun}</span>
       </button>
 
       <div className="pw-ident">
-        {piece.kind === 'episode' ? (
+        {piece.kind !== 'special' ? (
           <span className="pw-label" data-testid="piece-label" title={LOCK_HINT}>
             <span className="pw-label-text">{label}</span>
             <LockIcon className="icon pw-lock" />
@@ -125,15 +139,48 @@ export function PieceBar({
           </span>
         )}
         <SessionInput
-          key={piece.id}
+          key={episode.id}
           hub={hub}
-          fieldKey={pieceField(piece.id, 'subtitle')}
-          stored={piece.subtitle}
+          fieldKey={pieceField(episode.id, 'subtitle')}
+          stored={episode.subtitle}
           className="input pw-subtitle"
           placeholder="話の題（任意）"
-          aria-label="話の題"
+          aria-label={actLabel ? '話の題（すべての幕の見出しに入ります）' : '話の題'}
           data-testid="subtitle-input"
         />
+        {actLabel ? (
+          <span className="pw-act-label" data-testid="act-label" title="幕の番号は話の中の並び順で決まります">
+            {actLabel}
+          </span>
+        ) : null}
+        {actMenu ? (
+          <button
+            type="button"
+            className="btn pw-acts-btn"
+            aria-haspopup="menu"
+            aria-expanded={acts !== null}
+            aria-label={actLabel ? '幕の操作（さらに分ける・次の幕とつなぐ・セパレート解除）' : '幕に分ける（セパレート）'}
+            title={actLabel ? '幕の操作' : '幕に分ける（セパレート）'}
+            onClick={(e) => {
+              const anchor = e.currentTarget
+              setActs((open) => (open ? null : { anchor, items: actMenu() }))
+            }}
+            data-testid="acts-menu-button"
+          >
+            <ActsIcon />
+            <span className="pw-acts-btn-text">{actLabel ? '幕の操作' : 'セパレート'}</span>
+          </button>
+        ) : null}
+        {acts ? (
+          <PopupMenu
+            label={actLabel ? `${label}　${actLabel}の操作` : `${label}を幕に分ける`}
+            items={acts.items}
+            placement={{ anchor: acts.anchor }}
+            onClose={() => setActs(null)}
+            returnFocus={acts.anchor}
+            testId="acts-menu"
+          />
+        ) : null}
       </div>
 
       <button
@@ -141,11 +188,11 @@ export function PieceBar({
         className="btn pw-nav pw-next"
         disabled={!next}
         onClick={() => next && onNavigate(next.id)}
-        aria-label={next ? `次の話（${next.label}）` : '次の話'}
-        title={next ? `次の話：${next.label}` : '次の話はありません'}
+        aria-label={next ? `次の${noun}（${next.label}）` : `次の${noun}`}
+        title={next ? `次の${noun}：${next.label}` : `次の${noun}はありません`}
         data-testid="next-piece"
       >
-        <span className="pw-nav-text">次の話</span>
+        <span className="pw-nav-text">次の{noun}</span>
         <ChevronRightIcon />
       </button>
 

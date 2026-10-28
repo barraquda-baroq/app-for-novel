@@ -24,6 +24,11 @@ const PieceWorkspace = lazy(() =>
     default: m.PieceWorkspace,
   })),
 )
+const SeparatePage = lazy(() =>
+  import('./features/acts/SeparatePage').then((m) => ({
+    default: m.SeparatePage,
+  })),
+)
 const ReadThroughPage = lazy(() =>
   import('./features/read/ReadThroughPage').then((m) => ({
     default: m.ReadThroughPage,
@@ -132,6 +137,7 @@ export const routes: RouteObject[] = [
       { path: '/t/:titleId', element: <TitlePage /> },
       { path: '/t/:titleId/c/:chapterId', element: <ChapterPage /> },
       { path: '/t/:titleId/p/:pieceId', element: <PieceWorkspace /> },
+      { path: '/t/:titleId/p/:pieceId/separate', element: <SeparatePage /> },
       { path: '/t/:titleId/m/:memoId', element: <MemoPage /> },
       { path: '/t/:titleId/read', element: <ReadThroughPage /> },
       { path: '*', element: <NotFound /> },

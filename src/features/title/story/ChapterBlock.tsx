@@ -136,7 +136,7 @@ function ChapterBlockView({
             <span>{formatCount(stats.chars)}字</span>
             {stats.missingActive > 0 ? (
               <span className="badge badge-missing" data-testid="chapter-missing">
-                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials)}
+                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials, stats.missingActs)}
               </span>
             ) : null}
           </span>

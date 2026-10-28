@@ -21,6 +21,7 @@ import { AddDialog, type AddKind } from '../title/story/AddDialog'
 import { CHAPTER_ADD_BLOCKED_REASON, releaseChapter } from '../title/story/ChapterBlock'
 import { toggleChapters } from '../title/story/chapterFlows'
 import { PieceRow } from '../title/story/PieceRow'
+import { RowMenuProvider } from '../title/story/RowMenu'
 import { chapterName, deletePermissions, pieceRows, rowsFor, statsOf, stepAvailability } from '../title/story/storyLogic'
 import { useStoryData } from '../title/story/useStoryData'
 import '../title/story/story.css'
@@ -157,7 +158,7 @@ export function ChapterPage() {
             </li>
             {stats.missingActive > 0 ? (
               <li className="tpage-chip is-warn" data-testid="chapter-stat-missing">
-                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials)}
+                {missingActiveLabel(stats.missingEpisodes, stats.missingSpecials, stats.missingActs)}
               </li>
             ) : null}
           </ul>
@@ -236,13 +237,15 @@ export function ChapterPage() {
               <p className="small muted story-progress-legend" data-testid="progress-legend">
                 右の％は、その話の終わりがタイトル全体（採用原稿）のどこにあるかです（章の中での割合ではありません）。
               </p>
-              <NearViewportContext.Provider value={registerNear}>
-                <ol className="story-list" data-testid="story-list">
-                  {rows.map((row) => (
-                    <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
-                  ))}
-                </ol>
-              </NearViewportContext.Provider>
+              <RowMenuProvider onPieceMoved={onMoved}>
+                <NearViewportContext.Provider value={registerNear}>
+                  <ol className="story-list" data-testid="story-list">
+                    {rows.map((row) => (
+                      <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
+                    ))}
+                  </ol>
+                </NearViewportContext.Provider>
+              </RowMenuProvider>
             </>
           )}
 

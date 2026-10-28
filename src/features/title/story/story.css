@@ -393,6 +393,158 @@
   background: var(--surface-2);
 }
 
+/* 行の本体（開閉・リンク・「…」）。右クリック・長押しで操作メニューを開く所 */
+.story-row-main {
+  flex: 1 1 0;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+/* 指で操作する端末では、長押しで文字を選んだり、リンクのメニュー（iOS のプレビュー）を出したりしない */
+@media (pointer: coarse) {
+  .story-row-main {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+.icon-btn.story-row-more {
+  align-self: center;
+  width: 36px;
+  height: 40px;
+  margin-right: 4px;
+}
+
+.icon-btn.story-row-more:hover {
+  background: var(--surface-3);
+}
+
+/* 幕に分けた話: フォルダのような行と、その下の幕の行 */
+.story-row.is-split {
+  flex-wrap: wrap;
+}
+
+/* 幕の行（幅いっぱい）を次の行に送るため、本体に幅を持たせる（編集モードの操作はその右） */
+.story-row.is-split > .story-row-main {
+  flex: 1 1 60%;
+}
+
+.icon-btn.story-acts-toggle {
+  align-self: center;
+  width: 36px;
+  height: 40px;
+  margin-left: 4px;
+}
+
+.icon-btn.story-acts-toggle .icon {
+  transition: transform 0.15s;
+}
+
+.icon-btn.story-acts-toggle[aria-expanded='true'] .icon {
+  transform: rotate(90deg);
+}
+
+.story-row.is-split .story-row-link {
+  padding-left: 6px;
+}
+
+.story-acts-badge .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.story-acts {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px 10px 30px;
+  list-style: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.story-acts[hidden] {
+  display: none;
+}
+
+.story-act {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.story-act.is-missing {
+  border-left-color: var(--warn);
+}
+
+.story-act:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.story-act-link {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 7px 8px 7px 12px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.story-act-link:hover {
+  background: var(--surface-2);
+}
+
+.story-act-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.story-act-head {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.story-act-head .badge {
+  white-space: normal;
+}
+
+.story-act-label {
+  flex: none;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.story-act .story-row-progress-fill {
+  background: color-mix(in srgb, var(--accent) 70%, var(--surface-3));
+}
+
+.story-act.is-missing .story-row-progress-fill {
+  background: var(--text-faint);
+}
+
+.story-row-excerpt.story-act-excerpt {
+  font-size: 12px;
+}
+
+.story-act .story-row-chevron {
+  grid-row: 1 / span 2;
+}
+
 .story-add-more {
   display: flex;
   align-items: center;
@@ -775,9 +927,21 @@
     flex-wrap: wrap;
   }
 
+  .story-row-main {
+    flex-basis: 100%;
+  }
+
   .story-row-link {
     flex-basis: 100%;
-    padding: 10px 8px 10px 12px;
+    padding: 10px 4px 10px 12px;
+  }
+
+  .icon-btn.story-row-more {
+    margin-right: 2px;
+  }
+
+  .story-acts {
+    padding: 6px 8px 8px 14px;
   }
 
   .story-row-edit {

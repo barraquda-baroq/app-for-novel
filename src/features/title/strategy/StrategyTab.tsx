@@ -135,7 +135,7 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
           </dl>
           {summary.missingActive > 0 ? (
             <p className="sg-missing" data-testid="summary-missing">
-              {missingActiveLabel(summary.missingEpisodes, summary.missingSpecials)}
+              {missingActiveLabel(summary.missingEpisodes, summary.missingSpecials, summary.missingActs)}
               <span>（文字数に含まれていません）</span>
             </p>
           ) : null}

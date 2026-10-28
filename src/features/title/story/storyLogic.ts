@@ -474,8 +474,6 @@ export interface PieceRowData {
   text: { body: string } | null
   /** 幕に分けた話の幕の行（読む順）。分けていなければ null */
   acts: ActRowData[] | null
-  /** セパレート（幕に分ける）できるか（採用原稿のある、分けていない第n話） */
-  canSeparate: boolean
   versionCount: number
   /** 第n話・特殊ブロックの見出し */
   label: string
@@ -622,7 +620,6 @@ export function pieceRows(data: AppData, titleId: ID, opts: PieceRowOptions = {}
       version,
       text: adoptedText(data, piece),
       acts: split ? actRows(data, piece, progress.get(piece.id), numbers) : null,
-      canSeparate: piece.kind === 'episode' && !split && version !== null && version.pieceId === piece.id,
       versionCount: versionCountOf(data, piece),
       label: pieceLabel(data, piece, numbers),
       fullLabel: pieceFullLabel(data, piece, numbers),
