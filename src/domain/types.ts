@@ -245,6 +245,11 @@ export interface TrashEntry {
   label: string
   /** 削除した時点のタイトル名（タイトルが後で消えても一覧に出せるように） */
   titleName: string
+  /**
+   * 削除した時点の親の表記（稿なら属していた話の「第3話　旅立ち」、設定エントリなら設定項目名、章の中の話なら章名）。
+   * 一覧で「どこにあったか」を出すためだけに使う（無くてもよい）
+   */
+  parentLabel?: string
   origin: TrashOrigin
   /** 中身（trashRecords の id）。先頭が削除したもの本体 */
   recordIds: ID[]

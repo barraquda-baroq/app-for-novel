@@ -1,6 +1,7 @@
 // 同期の競合で、どちらの文章も消さないための控えを作る。
 // - 稿の本文が両方の端末で変わっていた → この端末の本文を「（競合: ○○での編集）」の別の稿として残す
-// - 片方で削除・片方で編集されていた → 削除を優先し、編集された内容をゴミ箱に残す（reason: 'conflict'）
+// - 片方で削除・片方で編集されていた → 削除を優先し、編集された内容をゴミ箱に残す（reason: 'conflict'。
+//   戻し方は src/domain/trash.ts。同じ id が残っていれば新しい id の複製として戻る）
 import { pieceFullLabel } from '../domain/structure'
 import type {
   AppData,
@@ -65,13 +66,17 @@ export function conflictTrash(
   const kind = KIND_OF[table]
   if (!kind) return null
   let label = ''
+  let parentLabel = ''
   let titleId: ID | null = null
   const origin: TrashOrigin = { titleId: null, index: 0 }
+  /** 一緒に控えるレコード（応募計画の応募時の原稿の本文） */
+  const extras: { table: ContentTableName; record: Rec }[] = []
   if (table === 'versions') {
     const v = record as unknown as Version
     const piece = data.pieces[v.pieceId]
     titleId = v.titleId ?? piece?.titleId ?? null
-    label = piece ? `${pieceFullLabel(data, piece)}　${v.name}` : v.name
+    label = v.name || '無題の稿'
+    parentLabel = piece ? pieceFullLabel(data, piece) : ''
     origin.pieceId = v.pieceId
     origin.index = piece ? piece.versionIds.length : 0
     origin.prevId = piece?.versionIds[piece.versionIds.length - 1] ?? null
@@ -90,6 +95,7 @@ export function conflictTrash(
     const e = record as unknown as SettingEntry
     titleId = e.titleId
     label = e.name || '設定のエントリ'
+    parentLabel = data.settingCategories[e.categoryId]?.name ?? ''
     origin.categoryId = e.categoryId
     origin.index = e.order
   } else if (table === 'submissions') {
@@ -97,29 +103,36 @@ export function conflictTrash(
     titleId = s.titleId
     label = s.contestName || '応募計画'
     origin.index = s.order
+    // 応募時の原稿の本文は別の表にあるので、一緒に控える（後で使われなくなって消えても戻せるように）
+    const keys = new Set<ID>()
+    for (const p of Object.values(s.snapshot?.pieces ?? {})) if (p.textKey) keys.add(p.textKey)
+    for (const key of keys) {
+      const text = data.snapshotTexts[key]
+      if (text) extras.push({ table: 'snapshotTexts', record: text as unknown as Rec })
+    }
   }
   origin.titleId = titleId
   const entryId = opts.newId()
-  const recordId = opts.newId()
+  const records: TrashRecord[] = [{ table, record }, ...extras].map((r) => ({
+    id: opts.newId(),
+    entryId,
+    table: r.table,
+    record: r.record as unknown as TrashRecord['record'],
+    createdAt: opts.now,
+    updatedAt: opts.now,
+  }))
   const entry: TrashEntry = {
     id: entryId,
     kind,
     label: label || '（名前なし）',
     titleName: titleId ? (data.titles[titleId]?.name ?? '') : '',
+    ...(parentLabel ? { parentLabel } : {}),
     origin,
-    recordIds: [recordId],
+    recordIds: records.map((r) => r.id),
     reason: 'conflict',
     deletedAt: opts.now,
     createdAt: opts.now,
     updatedAt: opts.now,
   }
-  const trashRecord: TrashRecord = {
-    id: recordId,
-    entryId,
-    table,
-    record: record as unknown as TrashRecord['record'],
-    createdAt: opts.now,
-    updatedAt: opts.now,
-  }
-  return { entry, records: [trashRecord] }
+  return { entry, records }
 }

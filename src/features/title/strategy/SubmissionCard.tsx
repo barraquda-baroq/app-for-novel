@@ -10,6 +10,7 @@ import {
   type SubmissionPatch,
 } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
+import { trashNotice } from '../../../domain/trash'
 import type { ID, LimitUnit, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData } from '../../../store/appStore'
@@ -398,7 +399,7 @@ function SubmissionEditor({
     const latest = getData().submissions[s.id] ?? s
     const ok = await confirmDialog({
       title: `「${contestDisplayName(latest.contestName)}」を削除しますか？`,
-      message: '応募計画・結果・改稿方針などの記録も削除されます。この操作は取り消せません。',
+      message: trashNotice('応募計画・結果・改稿方針・応募時の原稿などの記録もいっしょに'),
       confirmLabel: '削除',
       danger: true,
     })

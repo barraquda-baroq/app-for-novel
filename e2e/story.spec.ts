@@ -763,7 +763,7 @@ test.describe('タイトル画面・本編（細部）', () => {
     await expect(memo.getByTestId('memo-down')).toBeFocused()
   })
 
-  test('メモの削除の確認は「この操作は取り消せません。」で終わり、更新日時は「…に更新」と表示する', async ({ page }) => {
+  test('メモの削除の確認はゴミ箱へ移ることを伝え、更新日時は「…に更新」と表示する', async ({ page }) => {
     await openApp(page)
     const { titleId } = await seed(page, ({ actions }) => {
       const id = actions.createTitle('メモ削除')
@@ -774,7 +774,7 @@ test.describe('タイトル画面・本編（細部）', () => {
     await expect(page.getByTestId('memo-card')).toContainText('たった今更新')
     await page.getByTestId('memo-edit-toggle').click()
     await page.getByTestId('memo-delete').click()
-    await expect(dialog(page)).toContainText('この操作は取り消せません。')
+    await expect(dialog(page)).toContainText('ゴミ箱に移します。30日後に完全に削除されます（それまではゴミ箱から元に戻せます）。')
     await confirmIn(page, '削除')
     await expect(page.getByTestId('memo-card')).toHaveCount(0)
   })

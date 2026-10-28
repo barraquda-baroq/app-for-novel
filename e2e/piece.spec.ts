@@ -861,7 +861,7 @@ test.describe('メモ', () => {
     // 編集中のまま削除しても、削除後に保存エラーが出ない
     await page.getByTestId('memo-body').fill('削除直前の追記')
     await page.getByTestId('memo-delete').click()
-    await expect(page.getByRole('dialog')).toContainText('この操作は取り消せません。')
+    await expect(page.getByRole('dialog')).toContainText('このメモをゴミ箱に移します。30日後に完全に削除されます')
     await page.getByRole('dialog').getByRole('button', { name: '削除' }).click()
     await expect(page).toHaveURL(new RegExp(`#/t/${titleId}$`))
     await expect(page.locator('.toast.error')).toHaveCount(0)

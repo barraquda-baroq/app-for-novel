@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { categoriesOf, entriesOf } from '../../../domain/entityOps'
+import { trashNotice } from '../../../domain/trash'
 import type { ID, SettingCategory } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
@@ -88,8 +89,7 @@ export function SettingsTab({ titleId }: { titleId: ID }) {
     const n = counts[c.id] ?? 0
     const ok = await confirmDialog({
       title: `設定項目「${categoryDisplayName(c.name)}」を削除しますか？`,
-      message:
-        n > 0 ? `この項目の中のエントリ（${n}件）もすべて削除されます。この操作は取り消せません。` : 'この操作は取り消せません。',
+      message: n > 0 ? trashNotice(`この項目の中のエントリ（${n}件）もすべていっしょに`) : trashNotice(),
       confirmLabel: '削除',
       danger: true,
     })
@@ -98,7 +98,7 @@ export function SettingsTab({ titleId }: { titleId: ID }) {
     const i = list.findIndex((x) => x.id === c.id)
     const neighbor = list[i + 1] ?? list[i - 1] ?? null
     if (attempt(() => (actions.deleteCategory(c.id), true))) {
-      notify(`設定項目「${categoryDisplayName(c.name)}」を削除しました`)
+      notify(`設定項目「${categoryDisplayName(c.name)}」をゴミ箱に移しました`)
       select(neighbor && neighbor.id !== c.id ? neighbor.id : null)
     }
   }

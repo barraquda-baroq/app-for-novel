@@ -2,6 +2,7 @@
 import { memo, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { memosOf } from '../../../domain/entityOps'
+import { trashNotice } from '../../../domain/trash'
 import type { ID, Memo } from '../../../domain/types'
 import { paths } from '../../../routes'
 import { actions } from '../../../store/actions'
@@ -100,7 +101,7 @@ const MemoCard = memo(function MemoCard({
   const remove = async () => {
     const ok = await confirmDialog({
       title: `メモ「${name}」を削除しますか？`,
-      message: 'この操作は取り消せません。',
+      message: trashNotice(),
       danger: true,
       confirmLabel: '削除',
     })

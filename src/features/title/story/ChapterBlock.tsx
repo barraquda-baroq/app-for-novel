@@ -3,6 +3,7 @@ import { memo } from 'react'
 import { Link } from 'react-router-dom'
 import { missingActiveLabel } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
+import { trashNotice } from '../../../domain/trash'
 import type { AppData, Chapter, ID } from '../../../domain/types'
 import { paths } from '../../../routes'
 import { actions } from '../../../store/actions'
@@ -63,7 +64,7 @@ export async function releaseChapter(data: AppData, chapter: Chapter): Promise<b
       (renumbered.length > 0
         ? `\n\n話数を章ごとに数えているため、章の外の話として数え直され、話数が振り直されます（${formatRenumbering(renumbered)}）。`
         : '') +
-      (chapter.note.trim() ? '\n\n章のメモは削除されます。' : ''),
+      `\n\n${trashNotice(chapter.note.trim() ? '章（名前とメモ）を' : '章を')}`,
     confirmLabel: '章を解除',
     danger: true,
   })

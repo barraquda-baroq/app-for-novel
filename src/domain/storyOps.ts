@@ -11,6 +11,7 @@ import {
   locatePiece,
   pieceFullLabel,
 } from './structure'
+import { pieceOrigin, putInTrash, trashLabel } from './trash'
 import { Tx, transact } from './tx'
 import {
   DomainError,
@@ -396,14 +397,30 @@ export function updatePiece(data: AppData, pieceId: ID, patch: { subtitle?: stri
   }).data
 }
 
+/** 話をその稿ごとゴミ箱へ移す（途中の話数は削除できない） */
 export function deletePiece(data: AppData, pieceId: ID): AppData {
   const perm = canDeletePiece(data, pieceId)
   if (!perm.ok) throw new DomainError(perm.reason ?? '削除できません')
   return transact(data, (tx) => {
     const p = requirePiece(tx, pieceId)
+    const title = requireTitle(tx, p.titleId)
+    const origin = pieceOrigin(tx.data, pieceId)
+    const chapter = origin.chapterId ? tx.get('chapters', origin.chapterId) : undefined
+    // versionIds に載っていない稿（壊れたデータ）も一緒に移す
+    const versions = [
+      ...p.versionIds.map((vid) => tx.get('versions', vid)).filter((v): v is Version => Boolean(v)),
+      ...tx.all('versions').filter((v) => v.pieceId === pieceId && !p.versionIds.includes(v.id)),
+    ]
+    const label = pieceFullLabel(tx.data, p)
     detachPiece(tx, pieceId)
-    for (const vid of p.versionIds) tx.delete('versions', vid)
-    tx.delete('pieces', pieceId)
+    putInTrash(tx, {
+      kind: 'piece',
+      label,
+      titleName: title.name,
+      parentLabel: chapter ? trashLabel.chapter(chapter) : undefined,
+      origin,
+      records: [{ table: 'pieces', record: p }, ...versions.map((record) => ({ table: 'versions' as const, record }))],
+    })
     touchTitle(tx, p.titleId)
   }).data
 }
@@ -576,7 +593,10 @@ export function moveChapterStep(data: AppData, chapterId: ID, dir: -1 | 1): AppD
   }).data
 }
 
-/** 章を解除する。中の話は章があった位置にそのまま章の外として並ぶ（話は削除しない） */
+/**
+ * 章を解除する。中の話は章があった位置にそのまま章の外として並ぶ（話は削除しない）。
+ * 章（名前・メモ）はゴミ箱へ移り、戻すと元の位置に章が作り直され、今もタイトル直下にある話が章へ戻る。
+ */
 export function removeChapter(data: AppData, chapterId: ID): AppData {
   return transact(data, (tx) => {
     const ch = requireChapter(tx, chapterId)
@@ -584,7 +604,18 @@ export function removeChapter(data: AppData, chapterId: ID): AppData {
     const i = t.structure.findIndex((n) => n.type === 'chapter' && n.id === chapterId)
     const loose: NodeRef[] = ch.pieceIds.map((id) => ({ type: 'piece', id }))
     const structure = i < 0 ? t.structure : [...t.structure.slice(0, i), ...loose, ...t.structure.slice(i + 1)]
-    tx.delete('chapters', chapterId)
+    putInTrash(tx, {
+      kind: 'chapter',
+      label: trashLabel.chapter(ch),
+      titleName: t.name,
+      origin: {
+        titleId: t.id,
+        chapterId: null,
+        index: i < 0 ? t.structure.length : i,
+        prevId: i > 0 ? t.structure[i - 1].id : null,
+      },
+      records: [{ table: 'chapters', record: ch }],
+    })
     touchTitle(tx, t.id, { structure })
   }).data
 }
@@ -634,18 +665,33 @@ export function updateVersion(data: AppData, versionId: ID, patch: { name?: stri
   }).data
 }
 
+/** 推敲バージョンをゴミ箱へ移す。採用中だった稿なら、この話は採用なしになる */
 export function deleteVersion(data: AppData, versionId: ID): AppData {
   return transact(data, (tx) => {
     const v = tx.get('versions', versionId)
     if (!v) return
     const p = requirePiece(tx, v.pieceId)
+    const index = p.versionIds.indexOf(versionId)
+    putInTrash(tx, {
+      kind: 'version',
+      label: trashLabel.version(v),
+      titleName: tx.get('titles', p.titleId)?.name ?? '',
+      parentLabel: pieceFullLabel(tx.data, p),
+      origin: {
+        titleId: p.titleId,
+        pieceId: p.id,
+        index: index < 0 ? p.versionIds.length : index,
+        prevId: index > 0 ? p.versionIds[index - 1] : null,
+        wasActive: p.activeVersionId === versionId,
+      },
+      records: [{ table: 'versions', record: v }],
+    })
     tx.put('pieces', {
       ...p,
       versionIds: removeValue(p.versionIds, versionId),
       activeVersionId: p.activeVersionId === versionId ? null : p.activeVersionId,
       updatedAt: now(),
     })
-    tx.delete('versions', versionId)
   }).data
 }
 

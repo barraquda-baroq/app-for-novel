@@ -1,6 +1,7 @@
 // 原稿画面（採用原稿と推敲バージョンの比較）で使う純粋な計算。
 import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import { flatten } from '../../domain/structure'
+import { trashNotice } from '../../domain/trash'
 import { bodyMetrics, formatCount, textStats, type TextStats } from '../../domain/text'
 import type { AppData, ID, Piece, Submission, Version } from '../../domain/types'
 
@@ -148,11 +149,12 @@ export function versionDeleteMessage(
   isActive: boolean,
   referencedBy: Pick<Submission, 'contestName' | 'snapshot'>[],
 ): string {
-  const parts = [
-    isActive
-      ? `このバージョンは採用中です。削除すると、この話には採用原稿がなくなり、通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。`
-      : 'この推敲バージョンの本文と推敲メモを削除します。',
-  ]
+  const parts: string[] = []
+  if (isActive) {
+    parts.push(
+      `このバージョンは採用中です。削除すると、この話には採用原稿がなくなり、通し読みでは「${NO_ACTIVE_MESSAGE}」と表示されます。`,
+    )
+  }
   if (referencedBy.length > 0) {
     const names = referencedBy.map((s) => `「${s.contestName.trim() || '（コンテスト名未設定）'}」`).join('')
     // 古い記録には本文の控えがない
@@ -163,9 +165,9 @@ export function versionDeleteMessage(
     parts.push(
       hasCopy
         ? `この稿は${names}の応募時の原稿として記録されています。記録には本文の控えがあるので、削除しても応募時の原稿は残ります。`
-        : `この稿は${names}の応募時の原稿として記録されています。記録に本文の控えがないため、削除すると応募時の原稿は読めなくなります。`,
+        : `この稿は${names}の応募時の原稿として記録されています。記録に本文の控えがないため、削除すると応募時の原稿は読めなくなります（ゴミ箱から戻せばまた読めます）。`,
     )
   }
-  parts.push('この操作は取り消せません。')
+  parts.push(trashNotice('この推敲バージョン（本文と推敲メモ）を'))
   return parts.join('\n\n')
 }

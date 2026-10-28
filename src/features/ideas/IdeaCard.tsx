@@ -1,6 +1,7 @@
 // アイデア1件のカード。見出し（任意）＋内容（長い場合は6行で折りたたみ）と、編集・移動・並べ替え・削除。
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { trashNotice } from '../../domain/trash'
 import type { Idea } from '../../domain/types'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
@@ -101,7 +102,7 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
   const remove = async () => {
     const ok = await confirmDialog({
       title: 'アイデアを削除しますか？',
-      message: `「${label}」を削除します。この操作は取り消せません。`,
+      message: trashNotice(`「${label}」を`),
       danger: true,
       confirmLabel: '削除',
     })

@@ -4,6 +4,7 @@
 import { memo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { formatCount } from '../../../domain/text'
+import { trashNotice } from '../../../domain/trash'
 import type { ID } from '../../../domain/types'
 import { paths } from '../../../routes'
 import { actions } from '../../../store/actions'
@@ -65,13 +66,12 @@ function PieceRowView({
     }
     const ok = await confirmDialog({
       title: `「${fullLabel}」を削除しますか？`,
-      message: `この話のすべての推敲バージョン（${versionCount}稿）も削除されます。この操作は取り消せません。`,
+      message: trashNotice(`この話のすべての推敲バージョン（${versionCount}稿）もいっしょに`),
       danger: true,
       confirmLabel: '削除',
     })
     if (!ok) return
-    attempt(() => actions.deletePiece(pieceId))
-    notify(`「${fullLabel}」を削除しました`)
+    if (attempt(() => (actions.deletePiece(pieceId), true))) notify(`「${fullLabel}」をゴミ箱に移しました`)
   }
 
   return (

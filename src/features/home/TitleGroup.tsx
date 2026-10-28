@@ -118,7 +118,7 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
       confirmLabel: '削除',
     })
     if (!ok) return
-    if (attempt(() => (actions.deleteTitle(info.id), true))) notify(`「${info.name}」を削除しました`)
+    if (attempt(() => (actions.deleteTitle(info.id), true))) notify(`「${info.name}」をゴミ箱に移しました`)
   }
 
   return (

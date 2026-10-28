@@ -1,0 +1,695 @@
+// ゴミ箱: 削除したものを30日とっておき、元の場所へ戻せるようにする。
+// 削除の操作（entityOps / storyOps）は putInTrash でレコードを丸ごとここへ移し、削除した時点の場所（TrashOrigin）を控える。
+// 戻す時はその場所へ並べ直す（直前にあった要素がまだあればその直後、なければ控えた位置）。
+// すべて純粋関数で、新しい AppData を返す。戻せない時は DomainError を投げる。
+import { locatePiece } from './structure'
+import { Tx, transact } from './tx'
+import {
+  DomainError,
+  TABLE_NAMES,
+  type AppData,
+  type Chapter,
+  type ContentTableName,
+  type ID,
+  type Idea,
+  type Memo,
+  type NodeRef,
+  type Piece,
+  type SettingCategory,
+  type SettingEntry,
+  type SnapshotText,
+  type Submission,
+  type SubmissionSnapshot,
+  type Title,
+  type TrashEntry,
+  type TrashKind,
+  type TrashOrigin,
+  type TrashRecord,
+  type Version,
+} from './types'
+import { byOrder, newId, nextOrder, now } from './util'
+
+// ---------- 定数・表記 ----------
+
+/** ゴミ箱に残す日数。これを過ぎたものは中身ごと完全に削除する */
+export const TRASH_RETENTION_DAYS = 30
+export const DAY_MS = 24 * 60 * 60 * 1000
+export const TRASH_RETENTION_MS = TRASH_RETENTION_DAYS * DAY_MS
+
+/**
+ * 削除の確認文の結び。subject には「この話の推敲バージョン（3稿）もいっしょに」のような前置きを渡せる。
+ * 例: 「ゴミ箱に移します。30日後に完全に削除されます（それまではゴミ箱から元に戻せます）。」
+ */
+export function trashNotice(subject = ''): string {
+  return `${subject}ゴミ箱に移します。${TRASH_RETENTION_DAYS}日後に完全に削除されます（それまではゴミ箱から元に戻せます）。`
+}
+
+/** ゴミ箱に入れられるレコード */
+export type ContentRecord = AppData[ContentTableName][string]
+
+/** ゴミ箱以外の表（ゴミ箱に入れられるレコードの表） */
+export const CONTENT_TABLES: readonly ContentTableName[] = TABLE_NAMES.filter(
+  (t): t is ContentTableName => t !== 'trashEntries' && t !== 'trashRecords',
+)
+
+export function isContentTable(v: unknown): v is ContentTableName {
+  return typeof v === 'string' && (CONTENT_TABLES as readonly string[]).includes(v)
+}
+
+export const TRASH_KINDS: readonly TrashKind[] = [
+  'title',
+  'chapter',
+  'piece',
+  'version',
+  'memo',
+  'idea',
+  'settingCategory',
+  'settingEntry',
+  'submission',
+]
+
+export function isTrashKind(v: unknown): v is TrashKind {
+  return typeof v === 'string' && (TRASH_KINDS as readonly string[]).includes(v)
+}
+
+/** 種類ごとの本体の表 */
+export const TRASH_KIND_TABLE: Record<TrashKind, ContentTableName> = {
+  title: 'titles',
+  chapter: 'chapters',
+  piece: 'pieces',
+  version: 'versions',
+  memo: 'memos',
+  idea: 'ideas',
+  settingCategory: 'settingCategories',
+  settingEntry: 'settingEntries',
+  submission: 'submissions',
+}
+
+export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
+  title: 'タイトル',
+  chapter: '章',
+  piece: '話',
+  version: '推敲バージョン',
+  memo: 'メモ',
+  idea: 'アイデア',
+  settingCategory: '設定項目',
+  settingEntry: '設定エントリ',
+  submission: '応募計画',
+}
+
+/** 一覧に出す名前（画面の表記と同じ。空なら「無題の…」） */
+export const trashLabel = {
+  title: (t: Pick<Title, 'name'>) => t.name.trim() || '無題のタイトル',
+  chapter: (c: Pick<Chapter, 'name'>) => c.name.trim() || '無題の章',
+  version: (v: Pick<Version, 'name'>) => v.name.trim() || '（無題の稿）',
+  memo: (m: Pick<Memo, 'name'>) => m.name.trim() || '無題のメモ',
+  /** 見出し、なければ内容の最初の行（長ければ切る） */
+  idea: (i: Pick<Idea, 'heading' | 'body'>) => {
+    const line =
+      i.heading.trim() ||
+      (i.body
+        .split(/\r\n?|\n/)
+        .map((l) => l.trim())
+        .find((l) => l.length > 0) ??
+        '')
+    const chars = Array.from(line)
+    return (chars.length > 24 ? `${chars.slice(0, 24).join('')}…` : line) || '（空のアイデア）'
+  },
+  category: (c: Pick<SettingCategory, 'name'>) => c.name.trim() || '無題の設定項目',
+  entry: (e: Pick<SettingEntry, 'name'>) => e.name.trim() || '（名前未設定）',
+  submission: (s: Pick<Submission, 'contestName'>) => s.contestName.trim() || '（コンテスト名未設定）',
+}
+
+/** 同じ id のものが残っていて複製として戻した稿の名前に付ける */
+export const RESTORED_COPY_SUFFIX = '（ゴミ箱から復元）'
+
+// ---------- ゴミ箱へ入れる ----------
+
+export interface TrashSpec {
+  kind: TrashKind
+  label: string
+  titleName: string
+  parentLabel?: string
+  origin: TrashOrigin
+  /** 中身。先頭が削除したもの本体 */
+  records: { table: ContentTableName; record: ContentRecord }[]
+  reason?: TrashEntry['reason']
+  at?: number
+}
+
+/**
+ * レコードをゴミ箱の1件にまとめて入れ、元の表から消す。親からの参照（並び）は呼び出し側で外す。
+ * 応募時の原稿の控え（snapshotTexts）は他の応募記録と共有されていることがあるので、写しを取るだけで消さない
+ * （呼び出し側で使われなくなった控えを片付ける）。
+ */
+export function putInTrash(tx: Tx, spec: TrashSpec): ID {
+  const ts = spec.at ?? now()
+  const entryId = newId()
+  const recordIds: ID[] = []
+  const seen = new Set<string>()
+  for (const { table, record } of spec.records) {
+    const key = `${table}:${record.id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const trashRecord: TrashRecord = { id: newId(), entryId, table, record, createdAt: ts, updatedAt: ts }
+    tx.put('trashRecords', trashRecord)
+    recordIds.push(trashRecord.id)
+    if (table !== 'snapshotTexts') tx.delete(table, record.id)
+  }
+  const entry: TrashEntry = {
+    id: entryId,
+    kind: spec.kind,
+    label: spec.label,
+    titleName: spec.titleName,
+    ...(spec.parentLabel ? { parentLabel: spec.parentLabel } : {}),
+    origin: spec.origin,
+    recordIds,
+    reason: spec.reason ?? 'deleted',
+    deletedAt: ts,
+    createdAt: ts,
+    updatedAt: ts,
+  }
+  tx.put('trashEntries', entry)
+  return entryId
+}
+
+/** order で並ぶ一覧（peers）の中での場所。index には order の値を控える（戻す時に、間の要素が欠けていても順番を保てる） */
+export function orderOrigin(peers: { id: ID; order: number }[], id: ID): Pick<TrashOrigin, 'index' | 'prevId'> {
+  const sorted = [...peers].sort(byOrder)
+  const i = sorted.findIndex((r) => r.id === id)
+  if (i < 0) return { index: nextOrder(sorted), prevId: sorted.at(-1)?.id ?? null }
+  return { index: sorted[i].order, prevId: i > 0 ? sorted[i - 1].id : null }
+}
+
+/** 話の場所（入っていた章・その並びの中の位置・直前の要素）。直前の要素はタイトル直下なら章のこともある */
+export function pieceOrigin(data: AppData, pieceId: ID): TrashOrigin {
+  const piece = data.pieces[pieceId]
+  const title = data.titles[piece.titleId]
+  const slot = locatePiece(data, pieceId)
+  if (!title || !slot) return { titleId: piece.titleId, chapterId: null, index: title?.structure.length ?? 0, prevId: null }
+  const prevId =
+    slot.index === 0
+      ? null
+      : slot.chapterId
+        ? (data.chapters[slot.chapterId]?.pieceIds[slot.index - 1] ?? null)
+        : (title.structure[slot.index - 1]?.id ?? null)
+  return { titleId: piece.titleId, chapterId: slot.chapterId, index: slot.index, prevId }
+}
+
+// ---------- 一覧 ----------
+
+/** 新しく削除したものから順に */
+export function listTrash(entries: AppData['trashEntries']): TrashEntry[] {
+  return Object.values(entries).sort((a, b) => b.deletedAt - a.deletedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id))
+}
+
+/** 完全に削除される日時 */
+export function trashExpiresAt(entry: Pick<TrashEntry, 'deletedAt'>): number {
+  return entry.deletedAt + TRASH_RETENTION_MS
+}
+
+/** 削除してから30日たった（この時点で完全に削除する） */
+export function isTrashExpired(entry: Pick<TrashEntry, 'deletedAt'>, nowTs: number): boolean {
+  return nowTs >= trashExpiresAt(entry)
+}
+
+/** 完全に削除されるまでの残り日数（切り上げ。1日未満でも「あと1日」。端末の時計が戻っていても30日を超えない） */
+export function trashDaysLeft(entry: Pick<TrashEntry, 'deletedAt'>, nowTs: number): number {
+  const left = trashExpiresAt(entry) - nowTs
+  if (left <= 0) return 0
+  return Math.min(TRASH_RETENTION_DAYS, Math.ceil(left / DAY_MS))
+}
+
+/** 1件の中身（recordIds の順。載っていないが同じ件に属するものは後ろに付ける） */
+export function trashContents(data: AppData, entry: TrashEntry): TrashRecord[] {
+  const out: TrashRecord[] = []
+  const seen = new Set<ID>()
+  for (const id of entry.recordIds) {
+    const r = data.trashRecords[id]
+    if (!r || r.entryId !== entry.id || seen.has(id)) continue
+    seen.add(id)
+    out.push(r)
+  }
+  for (const r of Object.values(data.trashRecords)) {
+    if (r.entryId === entry.id && !seen.has(r.id)) {
+      seen.add(r.id)
+      out.push(r)
+    }
+  }
+  return out
+}
+
+/** 本体のレコード（一覧で特殊ブロックかどうかなどを見る用） */
+export function trashMainRecord(data: AppData, entry: TrashEntry): TrashRecord | undefined {
+  const r = data.trashRecords[entry.recordIds[0]]
+  return r && r.entryId === entry.id ? r : undefined
+}
+
+// ---------- 完全に削除 ----------
+
+function removeEntries(tx: Tx, ids: Set<ID>): void {
+  if (ids.size === 0) return
+  for (const id of ids) {
+    const entry = tx.get('trashEntries', id)
+    for (const rid of entry?.recordIds ?? []) {
+      if (tx.get('trashRecords', rid)?.entryId === id) tx.delete('trashRecords', rid)
+    }
+    tx.delete('trashEntries', id)
+  }
+  for (const r of tx.all('trashRecords')) if (ids.has(r.entryId)) tx.delete('trashRecords', r.id)
+}
+
+/** ゴミ箱の1件を中身ごと完全に削除する（もう無ければ何もしない） */
+export function deleteTrashEntry(data: AppData, entryId: ID): AppData {
+  if (!data.trashEntries[entryId]) return data
+  return transact(data, (tx) => removeEntries(tx, new Set([entryId]))).data
+}
+
+/** ゴミ箱を空にする */
+export function emptyTrash(data: AppData): AppData {
+  if (Object.keys(data.trashEntries).length === 0 && Object.keys(data.trashRecords).length === 0) return data
+  return transact(data, (tx) => {
+    for (const e of tx.all('trashEntries')) tx.delete('trashEntries', e.id)
+    for (const r of tx.all('trashRecords')) tx.delete('trashRecords', r.id)
+  }).data
+}
+
+/**
+ * 削除してから30日たったものを中身ごと完全に削除する。消すものがなければ data をそのまま返す。
+ * 同期中は件（entry）より中身が先に届くことがあるので、件のない中身はここでは消さない。
+ */
+export function purgeExpiredTrash(data: AppData, nowTs: number): AppData {
+  const expired = new Set(
+    Object.values(data.trashEntries)
+      .filter((e) => isTrashExpired(e, nowTs))
+      .map((e) => e.id),
+  )
+  if (expired.size === 0) return data
+  return transact(data, (tx) => removeEntries(tx, expired)).data
+}
+
+// ---------- 元に戻す ----------
+
+export interface RestoreResult {
+  entryId: ID
+  kind: TrashKind
+  label: string
+  /** 戻したもの本体の id（複製として戻した時は新しい id） */
+  id: ID
+  /** 戻したものが属するタイトル（タイトル自体ならその id。どのタイトルにも属さないアイデアは null） */
+  titleId: ID | null
+  /** 同じ id のものが残っていたので、新しい id の複製として戻した */
+  copied: boolean
+  /** 元のタイトルがなかったので「どのタイトルにも属さない」へ戻した（アイデアのみ） */
+  movedToUnassigned: boolean
+}
+
+/** 控えた位置が分かるか（負の値や数でないものは「分からない」。修復で補った件など） */
+const knownIndex = (origin: TrashOrigin) => Number.isFinite(origin.index) && origin.index >= 0
+
+/** 戻す先（親）が残っているか。なければ何を先に戻せばよいかを伝える */
+function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord): void {
+  const titleOf = (titleId: ID | null | undefined) => {
+    if (!titleId || !tx.get('titles', titleId))
+      throw new DomainError('元のタイトルがないため戻せません。先にタイトルを戻してください。')
+  }
+  switch (kind) {
+    case 'title':
+    case 'idea':
+      return
+    case 'chapter':
+    case 'piece':
+    case 'memo':
+    case 'settingCategory':
+    case 'submission':
+      titleOf((record as { titleId: ID }).titleId)
+      return
+    case 'version': {
+      const v = record as Version
+      if (!tx.get('pieces', v.pieceId)) {
+        // タイトルごと消えているなら、タイトルを戻せば話も戻る
+        if (!tx.get('titles', v.titleId)) titleOf(v.titleId)
+        throw new DomainError('元の話がないため戻せません。先に話を戻してください。')
+      }
+      return
+    }
+    case 'settingEntry': {
+      const e = record as SettingEntry
+      if (!tx.get('settingCategories', e.categoryId)) {
+        if (!tx.get('titles', e.titleId)) titleOf(e.titleId)
+        throw new DomainError('元の設定項目がないため戻せません。先に設定項目を戻してください。')
+      }
+      return
+    }
+  }
+}
+
+/** 複製として戻すレコードの id を付け替えた時に、中身の参照も付け替える */
+function rewriteRefs(table: ContentTableName, record: ContentRecord, ids: Map<ID, ID>, texts: Map<ID, ID>): ContentRecord {
+  const m = (id: ID) => ids.get(id) ?? id
+  const mn = (id: ID | null) => (id === null ? null : m(id))
+  const list = (v: ID[]) => (Array.isArray(v) ? v.map(m) : v)
+  switch (table) {
+    case 'titles': {
+      const r = record as Title
+      return {
+        ...r,
+        id: m(r.id),
+        structure: Array.isArray(r.structure) ? r.structure.map((n): NodeRef => ({ ...n, id: m(n.id) })) : r.structure,
+      }
+    }
+    case 'chapters': {
+      const r = record as Chapter
+      return { ...r, id: m(r.id), titleId: m(r.titleId), pieceIds: list(r.pieceIds) }
+    }
+    case 'pieces': {
+      const r = record as Piece
+      return { ...r, id: m(r.id), titleId: m(r.titleId), activeVersionId: mn(r.activeVersionId), versionIds: list(r.versionIds) }
+    }
+    case 'versions': {
+      const r = record as Version
+      return { ...r, id: m(r.id), titleId: m(r.titleId), pieceId: m(r.pieceId), sourceVersionId: mn(r.sourceVersionId) }
+    }
+    case 'memos': {
+      const r = record as Memo
+      return { ...r, id: m(r.id), titleId: m(r.titleId) }
+    }
+    case 'ideas': {
+      const r = record as Idea
+      return { ...r, id: m(r.id), titleId: mn(r.titleId) }
+    }
+    case 'settingCategories': {
+      const r = record as SettingCategory
+      return { ...r, id: m(r.id), titleId: m(r.titleId) }
+    }
+    case 'settingEntries': {
+      const r = record as SettingEntry
+      return { ...r, id: m(r.id), titleId: m(r.titleId), categoryId: m(r.categoryId) }
+    }
+    case 'submissions': {
+      const r = record as Submission
+      return { ...r, id: m(r.id), titleId: m(r.titleId), snapshot: rewriteSnapshot(r.snapshot, m, texts) }
+    }
+    case 'snapshotTexts':
+      return record
+  }
+}
+
+function rewriteSnapshot(s: SubmissionSnapshot | null, m: (id: ID) => ID, texts: Map<ID, ID>): SubmissionSnapshot | null {
+  if (!s || typeof s !== 'object') return s
+  const out: SubmissionSnapshot = {
+    ...s,
+    activeVersions: Object.fromEntries(
+      Object.entries(s.activeVersions ?? {}).map(([pid, vid]) => [m(pid), vid === null ? null : m(vid)]),
+    ),
+  }
+  if (Array.isArray(s.order)) out.order = s.order.map(m)
+  if (s.pieces) {
+    out.pieces = Object.fromEntries(
+      Object.entries(s.pieces).map(([pid, p]) => [
+        m(pid),
+        {
+          ...p,
+          versionId: p.versionId === null ? null : m(p.versionId),
+          textKey: p.textKey ? (texts.get(p.textKey) ?? p.textKey) : p.textKey,
+        },
+      ]),
+    )
+  }
+  return out
+}
+
+/**
+ * 応募時の原稿の控えを戻す。控えは内容から作ったキーなので、同じキーで同じ本文が残っていればそれを使う。
+ * 万一同じキーで別の本文があれば、別のキーで戻して参照を付け替える。
+ */
+function restoreSnapshotText(tx: Tx, text: SnapshotText, texts: Map<ID, ID>): void {
+  const live = tx.get('snapshotTexts', text.id)
+  if (!live) {
+    tx.put('snapshotTexts', text)
+    return
+  }
+  if (live.body === text.body) return
+  for (let n = 1; ; n++) {
+    const key = `${text.id}-r${n}`
+    const other = tx.get('snapshotTexts', key)
+    if (other && other.body !== text.body) continue
+    if (!other) tx.put('snapshotTexts', { ...text, id: key })
+    texts.set(text.id, key)
+    return
+  }
+}
+
+/**
+ * 並び list の中の差し込み位置。先頭にあった（prevId = null）なら先頭、直前にあった要素がまだあればその直後、
+ * なければ控えた位置（範囲内に収める。分からなければ末尾）
+ */
+function insertIndex(list: readonly ID[], origin: TrashOrigin): number {
+  if (origin.prevId === null) return 0
+  const prev = origin.prevId ? list.indexOf(origin.prevId) : -1
+  if (prev >= 0) return prev + 1
+  return knownIndex(origin) ? Math.min(origin.index, list.length) : list.length
+}
+
+type OrderedTable = 'titles' | 'memos' | 'ideas' | 'settingCategories' | 'settingEntries' | 'submissions'
+
+/**
+ * order で並ぶ一覧へ戻す。先頭にあった（prevId = null）なら先頭、直前にあった要素がまだあればその直後、
+ * なければ削除した時の order の値の位置（その値より大きい最初の要素の前）。並びは 0..n-1 に詰め直し、変わったものだけ書く。
+ */
+function placeInOrder<T extends OrderedTable>(
+  tx: Tx,
+  table: T,
+  id: ID,
+  isPeer: (r: AppData[T][string]) => boolean,
+  origin: TrashOrigin,
+): void {
+  const self = tx.get(table, id)
+  if (!self) return
+  const list = (tx.all(table) as AppData[T][string][]).filter((r) => r.id !== id && isPeer(r)).sort(byOrder)
+  const prev = origin.prevId ? list.findIndex((r) => r.id === origin.prevId) : -1
+  let at: number
+  if (origin.prevId === null) at = 0
+  else if (prev >= 0) at = prev + 1
+  else {
+    const key = knownIndex(origin) ? origin.index : self.order
+    at = list.findIndex((r) => r.order > key)
+    if (at < 0) at = list.length
+  }
+  list.splice(at, 0, self)
+  const ts = now()
+  list.forEach((r, i) => {
+    if (r.order !== i) tx.put(table, { ...r, order: i, updatedAt: ts } as AppData[T][string])
+  })
+}
+
+function touchTitle(tx: Tx, titleId: ID, patch: Partial<Title> = {}): void {
+  const t = tx.get('titles', titleId)
+  if (t) tx.put('titles', { ...t, ...patch, updatedAt: now() })
+}
+
+/** 話を元の章・位置へ戻す。元の章がもう無ければ、直前にあった話の後ろ（それも無ければタイトル直下の末尾） */
+function relinkPiece(tx: Tx, piece: Piece, origin: TrashOrigin): void {
+  const title = tx.get('titles', piece.titleId)
+  if (!title || locatePiece(tx.data, piece.id)) return
+  const node: NodeRef = { type: 'piece', id: piece.id }
+  const ts = now()
+  const ch = origin.chapterId ? tx.get('chapters', origin.chapterId) : undefined
+  const inStructure = ch && ch.titleId === title.id && title.structure.some((n) => n.type === 'chapter' && n.id === ch.id)
+  if (ch && inStructure) {
+    const pieceIds = [...ch.pieceIds]
+    pieceIds.splice(insertIndex(pieceIds, origin), 0, piece.id)
+    tx.put('chapters', { ...ch, pieceIds, updatedAt: ts })
+    touchTitle(tx, title.id)
+    return
+  }
+  const structure = [...title.structure]
+  if (!origin.chapterId) {
+    structure.splice(
+      insertIndex(
+        structure.map((n) => n.id),
+        origin,
+      ),
+      0,
+      node,
+    )
+    touchTitle(tx, title.id, { structure })
+    return
+  }
+  const prev = origin.prevId && tx.get('pieces', origin.prevId) ? locatePiece(tx.data, origin.prevId) : null
+  if (prev?.chapterId) {
+    const prevChapter = tx.get('chapters', prev.chapterId)!
+    const pieceIds = [...prevChapter.pieceIds]
+    pieceIds.splice(prev.index + 1, 0, piece.id)
+    tx.put('chapters', { ...prevChapter, pieceIds, updatedAt: ts })
+    touchTitle(tx, title.id)
+    return
+  }
+  structure.splice(prev ? prev.index + 1 : structure.length, 0, node)
+  touchTitle(tx, title.id, { structure })
+}
+
+/**
+ * 解除した章を元の位置に作り直す。章に入っていた話のうち、今もタイトル直下にあるものを元の並び順で章へ戻す
+ * （別の章へ移したもの・削除したものはそのまま）。
+ */
+function relinkChapter(tx: Tx, chapter: Chapter, origin: TrashOrigin): void {
+  const title = tx.get('titles', chapter.titleId)
+  if (!title || title.structure.some((n) => n.type === 'chapter' && n.id === chapter.id)) return
+  const loose = new Set(title.structure.filter((n) => n.type === 'piece').map((n) => n.id))
+  const former = Array.isArray(chapter.pieceIds) ? chapter.pieceIds : []
+  const pieceIds = former.filter(
+    (pid, i) => loose.has(pid) && tx.get('pieces', pid)?.titleId === title.id && former.indexOf(pid) === i,
+  )
+  const reclaimed = new Set(pieceIds)
+  const structure = title.structure.filter((n) => !(n.type === 'piece' && reclaimed.has(n.id)))
+  structure.splice(
+    insertIndex(
+      structure.map((n) => n.id),
+      origin,
+    ),
+    0,
+    { type: 'chapter', id: chapter.id },
+  )
+  const same = pieceIds.length === former.length && pieceIds.every((id, i) => former[i] === id)
+  if (!same) tx.put('chapters', { ...chapter, pieceIds, updatedAt: now() })
+  touchTitle(tx, title.id, { structure })
+}
+
+/** 稿を元の話の元の位置へ戻す。採用中だった稿は、その話に今は採用している稿がなければ採用に戻す */
+function relinkVersion(tx: Tx, version: Version, origin: TrashOrigin): void {
+  const piece = tx.get('pieces', version.pieceId)
+  if (!piece) return
+  if (version.titleId !== piece.titleId) tx.put('versions', { ...version, titleId: piece.titleId })
+  const versionIds = [...piece.versionIds]
+  if (!versionIds.includes(version.id)) versionIds.splice(insertIndex(versionIds, origin), 0, version.id)
+  const hasActive = piece.activeVersionId !== null && Boolean(tx.get('versions', piece.activeVersionId))
+  const activeVersionId = origin.wasActive && !hasActive ? version.id : piece.activeVersionId
+  tx.put('pieces', { ...piece, versionIds, activeVersionId, updatedAt: now() })
+}
+
+/**
+ * ゴミ箱の1件を元の場所へ戻し、ゴミ箱から消す。
+ * - 親（タイトル・話・設定項目）がもう無ければ DomainError（先に親を戻すよう伝える）
+ * - 同じ id のものが残っていれば上書きせず、新しい id の複製として戻す（稿は名前に「（ゴミ箱から復元）」を付ける）
+ * - アイデアは元のタイトルが無ければ「どのタイトルにも属さない」へ戻す（タイトルを消した時と同じ扱い）
+ */
+export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; result: RestoreResult } {
+  const entry = data.trashEntries[entryId]
+  if (!entry) throw new DomainError('ゴミ箱に見つかりません。すでに元に戻したか、完全に削除されています。')
+  const contents = trashContents(data, entry)
+  const main = contents[0]
+  if (!main || main.table !== TRASH_KIND_TABLE[entry.kind] || !main.record || typeof main.record.id !== 'string') {
+    throw new DomainError('ゴミ箱の中身が見つからないため戻せません。')
+  }
+  return transact(data, (tx) => {
+    requireParents(tx, entry.kind, main.record)
+
+    // 同じ id のものが残っていれば新しい id を振る（残っている方は上書きしない）
+    const ids = new Map<ID, ID>()
+    const texts = new Map<ID, ID>()
+    const seen = new Set<string>()
+    const items: { table: ContentTableName; record: ContentRecord }[] = []
+    for (const r of contents) {
+      if (!isContentTable(r.table) || !r.record || typeof r.record.id !== 'string') continue
+      const key = `${r.table}:${r.record.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      if (r.table === 'snapshotTexts') {
+        restoreSnapshotText(tx, r.record as SnapshotText, texts)
+        continue
+      }
+      if (tx.get(r.table, r.record.id)) ids.set(r.record.id, newId())
+      items.push({ table: r.table, record: r.record })
+    }
+    const remap = ids.size > 0 || texts.size > 0
+    for (const item of items) {
+      let record = remap ? rewriteRefs(item.table, item.record, ids, texts) : item.record
+      if (item.table === 'versions' && ids.has(item.record.id)) {
+        const v = record as Version
+        record = { ...v, name: `${v.name.trim() || '無題の稿'}${RESTORED_COPY_SUFFIX}` }
+      }
+      tx.put(item.table, record)
+    }
+
+    const mainId = ids.get(main.record.id) ?? main.record.id
+    const restored = tx.get(main.table, mainId)!
+    const origin = entry.origin ?? { titleId: null, index: -1 }
+    let titleId: ID | null = null
+    let movedToUnassigned = false
+    switch (entry.kind) {
+      case 'title':
+        titleId = mainId
+        placeInOrder(tx, 'titles', mainId, () => true, origin)
+        break
+      case 'chapter': {
+        const c = restored as Chapter
+        titleId = c.titleId
+        relinkChapter(tx, c, origin)
+        break
+      }
+      case 'piece': {
+        const p = restored as Piece
+        titleId = p.titleId
+        relinkPiece(tx, p, origin)
+        break
+      }
+      case 'version': {
+        const v = restored as Version
+        titleId = tx.get('pieces', v.pieceId)?.titleId ?? v.titleId
+        relinkVersion(tx, v, origin)
+        break
+      }
+      case 'memo': {
+        const m = restored as Memo
+        titleId = m.titleId
+        placeInOrder(tx, 'memos', mainId, (x) => x.titleId === m.titleId, origin)
+        break
+      }
+      case 'idea': {
+        const i = restored as Idea
+        if (i.titleId !== null && !tx.get('titles', i.titleId)) {
+          // 元のタイトルがない: タイトルを消した時と同じく「どのタイトルにも属さない」の末尾へ
+          const order = nextOrder(tx.all('ideas').filter((x) => x.id !== i.id && x.titleId === null))
+          tx.put('ideas', { ...i, titleId: null, order, updatedAt: now() })
+          movedToUnassigned = true
+        } else {
+          titleId = i.titleId
+          placeInOrder(tx, 'ideas', mainId, (x) => x.titleId === i.titleId, origin)
+        }
+        break
+      }
+      case 'settingCategory': {
+        const c = restored as SettingCategory
+        titleId = c.titleId
+        placeInOrder(tx, 'settingCategories', mainId, (x) => x.titleId === c.titleId, origin)
+        break
+      }
+      case 'settingEntry': {
+        const e = restored as SettingEntry
+        const cat = tx.get('settingCategories', e.categoryId)!
+        titleId = cat.titleId
+        if (e.titleId !== cat.titleId) tx.put('settingEntries', { ...e, titleId: cat.titleId })
+        placeInOrder(tx, 'settingEntries', mainId, (x) => x.categoryId === e.categoryId, origin)
+        break
+      }
+      case 'submission': {
+        const s = restored as Submission
+        titleId = s.titleId
+        placeInOrder(tx, 'submissions', mainId, (x) => x.titleId === s.titleId, origin)
+        break
+      }
+    }
+
+    removeEntries(tx, new Set([entry.id]))
+    return {
+      entryId: entry.id,
+      kind: entry.kind,
+      label: entry.label,
+      id: mainId,
+      titleId,
+      copied: ids.has(main.record.id),
+      movedToUnassigned,
+    }
+  })
+}

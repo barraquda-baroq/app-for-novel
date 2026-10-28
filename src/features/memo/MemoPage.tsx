@@ -2,6 +2,7 @@
 import { useDeferredValue, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { bodyMetrics, countChars, formatCount } from '../../domain/text'
+import { trashNotice } from '../../domain/trash'
 import type { Memo, Title } from '../../domain/types'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
@@ -48,7 +49,7 @@ function MemoEditor({ title, memo }: { title: Title; memo: Memo }) {
   const remove = async () => {
     const ok = await confirmDialog({
       title: `メモ「${name}」を削除しますか？`,
-      message: 'このメモの内容を削除します。この操作は取り消せません。',
+      message: trashNotice('このメモを'),
       confirmLabel: '削除',
       danger: true,
     })

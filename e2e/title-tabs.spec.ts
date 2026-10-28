@@ -263,7 +263,7 @@ test.describe('設定タブ', () => {
     // 項目を削除すると中のエントリも消える
     await page.getByTestId('category-menu').click()
     await page.getByTestId('category-delete').click()
-    await expect(dialog(page)).toContainText('エントリ（1件）もすべて削除されます')
+    await expect(dialog(page)).toContainText('エントリ（1件）もすべていっしょにゴミ箱に移します')
     await dialog(page).getByRole('button', { name: '削除', exact: true }).click()
     await expect(page.getByTestId('category-item')).toHaveCount(1)
     await expect(page.getByTestId('category-title')).toHaveText('世界観')

@@ -239,7 +239,7 @@ describe('設定タブ', () => {
     expect(document.activeElement).toBe(within(card()).getByTestId('entry-up'))
   })
 
-  it('項目の削除は確認し、中のエントリも消える', async () => {
+  it('項目の削除は確認し、中のエントリもいっしょにゴミ箱へ移る', async () => {
     const user = userEvent.setup()
     const titleId = actions.createTitle('作品')
     const chara = categoryOf(titleId, 'キャラクター')
@@ -248,10 +248,11 @@ describe('設定タブ', () => {
     await user.click(screen.getByTestId('category-menu'))
     await user.click(screen.getByTestId('category-delete'))
     const dialog = await screen.findByRole('dialog')
-    expect(dialog.textContent).toContain('エントリ（1件）もすべて削除されます')
+    expect(dialog.textContent).toContain('エントリ（1件）もすべていっしょにゴミ箱に移します')
     await user.click(within(dialog).getByRole('button', { name: '削除' }))
     expect(getData().settingCategories[chara]).toBeUndefined()
     expect(Object.values(getData().settingEntries)).toHaveLength(0)
+    expect(Object.values(getData().trashEntries).map((e) => [e.kind, e.recordIds.length])).toEqual([['settingCategory', 2]])
     await waitFor(() => expect(screen.getByTestId('category-title').textContent).toBe('世界観'))
   })
 })
