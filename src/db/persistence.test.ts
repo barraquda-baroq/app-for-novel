@@ -375,6 +375,28 @@ describe('幕（2.2）の送信待ちと反映', () => {
     expect((await q.readOutbox(100)).every((i) => !i.group)).toBe(true)
   })
 
+  it('送信待ちは1回の読み取りで読む（読んでいる途中に幕の操作が保存されても、操作の前と後が混ざらない）', async () => {
+    const { data, ep, acts } = actsSample()
+    for (let round = 0; round < 5; round++) {
+      // まだ送っていない分けた話（話・幕・稿がすべて送信待ち）で、読み出しと同時に第1幕と第2幕をつなぐ
+      const p = fresh()
+      await p.save(emptyData(), data)
+      const joined = joinActWithNext(data, acts[0])
+      const [items] = await Promise.all([p.readOutbox(100), p.save(data, joined.data)])
+      const local = new Map(items.map((i) => [`${i.table}/${i.id}`, i.local]))
+      const episode = local.get(`pieces/${ep}`) as { actIds?: string[] } | null
+      // 話の幕の並びに載る幕と、その採用稿が、読んだ中にそろっている
+      for (const id of episode?.actIds ?? []) {
+        const act = local.get(`pieces/${id}`) as { activeVersionId?: string } | null | undefined
+        expect(act, `幕 ${id}`).toBeTruthy()
+        expect(local.get(`versions/${act!.activeVersionId}`), `幕 ${id} の採用稿`).toBeTruthy()
+      }
+      // つないだ後の話なら、つないだ稿も読んでいる
+      if (episode?.actIds?.length === 2) expect(local.get(`versions/${joined.result}`)).toBeTruthy()
+      p.close()
+    }
+  })
+
   it('クラウドから直接読んだ話が知らない幕を指していれば、その話は合わせずに購読で届くのを待つ', async () => {
     const { data, ep, acts } = actsSample()
     const p = fresh()

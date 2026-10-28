@@ -1449,45 +1449,49 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       return deferred ? null : [...written.values()]
     },
 
-    async readOutbox(limit) {
-      const keys = (await db.outbox.toCollection().primaryKeys()).map(String)
-      keys.sort((a, b) => sendRank(a) - sendRank(b) || (a < b ? -1 : a > b ? 1 : 0))
-      // 幕の構成を変えた話があれば、その話・幕・稿・ゴミ箱の件を1つのまとまりとして続けて並べる（全部を1回で送る）
-      const pieceItems = await itemsOf(keys.filter((k) => k.startsWith('pieces/')))
-      if (!pieceItems.some(isDirtyEpisodeRow)) return itemsOf(keys.slice(0, limit))
-      const known = new Map<string, OutboxItem>()
-      const related = keys.filter((k) => /^(versions|trashEntries|trashRecords)\//.test(k))
-      for (const it of [...pieceItems, ...(await itemsOf(related))]) known.set(it.k, it)
-      const groups = groupOutbox([...known.values()])
-      const members = new Map<string, string[]>()
-      for (const k of keys) {
-        const g = groups.get(k)
-        if (!g) continue
-        const list = members.get(g) ?? []
-        list.push(k)
-        members.set(g, list)
-      }
-      const order: string[] = []
-      const done = new Set<string>()
-      for (const k of keys) {
-        // 上限に達しても、並べ始めたまとまりは最後まで入れる
-        if (order.length >= limit) break
-        if (done.has(k)) continue
-        const g = groups.get(k)
-        for (const m of g ? members.get(g)! : [k]) {
-          order.push(m)
-          done.add(m)
+    readOutbox(limit) {
+      // 送信待ちの一覧・行・端末内の内容を1つの読み取りトランザクションで読む（読んでいる途中に保存が入って、幕のまとまりが
+      // 操作の前と後の混ざった内容にならないように。途中に始まった保存は、読み終わるのを待ってからまとめて書かれる）
+      return db.transaction('r', [db.outbox, ...allTables()], async () => {
+        const keys = (await db.outbox.toCollection().primaryKeys()).map(String)
+        keys.sort((a, b) => sendRank(a) - sendRank(b) || (a < b ? -1 : a > b ? 1 : 0))
+        // 幕の構成を変えた話があれば、その話・幕・稿・ゴミ箱の件を1つのまとまりとして続けて並べる（全部を1回で送る）
+        const pieceItems = await itemsOf(keys.filter((k) => k.startsWith('pieces/')))
+        if (!pieceItems.some(isDirtyEpisodeRow)) return itemsOf(keys.slice(0, limit))
+        const known = new Map<string, OutboxItem>()
+        const related = keys.filter((k) => /^(versions|trashEntries|trashRecords)\//.test(k))
+        for (const it of [...pieceItems, ...(await itemsOf(related))]) known.set(it.k, it)
+        const groups = groupOutbox([...known.values()])
+        const members = new Map<string, string[]>()
+        for (const k of keys) {
+          const g = groups.get(k)
+          if (!g) continue
+          const list = members.get(g) ?? []
+          list.push(k)
+          members.set(g, list)
         }
-      }
-      for (const it of await itemsOf(order.filter((k) => !known.has(k)))) known.set(it.k, it)
-      const out: OutboxItem[] = []
-      for (const k of order) {
-        const it = known.get(k)
-        if (!it) continue
-        const g = groups.get(k)
-        out.push(g ? { ...it, group: g } : it)
-      }
-      return out
+        const order: string[] = []
+        const done = new Set<string>()
+        for (const k of keys) {
+          // 上限に達しても、並べ始めたまとまりは最後まで入れる
+          if (order.length >= limit) break
+          if (done.has(k)) continue
+          const g = groups.get(k)
+          for (const m of g ? members.get(g)! : [k]) {
+            order.push(m)
+            done.add(m)
+          }
+        }
+        for (const it of await itemsOf(order.filter((k) => !known.has(k)))) known.set(it.k, it)
+        const out: OutboxItem[] = []
+        for (const k of order) {
+          const it = known.get(k)
+          if (!it) continue
+          const g = groups.get(k)
+          out.push(g ? { ...it, group: g } : it)
+        }
+        return out
+      })
     },
 
     async completeUpload(sent) {
