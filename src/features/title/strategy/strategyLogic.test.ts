@@ -4,8 +4,11 @@ import {
   compareSnapshotWithCurrent,
   createTitle,
   recordSubmissionSnapshot,
+  snapshotCounts,
   takeSnapshot,
+  updateSubmission,
 } from '../../../domain/entityOps'
+import { bodyMetrics } from '../../../domain/text'
 import {
   addEpisode,
   addSpecial,
@@ -15,7 +18,7 @@ import {
   updatePiece,
   updateVersion,
 } from '../../../domain/storyOps'
-import { emptyData, type AppData, type Submission, type SubmissionStatus } from '../../../domain/types'
+import { emptyData, type AppData, type Submission, type SubmissionSnapshot, type SubmissionStatus } from '../../../domain/types'
 import {
   compareSnapshots,
   currentManuscript,
@@ -45,6 +48,15 @@ import {
 } from './strategyLogic'
 
 const today = new Date(2026, 9, 27, 15, 30) // 2026/10/27（ローカル時刻）
+
+/** 本文の控えがない時の数え直し（記録した数のまま） */
+const NO_TEXTS = { snapshotTexts: {} }
+const recount = (snap: SubmissionSnapshot | null) => (snap ? snapshotCounts(NO_TEXTS, snap) : null)
+
+/** 画面と同じく、記録を数え直した数と合わせて並べる */
+function viewOf(data: AppData, titleId: string, snap: SubmissionSnapshot) {
+  return snapshotView(snap, currentManuscript(data, titleId), snapshotCounts(data, snap))
+}
 
 describe('締切', () => {
   it('ローカルの日付で日数を数える', () => {
@@ -143,28 +155,37 @@ describe('規定（文字数・原稿用紙換算枚数）', () => {
     expect(limitUnitOf({ limitUnit: 'pages' })).toBe('pages')
     const current = { chars: 2_000, pages: 5 }
     const snapshot = { at: 0, charCount: 1_500, activeVersions: {}, pages: 4 }
-    expect(limitBasis({ status: 'planned', snapshot, limitUnit: 'chars' }, current)).toEqual({ source: 'current', amount: 2_000 })
-    expect(limitBasis({ status: 'considering', snapshot: null, limitUnit: 'pages' }, current)).toEqual({
+    const rec = recount(snapshot)
+    expect(limitBasis({ status: 'planned', snapshot, limitUnit: 'chars' }, current, rec)).toEqual({
+      source: 'current',
+      amount: 2_000,
+    })
+    expect(limitBasis({ status: 'considering', snapshot: null, limitUnit: 'pages' }, current, null)).toEqual({
       source: 'current',
       amount: 5,
     })
-    expect(limitBasis({ status: 'submitted', snapshot, limitUnit: 'chars' }, current)).toEqual({
+    expect(limitBasis({ status: 'submitted', snapshot, limitUnit: 'chars' }, current, rec)).toEqual({
       source: 'snapshot',
       amount: 1_500,
     })
-    expect(limitBasis({ status: 'reviewing', snapshot, limitUnit: 'pages' }, current)).toEqual({ source: 'snapshot', amount: 4 })
-    expect(limitBasis({ status: 'won', snapshot, limitUnit: undefined }, current)).toEqual({ source: 'snapshot', amount: 1_500 })
+    expect(limitBasis({ status: 'reviewing', snapshot, limitUnit: 'pages' }, current, rec)).toEqual({
+      source: 'snapshot',
+      amount: 4,
+    })
+    expect(limitBasis({ status: 'won', snapshot, limitUnit: undefined }, current, rec)).toEqual({
+      source: 'snapshot',
+      amount: 1_500,
+    })
     // 応募後で記録がなければ比べない
-    expect(limitBasis({ status: 'submitted', snapshot: null }, current)).toBeNull()
+    expect(limitBasis({ status: 'submitted', snapshot: null }, current, null)).toBeNull()
     // 古い記録（枚数なし・本文の控えなし）は枚数で比べられない
-    expect(
-      limitBasis({ status: 'submitted', snapshot: { at: 0, charCount: 10, activeVersions: {} }, limitUnit: 'pages' }, current),
-    ).toBeNull()
+    const old = { at: 0, charCount: 10, activeVersions: {} }
+    expect(limitBasis({ status: 'submitted', snapshot: old, limitUnit: 'pages' }, current, recount(old))).toBeNull()
   })
 
   it('応募時の原稿の枚数（古い記録は本文の控えから数える）', () => {
-    expect(snapshotPages({ at: 0, charCount: 0, activeVersions: {}, pages: 7 })).toBe(7)
-    expect(snapshotPages({ at: 0, charCount: 0, activeVersions: {} })).toBeNull()
+    expect(snapshotPages({ at: 0, charCount: 0, activeVersions: {}, pages: 7 }, NO_TEXTS)).toBe(7)
+    expect(snapshotPages({ at: 0, charCount: 0, activeVersions: {} }, NO_TEXTS)).toBeNull()
     const piece = {
       kind: 'episode' as const,
       label: '第1話',
@@ -176,12 +197,15 @@ describe('規定（文字数・原稿用紙換算枚数）', () => {
       hash: '',
     }
     expect(
-      snapshotPages({
-        at: 0,
-        charCount: 0,
-        activeVersions: {},
-        pieces: { a: { ...piece, body: 'あ'.repeat(401) }, b: { ...piece, body: null } },
-      }),
+      snapshotPages(
+        {
+          at: 0,
+          charCount: 0,
+          activeVersions: {},
+          pieces: { a: { ...piece, body: 'あ'.repeat(401) }, b: { ...piece, body: null } },
+        },
+        NO_TEXTS,
+      ),
     ).toBe(2)
   })
 })
@@ -301,6 +325,114 @@ describe('現在の原稿', () => {
     })
   })
 
+  it('ルビ・傍点の記号とルビの読みは、現在の原稿・応募時の記録の文字数・枚数に数えない', () => {
+    const s = setup()
+    const v = s.data.pieces[s.pieces[0]].versionIds[0]
+    // 第1話: 魔法使い・が・来た = 7字（ルビの読みを数えると 20字を超える）
+    let data = updateVersion(s.data, v, { body: '｜魔法使い《ウィザード》が《《来た》》' })
+    expect(manuscriptSummary(data, s.titleId).chars).toBe(7 + 5 + 3)
+    const sub = addSubmission(data, s.titleId, '賞')
+    data = recordSubmissionSnapshot(sub.data, sub.result)
+    const snap = data.submissions[sub.result].snapshot!
+    expect(snap.charCount).toBe(15)
+    expect(snap.pieces![s.pieces[0]].chars).toBe(7)
+    expect(viewOf(data, s.titleId, snap).rows[0].chars).toBe(7)
+    // 古い記録（本文が記録の中にある）の枚数も、記号と読みを除いて数える: 400字の段落なら1枚（読みを数えると2枚）
+    expect(
+      snapshotPages(
+        {
+          at: 0,
+          charCount: 0,
+          activeVersions: {},
+          pieces: {
+            a: {
+              kind: 'episode',
+              label: '第1話',
+              subtitle: '',
+              versionId: 'v',
+              versionName: '第1稿',
+              chars: 0,
+              textKey: null,
+              hash: '',
+              body: `${'あ'.repeat(19)}漢《${'よみ'.repeat(30)}》${'い'.repeat(380)}`,
+            },
+          },
+        },
+        NO_TEXTS,
+      ),
+    ).toBe(1)
+  })
+
+  it('2.0 までの数え方（ルビの記号と読みも数えた）の記録は、本文の控えから数え直して表示・規定の判定・差に使う', () => {
+    const s = setup()
+    const body = `｜魔法使い《ウィザード》が来た。\n${'あ'.repeat(19)}漢《${'よみ'.repeat(30)}》${'い'.repeat(380)}`
+    let data = updateVersion(s.data, s.data.pieces[s.pieces[0]].versionIds[0], { body })
+    const sub = addSubmission(data, s.titleId, '賞')
+    data = recordSubmissionSnapshot(sub.data, sub.result)
+    const fresh = data.submissions[sub.result].snapshot!
+    // 2.0 までの端末で記録した時の数（記号とルビの読みも数えていた）に置き換える
+    const oldChars = Array.from(body.replace(/\s/g, '')).length
+    const first = fresh.pieces![s.pieces[0]]
+    const old: SubmissionSnapshot = {
+      ...fresh,
+      charCount: fresh.charCount - first.chars + oldChars,
+      pages: 99,
+      pieces: { ...fresh.pieces, [s.pieces[0]]: { ...first, chars: oldChars } },
+    }
+    data = updateSubmission(data, sub.result, { snapshot: old, status: 'submitted', minChars: null, maxChars: 420 })
+    const snap = data.submissions[sub.result].snapshot!
+    expect(snap.charCount).toBeGreaterThan(fresh.charCount)
+
+    // 数え直した数は、本文の控えを今の数え方で数えた数と同じ（記録そのものは書き換えない）
+    const texts = Object.values(snap.pieces!).map((p) => data.snapshotTexts[p.textKey!])
+    const expected = texts.reduce((n, t) => n + bodyMetrics(t).chars, 0)
+    const expectedPages = texts.reduce((n, t) => n + bodyMetrics(t).manuscriptPages, 0)
+    const counts = snapshotCounts(data, snap)
+    expect(counts.charCount).toBe(expected)
+    expect(counts.charCount).toBe(fresh.charCount)
+    expect(counts.pages).toBe(expectedPages)
+    expect(counts.chars[s.pieces[0]]).toBe(bodyMetrics(data.snapshotTexts[first.textKey!]).chars)
+    expect(data.submissions[sub.result].snapshot!.charCount).toBe(old.charCount)
+
+    // 内訳の文字数・規定の判定・今の原稿との差
+    const view = viewOf(data, s.titleId, snap)
+    expect(view.rows.map((r) => r.chars)).toEqual(Object.values(counts.chars))
+    expect(view.rows[0].chars).toBe(fresh.pieces![s.pieces[0]].chars)
+    const current = manuscriptSummary(data, s.titleId)
+    const basis = limitBasis(data.submissions[sub.result], current, counts)
+    expect(basis).toEqual({ source: 'snapshot', amount: expected })
+    // 記録した数（記号と読みを含む）では「規定を超過」になる原稿も、数え直すと規定内
+    expect(limitCheck(basis!.amount, null, 420, 'chars', 'after')?.state).toBe('ok')
+    expect(limitCheck(snap.charCount, null, 420, 'chars', 'after')?.state).toBe('over')
+    expect(limitBasis({ ...data.submissions[sub.result], limitUnit: 'pages' }, current, counts)).toEqual({
+      source: 'snapshot',
+      amount: expectedPages,
+    })
+    expect(view.diff.charDelta).toBe(0)
+    expect(compareSnapshotWithCurrent(data, s.titleId, snap).charDelta).toBe(0)
+    // 記録の後に1字足すと、差は +1字（記録した数のままだと記号と読みの分だけずれる）
+    data = updateVersion(data, data.pieces[s.pieces[1]].activeVersionId!, { body: 'かきくけこさ' })
+    expect(viewOf(data, s.titleId, snap).diff.charDelta).toBe(1)
+    expect(compareSnapshotWithCurrent(data, s.titleId, snap).charDelta).toBe(1)
+  })
+
+  it('本文の控えが欠けている話（まだ届いていない等）は記録した数を使い、枚数は記録した枚数', () => {
+    const s = setup()
+    const sub = addSubmission(s.data, s.titleId, '賞')
+    const data = recordSubmissionSnapshot(sub.data, sub.result)
+    const snap = data.submissions[sub.result].snapshot!
+    const id = s.pieces[1]
+    const missing: SubmissionSnapshot = {
+      ...snap,
+      pages: 7,
+      pieces: { ...snap.pieces, [id]: { ...snap.pieces![id], textKey: null, chars: 50 } },
+    }
+    const counts = snapshotCounts(data, missing)
+    expect(counts.chars[id]).toBe(50)
+    expect(counts.charCount).toBe(snap.charCount - snap.pieces![id].chars + 50)
+    expect(counts.pages).toBe(7)
+  })
+
   it('話数の表記は特殊ブロックを話に数えない', () => {
     expect(pieceCountLabel(3, 0)).toBe('3話')
     expect(pieceCountLabel(3, 1)).toBe('3話＋特殊1')
@@ -319,7 +451,7 @@ describe('応募時スナップショットとの比較', () => {
     data = recordSubmissionSnapshot(s.data, s.result)
     const snap = data.submissions[s.result].snapshot!
 
-    const first = snapshotView(snap, currentManuscript(data, titleId))
+    const first = viewOf(data, titleId, snap)
     expect(first.detailed).toBe(true)
     expect([first.episodes, first.specials]).toEqual([3, 1])
     expect(first.rows.map((r) => [r.label, r.subtitle, r.versionName, r.chars, r.change])).toEqual([
@@ -332,7 +464,7 @@ describe('応募時スナップショットとの比較', () => {
 
     // 稿の名前を変えただけでは変わったことにしない
     data = updateVersion(data, data.pieces[pieces[1]].activeVersionId!, { name: '決定稿' })
-    expect(snapshotView(snap, currentManuscript(data, titleId)).rows.every((r) => r.change === null)).toBe(true)
+    expect(viewOf(data, titleId, snap).rows.every((r) => r.change === null)).toBe(true)
 
     // 第1話: 別の稿に切り替え／第2話: 同じ稿のまま本文を編集／第3話を削除し、新しい第3話を追加
     const v = addVersion(data, pieces[0], { body: '新しい' })
@@ -341,7 +473,7 @@ describe('応募時スナップショットとの比較', () => {
     data = deletePiece(data, pieces[2])
     const added = addEpisode(data, titleId)
     data = added.data
-    const view = snapshotView(snap, currentManuscript(data, titleId))
+    const view = viewOf(data, titleId, snap)
     expect(view.rows.map((r) => [r.label, r.change])).toEqual([
       ['プロローグ', null],
       ['第1話', 'switched'],
@@ -354,14 +486,16 @@ describe('応募時スナップショットとの比較', () => {
     // 記録時 4+5+5+3=17字 → 現在 4+3+6+0=13字
     expect(view.diff.charDelta).toBe(-4)
     // 使い回す今の状態との比較は、domain の比較（その場で今の状態を作る）と同じ結果
-    expect(compareSnapshots(snap, currentManuscript(data, titleId))).toEqual(compareSnapshotWithCurrent(data, titleId, snap))
+    expect(compareSnapshots(snap, currentManuscript(data, titleId), snapshotCounts(data, snap))).toEqual(
+      compareSnapshotWithCurrent(data, titleId, snap),
+    )
   })
 
   it('記録した時に採用原稿がなかった話は「採用原稿なし」として並べる', () => {
     const { data: base, titleId, pieces } = setup()
     const s = addSubmission(setActiveVersion(base, pieces[1], null), titleId, '賞')
     const data = recordSubmissionSnapshot(s.data, s.result)
-    const view = snapshotView(data.submissions[s.result].snapshot!, currentManuscript(data, titleId))
+    const view = viewOf(data, titleId, data.submissions[s.result].snapshot!)
     expect(view.rows.map((r) => [r.label, r.noActive])).toEqual([
       ['第1話', false],
       ['第2話', true],
@@ -388,10 +522,12 @@ describe('応募時スナップショットとの比較', () => {
     const data = addSpecial(s.data, s.titleId, { chapterId: null, index: 0 }, 'プロローグ').data
     const full = takeSnapshot(data, s.titleId)
     const old = { at: full.at, charCount: full.charCount, activeVersions: full.activeVersions }
-    const view = snapshotView(old, currentManuscript(data, s.titleId))
+    const view = viewOf(data, s.titleId, old)
     expect(view.detailed).toBe(false)
     expect(view.rows).toEqual([])
     expect([view.episodes, view.specials]).toEqual([3, 1])
-    expect(snapshotPages(old)).toBeNull()
+    expect(snapshotPages(old, data)).toBeNull()
+    // 文字数は記録した数のまま
+    expect(snapshotCounts(data, old)).toEqual({ charCount: full.charCount, pages: null, chars: {} })
   })
 })

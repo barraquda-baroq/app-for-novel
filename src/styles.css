@@ -492,11 +492,13 @@ h4 {
     color 0.12s;
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--surface-3);
 }
 
-.btn:disabled {
+/* aria-disabled は、処理中などでフォーカスを残したまま押せなくしているボタン */
+.btn:disabled,
+.btn[aria-disabled='true'] {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -507,7 +509,7 @@ h4 {
   color: var(--on-primary);
 }
 
-.btn-primary:hover:not(:disabled) {
+.btn-primary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--primary-hover);
   border-color: color-mix(in srgb, var(--primary-hover) 70%, var(--primary-border));
 }
@@ -518,7 +520,7 @@ h4 {
   color: var(--on-active);
 }
 
-.btn-active:hover:not(:disabled) {
+.btn-active:hover:not(:disabled):not([aria-disabled='true']) {
   background: color-mix(in srgb, var(--active-fill) 85%, black);
 }
 
@@ -527,7 +529,7 @@ h4 {
   border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
 }
 
-.btn-danger:hover:not(:disabled) {
+.btn-danger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--danger-soft);
 }
 
@@ -536,7 +538,7 @@ h4 {
   background: transparent;
 }
 
-.btn-ghost:hover:not(:disabled) {
+.btn-ghost:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--surface-3);
 }
 
@@ -561,12 +563,13 @@ h4 {
   flex: none;
 }
 
-.icon-btn:hover:not(:disabled) {
+.icon-btn:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--surface-3);
   color: var(--text);
 }
 
-.icon-btn:disabled {
+.icon-btn:disabled,
+.icon-btn[aria-disabled='true'] {
   opacity: 0.35;
   cursor: not-allowed;
 }

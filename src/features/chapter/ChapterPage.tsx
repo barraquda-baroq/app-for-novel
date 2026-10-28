@@ -2,6 +2,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { missingActiveLabel } from '../../domain/entityOps'
+import { titleProgress } from '../../domain/progress'
 import { episodeTargets } from '../../domain/storyOps'
 import { chaptersOf, locatePiece, pieceFullLabel } from '../../domain/structure'
 import { formatCount } from '../../domain/text'
@@ -14,6 +15,7 @@ import { DraftInput, DraftTextarea } from '../../ui/DraftField'
 import { useDocumentTitle } from '../../ui/hooks'
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, EditIcon, FolderIcon, PlusIcon, StarIcon, XIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
+import { NearViewportContext, useNearViewportWatcher } from '../../ui/nearViewport'
 import { NotFound } from '../../ui/NotFound'
 import { AddDialog, type AddKind } from '../title/story/AddDialog'
 import { CHAPTER_ADD_BLOCKED_REASON, releaseChapter } from '../title/story/ChapterBlock'
@@ -36,13 +38,16 @@ export function ChapterPage() {
 
   // 一覧・集計は本編に関わるデータが変わった時だけ作り直す（章のメモの入力などでは数え直さない）
   const story = useStoryData(titleId)
+  // 進捗はタイトル全体（採用原稿）の中の位置。本編が変わった時だけ数える
+  const progress = useMemo(() => titleProgress(story, titleId), [story, titleId])
   const allRows = useMemo(
     () =>
       pieceRows(story, titleId, {
         steps: edit ? stepAvailability(story, titleId) : null,
         deletable: edit ? deletePermissions(story, titleId) : null,
+        progress,
       }),
-    [story, titleId, edit],
+    [story, titleId, edit, progress],
   )
   const pieceIds = chapter?.pieceIds
   const rows = useMemo(() => rowsFor(allRows, pieceIds ?? []), [allRows, pieceIds])
@@ -52,6 +57,8 @@ export function ChapterPage() {
     [story, titleId, chapterId],
   )
   const siblings = useMemo(() => chaptersOf(story, titleId), [story, titleId])
+  // 抜粋のルビ・傍点は、画面の近くに来た行だけに作る（スクロールは画面全体）
+  const { register: registerNear } = useNearViewportWatcher(() => null, [])
 
   /** ↑↓ で章の外へ出たら知らせる */
   const onMoved = useCallback(
@@ -224,11 +231,19 @@ export function ChapterPage() {
               この章にはまだ話がありません。{canAddEpisode ? '「＋話数追加」から話を追加しましょう。' : ''}
             </div>
           ) : (
-            <ol className="story-list" data-testid="story-list">
-              {rows.map((row) => (
-                <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
-              ))}
-            </ol>
+            <>
+              {/* 進捗の％は章の中ではなくタイトル全体での位置（スマホではマウスを乗せた時の説明が出ないので書いておく） */}
+              <p className="small muted story-progress-legend" data-testid="progress-legend">
+                右の％は、その話の終わりがタイトル全体（採用原稿）のどこにあるかです（章の中での割合ではありません）。
+              </p>
+              <NearViewportContext.Provider value={registerNear}>
+                <ol className="story-list" data-testid="story-list">
+                  {rows.map((row) => (
+                    <PieceRow key={row.piece.id} {...row} edit={edit} onMoved={onMoved} />
+                  ))}
+                </ol>
+              </NearViewportContext.Provider>
+            </>
           )}
 
           {edit ? (

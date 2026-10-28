@@ -8,8 +8,14 @@ import { createPersistence } from '../../../db/persistence'
 import type { ID } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../../store/appStore'
+import * as progress from '../../../domain/progress'
 import { TitlePage } from '../TitlePage'
 import * as logic from './storyLogic'
+
+vi.mock('../../../domain/progress', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../../domain/progress')>()
+  return { ...mod, titleProgress: vi.fn(mod.titleProgress) }
+})
 
 vi.mock('./storyLogic', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./storyLogic')>()
@@ -59,6 +65,11 @@ function clearCounts() {
   vi.mocked(logic.summarize).mockClear()
   vi.mocked(logic.titleStats).mockClear()
   vi.mocked(logic.pieceRows).mockClear()
+  vi.mocked(progress.titleProgress).mockClear()
+}
+
+function progressTexts(): string[] {
+  return screen.getAllByTestId('piece-progress').map((el) => el.textContent ?? '')
 }
 
 function subtitles(): string[] {
@@ -107,5 +118,35 @@ describe('タイトル画面の描き直し', () => {
     expect(screen.getAllByTestId('chapter-collapse')[0].getAttribute('aria-expanded')).toBe('false')
     expect(logic.summarize).not.toHaveBeenCalled()
     expect(logic.titleStats).not.toHaveBeenCalled()
+  })
+
+  it('各話の進捗を出し、あらすじ・編集モードの切り替えでは数え直さない。並べ替えでは位置の変わった行だけ', async () => {
+    const user = userEvent.setup()
+    const titleId = actions.createTitle('進捗')
+    const ids: ID[] = []
+    for (let i = 0; i < 4; i++) {
+      const id = actions.addEpisode(titleId)
+      actions.updateVersion(getData().pieces[id].versionIds[0], { body: 'あ'.repeat(100 * (i + 1)) })
+      ids.push(id)
+    }
+    renderTitle(titleId)
+    // 100・200・300・400字 → 終わりの位置は 10%・30%・60%・100%
+    expect(progressTexts()).toEqual(['10%', '30%', '60%', '100%'])
+    expect(screen.getAllByTestId('piece-progress')[1].getAttribute('aria-label')).toBe(
+      'この話の終わりは、タイトル全体（採用原稿）の 30% の位置です',
+    )
+    // ％の意味は一覧の上にも書いておく（マウスを乗せられないスマホのため）
+    expect(screen.getByTestId('progress-legend').textContent).toContain('タイトル全体（採用原稿）のどこにあるか')
+    clearCounts()
+    act(() => actions.updateTitle(titleId, { synopsis: 'あらすじ' }))
+    await user.click(screen.getByTestId('edit-toggle'))
+    expect(progress.titleProgress).not.toHaveBeenCalled()
+
+    // 第3話を1つ上へ: 入れ替わった2行の位置だけが変わる
+    clearCounts()
+    act(() => actions.movePieceStep(ids[2], -1))
+    expect(progressTexts()).toEqual(['10%', '40%', '60%', '100%'])
+    expect(progress.titleProgress).toHaveBeenCalledTimes(1)
+    expect(logic.summarize).toHaveBeenCalledTimes(2)
   })
 })

@@ -20,6 +20,7 @@
   "dependencies": {
     "dexie": "^4.4.7",
     "diff": "^8.0.4",
+    "fflate": "^0.8.2",
     "firebase": "^13.1.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

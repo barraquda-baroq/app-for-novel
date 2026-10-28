@@ -1,5 +1,6 @@
 // 本編タブ: 設定項目の帯・本編（章／第n話／特殊ブロック）・メモ（一番下）。
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { titleProgress } from '../../../domain/progress'
 import { episodeTargets } from '../../../domain/storyOps'
 import { effectiveNumbering, flatten, locatePiece, pieceFullLabel } from '../../../domain/structure'
 import type { ID, NumberingMode } from '../../../domain/types'
@@ -7,6 +8,9 @@ import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
 import { EditIcon, FolderIcon, PlusIcon } from '../../../ui/icons'
+import { NearViewportContext, useNearViewportWatcher } from '../../../ui/nearViewport'
+import { EpisodeExportDialog } from '../../episodeExport/EpisodeExportDialog'
+import { FilesIcon } from '../../episodeExport/exportIcons'
 import { AddDialog, type AddKind } from './AddDialog'
 import { ChapterBlock } from './ChapterBlock'
 import { NUMBERING_LABELS, changeNumbering, toggleChapters } from './chapterFlows'
@@ -30,16 +34,22 @@ export function StoryTab({ titleId }: { titleId: ID }) {
   const story = useStoryData(titleId)
   const [edit, setEdit] = useState(false)
   const [adding, setAdding] = useState<AddRequest | null>(null)
+  const [exporting, setExporting] = useState(false)
   const { collapsed, toggle: toggleCollapsed, expand } = useCollapsedChapters(titleId)
+  // 抜粋のルビ・傍点は、画面の近くに来た行だけに作る（数百行あっても開くのを重くしない。スクロールは画面全体）
+  const { register: registerNear } = useNearViewportWatcher(() => null, [])
 
   const flat = useMemo(() => flatten(story, titleId), [story, titleId])
+  // 各話の進捗は本編が変わった時だけ数える（編集モードの切り替えでは数え直さない）
+  const progress = useMemo(() => titleProgress(story, titleId), [story, titleId])
   const rows = useMemo(
     () =>
       pieceRows(story, titleId, {
         steps: edit ? stepAvailability(story, titleId) : null,
         deletable: edit ? deletePermissions(story, titleId) : null,
+        progress,
       }),
-    [story, titleId, edit],
+    [story, titleId, edit, progress],
   )
   const targetIds = useMemo(() => new Set(episodeTargets(story, titleId).map((t) => t.chapterId)), [story, titleId])
 
@@ -99,6 +109,22 @@ export function StoryTab({ titleId }: { titleId: ID }) {
               <EditIcon />
               {edit ? '編集を終える' : '編集'}
             </button>
+            {!isEmpty ? (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setExporting(true)}
+                // スマホでは「書き出し」だけが見えるので、バックアップの書き出しと区別できる名前にする
+                aria-label="各話テキスト書き出し"
+                title="採用原稿を1話1ファイルのテキストで書き出す"
+                data-testid="episode-export-open"
+              >
+                <FilesIcon />
+                <span>
+                  <span className="hide-mobile">各話テキスト</span>書き出し
+                </span>
+              </button>
+            ) : null}
           </div>
           <span className="grow" />
           <label className="switch story-chapter-switch" data-testid="chapters-switch">
@@ -161,38 +187,46 @@ export function StoryTab({ titleId }: { titleId: ID }) {
             まだ話がありません。「＋追加」から第1話を作成しましょう。
           </div>
         ) : (
-          <ol className={`story-list${chaptersOn ? ' is-tree' : ''}`} data-testid="story-list">
-            {chaptersOn
-              ? title.structure.map((node) => {
-                  if (node.type === 'piece') {
-                    const row = rows[node.id]
-                    if (!row) return null
-                    return <PieceRow key={node.id} {...row} edit={edit} onMoved={onPieceMoved} />
-                  }
-                  const chapter = data.chapters[node.id]
-                  if (!chapter) return null
-                  const chStep = edit ? chapterStepAvailability(story, chapter.id) : null
-                  return (
-                    <ChapterBlock
-                      key={chapter.id}
-                      chapter={chapter}
-                      rows={rowsFor(rows, chapter.pieceIds)}
-                      edit={edit}
-                      canUp={chStep?.up ?? false}
-                      canDown={chStep?.down ?? false}
-                      collapsed={collapsed.has(chapter.id)}
-                      onToggleCollapsed={toggleCollapsed}
-                      canAddEpisode={targetIds.has(chapter.id)}
-                      onAddEpisode={addEpisodeTo}
-                      onPieceMoved={onPieceMoved}
-                    />
-                  )
-                })
-              : flat.map((f) => {
-                  const row = rows[f.pieceId]
-                  return row ? <PieceRow key={f.pieceId} {...row} edit={edit} onMoved={onPieceMoved} /> : null
-                })}
-          </ol>
+          <>
+            {/* 進捗の％の意味（達成率ではなく位置）。スマホではマウスを乗せた時の説明が出ないので、一覧の上に書いておく */}
+            <p className="small muted story-progress-legend" data-testid="progress-legend">
+              右の％は、その話の終わりがタイトル全体（採用原稿）のどこにあるかを示します（転機の位置を見るための目安）。
+            </p>
+            <NearViewportContext.Provider value={registerNear}>
+              <ol className={`story-list${chaptersOn ? ' is-tree' : ''}`} data-testid="story-list">
+                {chaptersOn
+                  ? title.structure.map((node) => {
+                      if (node.type === 'piece') {
+                        const row = rows[node.id]
+                        if (!row) return null
+                        return <PieceRow key={node.id} {...row} edit={edit} onMoved={onPieceMoved} />
+                      }
+                      const chapter = data.chapters[node.id]
+                      if (!chapter) return null
+                      const chStep = edit ? chapterStepAvailability(story, chapter.id) : null
+                      return (
+                        <ChapterBlock
+                          key={chapter.id}
+                          chapter={chapter}
+                          rows={rowsFor(rows, chapter.pieceIds)}
+                          edit={edit}
+                          canUp={chStep?.up ?? false}
+                          canDown={chStep?.down ?? false}
+                          collapsed={collapsed.has(chapter.id)}
+                          onToggleCollapsed={toggleCollapsed}
+                          canAddEpisode={targetIds.has(chapter.id)}
+                          onAddEpisode={addEpisodeTo}
+                          onPieceMoved={onPieceMoved}
+                        />
+                      )
+                    })
+                  : flat.map((f) => {
+                      const row = rows[f.pieceId]
+                      return row ? <PieceRow key={f.pieceId} {...row} edit={edit} onMoved={onPieceMoved} /> : null
+                    })}
+              </ol>
+            </NearViewportContext.Provider>
+          </>
         )}
 
         {!isEmpty ? (
@@ -208,6 +242,7 @@ export function StoryTab({ titleId }: { titleId: ID }) {
       {adding ? (
         <AddDialog titleId={titleId} presetKind={adding.kind} chapterId={adding.chapterId} onClose={() => setAdding(null)} />
       ) : null}
+      {exporting ? <EpisodeExportDialog titleId={titleId} onClose={() => setExporting(false)} /> : null}
     </div>
   )
 }

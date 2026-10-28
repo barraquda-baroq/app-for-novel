@@ -1,5 +1,7 @@
 // 本編タブ・章ページで使う、表示用の純粋な計算（データは変更しない）。
 import { entriesOf } from '../../../domain/entityOps'
+import { formatProgress, titleProgress, type PieceProgress } from '../../../domain/progress'
+import { hasRubyMarkup, parseRuby, type RubySegment } from '../../../domain/ruby'
 import * as S from '../../../domain/storyOps'
 import type { InsertOption } from '../../../domain/storyOps'
 import {
@@ -248,8 +250,8 @@ export interface PieceSummary {
   versionCount: number
   /** 採用中の稿。採用原稿がなければ null */
   active: { name: string; chars: number } | null
-  /** 採用原稿の冒頭（1行） */
-  excerpt: string
+  /** 採用原稿の冒頭（1行。ルビ・傍点は分けてある）。なければ空配列 */
+  excerpt: RubySegment[]
 }
 
 const SPACE = /\s/u
@@ -278,6 +280,67 @@ export function excerptOf(text: string, max = 90): string {
   return out
 }
 
+/**
+ * ルビ・傍点の記法を読むための表示にした抜粋（excerptOf と同じ詰め方・切り詰め方で、見える文字で数える）。
+ * 記法の途中では切らない（ルビは親文字ごと入れるか、入れずに「…」で終える）。
+ * 記法は改行をまたがないので、本文全体は分けず、抜粋に要る先頭の行だけを1行ずつ分ける。
+ */
+export function excerptSegments(text: string, max = 90): RubySegment[] {
+  if (!hasRubyMarkup(text)) {
+    const plain = excerptOf(text, max)
+    return plain ? [{ type: 'text', text: plain }] : []
+  }
+  const out: RubySegment[] = []
+  let count = 0
+  let pendingSpace = false
+  /** 末尾が同じ種類（地の文・傍点）ならつなげる */
+  const append = (type: 'text' | 'bouten', s: string) => {
+    const last = out[out.length - 1]
+    if (last && last.type === type) last.text += s
+    else out.push({ type, text: s })
+  }
+  /** 次に見える文字を足す前の空白（地の文として足す）。上限に達して足せなければ false */
+  const beforeVisible = (): boolean => {
+    if (pendingSpace) {
+      if (count >= max) return false
+      append('text', ' ')
+      count += 1
+      pendingSpace = false
+    }
+    return count < max
+  }
+  const done = () => {
+    append('text', '…')
+    return out
+  }
+  let start = 0
+  while (start <= text.length) {
+    let end = text.indexOf('\n', start)
+    if (end < 0) end = text.length
+    for (const seg of parseRuby(text.slice(start, end))) {
+      if (seg.type === 'ruby') {
+        if (!beforeVisible()) return done()
+        out.push(seg)
+        count += Array.from(seg.base).length
+        continue
+      }
+      for (const ch of seg.text) {
+        if (SPACE.test(ch)) {
+          if (count > 0) pendingSpace = true
+          continue
+        }
+        if (!beforeVisible()) return done()
+        append(seg.type, ch)
+        count += 1
+      }
+    }
+    // 改行も空白として詰める
+    if (count > 0) pendingSpace = true
+    start = end + 1
+  }
+  return out
+}
+
 /** メモの抜粋。改行は残し（付箋らしく箇条書きが読めるように）、空行と行頭・行末の空白は詰める */
 export function memoExcerpt(text: string, maxLines = 4, maxChars = 140): string {
   const lines = text
@@ -299,8 +362,12 @@ export function versionCountOf(data: AppData, piece: Piece): number {
 
 /** 採用中の稿と稿の数から一覧の要約を作る（文字数は稿ごとのキャッシュを使う） */
 export function summarize(version: Version | null, versionCount: number): PieceSummary {
-  if (!version) return { versionCount, active: null, excerpt: '' }
-  return { versionCount, active: { name: version.name, chars: bodyMetrics(version).chars }, excerpt: excerptOf(version.body) }
+  if (!version) return { versionCount, active: null, excerpt: [] }
+  return {
+    versionCount,
+    active: { name: version.name, chars: bodyMetrics(version).chars },
+    excerpt: excerptSegments(version.body),
+  }
 }
 
 export function pieceSummary(data: AppData, piece: Piece): PieceSummary {
@@ -393,6 +460,11 @@ export interface PieceRowData {
   /** 編集モードで削除できるか（できない時の理由は deleteReason） */
   canDelete: boolean
   deleteReason?: string
+  /**
+   * 進捗: この話の終わりがタイトル全体（採用原稿）の何 % の位置か（0〜100 の整数。全体が0字なら null）。
+   * 表示する値だけを持つので、ほかの話の文字数が少し変わっても表示が変わらない行は描き直さない
+   */
+  progress: number | null
 }
 
 /**
@@ -433,11 +505,35 @@ export interface PieceRowOptions {
   steps?: Record<ID, { up: boolean; down: boolean }> | null
   /** 編集モードの時だけ渡す（なければ削除できない扱い） */
   deletable?: Record<ID, Permission> | null
+  /**
+   * 各話の進捗（titleProgress）。編集モードの切り替えなどで数え直さないよう、呼ぶ側で覚えておいて渡す。
+   * 省くとここで数える
+   */
+  progress?: Map<ID, PieceProgress> | null
+}
+
+/** 進捗の位置（0〜1）を一覧に出す % の整数にする（formatProgress と同じ丸め。全体が0字なら null） */
+export function progressPercent(ratio: number | null | undefined): number | null {
+  if (ratio === null || ratio === undefined) return null
+  return Math.round(ratio * 100)
+}
+
+/** 「34%」（全体が0字なら「—」）。formatProgress と同じ表記 */
+export function progressLabel(percent: number | null): string {
+  return formatProgress(percent === null ? null : percent / 100)
+}
+
+/** 進捗の説明（読み上げ・マウスを乗せた時の説明） */
+export function progressDescription(percent: number | null, hasActive: boolean): string {
+  if (percent === null) return 'タイトル全体の採用原稿がまだ0字のため、位置は出せません'
+  const base = `この話の終わりは、タイトル全体（採用原稿）の ${percent}% の位置です`
+  return hasActive ? base : `${base}（採用原稿がないので0字として数えています）`
 }
 
 /** タイトルの全行（読む順の pieceId → 行の値） */
 export function pieceRows(data: AppData, titleId: ID, opts: PieceRowOptions = {}): Record<ID, PieceRowData> {
   const numbers = episodeNumbers(data, titleId)
+  const progress = opts.progress ?? titleProgress(data, titleId)
   const out: Record<ID, PieceRowData> = {}
   for (const f of flatten(data, titleId)) {
     const piece = data.pieces[f.pieceId]
@@ -453,6 +549,7 @@ export function pieceRows(data: AppData, titleId: ID, opts: PieceRowOptions = {}
       canDown: step?.down ?? false,
       canDelete: del?.ok ?? false,
       deleteReason: del && !del.ok ? del.reason : undefined,
+      progress: progressPercent(progress.get(piece.id)?.end),
     }
   }
   return out

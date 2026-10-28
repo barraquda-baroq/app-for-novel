@@ -202,6 +202,7 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
                   onToggle={toggle}
                   current={current}
                   manuscript={manuscript}
+                  snapshotTexts={data.snapshotTexts}
                   titleName={titleName}
                   today={today}
                 />

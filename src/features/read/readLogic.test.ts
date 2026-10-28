@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createTitle } from '../../domain/entityOps'
-import { buildReadThrough } from '../../domain/readthrough'
+import { buildReadThrough, readThroughText } from '../../domain/readthrough'
+import { strippedBody } from '../../domain/ruby'
 import {
   addChapter,
   addEpisode,
@@ -11,6 +12,7 @@ import {
   updateVersion,
 } from '../../domain/storyOps'
 import { emptyData, type AppData } from '../../domain/types'
+import { lineShape, lineShapeOf } from './lineEstimate'
 import { clampFontSize, readStats, resolveChapterScope, splitTcy, tocGroups } from './readLogic'
 
 function setup(): { data: AppData; titleId: string; pieces: string[] } {
@@ -77,6 +79,32 @@ describe('目次と集計', () => {
     expect(groups).toHaveLength(1)
     expect(groups[0].name).toBeNull()
     expect(groups[0].items).toHaveLength(3)
+  })
+})
+
+describe('ルビ・傍点', () => {
+  it('文字数は記号とルビの読みを除き、テキストの書き出しは記法のまま', () => {
+    let { data, titleId, pieces } = setup()
+    data = updateVersion(data, data.pieces[pieces[0]].versionIds[0], { body: '｜魔法使い《ウィザード》と《《夜》》' })
+    // 第1話: 魔法使い・と・夜 = 6字、第2話「二話です」4字、第3話「三話」2字
+    expect(readStats(data, buildReadThrough(data, titleId)).chars).toBe(12)
+    const text = readThroughText(data, titleId)
+    expect(text).toContain('第1話\n\n｜魔法使い《ウィザード》と《《夜》》\n')
+  })
+
+  it('画面の外の話の大きさの見積もりは、表示される文字（記号と読みを除く）で数える', () => {
+    expect(lineShapeOf('｜魔法使い《ウィザード》と《《夜》》\n\n東京《とうきょう》')).toEqual({ chars: 8, paras: 2, blank: 1 })
+    expect(lineShapeOf('記法なし\n二行目')).toEqual({ chars: 7, paras: 2, blank: 0 })
+    // 本文の控え・稿ごとに覚えておく値も同じ
+    expect(lineShape({ body: '漢字《かんじ》' })).toEqual({ chars: 2, paras: 1, blank: 0 })
+  })
+
+  it('稿ごとの見積もりは、遠くの話に置く「記号と読みを除いた本文」と同じものを数える（除くのは1回だけ）', () => {
+    const record = { body: '漢字｜《かな》\n東京《とうきょう》' }
+    // 漢字《かな》（6字）・東京（2字）。2回除くと 漢字（2字）になってしまう
+    expect(lineShape(record)).toEqual({ chars: 8, paras: 2, blank: 0 })
+    expect(strippedBody(record)).toBe('漢字《かな》\n東京')
+    expect(lineShapeOf(record.body)).toEqual(lineShape(record))
   })
 })
 

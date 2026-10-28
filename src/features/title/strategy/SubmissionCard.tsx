@@ -3,15 +3,26 @@
 import { memo, useId, useMemo, useRef, useState } from 'react'
 import {
   SUBMISSION_STATUSES,
+  snapshotCounts,
   snapshotPieceBody,
   snapshotText,
   submissionsOf,
   submissionStatusLabel,
+  type SnapshotCounts,
   type SubmissionPatch,
 } from '../../../domain/entityOps'
+import { strippedBody } from '../../../domain/ruby'
 import { formatCount } from '../../../domain/text'
 import { trashNotice } from '../../../domain/trash'
-import type { ID, LimitUnit, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
+import type {
+  AppData,
+  ID,
+  LimitUnit,
+  SnapshotPiece,
+  Submission,
+  SubmissionSnapshot,
+  SubmissionStatus,
+} from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData } from '../../../store/appStore'
 import { attempt, notify, notifyError } from '../../../store/uiStore'
@@ -21,6 +32,8 @@ import { DraftInput } from '../../../ui/DraftField'
 import { BookIcon, CameraIcon, ChevronRightIcon, DownloadIcon, LinkIcon, TrashIcon } from '../../../ui/icons'
 import { useKeepInPlace } from '../../../ui/keepInPlace'
 import { Modal } from '../../../ui/Modal'
+import { NearViewportContext, useNearViewportWatcher } from '../../../ui/nearViewport'
+import { LazyRubyText } from '../../../ui/RubyText'
 import { lineShape, lineShapeOf, lineShapeStyle, useCharsPerLine } from '../../read/lineEstimate'
 import { GrowTextarea } from '../settings/GrowTextarea'
 import { ArrowDownIcon, ArrowUpIcon } from './strategyIcons'
@@ -43,7 +56,6 @@ import {
   resultInfo,
   SNAPSHOT_CHANGE_LABEL,
   snapshotChangeSummary,
-  snapshotPages,
   snapshotView,
   statusPhase,
   statusTone,
@@ -100,6 +112,8 @@ export interface SubmissionCardProps {
   current: CurrentAmount
   /** 現在の採用原稿の状態（応募時の原稿との比較用。原稿が変わった時だけ作り直される） */
   manuscript: CurrentManuscript
+  /** 応募時の原稿の本文の控え（記録の文字数・枚数を今の数え方で数え直すのに使う） */
+  snapshotTexts: AppData['snapshotTexts']
   titleName: string
   today: Date
 }
@@ -120,17 +134,26 @@ export const SubmissionCard = memo(function SubmissionCard({
   onToggle,
   current,
   manuscript,
+  snapshotTexts,
   titleName,
   today,
 }: SubmissionCardProps) {
   const tone = statusTone(s.status)
   const phase = statusPhase(s.status)
   const unit = limitUnitOf(s)
+  const snap = s.snapshot
+  // 応募時の記録の文字数・枚数は、本文の控えから今の数え方で数え直す（記録した数はルビの記号と読みを含むことがあるため）。
+  // 使う時（結果待ちの規定判定・開いた時）だけ数える。数え直しは控えのレコードごとに1回だけ
+  const needRecorded = snap !== null && (phase === 'waiting' || expanded)
+  const recorded = useMemo(
+    () => (snap && needRecorded ? snapshotCounts({ snapshotTexts }, snap) : null),
+    [snap, needRecorded, snapshotTexts],
+  )
   // 応募前: 締切と現在の原稿の規定判定／結果待ち: 応募日・結果発表と応募時の原稿の規定判定／終了: 注意は出さない
   const deadline = phase === 'before' ? deadlineInfo(s, today) : null
   const result = phase === 'waiting' ? resultInfo(s.resultOn, today) : null
   const submittedOn = phase === 'waiting' ? formatYmd(s.submittedOn) : ''
-  const basis = phase === 'finished' ? null : limitBasis(s, current)
+  const basis = phase === 'finished' ? null : limitBasis(s, current, recorded)
   const check = basis ? limitCheck(basis.amount, s.minChars, s.maxChars, unit, limitTense(s.status)) : null
   const followUps = phase === 'finished' && !expanded ? followUpLines(s) : null
   const followUpsEmpty = followUps !== null && followUps.every((f) => !f.text)
@@ -264,6 +287,7 @@ export const SubmissionCard = memo(function SubmissionCard({
           submission={s}
           current={current}
           manuscript={manuscript}
+          recorded={recorded}
           titleName={titleName}
           onClose={() => onToggle(s.id)}
           order={
@@ -352,6 +376,7 @@ function SubmissionEditor({
   submission: s,
   current,
   manuscript,
+  recorded: recordedCounts,
   titleName,
   onClose,
   order,
@@ -360,6 +385,8 @@ function SubmissionEditor({
   submission: Submission
   current: CurrentAmount
   manuscript: CurrentManuscript
+  /** 応募時の記録を今の数え方で数え直した文字数・枚数（記録がなければ null） */
+  recorded: SnapshotCounts | null
   titleName: string
   onClose: () => void
   /** 応募順の並べ替え（締切順で表示している間・1件だけの時は null） */
@@ -389,7 +416,7 @@ function SubmissionEditor({
   }
 
   // 応募後は応募時の原稿と比べる（記録がなければ、参考として現在の採用原稿と比べる）
-  const recorded = limitBasis(s, current)
+  const recorded = limitBasis(s, current, recordedCounts)
   const basis = recorded ?? { source: 'current' as const, amount: unit === 'pages' ? current.pages : current.chars }
   const fallback = phase !== 'before' && recorded === null
   // 応募した後は「応募時に規定に足りていたか」として言う（これから直す「あと…字必要」は応募前だけ）
@@ -643,7 +670,7 @@ function SubmissionEditor({
         )}
       </div>
 
-      <SnapshotBox submission={s} manuscript={manuscript} titleName={titleName} />
+      <SnapshotBox submission={s} manuscript={manuscript} recorded={recordedCounts} titleName={titleName} />
 
       <div className="sg-editor-actions">
         <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()} data-testid="submission-delete">
@@ -687,21 +714,24 @@ const READER_FONT_SIZE = 16
 function SnapshotBox({
   submission: s,
   manuscript,
+  recorded,
   titleName,
 }: {
   submission: Submission
   manuscript: CurrentManuscript
+  /** 記録を今の数え方で数え直した文字数・枚数（カードで1回だけ数える） */
+  recorded: SnapshotCounts | null
   titleName: string
 }) {
   const snap = s.snapshot
   // 今の原稿の状態はタブで1回だけ作ったものを使う（応募先ごとに原稿全体をなめ直さない）
-  const view = useMemo(() => (snap ? snapshotView(snap, manuscript) : null), [snap, manuscript])
+  const view = useMemo(() => (snap && recorded ? snapshotView(snap, manuscript, recorded) : null), [snap, manuscript, recorded])
   const [reading, setReading] = useState(false)
   // 内訳は開いている時だけ描く（数百話の内訳を、応募先の数だけ常に描かない）
   // 開閉を操作するまでは件数で決める（少なければ開いておく）
   const [rowsToggled, setRowsToggled] = useState<boolean | null>(null)
   const rowsOpen = rowsToggled ?? (view ? view.rows.length <= OPEN_ROWS_LIMIT : false)
-  const pages = snap ? snapshotPages(snap) : null
+  const pages = recorded ? recorded.pages : null
   const changes = view ? snapshotChangeSummary(view.diff) : ''
   const recordedRows = view ? view.rows.filter((r) => r.change !== 'added').length : 0
 
@@ -711,7 +741,7 @@ function SnapshotBox({
     if (latest.snapshot) {
       const ok = await confirmDialog({
         title: '応募時の原稿を記録し直しますか？',
-        message: `前回の記録（${formatDateTime(latest.snapshot.at)}・${formatCount(latest.snapshot.charCount)}字）は、現在の採用原稿で上書きされます。`,
+        message: `前回の記録（${formatDateTime(latest.snapshot.at)}・${formatCount(snapshotCounts(getData(), latest.snapshot).charCount)}字）は、現在の採用原稿で上書きされます。`,
         confirmLabel: '記録し直す',
       })
       if (!ok) return
@@ -738,10 +768,10 @@ function SnapshotBox({
           {snap ? '記録し直す' : '応募時の原稿を記録'}
         </button>
       </div>
-      {snap && view ? (
+      {snap && view && recorded ? (
         <>
           <p className="sg-snapshot-info" data-testid="snapshot-info">
-            <span>{formatDateTime(snap.at)} 記録</span>・<span>{formatCount(snap.charCount)}字</span>
+            <span>{formatDateTime(snap.at)} 記録</span>・<span>{formatCount(recorded.charCount)}字</span>
             {pages !== null ? (
               <>
                 ・<span>約{formatCount(pages)}枚</span>
@@ -820,9 +850,10 @@ function SnapshotBox({
           応募した時点で、どの稿を採用していたか・本文・文字数を記録しておけます。後から改稿しても、応募した原稿を読み返したり書き出したりでき、変えた話がひと目で分かります。
         </p>
       )}
-      {reading && snap ? (
+      {reading && snap && recorded ? (
         <SnapshotReader
           snapshot={snap}
+          charCount={recorded.charCount}
           contest={contestDisplayName(s.contestName)}
           onExport={exportText}
           onClose={() => setReading(false)}
@@ -835,11 +866,14 @@ function SnapshotBox({
 /** 応募時に記録した原稿（本文の控え）を読む */
 function SnapshotReader({
   snapshot,
+  charCount,
   contest,
   onExport,
   onClose,
 }: {
   snapshot: SubmissionSnapshot
+  /** 記録の総文字数（今の数え方で数え直したもの） */
+  charCount: number
   contest: string
   onExport: () => void
   onClose: () => void
@@ -848,6 +882,8 @@ function SnapshotReader({
   // 長編でも開いた時に全文を組まないよう、画面の外の話は見積もった大きさで場所だけ取る（通し読みと同じ）
   const readerRef = useRef<HTMLDivElement>(null)
   useCharsPerLine(readerRef, 0, [], READER_FONT_SIZE)
+  // ルビ・傍点の要素は画面の近くに来た話だけに作る（ダイアログの本文の枠の中をスクロールする）
+  const { register: registerNear } = useNearViewportWatcher(() => readerRef.current?.closest('.modal-body') ?? null, [])
   return (
     <Modal
       title={`応募時の原稿（${contest}）`}
@@ -865,33 +901,43 @@ function SnapshotReader({
         </>
       }
     >
-      <div className="sg-reader" ref={readerRef} data-testid="snapshot-reader">
-        <p className="small muted sg-reader-info">
-          {formatDateTime(snapshot.at)} に記録・{formatCount(snapshot.charCount)}字
-        </p>
-        {order.map((id) => {
-          const p = snapshot.pieces?.[id]
-          if (!p) return null
-          const data = getData()
-          const body = snapshotPieceBody(data, p)
-          const record = p.textKey ? data.snapshotTexts[p.textKey] : undefined
-          const shape = record ? lineShape(record) : body ? lineShapeOf(body) : null
-          return (
-            <article key={id} className="sg-reader-piece" style={shape ? lineShapeStyle(shape) : undefined}>
-              <h3 className="sg-reader-heading">
-                <span>{p.label}</span>
-                {p.subtitle.trim() ? <span className="sg-reader-subtitle">{p.subtitle.trim()}</span> : null}
-                {p.versionName ? <span className="badge sg-reader-version">{p.versionName}</span> : null}
-              </h3>
-              {body === null ? (
-                <p className="muted sg-reader-none">採用原稿がありません。</p>
-              ) : (
-                <div className="sg-reader-body">{body}</div>
-              )}
-            </article>
-          )
-        })}
-      </div>
+      <NearViewportContext.Provider value={registerNear}>
+        <div className="sg-reader" ref={readerRef} data-testid="snapshot-reader">
+          <p className="small muted sg-reader-info">
+            {formatDateTime(snapshot.at)} に記録・{formatCount(charCount)}字
+          </p>
+          {order.map((id) => {
+            const p = snapshot.pieces?.[id]
+            return p ? <SnapshotReaderPiece key={id} piece={p} /> : null
+          })}
+        </div>
+      </NearViewportContext.Provider>
     </Modal>
+  )
+}
+
+/** 応募時の原稿の1話分。ルビ・傍点はこの話が画面の近くに来てから表示する */
+function SnapshotReaderPiece({ piece: p }: { piece: SnapshotPiece }) {
+  const ref = useRef<HTMLElement>(null)
+  const data = getData()
+  const body = snapshotPieceBody(data, p)
+  const record = p.textKey ? data.snapshotTexts[p.textKey] : undefined
+  const shape = record ? lineShape(record) : body ? lineShapeOf(body) : null
+  return (
+    <article ref={ref} className="sg-reader-piece" style={shape ? lineShapeStyle(shape) : undefined}>
+      <h3 className="sg-reader-heading">
+        <span>{p.label}</span>
+        {p.subtitle.trim() ? <span className="sg-reader-subtitle">{p.subtitle.trim()}</span> : null}
+        {p.versionName ? <span className="badge sg-reader-version">{p.versionName}</span> : null}
+      </h3>
+      {body === null ? (
+        <p className="muted sg-reader-none">採用原稿がありません。</p>
+      ) : (
+        <div className="sg-reader-body">
+          {/* 記号と読みを除いた本文は本文の控えごとに覚えておく（開き直しても全文を分け直さない） */}
+          <LazyRubyText text={body} plain={record ? strippedBody(record) : undefined} watch={ref} />
+        </div>
+      )}
+    </article>
   )
 }

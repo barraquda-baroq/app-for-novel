@@ -1,6 +1,6 @@
 // 戦略タブの表示用の純粋な計算（締切・結果発表までの日数・規定の判定・応募時スナップショットとの比較など）。
-import { takeSnapshot, type SnapshotDiff } from '../../../domain/entityOps'
-import { formatCount, textStats } from '../../../domain/text'
+import { snapshotCounts, takeSnapshot, type SnapshotCounts, type SnapshotDiff } from '../../../domain/entityOps'
+import { formatCount } from '../../../domain/text'
 import type {
   AppData,
   ID,
@@ -287,14 +287,12 @@ export function parseLimit(input: string): number | null | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-/** 応募時の原稿の枚数（古い記録で枚数がなければ本文の控えから数える。控えもなければ null） */
-export function snapshotPages(snapshot: SubmissionSnapshot): number | null {
-  if (typeof snapshot.pages === 'number') return snapshot.pages
-  if (!snapshot.pieces) return null
-  let pages = 0
-  for (const p of Object.values(snapshot.pieces)) if (p.body) pages += textStats(p.body).manuscriptPages
-  // 枚数を持たない記録は古い形式（本文が記録の中にある）だけなので、本文の控えの表は見なくてよい
-  return pages
+// 応募時の原稿の文字数・枚数は、記録した数ではなく snapshotCounts（本文の控えを今の数え方で数え直したもの）を使う
+// （2.0 までの記録はルビの記号と読みも数えていたため。記録そのものは書き換えない）。
+
+/** 応募時の原稿の枚数（本文の控えから数える。古い記録で枚数も控えもなければ null） */
+export function snapshotPages(snapshot: SubmissionSnapshot, data: Pick<AppData, 'snapshotTexts'>): number | null {
+  return snapshotCounts(data, snapshot).pages
 }
 
 export interface LimitBasis {
@@ -304,17 +302,18 @@ export interface LimitBasis {
 }
 
 /**
- * 規定と比べる原稿。応募前は現在の採用原稿、応募後は応募時に記録した原稿。
+ * 規定と比べる原稿。応募前は現在の採用原稿、応募後は応募時に記録した原稿（recorded は記録を数え直した数。snapshotCounts）。
  * 応募後で記録がない（または古い記録に枚数がない）ときは null。
  */
 export function limitBasis(
   s: Pick<Submission, 'status' | 'snapshot' | 'limitUnit'>,
   current: { chars: number; pages: number },
+  recorded: SnapshotCounts | null,
 ): LimitBasis | null {
   const unit = limitUnitOf(s)
   if (statusPhase(s.status) === 'before') return { source: 'current', amount: unit === 'pages' ? current.pages : current.chars }
-  if (!s.snapshot) return null
-  const amount = unit === 'pages' ? snapshotPages(s.snapshot) : s.snapshot.charCount
+  if (!s.snapshot || !recorded) return null
+  const amount = unit === 'pages' ? recorded.pages : recorded.charCount
   return amount === null ? null : { source: 'snapshot', amount }
 }
 
@@ -382,14 +381,19 @@ export interface SnapshotView {
 /**
  * 記録した時点と今の採用原稿を比べる（本文の指紋で比べるので、稿の名前やメモの変更は数えない）。
  * domain の compareSnapshotWithCurrent と同じ判定で、今の状態（current）を作り直さずに使い回せる。
+ * 文字数の差は、記録を今の数え方で数え直した数（recorded。snapshotCounts）と比べる。
  */
-export function compareSnapshots(snapshot: SubmissionSnapshot, current: CurrentManuscript): SnapshotDiff {
+export function compareSnapshots(
+  snapshot: SubmissionSnapshot,
+  current: CurrentManuscript,
+  recorded: SnapshotCounts,
+): SnapshotDiff {
   const diff: SnapshotDiff = {
     switched: [],
     edited: [],
     added: [],
     removed: [],
-    charDelta: current.charCount - snapshot.charCount,
+    charDelta: current.charCount - recorded.charCount,
   }
   for (const id of Object.keys(snapshot.activeVersions)) {
     if (!(id in current.activeVersions)) {
@@ -407,9 +411,12 @@ export function compareSnapshots(snapshot: SubmissionSnapshot, current: CurrentM
   return diff
 }
 
-/** 応募時の記録を、今の採用原稿（currentManuscript）と比べながら表示用に並べる */
-export function snapshotView(snapshot: SubmissionSnapshot, current: CurrentManuscript): SnapshotView {
-  const diff = compareSnapshots(snapshot, current)
+/**
+ * 応募時の記録を、今の採用原稿（currentManuscript）と比べながら表示用に並べる。
+ * 話ごとの文字数は、記録を今の数え方で数え直した数（recorded。snapshotCounts）
+ */
+export function snapshotView(snapshot: SubmissionSnapshot, current: CurrentManuscript, recorded: SnapshotCounts): SnapshotView {
+  const diff = compareSnapshots(snapshot, current, recorded)
   const change = new Map<ID, SnapshotChange>()
   for (const k of ['switched', 'edited', 'added', 'removed'] as const) for (const id of diff[k]) change.set(id, k)
 
@@ -429,7 +436,7 @@ export function snapshotView(snapshot: SubmissionSnapshot, current: CurrentManus
         label: p.label,
         subtitle: p.subtitle.trim(),
         versionName: p.versionName,
-        chars: p.chars,
+        chars: recorded.chars[id] ?? p.chars,
         // 本文の控えは別の表にあるので、採用原稿の有無は記録した稿で見る
         noActive: p.versionId === null,
         change: change.get(id) ?? null,

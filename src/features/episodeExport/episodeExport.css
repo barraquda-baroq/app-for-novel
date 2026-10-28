@@ -1,0 +1,116 @@
+/* ===== 各話テキスト書き出し（ex-） ===== */
+
+.ex-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ex-lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+/* 指で押しやすいよう、チェックボックスは行全体を押せる大きさにする */
+.check.ex-option {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.ex-option input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+/* 通し読みで章を選んでいても、書き出すのはタイトル全体 */
+.ex-scope-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ex-method {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.ex-method strong {
+  color: var(--text);
+}
+
+.ex-zip-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ex-skipped {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ex-files-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: -6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.ex-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.ex-files {
+  margin: 0;
+  padding: 0;
+  max-height: min(34vh, 280px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  list-style: none;
+}
+
+.ex-files li {
+  padding: 5px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ex-files li + li {
+  border-top: 1px solid var(--border);
+}
+
+.empty.ex-empty {
+  margin: 0;
+  padding: 16px 12px;
+}

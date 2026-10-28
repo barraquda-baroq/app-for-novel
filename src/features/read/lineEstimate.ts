@@ -2,7 +2,9 @@
 // 各話に content-visibility: auto を付け、まだ描いていない話は「段落の文字数 ÷ 1行の字数」で見積もった大きさで場所だけ取る
 // （300話・数百万字でも開く・縦書きや文字の大きさを切り替える時に全文を組み直さない）。
 // 1行の字数（--cpl）は本文の枠の幅（縦書きでは高さ）と文字の大きさから求め、見積もりの計算そのものは CSS で行う。
+// ルビ・傍点の記法は、表示される文字（記号とルビの読みを除いた本文）で数える（ルビは行間に収まるので行は増えない）。
 import { useLayoutEffect, type CSSProperties, type RefObject } from 'react'
+import { strippedBody, stripRuby } from '../../domain/ruby'
 
 export interface LineShape {
   /** 空でない段落の文字数の合計（空白を含む。サロゲートペアは1字） */
@@ -15,7 +17,13 @@ export interface LineShape {
 
 const EMPTY: LineShape = { chars: 0, paras: 0, blank: 0 }
 
-export function lineShapeOf(text: string): LineShape {
+/** 本文の段落の形。ルビ・傍点の記法は、表示される文字だけで数える */
+export function lineShapeOf(source: string): LineShape {
+  return plainLineShape(stripRuby(source))
+}
+
+/** 記号とルビの読みを除いた後の本文（stripRuby の結果）の段落の形。除くのは1回だけにする（2回除くと結果が変わることがある） */
+function plainLineShape(text: string): LineShape {
   if (text.length === 0) return EMPTY
   let chars = 0
   let paras = 0
@@ -52,11 +60,14 @@ export function lineShapeOf(text: string): LineShape {
 
 const cache = new WeakMap<object, LineShape>()
 
-/** 本文を持つ不変のレコード（推敲バージョン・本文の控え）の段落の形。レコードごとに1回だけ数える */
+/**
+ * 本文を持つ不変のレコード（推敲バージョン・本文の控え）の段落の形。レコードごとに1回だけ数える。
+ * 記号と読みを除いた本文は、通し読みの遠くの話の表示と分け合う（strippedBody）
+ */
 export function lineShape(record: { body: string }): LineShape {
   let s = cache.get(record)
   if (!s) {
-    s = lineShapeOf(record.body)
+    s = plainLineShape(strippedBody(record))
     cache.set(record, s)
   }
   return s
