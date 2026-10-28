@@ -7,11 +7,10 @@ import { paths } from '../../routes'
 import { actions } from '../../store/actions'
 import { attempt, notify } from '../../store/uiStore'
 import { BookIcon, ChevronRightIcon, PlusIcon } from '../../ui/icons'
-import { scrollToTop } from '../home/scroll'
 import { IdeaCard } from './IdeaCard'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { InboxIcon } from './ideaIcons'
-import { sectionDisplayName, sectionKey } from './ideaLogic'
+import { ideaModalDraftKey, sectionDisplayName, sectionKey } from './ideaLogic'
 import './ideas.css'
 
 export interface IdeaSectionViewProps {
@@ -88,10 +87,7 @@ export function IdeaSectionView({
           <h3 className="idea-section-title">{titleContent}</h3>
         )}
         {showOpenLink && section.titleId ? (
-          <Link
-            to={paths.title(section.titleId)}
-            onClick={scrollToTop}
-            className="btn btn-sm btn-ghost idea-section-open" aria-label={`タイトル「${name}」を開く`}>
+          <Link to={paths.title(section.titleId)} className="btn btn-sm btn-ghost idea-section-open" aria-label={`タイトル「${name}」を開く`}>
             開く
           </Link>
         ) : null}
@@ -126,7 +122,15 @@ export function IdeaSectionView({
         )}
       </div>
 
-      {adding ? <IdeaEditorModal mode="add" sectionName={name} onSave={add} onClose={() => setAdding(false)} /> : null}
+      {adding ? (
+        <IdeaEditorModal
+          mode="add"
+          sectionName={name}
+          draftKey={ideaModalDraftKey({ mode: 'add', section: key })}
+          onSave={add}
+          onClose={() => setAdding(false)}
+        />
+      ) : null}
     </section>
   )
 }

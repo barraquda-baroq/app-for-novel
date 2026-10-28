@@ -100,3 +100,16 @@ export const DELETE_ALL_WORD = '削除'
 export function confirmsDeleteAll(input: string | null): boolean {
   return input !== null && input.trim() === DELETE_ALL_WORD
 }
+
+// ---------- この端末の状態 ----------
+
+/** 最後にバックアップを書き出した日時（この端末） */
+export const LAST_BACKUP_KEY = 'novel-studio:last-backup'
+
+/** 表示の設定（この端末だけ）。すべて削除・復元しても残す */
+export const DISPLAY_PREF_KEYS: readonly string[] = ['novel-studio:prefs', 'novel-studio:piece-scroll-sync']
+
+/** このアプリが保存しているキーのうち、keep 以外（書きかけ・折りたたみ・復旧用の控えなど）。ほかのサイトのキーには触れない */
+export function localKeysToClear(keys: readonly string[], keep: readonly string[] = DISPLAY_PREF_KEYS): string[] {
+  return keys.filter((k) => k.startsWith('novel-studio:') && !keep.includes(k))
+}

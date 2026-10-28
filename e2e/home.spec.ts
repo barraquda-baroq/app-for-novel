@@ -5,18 +5,17 @@ import { openApp, seed, seedTitleWithEpisodes } from './helpers'
 
 const UNASSIGNED = 'どのタイトルにも属さない'
 
-/** 2列表示にならない幅（スマホ・タブレット）か */
-function isNarrow(page: Page): boolean {
-  return (page.viewportSize()?.width ?? 0) < 900
+/** 上下に積む幅（スマホ）か。721px からは左右2列 */
+function isStacked(page: Page): boolean {
+  return (page.viewportSize()?.width ?? 0) <= 720
 }
 
+/** タイトル群もアイデア領域も常に表示されている（どちらかを隠す切り替えはない） */
 async function showTitles(page: Page): Promise<void> {
-  if (isNarrow(page)) await page.getByTestId('home-tab-titles').click()
   await expect(page.getByTestId('title-group')).toBeVisible()
 }
 
 async function showIdeas(page: Page): Promise<void> {
-  if (isNarrow(page)) await page.getByTestId('home-tab-ideas').click()
   await expect(page.getByTestId('idea-area')).toBeVisible()
 }
 
@@ -54,6 +53,29 @@ async function noHorizontalScroll(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0)
 }
 
+/** この端末だけに保存している状態（書きかけ・折りたたみ・復旧用の控えなど）と、ほかのサイトのキーを用意する */
+async function seedLocalState(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    localStorage.setItem('novel-studio:idea-draft:home', 'すばやく追加の書きかけ')
+    localStorage.setItem('novel-studio:idea-modal-draft:new:none', JSON.stringify({ heading: '', body: '追加の書きかけ' }))
+    localStorage.setItem('novel-studio:idea-collapsed', '["none"]')
+    localStorage.setItem('novel-studio:collapsed-chapters:t0', '["c1"]')
+    localStorage.setItem('novel-studio:recovery:old-tab', JSON.stringify({ at: Date.now(), puts: {}, dels: {} }))
+    localStorage.setItem('novel-studio:last-backup', String(Date.now()))
+    if (!localStorage.getItem('novel-studio:prefs')) localStorage.setItem('novel-studio:prefs', '{}')
+    localStorage.setItem('other-app:keep', '1')
+  })
+}
+
+/** このアプリが localStorage に保存しているキー（並べ替え済み） */
+function appLocalKeys(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('novel-studio:'))
+      .sort(),
+  )
+}
+
 async function ideasInData(page: Page): Promise<{ heading: string; body: string; titleId: string | null; order: number }[]> {
   return page.evaluate(() =>
     Object.values(window.__ns.getData().ideas)
@@ -66,22 +88,19 @@ test.describe('ホーム', () => {
   test('起動するとタイトル群とアイデア領域が表示され、タイトルがなくても「どのタイトルにも属さない」仕切りがある', async ({ page }) => {
     await openApp(page)
     await expect(page).toHaveTitle('Novel Studio')
-    if (isNarrow(page)) {
-      await expect(page.getByTestId('home-switch')).toBeVisible()
-      await expect(page.getByTestId('home-tab-titles')).toHaveAttribute('aria-selected', 'true')
-      await expect(page.getByTestId('idea-area')).toBeHidden()
-    } else {
-      await expect(page.getByTestId('home-switch')).toHaveCount(0)
-      await expect(page.getByTestId('idea-area')).toBeVisible()
-    }
+    // どの幅でも両方が表示される（スマホでもどちらかを隠さない）
     await expect(page.getByTestId('title-group')).toBeVisible()
+    await expect(page.getByTestId('idea-area')).toBeVisible()
+    if (isStacked(page)) await expect(page.getByTestId('home-jump')).toBeVisible()
+    else await expect(page.getByTestId('home-jump')).toHaveCount(0)
     await expect(page.getByTestId('titles-empty')).toHaveText(/まだタイトルがありません。「＋新しいタイトル」から始めましょう。/)
 
-    await showIdeas(page)
     await expect(page.getByTestId('idea-area').getByTestId('idea-section')).toHaveCount(1)
     await expect.poll(() => sectionNames(page)).toEqual([UNASSIGNED])
     await expect(section(page, 'none').getByTestId('idea-section-empty')).toBeVisible()
     await expect(page.getByTestId('quick-capture')).toBeVisible()
+    // 仕切りが1つだけの時は仕切りの一覧を出さない
+    await expect(page.getByTestId('idea-index')).toHaveCount(0)
     await noHorizontalScroll(page)
   })
 
@@ -183,12 +202,13 @@ test.describe('ホーム', () => {
     await expect(dialog(page)).toHaveCount(0)
     await expect(cardsIn(none).nth(0)).toContainText('雨の日にだけ開く駅')
 
-    // 移動（今いる仕切りは選べない）
+    // 移動（今いる仕切りには印が付き、既定はほかの仕切りの末尾）
     await cardsIn(none).filter({ hasText: '記憶を売る古書店' }).getByTestId('idea-move').click()
     const options = page.getByTestId('idea-move-option')
     await expect(options).toHaveCount(2)
-    await expect(page.locator('[data-testid="idea-move-option"][data-section="none"]')).toBeDisabled()
+    await expect(page.locator('[data-testid="idea-move-option"][data-section="none"]')).toContainText('現在の場所')
     await page.locator(`[data-testid="idea-move-option"][data-section="${titleId}"]`).click()
+    await page.getByTestId('idea-move-submit').click()
     await expect(dialog(page)).toHaveCount(0)
     await expect(cardsIn(target)).toHaveCount(1)
     await expect(cardsIn(target).nth(0)).toContainText('記憶を売る古書店')
@@ -283,6 +303,24 @@ test.describe('ホーム', () => {
     await expect(cardsIn(section(page, 'none'))).toHaveCount(0)
   })
 
+  test('「この案でタイトルを作る」の候補は、長い文でも「…」を付けずに文の区切りで切り、選択した状態で出す', async ({ page }) => {
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      actions.addIdea(null, '', '雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている。そして十年が過ぎた。')
+    })
+    await cardsIn(section(page, 'none')).nth(0).getByTestId('idea-make-title').click()
+    const input = dialog(page).getByRole('textbox')
+    const suggestion = '雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている'
+    await expect(input).toHaveValue(suggestion)
+    await expect(input).not.toHaveValue(/…/)
+    // そのまま打てば置き換えられるように、候補の文字は選択されている
+    await expect
+      .poll(() => input.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd]))
+      .toEqual([0, suggestion.length])
+    await page.keyboard.type('雨の駅')
+    await expect(input).toHaveValue('雨の駅')
+  })
+
   test('タイトルを削除すると、そのアイデアは「どのタイトルにも属さない」へ移る', async ({ page }) => {
     await openApp(page)
     const { titleId } = await seedTitleWithEpisodes(page, '消える物語', ['一話', '二話'])
@@ -353,53 +391,340 @@ test.describe('ホーム', () => {
     await expect(card).toContainText('アイデア 1')
     await expect(card).toContainText('更新')
 
+    // 特殊ブロックは「話」に数えない
+    await seed(
+      page,
+      ({ actions, getData }, a: { titleId: string; second: string }) => {
+        const special = Object.values(getData().pieces).find((p) => p.titleId === a.titleId && p.kind === 'special')!
+        actions.setActiveVersion(special.id, null)
+      },
+      { titleId, second: pieceIds[1] },
+    )
+    await expect(card.getByTestId('title-card-missing')).toHaveText('採用原稿なし 1話＋特殊1')
+    await seed(
+      page,
+      ({ actions, getData }, second: string) => actions.setActiveVersion(second, getData().pieces[second].versionIds[0]),
+      pieceIds[1],
+    )
+    await expect(card.getByTestId('title-card-missing')).toHaveText('採用原稿なし 特殊1')
+
     await card.getByTestId('title-card-link').click()
     await expect(page).toHaveURL(new RegExp(`#/t/${titleId}$`))
     await expect(page.getByTestId('title-name')).toHaveValue('星の海')
   })
 
-  test('スマホ幅では上部の切り替えでタイトルとアイデアを行き来でき、最後の選択を覚えている', async ({ page }) => {
+  test('スマホ幅でも両方が上下に表示され（タイトルが先）、上部の切り替えで各領域の先頭へ移れる', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await openApp(page)
     await seed(page, ({ actions }) => {
-      const id = actions.createTitle('星の海')
-      actions.addIdea(id, '', '星の海のアイデア')
+      const ids = Array.from({ length: 8 }, (_, i) => actions.createTitle(`タイトル${i + 1}`))
+      actions.updateTitle(ids[0], { synopsis: 'あらすじ' })
+      actions.addIdea(ids[0], '', '星の海のアイデア')
       actions.addIdea(null, '', 'どこにも属さないアイデア')
     })
-    const titlesTab = page.getByTestId('home-tab-titles')
-    const ideasTab = page.getByTestId('home-tab-ideas')
-    await expect(titlesTab).toHaveAttribute('aria-selected', 'true')
-    await expect(titlesTab).toContainText('1')
-    await expect(ideasTab).toContainText('2')
-    await expect(page.getByTestId('title-group')).toBeVisible()
-    await expect(page.getByTestId('idea-area')).toBeHidden()
-
-    await ideasTab.click()
-    await expect(ideasTab).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByTestId('idea-area')).toBeVisible()
-    await expect(page.getByTestId('title-group')).toBeHidden()
-    await noHorizontalScroll(page)
-
-    await page.reload()
-    await expect(page.getByTestId('home-tab-ideas')).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByTestId('idea-area')).toBeVisible()
-
-    // キーボードでも切り替えられる
-    await page.getByTestId('home-tab-ideas').focus()
-    await page.keyboard.press('ArrowLeft')
-    await expect(page.getByTestId('home-tab-titles')).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByTestId('home-tab-titles')).toBeFocused()
-    await expect(page.getByTestId('title-group')).toBeVisible()
-    await noHorizontalScroll(page)
-
-    // 広い画面では左右に並ぶ
-    await page.setViewportSize({ width: 1280, height: 800 })
-    await expect(page.getByTestId('home-switch')).toHaveCount(0)
+    const jumpTitles = page.getByTestId('home-jump-titles')
+    const jumpIdeas = page.getByTestId('home-jump-ideas')
+    await expect(jumpTitles).toContainText('8')
+    await expect(jumpIdeas).toContainText('2')
+    await expect(jumpTitles).toHaveAttribute('aria-current', 'true')
+    // 両方とも表示されていて、タイトルが上、アイデアがその下
     await expect(page.getByTestId('title-group')).toBeVisible()
     await expect(page.getByTestId('idea-area')).toBeVisible()
     const titlesBox = await page.getByTestId('title-group').boundingBox()
     const ideasBox = await page.getByTestId('idea-area').boundingBox()
-    expect(titlesBox && ideasBox && titlesBox.x < ideasBox.x).toBeTruthy()
+    expect(titlesBox && ideasBox && titlesBox.y + titlesBox.height <= ideasBox.y).toBeTruthy()
+    // 小さめのカード: あらすじは省く
+    await expect(page.getByTestId('title-card').first().locator('.home-title-synopsis')).toBeHidden()
+
+    // 切り替えはスクロールして移るだけ（隠さない）
+    const ideasHeading = page.getByRole('heading', { name: 'アイデア', level: 2 })
+    await jumpIdeas.click()
+    await expect(ideasHeading).toBeInViewport()
+    await expect(ideasHeading).toBeFocused()
+    await expect(jumpIdeas).toHaveAttribute('aria-current', 'true')
+    await expect(page.getByTestId('title-group')).toBeVisible()
+    await noHorizontalScroll(page)
+
+    await jumpTitles.click()
+    await expect(page.getByRole('heading', { name: 'タイトル', level: 2 })).toBeInViewport()
+    await expect(jumpTitles).toHaveAttribute('aria-current', 'true')
+
+    // 721px からは左右2列（切り替えなし）
+    for (const width of [800, 1280]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(page.getByTestId('home-jump')).toHaveCount(0)
+      const t = await page.getByTestId('title-group').boundingBox()
+      const i = await page.getByTestId('idea-area').boundingBox()
+      expect(t && i && t.x + t.width <= i.x).toBeTruthy()
+      await expect(page.getByTestId('title-card').first().locator('.home-title-synopsis')).toBeVisible()
+      await noHorizontalScroll(page)
+    }
+  })
+
+  test('仕切りが多くても、仕切りの一覧から目的の仕切りへ移れ、すべて折りたたむ／開くができる', async ({ page }) => {
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      const ids = Array.from({ length: 15 }, (_, i) => actions.createTitle(`タイトル${i + 1}`))
+      for (let i = 0; i < 100; i++) actions.addIdea(i < 95 ? ids[i % 15] : null, `案${i + 1}`, `本文${i + 1}`)
+    })
+    const index = page.getByTestId('idea-index')
+    const chips = index.getByTestId('idea-index-chip')
+    await expect(chips).toHaveCount(16)
+    // 一番下にある「どのタイトルにも属さない」は一覧の先頭に置く
+    await expect(chips.first()).toHaveAttribute('data-section', 'none')
+    await expect(chips.first()).toContainText(UNASSIGNED)
+    await expect(chips.first()).toContainText('5')
+    await expect(chips.nth(1)).toContainText('タイトル1')
+    await expect(chips.nth(1)).toContainText('7')
+    await noHorizontalScroll(page)
+
+    const none = section(page, 'none')
+    await expect(none.getByTestId('idea-section-toggle')).not.toBeInViewport()
+    await chips.first().click()
+    await expect(none.getByTestId('idea-section-toggle')).toBeInViewport()
+    await expect(none.getByTestId('idea-section-toggle')).toBeFocused()
+
+    // すべて折りたたむ → 一覧から選ぶと、その仕切りは開いて表示される
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.getByTestId('idea-collapse-all').click()
+    const toggles = page.getByTestId('idea-area').getByTestId('idea-section-toggle')
+    await expect(toggles.and(page.locator('[aria-expanded="true"]'))).toHaveCount(0)
+    await expect(page.getByTestId('idea-collapse-all')).toBeDisabled()
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThan(5000)
+    const target = (await chips.nth(10).getAttribute('data-section'))!
+    await chips.nth(10).click()
+    await expect(section(page, target).getByTestId('idea-section-toggle')).toHaveAttribute('aria-expanded', 'true')
+    await expect(section(page, target).getByTestId('idea-section-toggle')).toBeInViewport()
+    await expect(cardsIn(section(page, target)).first()).toBeVisible()
+    // 折りたたみは覚えている
+    await page.reload()
+    await expect(toggles.and(page.locator('[aria-expanded="true"]'))).toHaveCount(1)
+    await page.getByTestId('idea-expand-all').click()
+    await expect(toggles.and(page.locator('[aria-expanded="false"]'))).toHaveCount(0)
+    await expect(page.getByTestId('idea-expand-all')).toBeDisabled()
+  })
+
+  test('すばやく追加したら「表示」で追加したカードへ移り、少しの間目立たせる（折りたたんだ仕切りは開く）', async ({ page }) => {
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      const ids = Array.from({ length: 6 }, (_, i) => actions.createTitle(`タイトル${i + 1}`))
+      for (let i = 0; i < 40; i++) actions.addIdea(ids[i % 6], `案${i + 1}`, `本文${i + 1}`)
+    })
+    await section(page, 'none').getByTestId('idea-section-toggle').click()
+    await expect(section(page, 'none').getByTestId('idea-section-toggle')).toHaveAttribute('aria-expanded', 'false')
+    await page.evaluate(() => window.scrollTo(0, 0))
+
+    const input = page.getByTestId('quick-idea-input')
+    await input.fill('灯台守の少女')
+    await input.press('Control+Enter')
+    await expect(input).toHaveValue('')
+    await expect(input).toBeFocused()
+    await expect(page.getByTestId('quick-idea-status')).toContainText(`「${UNASSIGNED}」に追加しました`)
+    const card = cardsIn(section(page, 'none')).filter({ hasText: '灯台守の少女' })
+    await expect(card).toHaveCount(1)
+    await expect(card).toBeHidden()
+
+    await page.getByTestId('quick-idea-show').click()
+    await expect(section(page, 'none').getByTestId('idea-section-toggle')).toHaveAttribute('aria-expanded', 'true')
+    await expect(card).toBeInViewport()
+    await expect(card).toHaveClass(/is-revealed/)
+    await expect(card).toBeFocused()
+    await expect(page.getByTestId('quick-idea-show')).toHaveCount(0)
+    await expect(card).not.toHaveClass(/is-revealed/, { timeout: 5000 })
+  })
+
+  test('ほかの画面から「戻る」と、ホームのスクロール位置に戻る', async ({ page }) => {
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      const ids = Array.from({ length: 6 }, (_, i) => actions.createTitle(`タイトル${i + 1}`))
+      for (let i = 0; i < 60; i++) actions.addIdea(ids[i % 6], `案${i + 1}`, `本文${i + 1}`)
+    })
+    const open = page.getByTestId('idea-area').locator('.idea-section-open').nth(4)
+    await open.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1000)
+    await page.waitForTimeout(300)
+    const before = await page.evaluate(() => window.scrollY)
+    await open.click()
+    await expect(page.getByTestId('title-name')).toBeVisible()
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+    await page.goBack()
+    await expect(page.getByTestId('home')).toBeVisible()
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(before - 5)
+    expect(await page.evaluate(() => window.scrollY)).toBeLessThan(before + 5)
+
+    // 新しく開いた時（リンク）は先頭から
+    await page.getByRole('link', { name: 'アプリの設定とバックアップ' }).click()
+    await expect(page.getByTestId('app-settings')).toBeVisible()
+    await goHome(page)
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+  })
+
+  test('↑↓で並べ替えても動かしたカードは指の下に残り、続けて押すとそのまま動かし続けられる', async ({ page }) => {
+    await openApp(page)
+    const titleId = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の海')
+      for (let i = 0; i < 6; i++) actions.addIdea(t, `案${i + 1}`, `本文${i + 1}`)
+      // 下にスクロールできる余地を作る
+      for (let i = 0; i < 30; i++) actions.addIdea(null, '', `どこにも属さない${i + 1}`)
+      return t
+    })
+    const sec = section(page, titleId)
+    const headings = () => sec.getByTestId('idea-heading').allTextContents()
+    await cardsIn(sec).nth(1).scrollIntoViewIfNeeded()
+    // 同じ場所を3回押すと、同じカードが3つ下へ動く（押した位置にカードが残る）
+    const down = (await cardsIn(sec).nth(0).getByTestId('idea-down').boundingBox())!
+    const expected = [
+      ['案2', '案1', '案3', '案4', '案5', '案6'],
+      ['案2', '案3', '案1', '案4', '案5', '案6'],
+      ['案2', '案3', '案4', '案1', '案5', '案6'],
+    ]
+    for (const order of expected) {
+      await page.mouse.click(down.x + down.width / 2, down.y + down.height / 2)
+      await expect.poll(headings).toEqual(order)
+    }
+    const moved = cardsIn(sec).filter({ hasText: '案1' })
+    const after = (await moved.getByTestId('idea-down').boundingBox())!
+    expect(Math.abs(after.y - down.y)).toBeLessThan(2)
+    await expect(moved.getByTestId('idea-down')).toBeFocused()
+
+    // キーボードでも続けて動かせる。端に着いて押せなくなったら反対向きのボタンにフォーカスが移る
+    await page.keyboard.press('Enter')
+    await expect.poll(headings).toEqual(['案2', '案3', '案4', '案5', '案1', '案6'])
+    await page.keyboard.press('Enter')
+    await expect.poll(headings).toEqual(['案2', '案3', '案4', '案5', '案6', '案1'])
+    await expect(moved.getByTestId('idea-down')).toBeDisabled()
+    await expect(moved.getByTestId('idea-up')).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect.poll(headings).toEqual(['案2', '案3', '案4', '案5', '案1', '案6'])
+    await expect(moved.getByTestId('idea-up')).toBeFocused()
+
+    // タイトルも同じ
+    await seed(page, ({ actions }) => {
+      for (let i = 0; i < 4; i++) actions.createTitle(`追加${i + 1}`)
+    })
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.getByTestId('titles-edit-toggle').click()
+    const tdown = (await page.getByTestId('title-card').nth(0).getByTestId('title-down').boundingBox())!
+    await page.mouse.click(tdown.x + tdown.width / 2, tdown.y + tdown.height / 2)
+    await expect.poll(() => titleCardNames(page)).toEqual(['追加1', '星の海', '追加2', '追加3', '追加4'])
+    await page.mouse.click(tdown.x + tdown.width / 2, tdown.y + tdown.height / 2)
+    await expect.poll(() => titleCardNames(page)).toEqual(['追加1', '追加2', '星の海', '追加3', '追加4'])
+    await expect(page.getByTestId('title-card').nth(2).getByTestId('title-down')).toBeFocused()
+  })
+
+  test('位置を選んで移動: タイトルの並びと、アイデアの移動先の仕切り・その中の位置を選べる', async ({ page }) => {
+    await openApp(page)
+    const { a, b } = await seed(page, ({ actions }) => {
+      const a = actions.createTitle('星の海')
+      const b = actions.createTitle('風の街')
+      actions.createTitle('無人駅')
+      for (const h of ['A1', 'A2', 'A3']) actions.addIdea(a, h, '')
+      for (const h of ['B1', 'B2']) actions.addIdea(b, h, '')
+      return { a, b }
+    })
+    // タイトル: 先頭を末尾へ
+    await page.getByTestId('titles-edit-toggle').click()
+    await page.getByTestId('title-card').nth(0).getByTestId('title-move').click()
+    const target = page.getByTestId('title-move-target')
+    await expect(target.locator('option')).toHaveText(['先頭（「風の街」の前）（現在の位置）', '「風の街」の後', '末尾（「無人駅」の後）'])
+    await expect(page.getByTestId('title-move-submit')).toBeDisabled()
+    await target.selectOption({ label: '末尾（「無人駅」の後）' })
+    await page.getByTestId('title-move-submit').click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect.poll(() => titleCardNames(page)).toEqual(['風の街', '無人駅', '星の海'])
+    await expect.poll(() => sectionNames(page)).toEqual(['風の街', '無人駅', '星の海', UNASSIGNED])
+
+    // アイデア: 別の仕切りの先頭へ（既定は末尾）
+    await cardsIn(section(page, a)).filter({ hasText: 'A3' }).getByTestId('idea-move').click()
+    await page.locator(`[data-testid="idea-move-option"][data-section="${b}"]`).click()
+    const position = page.getByTestId('idea-move-position')
+    await expect(position).toHaveValue('2')
+    await expect(position.locator('option')).toHaveText(['先頭（「B1」の前）', '「B1」の後', '末尾（「B2」の後）'])
+    await position.selectOption({ label: '先頭（「B1」の前）' })
+    await expect(page.getByTestId('idea-move-summary')).toContainText('「風の街」の先頭（「B1」の前）に入ります')
+    await page.getByTestId('idea-move-submit').click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect.poll(() => section(page, b).getByTestId('idea-heading').allTextContents()).toEqual(['A3', 'B1', 'B2'])
+
+    // 同じ仕切りの中で位置だけ変える
+    await cardsIn(section(page, a)).filter({ hasText: 'A1' }).getByTestId('idea-move').click()
+    const current = page.locator(`[data-testid="idea-move-option"][data-section="${a}"]`)
+    await expect(current).toContainText('現在の場所')
+    await current.click()
+    await expect(position.locator('option')).toHaveText(['先頭（「A2」の前）（現在の位置）', '末尾（「A2」の後）'])
+    await page.getByTestId('idea-move-submit').click()
+    await expect.poll(() => section(page, a).getByTestId('idea-heading').allTextContents()).toEqual(['A2', 'A1'])
+    // 現在の位置を選ぶと移動できない
+    await cardsIn(section(page, a)).filter({ hasText: 'A1' }).getByTestId('idea-move').click()
+    await current.click()
+    await expect(page.getByTestId('idea-move-submit')).toBeDisabled()
+    await expect(page.getByTestId('idea-move-summary')).toContainText('現在の位置です')
+  })
+
+  test('追加・編集ダイアログの書きかけは、戻る操作やアプリを閉じた後も同じダイアログを開くと復元される', async ({ page }) => {
+    // 設定画面からホームへ来て、ダイアログを開いたまま「戻る」→「進む」
+    await openApp(page, '/settings')
+    const titleId = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の海')
+      actions.addIdea(t, '既存の案', '元の本文')
+      return t
+    })
+    await goHome(page)
+    const none = section(page, 'none')
+    await none.getByTestId('idea-add').click()
+    await page.getByTestId('idea-heading-input').fill('書きかけの見出し')
+    await page.getByTestId('idea-body-input').fill('大事な思いつき')
+    await page.goBack()
+    await expect(page.getByTestId('app-settings')).toBeVisible()
+    await page.goForward()
+    await expect(page.getByTestId('home')).toBeVisible()
+    await expect(dialog(page)).toHaveCount(0)
+    await none.getByTestId('idea-add').click()
+    await expect(page.getByTestId('idea-draft-restored')).toContainText('下書きを復元しました')
+    await expect(page.getByTestId('idea-heading-input')).toHaveValue('書きかけの見出し')
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('大事な思いつき')
+
+    // アプリを閉じた（再読み込み）後も残っている。ほかの仕切りの追加には出ない
+    await page.reload()
+    await expect(page.getByTestId('home')).toBeVisible()
+    await section(page, titleId).getByTestId('idea-add').click()
+    await expect(page.getByTestId('idea-draft-restored')).toHaveCount(0)
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('')
+    await page.getByTestId('idea-cancel').click()
+    await none.getByTestId('idea-add').click()
+    await expect(page.getByTestId('idea-draft-restored')).toBeVisible()
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('大事な思いつき')
+    // 保存すると下書きは消える
+    await page.getByTestId('idea-save').click()
+    await expect(cardsIn(none)).toHaveCount(1)
+    await none.getByTestId('idea-add').click()
+    await expect(page.getByTestId('idea-draft-restored')).toHaveCount(0)
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('')
+    await page.getByTestId('idea-cancel').click()
+
+    // 編集: 再読み込みしても書きかけが戻る。「下書きを破棄して元に戻す」で元の内容に戻る
+    await cardsIn(section(page, titleId)).first().getByTestId('idea-edit').click()
+    await page.getByTestId('idea-body-input').fill('直しかけの本文')
+    await page.reload()
+    await cardsIn(section(page, titleId)).first().getByTestId('idea-edit').click()
+    await expect(page.getByTestId('idea-draft-restored')).toBeVisible()
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('直しかけの本文')
+    await page.getByTestId('idea-draft-discard').click()
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('元の本文')
+    await expect(page.getByTestId('idea-draft-restored')).toHaveCount(0)
+    await page.getByTestId('idea-cancel').click()
+    await expect(dialog(page)).toHaveCount(0)
+    const drafts = () =>
+      page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('novel-studio:idea-modal-draft:')))
+    expect(await drafts()).toEqual([])
+
+    // 破棄を確認して閉じても消える
+    await none.getByTestId('idea-add').click()
+    await page.getByTestId('idea-body-input').fill('やっぱりやめる')
+    expect(await drafts()).toHaveLength(1)
+    await page.getByTestId('idea-cancel').click()
+    await clickInDialog(page, '破棄する')
+    expect(await drafts()).toEqual([])
   })
 })
 
@@ -448,10 +773,12 @@ test.describe('タイトル画面のアイデアタブ', () => {
     await cardsIn(tab).nth(0).getByTestId('idea-move').click()
     await expect(page.getByTestId('idea-move-option')).toHaveCount(3)
     await page.locator(`[data-testid="idea-move-option"][data-section="${b}"]`).click()
+    await page.getByTestId('idea-move-submit').click()
     await expect(cardsIn(tab)).toHaveCount(3)
     // 「どのタイトルにも属さない」へ移動
     await cardsIn(tab).nth(0).getByTestId('idea-move').click()
     await page.locator('[data-testid="idea-move-option"][data-section="none"]').click()
+    await page.getByTestId('idea-move-submit').click()
     await expect(cardsIn(tab)).toHaveCount(2)
     const stored = await ideasInData(page)
     expect(stored.filter((i) => i.titleId === a).map((i) => i.body)).toEqual(['星の海の案3', '星の海の案4'])
@@ -602,10 +929,15 @@ test.describe('アプリの設定', () => {
     await expect(confirm).toContainText('話 0件')
     await expect(confirm).toContainText('アイデア 2件')
     await expect(confirm).toContainText('書き出し日時: 2026/01/0')
+    await expect(confirm).toContainText('表示の設定（テーマ・文字サイズなど）は残ります')
+    await seedLocalState(page)
     await clickInDialog(page, '置き換えて復元')
     await expect(page.getByRole('status').filter({ hasText: 'バックアップから復元しました' })).toBeVisible()
     expect(await page.evaluate(() => Object.values(window.__ns.getData().titles).map((t) => t.name))).toEqual(['復元された物語'])
     expect(await page.evaluate(() => Object.keys(window.__ns.getData().pieces).length)).toBe(0)
+    // 以前のデータ向けの書きかけ・折りたたみ・復旧用の控えは消え、表示の設定と最後に書き出した日時は残る
+    expect(await appLocalKeys(page)).toEqual(['novel-studio:last-backup', 'novel-studio:prefs'])
+    expect(await page.evaluate(() => localStorage.getItem('other-app:keep'))).toBe('1')
 
     // 再読み込みしても復元後のデータ
     await page.reload()
@@ -635,16 +967,47 @@ test.describe('アプリの設定', () => {
     await expect(page.getByRole('alert').filter({ hasText: '削除を中止しました' })).toBeVisible()
     expect(await page.evaluate(() => Object.keys(window.__ns.getData().titles).length)).toBe(1)
 
+    // 書きかけ・折りたたみ・ほかのタブの復旧用の控え（消したはずのタイトルを含む）も消える
+    await page.getByTestId('theme-dark').click()
+    await seedLocalState(page)
+    await page.reload()
+    await expect(page.getByTestId('last-backup')).toContainText('最後に書き出した日時')
+    await page.evaluate(() => {
+      const ts = Date.now()
+      const ghost = {
+        id: 'ghost',
+        name: '消したはずのタイトル',
+        synopsis: '',
+        chaptersEnabled: false,
+        numbering: 'continuous',
+        structure: [],
+        strategyNote: '',
+        order: 5,
+        createdAt: ts,
+        updatedAt: ts,
+      }
+      localStorage.setItem('novel-studio:recovery:other-tab', JSON.stringify({ at: ts, puts: { titles: [ghost] }, dels: {} }))
+    })
     await page.getByTestId('delete-all').click()
+    await expect(dialog(page)).toContainText('表示の設定（テーマ・文字サイズなど）は残ります')
     await clickInDialog(page, '削除へ進む')
     await dialog(page).getByRole('textbox').fill('削除')
     await clickInDialog(page, 'すべて削除')
     await expect(page.getByRole('status').filter({ hasText: 'すべてのデータを削除しました' })).toBeVisible()
     expect(await page.evaluate(() => Object.keys(window.__ns.getData().titles).length)).toBe(0)
+    expect(await appLocalKeys(page)).toEqual(['novel-studio:prefs'])
+    expect(await page.evaluate(() => localStorage.getItem('other-app:keep'))).toBe('1')
+    await expect(page.getByTestId('last-backup')).toContainText('まだバックアップを書き出していません')
     await page.reload()
     await expect(page.getByTestId('data-counts')).toContainText('タイトル0')
+    // 表示の設定は残っている
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
     await goHome(page)
     await expect(page.getByTestId('titles-empty')).toBeVisible()
+    await expect(page.getByTestId('quick-idea-input')).toHaveValue('')
+    await expect(section(page, 'none').getByTestId('idea-section-toggle')).toHaveAttribute('aria-expanded', 'true')
+    await section(page, 'none').getByTestId('idea-add').click()
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('')
   })
 
   test('インストールの案内が表示され、ブラウザの提案があれば「インストール」ボタンが出る', async ({ page }) => {
@@ -715,18 +1078,30 @@ test.describe('画面のスクリーンショット', () => {
     for (const scheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' })
       await openApp(page)
-      if (project === 'mobile') await page.getByTestId('home-tab-titles').click()
       await shot(scheme, true)
       if (project === 'mobile') {
-        await page.getByTestId('home-tab-ideas').click()
-        await shot(`ideas-${scheme}`, true)
+        await page.getByTestId('home-jump-ideas').click()
+        await shot(`ideas-${scheme}`)
+        await page.getByTestId('home-jump-titles').click()
       }
       await showTitles(page)
       await page.getByTestId('titles-edit-toggle').click()
       await shot(`titles-edit-${scheme}`)
+      await page.getByTestId('title-card').nth(1).getByTestId('title-move').click()
+      await shot(`title-move-${scheme}`)
+      await page.keyboard.press('Escape')
       await page.getByTestId('titles-edit-toggle').click()
 
       await showIdeas(page)
+      await page.getByTestId('quick-idea-input').fill('ふと思いついた台詞')
+      await page.getByTestId('quick-idea-add').click()
+      await page.getByTestId('quick-capture').scrollIntoViewIfNeeded()
+      await shot(`quick-added-${scheme}`)
+      await page.getByTestId('quick-idea-show').click()
+      await shot(`quick-revealed-${scheme}`)
+      await cardsIn(section(page, 'none')).last().getByTestId('idea-delete').click()
+      await clickInDialog(page, '削除')
+
       await section(page, 'none').getByTestId('idea-add').click()
       await page.getByTestId('idea-body-input').fill('思いついたこと')
       await shot(`idea-editor-${scheme}`)

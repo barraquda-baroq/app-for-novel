@@ -8,9 +8,10 @@ import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatRelative } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
-import { BookIcon, BulbIcon, ChevronRightIcon, DownIcon, EditIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
-import { scrollToTop } from './scroll'
-import { charsLabel, deleteTitleMessage, episodesLabel, titleCardInfo, type TitleCardInfo } from './homeLogic'
+import { BookIcon, BulbIcon, ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
+import { useKeepInPlace } from '../ideas/keepInPlace'
+import { charsLabel, deleteTitleMessage, episodesLabel, missingLabel, titleCardInfo, type TitleCardInfo } from './homeLogic'
+import { TitleMoveDialog } from './TitleMoveDialog'
 
 export async function createTitleFlow(navigate: (to: string) => void): Promise<void> {
   const name = await promptDialog({
@@ -22,7 +23,6 @@ export async function createTitleFlow(navigate: (to: string) => void): Promise<v
   if (name === null) return
   const id = attempt(() => actions.createTitle(name.trim()))
   if (!id) return
-  scrollToTop()
   navigate(paths.title(id))
 }
 
@@ -41,7 +41,9 @@ export function TitleGroup({ headingId }: { headingId: string }) {
     <>
       <div className="home-pane-head">
         <BookIcon className="icon home-pane-icon" />
-        <h2 id={headingId}>タイトル</h2>
+        <h2 id={headingId} tabIndex={-1}>
+          タイトル
+        </h2>
         <span className="home-pane-count" data-testid="title-count">
           {infos.length}
         </span>
@@ -86,6 +88,16 @@ export function TitleGroup({ headingId }: { headingId: string }) {
 function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boolean; first: boolean; last: boolean }) {
   const { summary } = info
   const eps = episodesLabel(summary)
+  const missing = missingLabel(summary)
+  const [moving, setMoving] = useState(false)
+  const { ref, move } = useKeepInPlace<HTMLLIElement>()
+
+  // 動かしたカードが押した指の下に残るように（続けて押すとそのまま動かし続けられる）
+  const step = (dir: -1 | 1) => {
+    const same = dir < 0 ? '[data-testid="title-up"]' : '[data-testid="title-down"]'
+    const other = dir < 0 ? '[data-testid="title-down"]' : '[data-testid="title-up"]'
+    move(() => attempt(() => (actions.moveTitleStep(info.id, dir), true)), [same, other])
+  }
 
   const rename = async () => {
     const name = await promptDialog({ title: 'タイトル名を変更', label: 'タイトル名', initial: info.name, confirmLabel: '変更' })
@@ -105,8 +117,8 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
   }
 
   return (
-    <li className={`home-title-card${edit ? ' is-editing' : ''}`} data-testid="title-card" data-title-id={info.id}>
-      <Link to={paths.title(info.id)} className="home-title-link" onClick={scrollToTop} data-testid="title-card-link">
+    <li ref={ref} className={`home-title-card${edit ? ' is-editing' : ''}`} data-testid="title-card" data-title-id={info.id}>
+      <Link to={paths.title(info.id)} className="home-title-link" data-testid="title-card-link">
         <span className="home-title-top">
           <span className="home-title-name" data-testid="title-card-name">
             {info.name}
@@ -126,9 +138,9 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
           <span className="badge" data-testid="title-card-chars">
             {charsLabel(summary.activeChars)}
           </span>
-          {summary.missingActive > 0 ? (
+          {missing ? (
             <span className="badge badge-missing" data-testid="title-card-missing">
-              採用原稿なし {summary.missingActive}話
+              {missing}
             </span>
           ) : null}
           {info.chaptersEnabled ? (
@@ -153,7 +165,7 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
           <button
             type="button"
             className="icon-btn"
-            onClick={() => attempt(() => actions.moveTitleStep(info.id, -1))}
+            onClick={() => step(-1)}
             disabled={first}
             aria-label="上へ"
             title="1つ上へ"
@@ -164,7 +176,7 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
           <button
             type="button"
             className="icon-btn"
-            onClick={() => attempt(() => actions.moveTitleStep(info.id, 1))}
+            onClick={() => step(1)}
             disabled={last}
             aria-label="下へ"
             title="1つ下へ"
@@ -172,10 +184,21 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
           >
             <DownIcon />
           </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => setMoving(true)}
+            disabled={first && last}
+            title="位置を選んで移動"
+            data-testid="title-move"
+          >
+            <MoveIcon />
+            移動…
+          </button>
           <span className="grow" />
-          <button type="button" className="btn btn-sm" onClick={() => void rename()} data-testid="title-rename">
+          <button type="button" className="btn btn-sm" onClick={() => void rename()} aria-label="名前を変更" data-testid="title-rename">
             <EditIcon />
-            名前を変更
+            名前<span className="hide-mobile">を変更</span>
           </button>
           <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()} data-testid="title-delete">
             <TrashIcon />
@@ -183,6 +206,7 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
           </button>
         </div>
       ) : null}
+      {moving ? <TitleMoveDialog titleId={info.id} onClose={() => setMoving(false)} /> : null}
     </li>
   )
 }

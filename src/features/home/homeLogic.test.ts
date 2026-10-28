@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { addIdea, createTitle, updateTitle } from '../../domain/entityOps'
 import { addEpisode, addSpecial, setActiveVersion, setChaptersEnabled, updateVersion } from '../../domain/storyOps'
 import { emptyData, type AppData } from '../../domain/types'
-import { charsLabel, deleteTitleMessage, episodesLabel, parseHomeView, synopsisExcerpt, titleCardInfo } from './homeLogic'
+import { charsLabel, deleteTitleMessage, episodesLabel, missingLabel, parseHomeView, synopsisExcerpt, titleCardInfo } from './homeLogic'
 
 describe('ホームの表示の保存値', () => {
   it('titles / ideas 以外は null', () => {
@@ -56,6 +56,7 @@ describe('タイトルカードの情報', () => {
     data = updateTitle(data, titleId, { synopsis: '星の海を\n渡る' })
     info = titleCardInfo(data, titleId)!
     expect(info.summary).toMatchObject({ episodes: 2, specials: 1, missingActive: 1, activeChars: 6 })
+    expect(missingLabel(info.summary)).toBe('採用原稿なし 1話')
     expect(info.chaptersEnabled).toBe(true)
     expect(info.ideaCount).toBe(1)
     expect(info.versionCount).toBe(3)
@@ -67,6 +68,17 @@ describe('タイトルカードの情報', () => {
     const t = createTitle(emptyData(), '')
     const data = updateTitle(t.data, t.result, { name: '  ' })
     expect(titleCardInfo(data, t.result)!.name).toBe('無題のタイトル')
+  })
+
+  it('採用原稿なしの表記: 特殊ブロックは「話」に数えない', () => {
+    const seeded = seedTitle()
+    let data = seeded.data
+    expect(missingLabel(titleCardInfo(data, seeded.titleId)!.summary)).toBe('')
+    const sp = addSpecial(data, seeded.titleId, { chapterId: null, index: 0 }, 'プロローグ')
+    data = setActiveVersion(sp.data, sp.result, null)
+    expect(missingLabel(titleCardInfo(data, seeded.titleId)!.summary)).toBe('採用原稿なし 特殊1')
+    data = setActiveVersion(data, seeded.pieceIds[1], null)
+    expect(missingLabel(titleCardInfo(data, seeded.titleId)!.summary)).toBe('採用原稿なし 1話＋特殊1')
   })
 
   it('話数と文字数の表記', () => {

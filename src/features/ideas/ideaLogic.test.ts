@@ -5,10 +5,14 @@ import {
   UNASSIGNED_KEY,
   UNASSIGNED_NAME,
   canSaveIdea,
+  cutAtBoundary,
+  ideaModalDraftKey,
   ideaShortLabel,
   isSubmitShortcut,
   moveTargets,
   parseCollapsed,
+  parseIdeaModalDraft,
+  positionOptions,
   sectionDisplayName,
   sectionKey,
   submitShortcutLabel,
@@ -52,10 +56,32 @@ describe('アイデアからタイトル名を作る', () => {
     expect(titleNameFromIdea({ heading: '', body: '一行目\r\n二行目' })).toBe('一行目')
   })
 
-  it('長すぎる場合は切り詰める（サロゲートペアを壊さない）', () => {
-    expect(titleNameFromIdea({ heading: 'あ'.repeat(50), body: '' })).toBe(`${'あ'.repeat(40)}…`)
+  it('長すぎる場合は「…」を付けずに切る（区切りがなければ40文字。サロゲートペアを壊さない）', () => {
+    expect(titleNameFromIdea({ heading: 'あ'.repeat(50), body: '' })).toBe('あ'.repeat(40))
+    expect(titleNameFromIdea({ heading: '𠮷'.repeat(50), body: '' })).toBe('𠮷'.repeat(40))
+    expect(titleNameFromIdea({ heading: '', body: 'あ'.repeat(60) })).not.toContain('…')
     expect(truncate('𠮷'.repeat(5), 3)).toBe('𠮷𠮷𠮷…')
     expect(truncate('短い', 3)).toBe('短い')
+  })
+
+  it('長い文は40文字以内の最後の文の区切り、なければ読点などの区切りで切る', () => {
+    const long = '雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている。そして十年が過ぎた。'
+    expect(titleNameFromIdea({ heading: '', body: long })).toBe('雨の日にだけ開く駅のホームで、少女は毎朝、来ないはずの列車を待ち続けている')
+    // 文の区切りがなければ読点で
+    const clauses = '灯台守の少女は嵐の夜に流れ着いた手紙を拾い、差出人を探して海沿いの町を一軒ずつ訪ね歩く'
+    expect(cutAtBoundary(clauses, 40)).toBe('灯台守の少女は嵐の夜に流れ着いた手紙を拾い')
+    // ！？ は題名の一部として残す
+    expect(cutAtBoundary(`それでも灯りは消さない！${'あ'.repeat(40)}`, 40)).toBe('それでも灯りは消さない！')
+    // ちょうど40文字の直後の区切りも使う
+    expect(cutAtBoundary(`${'い'.repeat(40)}。続き`, 40)).toBe('い'.repeat(40))
+    // 短すぎる切れ端にはしない（先頭近くの区切りは使わず40文字で切る）
+    expect(cutAtBoundary(`あ、${'う'.repeat(50)}`, 40)).toBe(`あ、${'う'.repeat(38)}`)
+  })
+
+  it('収まる長さなら末尾の句点だけを落とす（自分で付けた「…」や「！」は残す）', () => {
+    expect(titleNameFromIdea({ heading: '', body: '灯台守の少女が手紙を拾う。' })).toBe('灯台守の少女が手紙を拾う')
+    expect(titleNameFromIdea({ heading: 'そして誰もいなくなった…', body: '' })).toBe('そして誰もいなくなった…')
+    expect(titleNameFromIdea({ heading: '走れ！', body: '' })).toBe('走れ！')
   })
 
   it('空のアイデアは空文字。短い呼び名には代わりの表記', () => {
@@ -114,5 +140,39 @@ describe('折りたたみの保存値', () => {
     expect(parseCollapsed('not json')).toEqual([])
     expect(parseCollapsed('{"a":1}')).toEqual([])
     expect(parseCollapsed('["none", 3, "t1"]')).toEqual(['none', 't1'])
+  })
+})
+
+describe('位置を選んで移動の候補', () => {
+  it('先頭／○○の後／末尾を、移動するもの自身を除いた並びで作る', () => {
+    expect(positionOptions(['A', 'B', 'C'])).toEqual([
+      { index: 0, label: '先頭（「A」の前）' },
+      { index: 1, label: '「A」の後' },
+      { index: 2, label: '「B」の後' },
+      { index: 3, label: '末尾（「C」の後）' },
+    ])
+    expect(positionOptions([])).toEqual([{ index: 0, label: '先頭' }])
+  })
+
+  it('長い名前は短くし、同じ表記が並ぶ時は何番目かを添える', () => {
+    expect(positionOptions(['あ'.repeat(30)], 5)[0].label).toBe('先頭（「あああああ…」の前）')
+    const labels = positionOptions(['同じ', '同じ', '別']).map((o) => o.label)
+    expect(labels).toEqual(['先頭（「同じ」の前）', '「同じ」の後（2番目）', '「同じ」の後（3番目）', '末尾（「別」の後）'])
+  })
+})
+
+describe('追加・編集ダイアログの下書き', () => {
+  it('追加は仕切りごと、編集はアイデアごとに別のキー', () => {
+    expect(ideaModalDraftKey({ mode: 'add', section: 'none' })).toBe('novel-studio:idea-modal-draft:new:none')
+    expect(ideaModalDraftKey({ mode: 'add', section: 't1' })).toBe('novel-studio:idea-modal-draft:new:t1')
+    expect(ideaModalDraftKey({ mode: 'edit', ideaId: 'i1' })).toBe('novel-studio:idea-modal-draft:edit:i1')
+  })
+
+  it('壊れた値は null', () => {
+    expect(parseIdeaModalDraft(null)).toBeNull()
+    expect(parseIdeaModalDraft('not json')).toBeNull()
+    expect(parseIdeaModalDraft('{"heading":1,"body":"x"}')).toBeNull()
+    expect(parseIdeaModalDraft('null')).toBeNull()
+    expect(parseIdeaModalDraft('{"heading":"見出し","body":"内容"}')).toEqual({ heading: '見出し', body: '内容' })
   })
 })
