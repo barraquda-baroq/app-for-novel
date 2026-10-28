@@ -18,7 +18,7 @@ import {
 } from 'firebase/firestore'
 import emuRules from '../../firestore.emu.rules?raw'
 import prodRules from '../../firestore.rules?raw'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence, type ConflictNote, type Persistence } from '../db/persistence'
 import * as A from '../domain/acts'
 import * as E from '../domain/entityOps'
@@ -31,6 +31,28 @@ import { appModelRef, type AppModel } from './appModel'
 import { createConflictHooks } from './conflicts'
 import { createSyncEngine, type SyncEngine, type SyncTarget } from './engine'
 import { stableStringify } from './merge'
+
+/**
+ * 購読の通知を端末ごとに間引く（ページが止まった・裏に回った間に、自分の書き込みの通知を受け取れなかった時の再現）。
+ * dropOwn に Firestore と端末の名前を入れると、その端末の書き込みだけの通知を捨てる（ほかの端末の書き込みは届く）
+ */
+const listen = vi.hoisted(() => ({ dropOwn: new Map<unknown, string>() }))
+vi.mock('firebase/firestore', async (importOriginal) => {
+  const m = await importOriginal<typeof import('firebase/firestore')>()
+  type Snap = { docChanges?: () => { doc: { data: () => { device?: unknown } } }[] }
+  const onSnapshot = (ref: { firestore: unknown }, ...rest: unknown[]) => {
+    const i = rest.findIndex((x) => typeof x === 'function')
+    const next = rest[i] as (snap: Snap) => void
+    rest[i] = (snap: Snap) => {
+      const own = listen.dropOwn.get(ref.firestore)
+      const changes = own && snap.docChanges ? snap.docChanges() : []
+      if (own && changes.length && changes.every((c) => c.doc.data().device === own)) return
+      next(snap)
+    }
+    return (m.onSnapshot as unknown as (...a: unknown[]) => () => void)(ref, ...rest)
+  }
+  return { ...m, onSnapshot }
+})
 
 const PROJECT = 'demo-novel-studio'
 let seq = 0
@@ -55,6 +77,7 @@ const apps: { app: FirebaseApp; fs: Firestore }[] = []
 const devices: Device[] = []
 
 afterEach(async () => {
+  listen.dropOwn.clear()
   for (const d of devices.splice(0)) {
     d.offline()
     d.p.close()
@@ -427,6 +450,81 @@ describe('同期（エミュレーター）', () => {
       expect(data.pieces[pieceId].versionIds).toHaveLength(1)
       expect(Object.keys(data.trashEntries)).toHaveLength(0)
     }
+  })
+
+  it('送った後に自分の書き込みの通知を受け取れなくても、ほかの端末がその後に消したものは消える', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '作品')
+      titleId = t.result
+      return t.data
+    })
+    await settle(a, b)
+    // A は送った後にページが止まり、自分の書き込みの通知を受け取らない
+    listen.dropOwn.set(a.fs, 'a')
+    let memoId = ''
+    await a.edit((d) => {
+      const m = E.addMemo(d, titleId, '作ったメモ')
+      memoId = m.result
+      return m.data
+    })
+    const ref = doc(a.fs, 'users', a.uid, 'records', `memos:${memoId}`)
+    await waitFor(async () => (await getDoc(ref)).exists() && (await a.p.outboxCount()) === 0, 'A のメモが送られる')
+    await waitFor(async () => (await b.load()).memos[memoId], 'B にメモが届く')
+    // B が消す（削除の文書は、どれも同じ指紋）
+    await b.edit((d) => {
+      const { [memoId]: _gone, ...memos } = d.memos
+      void _gone
+      return { ...d, memos }
+    })
+    await waitFor(async () => (await getDoc(ref)).data()?.deleted === true, 'B の削除が送られる')
+    await waitFor(async () => !(await a.load()).memos[memoId], 'A でもメモが消える')
+    expect(await a.p.outboxCount()).toBe(0)
+    listen.dropOwn.clear()
+    await settle(a, b)
+  })
+
+  it('送った後に自分の書き込みの通知を受け取れなくても、ほかの端末が同じ内容で戻したものは戻る', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let memoId = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '作品')
+      const m = E.addMemo(t.data, t.result, '戻すメモ')
+      memoId = m.result
+      return E.updateMemo(m.data, memoId, { body: '本文' })
+    })
+    await settle(a, b)
+    const original = (await a.load()).memos[memoId]
+    // A が消して送った後、ページが止まり、自分の書き込みの通知を受け取らない
+    listen.dropOwn.set(a.fs, 'a')
+    await a.edit((d) => {
+      const { [memoId]: _gone, ...memos } = d.memos
+      void _gone
+      return { ...d, memos }
+    })
+    const ref = doc(a.fs, 'users', a.uid, 'records', `memos:${memoId}`)
+    await waitFor(
+      async () => (await getDoc(ref)).data()?.deleted === true && (await a.p.outboxCount()) === 0,
+      'A の削除が送られる',
+    )
+    await waitFor(async () => !(await b.load()).memos[memoId], 'B でも消える')
+    // B がまったく同じ内容で戻す（消す前と同じ指紋）
+    await b.edit((d) => ({ ...d, memos: { ...d.memos, [memoId]: original } }))
+    await waitFor(async () => (await getDoc(ref)).data()?.deleted === false, 'B の戻した内容が送られる')
+    await waitFor(async () => (await a.load()).memos[memoId], 'A でもメモが戻る')
+    expect((await a.load()).memos[memoId]).toEqual(original)
+    expect(await a.p.outboxCount()).toBe(0)
+    listen.dropOwn.clear()
+    await settle(a, b)
   })
 
   it('バックアップからの復元は、ほかの端末にも当たる（この端末が受け取っていないレコードも消える）', async () => {

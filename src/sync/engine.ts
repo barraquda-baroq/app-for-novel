@@ -212,16 +212,19 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   }
 
   /**
-   * この端末が書いて置き換えたクラウドの版の指紋（文書ごと）。購読の通知は、書く前のクラウドの内容のまま、書いた後に
-   * 届くことがある（通知を受け取ってから反映するまでの間に送った時）。その古い版で、送ったばかりの内容を戻さないように
+   * この端末が書いて置き換えたクラウドの版（文書ごと、その版の更新時刻）。購読の通知は、書く前のクラウドの内容のまま、書いた後に
+   * 届くことがある（通知を受け取ってから反映するまでの間に送った時）。その古い版で、送ったばかりの内容を戻さないように。
+   * 指紋（内容）ではなく時刻で見分ける: 同じ文書への後の書き込みは、どの端末のもの（削除・同じ内容で戻したものも）でも
+   * サーバーの時刻が必ず後になる。書く前にクラウドに無かった文書は覚えない（無い文書の古い通知は届かない）
    */
-  const replaced = new Map<string, string>()
+  const replaced = new Map<string, StoredCursor>()
 
-  /** 送る前のクラウドの版の通知か（この端末が書いて置き換えた版。書いた後の内容が届いたら、もう古い版は届かない） */
+  /** 送る前のクラウドの版の通知か（この端末が書いて置き換えた版か、それより前の版。後の版が届いたら、もう古い版は届かない） */
   function isSuperseded(id: string, data: RecordDoc): boolean {
     const old = replaced.get(id)
-    if (old === undefined) return false
-    if (data.hash === old && !data.reset) return true
+    if (!old) return false
+    const at = data.updated instanceof Timestamp ? { s: data.updated.seconds, n: data.updated.nanoseconds } : null
+    if (at && !later(at, old)) return true
     replaced.delete(id)
     return false
   }
@@ -468,7 +471,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         batch,
         clouds.map((c) => ({ exists: c !== null, hash: c && !c.deleted ? c.hash : '' })),
       )
-      const written: { change: Change; hash: string; replaced: string }[] = []
+      const written: { change: Change; hash: string; replaced: StoredCursor | null }[] = []
       batch.forEach((b, i) => {
         if (!decision.write[i]) return
         const cloud = clouds[i]
@@ -502,7 +505,9 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         written.push({
           change: { table: b.it.table, id: b.it.id, record: b.it.local },
           hash: b.enc.hash,
-          replaced: cloud && !cloud.deleted ? cloud.hash : '',
+          // 置き換えた版の時刻（クラウドに無かった時は覚えない）
+          replaced:
+            cloud && cloud.updated instanceof Timestamp ? { s: cloud.updated.seconds, n: cloud.updated.nanoseconds } : null,
         })
       })
       return { written, conflicts: decision.conflicts }
@@ -510,7 +515,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     for (const w of result.written) {
       const id = docIdOf(w.change.table, w.change.id)
       rememberSent(id, w.hash)
-      if (w.replaced !== w.hash) replaced.set(id, w.replaced)
+      if (w.replaced) replaced.set(id, w.replaced)
+      else replaced.delete(id)
     }
     await target.completeUpload(result.written.map((w) => w.change))
     return { done: false, progressed: idle.length + result.written.length, conflicts: result.conflicts }
