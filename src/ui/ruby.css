@@ -1,0 +1,25 @@
+/* ===== ルビ・傍点（rb-） ===== */
+/* 読むための表示（通し読み・応募時の原稿・一覧の抜粋）。
+ * ルビ・傍点は文字の半分の大きさで、行間（line-height の余り）に収めて行の高さを変えない。
+ * 横書きでは文字の上、縦書きでは文字の右に付く（over right）。 */
+
+.rb-ruby {
+  ruby-position: over;
+}
+
+.rb-ruby rt {
+  font-size: 0.5em;
+  font-weight: normal;
+  line-height: 1;
+  letter-spacing: 0;
+  font-feature-settings: normal;
+}
+
+/* 傍点は黒ゴマ（﹅）。縦書きでは右、横書きでは上 */
+.rb-bouten {
+  font-style: normal;
+  -webkit-text-emphasis: filled sesame;
+  text-emphasis: filled sesame;
+  -webkit-text-emphasis-position: over right;
+  text-emphasis-position: over right;
+}

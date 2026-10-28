@@ -11,7 +11,7 @@ import {
 } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
 import { trashNotice } from '../../../domain/trash'
-import type { ID, LimitUnit, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
+import type { ID, LimitUnit, SnapshotPiece, Submission, SubmissionSnapshot, SubmissionStatus } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData } from '../../../store/appStore'
 import { attempt, notify, notifyError } from '../../../store/uiStore'
@@ -21,6 +21,8 @@ import { DraftInput } from '../../../ui/DraftField'
 import { BookIcon, CameraIcon, ChevronRightIcon, DownloadIcon, LinkIcon, TrashIcon } from '../../../ui/icons'
 import { useKeepInPlace } from '../../../ui/keepInPlace'
 import { Modal } from '../../../ui/Modal'
+import { NearViewportContext, useNearViewportWatcher } from '../../../ui/nearViewport'
+import { LazyRubyText } from '../../../ui/RubyText'
 import { lineShape, lineShapeOf, lineShapeStyle, useCharsPerLine } from '../../read/lineEstimate'
 import { GrowTextarea } from '../settings/GrowTextarea'
 import { ArrowDownIcon, ArrowUpIcon } from './strategyIcons'
@@ -848,6 +850,8 @@ function SnapshotReader({
   // 長編でも開いた時に全文を組まないよう、画面の外の話は見積もった大きさで場所だけ取る（通し読みと同じ）
   const readerRef = useRef<HTMLDivElement>(null)
   useCharsPerLine(readerRef, 0, [], READER_FONT_SIZE)
+  // ルビ・傍点の要素は画面の近くに来た話だけに作る（ダイアログの本文の枠の中をスクロールする）
+  const registerNear = useNearViewportWatcher(() => readerRef.current?.closest('.modal-body') ?? null, [])
   return (
     <Modal
       title={`応募時の原稿（${contest}）`}
@@ -865,33 +869,42 @@ function SnapshotReader({
         </>
       }
     >
-      <div className="sg-reader" ref={readerRef} data-testid="snapshot-reader">
-        <p className="small muted sg-reader-info">
-          {formatDateTime(snapshot.at)} に記録・{formatCount(snapshot.charCount)}字
-        </p>
-        {order.map((id) => {
-          const p = snapshot.pieces?.[id]
-          if (!p) return null
-          const data = getData()
-          const body = snapshotPieceBody(data, p)
-          const record = p.textKey ? data.snapshotTexts[p.textKey] : undefined
-          const shape = record ? lineShape(record) : body ? lineShapeOf(body) : null
-          return (
-            <article key={id} className="sg-reader-piece" style={shape ? lineShapeStyle(shape) : undefined}>
-              <h3 className="sg-reader-heading">
-                <span>{p.label}</span>
-                {p.subtitle.trim() ? <span className="sg-reader-subtitle">{p.subtitle.trim()}</span> : null}
-                {p.versionName ? <span className="badge sg-reader-version">{p.versionName}</span> : null}
-              </h3>
-              {body === null ? (
-                <p className="muted sg-reader-none">採用原稿がありません。</p>
-              ) : (
-                <div className="sg-reader-body">{body}</div>
-              )}
-            </article>
-          )
-        })}
-      </div>
+      <NearViewportContext.Provider value={registerNear}>
+        <div className="sg-reader" ref={readerRef} data-testid="snapshot-reader">
+          <p className="small muted sg-reader-info">
+            {formatDateTime(snapshot.at)} に記録・{formatCount(snapshot.charCount)}字
+          </p>
+          {order.map((id) => {
+            const p = snapshot.pieces?.[id]
+            return p ? <SnapshotReaderPiece key={id} piece={p} /> : null
+          })}
+        </div>
+      </NearViewportContext.Provider>
     </Modal>
+  )
+}
+
+/** 応募時の原稿の1話分。ルビ・傍点はこの話が画面の近くに来てから表示する */
+function SnapshotReaderPiece({ piece: p }: { piece: SnapshotPiece }) {
+  const ref = useRef<HTMLElement>(null)
+  const data = getData()
+  const body = snapshotPieceBody(data, p)
+  const record = p.textKey ? data.snapshotTexts[p.textKey] : undefined
+  const shape = record ? lineShape(record) : body ? lineShapeOf(body) : null
+  return (
+    <article ref={ref} className="sg-reader-piece" style={shape ? lineShapeStyle(shape) : undefined}>
+      <h3 className="sg-reader-heading">
+        <span>{p.label}</span>
+        {p.subtitle.trim() ? <span className="sg-reader-subtitle">{p.subtitle.trim()}</span> : null}
+        {p.versionName ? <span className="badge sg-reader-version">{p.versionName}</span> : null}
+      </h3>
+      {body === null ? (
+        <p className="muted sg-reader-none">採用原稿がありません。</p>
+      ) : (
+        <div className="sg-reader-body">
+          <LazyRubyText text={body} watch={ref} />
+        </div>
+      )}
+    </article>
   )
 }

@@ -301,6 +301,41 @@ describe('現在の原稿', () => {
     })
   })
 
+  it('ルビ・傍点の記号とルビの読みは、現在の原稿・応募時の記録の文字数・枚数に数えない', () => {
+    const s = setup()
+    const v = s.data.pieces[s.pieces[0]].versionIds[0]
+    // 第1話: 魔法使い・が・来た = 7字（ルビの読みを数えると 20字を超える）
+    let data = updateVersion(s.data, v, { body: '｜魔法使い《ウィザード》が《《来た》》' })
+    expect(manuscriptSummary(data, s.titleId).chars).toBe(7 + 5 + 3)
+    const sub = addSubmission(data, s.titleId, '賞')
+    data = recordSubmissionSnapshot(sub.data, sub.result)
+    const snap = data.submissions[sub.result].snapshot!
+    expect(snap.charCount).toBe(15)
+    expect(snap.pieces![s.pieces[0]].chars).toBe(7)
+    expect(snapshotView(snap, currentManuscript(data, s.titleId)).rows[0].chars).toBe(7)
+    // 古い記録（本文が記録の中にある）の枚数も、記号と読みを除いて数える: 400字の段落なら1枚（読みを数えると2枚）
+    expect(
+      snapshotPages({
+        at: 0,
+        charCount: 0,
+        activeVersions: {},
+        pieces: {
+          a: {
+            kind: 'episode',
+            label: '第1話',
+            subtitle: '',
+            versionId: 'v',
+            versionName: '第1稿',
+            chars: 0,
+            textKey: null,
+            hash: '',
+            body: `${'あ'.repeat(19)}漢《${'よみ'.repeat(30)}》${'い'.repeat(380)}`,
+          },
+        },
+      }),
+    ).toBe(1)
+  })
+
   it('話数の表記は特殊ブロックを話に数えない', () => {
     expect(pieceCountLabel(3, 0)).toBe('3話')
     expect(pieceCountLabel(3, 1)).toBe('3話＋特殊1')

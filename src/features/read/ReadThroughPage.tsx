@@ -1,5 +1,6 @@
 // 通し読み: タイトル（または章）を、採用（アクティブ）原稿だけで最初から最後まで読む画面。
 // 採用原稿がない話には「採用原稿がありません。」と表示する。
+// 本文のルビ・傍点の記法は読むための表示にする（コピー・テキストの書き出しは記法のまま）。
 // 長編（数百話・数百万字）でも軽く開けるよう、画面の外の話は組版せず、見積もった大きさで場所だけ取る（lineEstimate.ts）。
 import {
   memo,
@@ -26,6 +27,10 @@ import { useDocumentTitle } from '../../ui/hooks'
 import { BookIcon, ChevronRightIcon, CopyIcon, DownloadIcon, EditIcon, ListIcon } from '../../ui/icons'
 import { AppHeader, type Crumb } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
+import { NearViewportContext, useNearViewportWatcher } from '../../ui/nearViewport'
+import { LazyRubyText } from '../../ui/RubyText'
+import { EpisodeExportDialog } from '../episodeExport/EpisodeExportDialog'
+import { FilesIcon } from '../episodeExport/exportIcons'
 import { lineShape, lineShapeStyle, useCharsPerLine, type LineShape } from './lineEstimate'
 import { VerticalTextIcon } from './readIcons'
 import {
@@ -79,8 +84,11 @@ const PieceSection = memo(function PieceSection({
   shape: LineShape | null
 }) {
   const state = b.body === null ? 'missing' : b.body.trim() === '' ? 'blank' : 'text'
+  // ルビ・傍点の要素は、この話が画面の近くに来てから作る（ルビの多い長編でも軽く開けるように）
+  const sectionRef = useRef<HTMLElement>(null)
   return (
     <section
+      ref={sectionRef}
       id={pieceAnchorId(b.pieceId)}
       className={`rt-piece${b.kind === 'special' ? ' is-special' : ''}`}
       style={shape && state === 'text' ? lineShapeStyle(shape) : undefined}
@@ -119,7 +127,7 @@ const PieceSection = memo(function PieceSection({
         <p className="rt-blank">（本文はまだありません）</p>
       ) : (
         <div className="rt-text" data-testid="read-text">
-          {b.body}
+          <LazyRubyText text={b.body} watch={sectionRef} />
         </div>
       )}
     </section>
@@ -255,6 +263,7 @@ export function ReadThroughPage() {
   const fontSize = clampFontSize(usePrefs((s) => s.editorFontSize))
   const setPrefs = usePrefs((s) => s.setPrefs)
   const [tocOpen, setTocOpen] = useState(false)
+  const [exportingEpisodes, setExportingEpisodes] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const docRef = useRef<HTMLElement>(null)
@@ -288,6 +297,9 @@ export function ReadThroughPage() {
 
   // 1行（縦書きでは1列）に入る字数。画面の外の話の大きさの見積もりに使う
   useCharsPerLine(docRef, TEXT_LETTER_SPACING, [vertical, fontSize, stats.pieces === 0])
+
+  // 画面の近くに来た話だけルビ・傍点を表示する見張り役。縦書きでは本文の枠の中を横にスクロールするので、枠を基準にする
+  const registerNear = useNearViewportWatcher(() => (vertical ? docRef.current : null), [vertical, stats.pieces === 0])
 
   // 縦書き・文字の大きさを切り替えたら、切り替える前に読んでいた所を出す
   useLayoutEffect(() => {
@@ -478,6 +490,18 @@ export function ReadThroughPage() {
               <DownloadIcon />
               <span className="hide-mobile">テキストで書き出し</span>
             </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setExportingEpisodes(true)}
+              disabled={isEmpty}
+              aria-label="各話テキスト書き出し"
+              title="タイトル全体の採用原稿を、1話1ファイルのテキストで書き出す"
+              data-testid="episode-export-open"
+            >
+              <FilesIcon />
+              <span className="hide-mobile">各話ごとに書き出し</span>
+            </button>
           </div>
         </div>
       </div>
@@ -509,17 +533,20 @@ export function ReadThroughPage() {
               tabIndex={vertical ? 0 : undefined}
               data-testid="read-body"
             >
-              <DocContent
-                blocks={blocks}
-                shapes={shapes}
-                titleId={titleId}
-                titleName={titleName}
-                chapterName={chapter ? chapterName : null}
-              />
+              <NearViewportContext.Provider value={registerNear}>
+                <DocContent
+                  blocks={blocks}
+                  shapes={shapes}
+                  titleId={titleId}
+                  titleName={titleName}
+                  chapterName={chapter ? chapterName : null}
+                />
+              </NearViewportContext.Provider>
             </article>
           </div>
         )}
       </main>
+      {exportingEpisodes ? <EpisodeExportDialog titleId={titleId} onClose={() => setExportingEpisodes(false)} /> : null}
     </div>
   )
 }

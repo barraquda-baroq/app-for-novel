@@ -94,6 +94,15 @@ describe('タイトルカードの情報', () => {
     expect(missingLabel(titleCardInfo(data, seeded.titleId)!.summary)).toBe('採用原稿なし 1話＋特殊1')
   })
 
+  it('採用原稿の文字数は、ルビ・傍点の記号とルビの読みを除いて数える', () => {
+    const seeded = seedTitle()
+    const v = seeded.data.pieces[seeded.pieceIds[0]].versionIds[0]
+    const data = updateVersion(seeded.data, v, { body: '｜魔法使い《ウィザード》と東京《とうきょう》の《《夜》》' })
+    // 第1話: 魔法使い・と・東京・の・夜 = 9字、第2話「二 話 目」= 3字
+    expect(titleCardInfo(data, seeded.titleId)!.summary.activeChars).toBe(12)
+    expect(charsLabel(titleCardInfo(data, seeded.titleId)!.summary.activeChars)).toBe('12字')
+  })
+
   it('話数と文字数の表記', () => {
     expect(episodesLabel({ episodes: 3, specials: 0 })).toEqual({ main: '全3話', sub: null })
     expect(episodesLabel({ episodes: 0, specials: 2 })).toEqual({ main: '全0話', sub: '特殊2' })
