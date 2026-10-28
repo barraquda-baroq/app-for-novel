@@ -329,6 +329,23 @@ export const ACTS_SCENARIOS: ActsScenario[] = [
     notes: lostOnSecond,
   },
   {
+    name: '第2幕で別の稿を採用して元の採用稿を削除し、第3幕をさらに分ける / 第1幕をさらに分ける',
+    body: FULL,
+    splitAt: [3, 6],
+    prepare: (d, ep) => S.addVersion(d, actsIds(d, ep)[1], { body: 'DEF' }).data,
+    x: (d, ep) => {
+      const a2 = actsIds(d, ep)[1]
+      const old = adopted(d, a2)
+      const other = d.pieces[a2].versionIds.find((id) => id !== old)!
+      const next = S.deleteVersion(S.setActiveVersion(d, a2, other), old)
+      return furtherSplit(2, [1])(next, ep)
+    },
+    y: furtherSplit(0, [1]),
+    text: FULL,
+    acts: 4,
+    notes: lostOnSecond,
+  },
+  {
     name: '第1幕と第2幕をつなぐ / 第3幕をさらに分ける',
     body: FULL,
     splitAt: [3, 6],
@@ -452,6 +469,9 @@ export function structureProblems(d: AppData): string[] {
   }
   for (const piece of Object.values(d.pieces)) {
     for (const id of piece.versionIds) if (!d.versions[id]) p.push(`話・幕 ${short(piece.id)} の稿の一覧に無い稿 ${short(id)}`)
+    const active = piece.activeVersionId
+    if (typeof active === 'string' && (!d.versions[active] || !piece.versionIds.includes(active)))
+      p.push(`話・幕 ${short(piece.id)} の採用稿 ${short(active)} が${d.versions[active] ? '稿の一覧に無い' : '無い'}`)
   }
   return p
 }

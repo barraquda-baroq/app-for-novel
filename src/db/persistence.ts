@@ -940,8 +940,9 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           const pieceId = String((row.base as VersionRec).pieceId)
           const f = finalOf(pieceId)
           if (!f || !(f.versionIds ?? []).includes(vid)) continue
-          if (res.resurrected.has(pieceId)) {
-            // この端末の操作で消した幕が戻る: その稿も戻す
+          if (res.resurrected.has(pieceId) || f.activeVersionId === vid) {
+            // この端末の操作で消した幕が戻る・採った側の幕がこの稿を採用している（この端末で別の稿を採用してから消した稿）:
+            // その稿も戻す（base = クラウドの内容。両方で変わっていれば 2 で届いた内容が base になっている）
             await w.put('versions', row.base)
             await db.outbox.delete(row.k)
           } else push(remove, pieceId, vid)
