@@ -1,8 +1,20 @@
 // 通し読み。採用（アクティブ）原稿だけが上位の層（章・タイトル）に反映される。
-import { activeBody, chaptersOf, episodeNumbers, flatten, pieceLabel } from './structure'
+// 幕に分けた話は、各幕の見出し（第1幕…）の下に各幕の採用稿を並べる（採用稿のない幕は「採用原稿がありません。」）。
+import { activeBody, actLabel, actParts, chaptersOf, episodeNumbers, flatten, isSplit, pieceLabel } from './structure'
 import type { AppData, ID } from './types'
 
 export const NO_ACTIVE_MESSAGE = '採用原稿がありません。'
+
+/** 幕に分けた話の1幕分 */
+export interface ReadAct {
+  /** 幕の id */
+  pieceId: ID
+  /** 「第1幕」 */
+  label: string
+  /** 幕の採用稿の本文。採用稿がなければ null */
+  body: string | null
+  versionName: string | null
+}
 
 export type ReadBlock =
   | { type: 'chapter'; chapterId: ID; name: string; note: string }
@@ -15,9 +27,11 @@ export type ReadBlock =
       chapterId: ID | null
       label: string
       subtitle: string
-      /** 採用原稿の本文。採用原稿がなければ null */
+      /** 採用原稿の本文（幕に分けた話は各幕の採用稿をつないだもの）。採用原稿がなければ null */
       body: string | null
       versionName: string | null
+      /** 幕に分けた話の幕（読む順）。分けていなければ null */
+      acts: ReadAct[] | null
     }
 
 /**
@@ -43,15 +57,26 @@ export function buildReadThrough(data: AppData, titleId: ID, chapterId?: ID): Re
     }
     const piece = data.pieces[item.pieceId]
     const body = activeBody(data, piece)
+    const acts = isSplit(piece)
+      ? actParts(data, piece).map(
+          (x): ReadAct => ({
+            pieceId: x.act.id,
+            label: actLabel(x.number),
+            body: x.version ? x.version.body : null,
+            versionName: x.version ? x.version.name : null,
+          }),
+        )
+      : null
     blocks.push({
       type: 'piece',
       pieceId: piece.id,
-      kind: piece.kind,
+      kind: piece.kind === 'special' ? 'special' : 'episode',
       chapterId: item.chapterId,
       label: pieceLabel(data, piece, numbers),
       subtitle: piece.subtitle,
       body,
-      versionName: body === null ? null : (data.versions[piece.activeVersionId!]?.name ?? null),
+      versionName: body === null || acts ? null : (data.versions[piece.activeVersionId!]?.name ?? null),
+      acts,
     })
   }
   // 中身が空の章も見出しだけは出す（章単位の通し読みで空の章を開いた場合など）
@@ -78,6 +103,11 @@ export function readThroughText(data: AppData, titleId: ID, chapterId?: ID): str
       continue
     }
     parts.push(b.subtitle.trim() ? `${b.label}　${b.subtitle.trim()}` : b.label, '')
+    if (b.acts) {
+      // 幕に分けた話は、各幕の見出しの下に各幕の採用稿
+      for (const a of b.acts) parts.push(a.label, '', a.body ?? NO_ACTIVE_MESSAGE, '', '')
+      continue
+    }
     parts.push(b.body ?? NO_ACTIVE_MESSAGE, '', '')
   }
   return (

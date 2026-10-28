@@ -1,7 +1,9 @@
 // アプリ全体のデータモデル。
-// 原稿の最小管理単位は「話（Piece）」で、Piece は 第n話（episode）か 特殊ブロック（special）のどちらか。
+// 原稿の最小管理単位は「話（Piece）」で、Piece は 第n話（episode）か 特殊ブロック（special）か 幕（act）。
 // 第n話の n は保存せず、タイトルの構成（structure / chapter.pieceIds）の並び順から常に導出する。
 // これにより「話数の表記は変更できない」「ソート後は並び順どおりに話数が書き換わる」を構造的に保証する。
+// 幕（2.2 セパレート）は採用した第n話を WEB 掲載用に分けたもの。話（parentId）の actIds の並びにだけ載り、
+// structure・chapter.pieceIds には載らない。第x幕の x も保存せず、actIds の中の位置から導出する。
 
 export type ID = string
 
@@ -40,7 +42,8 @@ export interface Chapter {
   updatedAt: number
 }
 
-export type PieceKind = 'episode' | 'special'
+/** episode = 第n話、special = 特殊ブロック（プロローグ等）、act = 幕に分けた話の幕（第x幕） */
+export type PieceKind = 'episode' | 'special' | 'act'
 
 export interface Piece {
   id: ID
@@ -56,6 +59,13 @@ export interface Piece {
   versionIds: ID[]
   /** 「第n稿」の自動命名用カウンタ（削除しても番号を再利用しない） */
   versionSeq: number
+  /** 幕（kind 'act'）: 属する話（幕に分けた第n話）。それ以外は無い */
+  parentId?: ID | null
+  /**
+   * 幕に分けた第n話: 幕の並び（読む順）。無い・空なら分けていない。
+   * 分けている間、話の本文は各幕の採用稿をつないだもので、話自身の稿・採用は変えられない（セパレート解除まで）
+   */
+  actIds?: ID[]
   createdAt: number
   updatedAt: number
 }

@@ -1,5 +1,6 @@
 // UI から呼ぶ操作。ドメインの純粋関数を現在のデータに適用して保存する。
 // 仕様違反は DomainError を投げるので、UI 側では attempt() で受けてトースト表示する。
+import * as A from '../domain/acts'
 import * as E from '../domain/entityOps'
 import { applyPieceEdits, type PieceEdit, type PieceEditOptions } from '../domain/pieceEdits'
 import * as S from '../domain/storyOps'
@@ -59,6 +60,14 @@ export const actions = {
   /** 原稿画面の「保存」: 画面の中で持っていた編集をまとめて書き込む（本文が競合したら別の稿として残す） */
   savePieceEdits: (pieceId: ID, edits: readonly PieceEdit[], opts: PieceEditOptions) =>
     run((d) => applyPieceEdits(d, pieceId, edits, opts)),
+
+  // セパレート（幕）
+  /** 話（または幕）を採用稿の offsets の位置で幕に分ける。戻り値は分けた後の幕の id（読む順） */
+  separatePiece: (pieceId: ID, offsets: readonly number[]) => run((d) => A.separatePiece(d, pieceId, offsets)),
+  /** 幕を次の幕とつなぐ。戻り値はつないだ稿の id */
+  joinActWithNext: (actId: ID) => run((d) => A.joinActWithNext(d, actId)),
+  /** セパレートを解除する。戻り値は各幕をつないだ話の新しい稿の id */
+  unseparatePiece: (pieceId: ID) => run((d) => A.unseparatePiece(d, pieceId)),
 
   // メモ
   addMemo: (titleId: ID, name?: string) => run((d) => E.addMemo(d, titleId, name)),

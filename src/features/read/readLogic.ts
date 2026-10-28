@@ -1,6 +1,6 @@
 // 通し読み画面の表示用の純粋な計算（範囲の決定・目次・文字数・縦中横など）。
 import type { ReadBlock } from '../../domain/readthrough'
-import { activeVersion, chaptersOf } from '../../domain/structure'
+import { activeVersion, adoptedText, chaptersOf } from '../../domain/structure'
 import { bodyMetrics } from '../../domain/text'
 import type { AppData, ID, Version } from '../../domain/types'
 
@@ -55,26 +55,39 @@ export function tocGroups(blocks: ReadBlock[]): TocGroup[] {
 
 export interface ReadStats {
   pieces: number
+  /** 採用原稿のない話（幕に分けた話は数えず、採用稿のない幕を missingActs に数える） */
   missing: number
+  /** 採用稿のない幕 */
+  missingActs: number
   chars: number
   pages: number
 }
 
-/** 話の採用中の推敲バージョン（採用原稿がなければ null） */
-export function pieceVersion(data: AppData, pieceId: ID): Version | null {
+/**
+ * 話の採用原稿（本文を持つレコード。採用原稿がなければ null）。
+ * 幕に分けた話は各幕の採用稿をつないだもの（本文が変わらない限り同じオブジェクトなので、文字数などを覚えておける）
+ */
+export function pieceVersion(data: AppData, pieceId: ID): { body: string } | null {
   const piece = data.pieces[pieceId]
-  return piece ? activeVersion(data, piece) : null
+  return piece ? adoptedText(data, piece) : null
+}
+
+/** 幕の採用稿（採用稿がなければ null） */
+export function actVersion(data: AppData, actId: ID): Version | null {
+  const act = data.pieces[actId]
+  return act ? activeVersion(data, act) : null
 }
 
 /** 採用原稿の話数・文字数・枚数。文字数は稿ごとに覚えておいた値を使う（長編でも全文を数え直さない） */
 export function readStats(data: AppData, blocks: ReadBlock[]): ReadStats {
-  const s: ReadStats = { pieces: 0, missing: 0, chars: 0, pages: 0 }
+  const s: ReadStats = { pieces: 0, missing: 0, missingActs: 0, chars: 0, pages: 0 }
   for (const b of blocks) {
     if (b.type !== 'piece') continue
     s.pieces += 1
+    if (b.acts) s.missingActs += b.acts.reduce((n, a) => n + (a.body === null ? 1 : 0), 0)
     const v = b.body === null ? null : pieceVersion(data, b.pieceId)
     if (!v) {
-      s.missing += 1
+      if (!b.acts) s.missing += 1
       continue
     }
     const m = bodyMetrics(v)
@@ -84,8 +97,20 @@ export function readStats(data: AppData, blocks: ReadBlock[]): ReadStats {
   return s
 }
 
+/** 「採用原稿なし 2話＋1幕」（なければ空文字） */
+export function readMissingLabel(s: Pick<ReadStats, 'missing' | 'missingActs'>): string {
+  const parts: string[] = []
+  if (s.missing > 0) parts.push(`${s.missing}話`)
+  if (s.missingActs > 0) parts.push(`${s.missingActs}幕`)
+  return parts.length > 0 ? `採用原稿なし ${parts.join('＋')}` : ''
+}
+
 export function pieceAnchorId(pieceId: ID): string {
   return `rt-piece-${pieceId}`
+}
+
+export function actAnchorId(actId: ID): string {
+  return `rt-act-${actId}`
 }
 
 /**

@@ -1,5 +1,5 @@
 // タイトル・アイデア・メモ・設定項目・戦略（応募計画）の更新操作。
-import { activeVersion, episodeNumbers, flatten, pieceLabel } from './structure'
+import { actsOf, adoptedMetrics, adoptedText, episodeNumbers, flatten, isSplit, missingActs, pieceLabel } from './structure'
 import { bodyMetrics, textHash } from './text'
 
 export { textHash }
@@ -19,6 +19,7 @@ import {
   type Submission,
   type SubmissionSnapshot,
   type Title,
+  type Version,
 } from './types'
 import { byOrder, newId, nextOrder, now, stepOrder } from './util'
 
@@ -163,6 +164,8 @@ export interface TitleSummary {
   missingEpisodes: number
   /** 採用原稿がない特殊ブロックの数 */
   missingSpecials: number
+  /** 幕に分けた話のうち、採用稿がない幕の数（missingActive にも入る） */
+  missingActs: number
   activeChars: number
 }
 
@@ -173,28 +176,36 @@ export function titleSummary(data: AppData, titleId: ID): TitleSummary {
     missingActive: 0,
     missingEpisodes: 0,
     missingSpecials: 0,
+    missingActs: 0,
     activeChars: 0,
   }
   for (const item of flatten(data, titleId)) {
     const p = data.pieces[item.pieceId]
     if (p.kind === 'episode') summary.episodes += 1
     else summary.specials += 1
-    const v = activeVersion(data, p)
-    if (v === null) {
+    const m = adoptedMetrics(data, p)
+    if (m) summary.activeChars += m.chars
+    if (isSplit(p)) {
+      // 幕に分けた話は、採用稿のない幕を採用原稿のないものとして数える
+      const acts = missingActs(data, p)
+      summary.missingActs += acts
+      summary.missingActive += acts
+    } else if (m === null) {
       summary.missingActive += 1
       if (p.kind === 'episode') summary.missingEpisodes += 1
       else summary.missingSpecials += 1
-    } else summary.activeChars += bodyMetrics(v).chars
+    }
   }
   return summary
 }
 
-/** 「採用原稿なし 2話＋特殊1」のような表記（話と特殊ブロックを分けて数える）。どちらも0なら空文字 */
-export function missingActiveLabel(missingEpisodes: number, missingSpecials: number): string {
-  if (missingEpisodes === 0 && missingSpecials === 0) return ''
-  if (missingSpecials === 0) return `採用原稿なし ${missingEpisodes}話`
-  if (missingEpisodes === 0) return `採用原稿なし 特殊${missingSpecials}`
-  return `採用原稿なし ${missingEpisodes}話＋特殊${missingSpecials}`
+/** 「採用原稿なし 2話＋特殊1」のような表記（話と特殊ブロック・幕を分けて数える）。どれも0なら空文字 */
+export function missingActiveLabel(missingEpisodes: number, missingSpecials: number, missingActs = 0): string {
+  const parts: string[] = []
+  if (missingEpisodes > 0) parts.push(`${missingEpisodes}話`)
+  if (missingSpecials > 0) parts.push(`特殊${missingSpecials}`)
+  if (missingActs > 0) parts.push(`${missingActs}幕`)
+  return parts.length > 0 ? `採用原稿なし ${parts.join('＋')}` : ''
 }
 
 /** タイトル配下のどれかが最後に編集された日時（原稿の編集も含む） */
@@ -691,9 +702,14 @@ export function takeSnapshot(data: AppData, titleId: ID, withTexts = true): Subm
   let pages = 0
   for (const item of flatten(data, titleId)) {
     const p = data.pieces[item.pieceId]
-    const v = activeVersion(data, p)
+    const v = adoptedText(data, p)
     const m = v ? bodyMetrics(v) : null
-    activeVersions[p.id] = v ? v.id : null
+    // 幕に分けた話は各幕の採用稿をつないだ本文を記録する。稿の印は話自身の（分けた時の）採用稿
+    // （分けても本文は変わらないので、分けただけでは「稿が変わった」にならない）
+    const split = isSplit(p)
+    const versionId = !v ? null : split ? (p.activeVersionId ?? `${p.id}:acts`) : (v as Version).id
+    const versionName = !v ? null : split ? `${actsOf(data, p).length}幕に分けた原稿` : (v as Version).name
+    activeVersions[p.id] = versionId
     order.push(p.id)
     let textKey: ID | null = null
     if (v && m && withTexts) {
@@ -704,8 +720,8 @@ export function takeSnapshot(data: AppData, titleId: ID, withTexts = true): Subm
       kind: p.kind,
       label: pieceLabel(data, p, numbers),
       subtitle: p.subtitle,
-      versionId: v ? v.id : null,
-      versionName: v ? v.name : null,
+      versionId,
+      versionName,
       chars: m ? m.chars : 0,
       textKey,
       hash: m ? m.hash : textHash(''),

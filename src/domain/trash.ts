@@ -2,7 +2,7 @@
 // 削除の操作（entityOps / storyOps）は putInTrash でレコードを丸ごとここへ移し、削除した時点の場所（TrashOrigin）を控える。
 // 戻す時はその場所へ並べ直す（直前にあった要素がまだあればその直後、なければ控えた位置）。
 // すべて純粋関数で、新しい AppData を返す。戻せない時は DomainError を投げる。
-import { locatePiece } from './structure'
+import { isSplit, locatePiece } from './structure'
 import { Tx, transact } from './tx'
 import {
   DomainError,
@@ -307,8 +307,16 @@ export interface RestoreResult {
 /** 控えた位置が分かるか（負の値や数でないものは「分からない」。修復で補った件など） */
 const knownIndex = (origin: TrashOrigin) => Number.isFinite(origin.index) && origin.index >= 0
 
+/**
+ * 稿を戻す先の話。ふつうは稿の話。幕をつないだ・セパレートを解除した時の、消えた幕の稿は
+ * 控えた場所（origin.pieceId。つないだ先の幕・話）へ戻す
+ */
+function versionTarget(tx: Tx, v: Version, origin: TrashOrigin | undefined): Piece | undefined {
+  return tx.get('pieces', v.pieceId) ?? (origin?.pieceId ? tx.get('pieces', origin.pieceId) : undefined)
+}
+
 /** 戻す先（親）が残っているか。なければ何を先に戻せばよいかを伝える */
-function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord): void {
+function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord, origin?: TrashOrigin): void {
   const titleOf = (titleId: ID | null | undefined) => {
     if (!titleId || !tx.get('titles', titleId))
       throw new DomainError('元のタイトルがないため戻せません。先にタイトルを戻してください。')
@@ -326,11 +334,14 @@ function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord): void {
       return
     case 'version': {
       const v = record as Version
-      if (!tx.get('pieces', v.pieceId)) {
+      const piece = versionTarget(tx, v, origin)
+      if (!piece) {
         // タイトルごと消えているなら、タイトルを戻せば話も戻る
         if (!tx.get('titles', v.titleId)) titleOf(v.titleId)
         throw new DomainError('元の話がないため戻せません。先に話を戻してください。')
       }
+      // 幕に分けた話の稿は、セパレートを解除するまで変えられない
+      if (isSplit(piece)) throw new DomainError('元の話を幕に分けているため戻せません。先にセパレートを解除してください。')
       return
     }
     case 'settingEntry': {
@@ -364,7 +375,17 @@ function rewriteRefs(table: ContentTableName, record: ContentRecord, ids: Map<ID
     }
     case 'pieces': {
       const r = record as Piece
-      return { ...r, id: m(r.id), titleId: m(r.titleId), activeVersionId: mn(r.activeVersionId), versionIds: list(r.versionIds) }
+      const out: Piece = {
+        ...r,
+        id: m(r.id),
+        titleId: m(r.titleId),
+        activeVersionId: mn(r.activeVersionId),
+        versionIds: list(r.versionIds),
+      }
+      // 幕の属する話と、幕に分けた話の幕の並び
+      if (typeof r.parentId === 'string') out.parentId = m(r.parentId)
+      if (Array.isArray(r.actIds)) out.actIds = list(r.actIds)
+      return out
     }
     case 'versions': {
       const r = record as Version
@@ -491,7 +512,8 @@ function touchTitle(tx: Tx, titleId: ID, patch: Partial<Title> = {}): void {
 /** 話を元の章・位置へ戻す。元の章がもう無ければ、直前にあった話の後ろ（それも無ければタイトル直下の末尾） */
 function relinkPiece(tx: Tx, piece: Piece, origin: TrashOrigin): void {
   const title = tx.get('titles', piece.titleId)
-  if (!title || locatePiece(tx.data, piece.id)) return
+  // 幕は本編の並びに載らない（話といっしょに戻り、話の幕の並びに入っている）
+  if (!title || piece.kind === 'act' || locatePiece(tx.data, piece.id)) return
   const node: NodeRef = { type: 'piece', id: piece.id }
   const ts = now()
   const ch = origin.chapterId ? tx.get('chapters', origin.chapterId) : undefined
@@ -556,16 +578,23 @@ function relinkChapter(tx: Tx, chapter: Chapter, origin: TrashOrigin): void {
   touchTitle(tx, title.id, { structure })
 }
 
-/** 稿を元の話の元の位置へ戻す。採用中だった稿は、その話に今は採用している稿がなければ採用に戻す */
+/**
+ * 稿を元の話の元の位置へ戻す。採用中だった稿は、その話に今は採用している稿がなければ採用に戻す。
+ * 消えた幕の稿は、控えた場所（つないだ先の幕・話）の稿として戻す
+ */
 function relinkVersion(tx: Tx, version: Version, origin: TrashOrigin): void {
-  const piece = tx.get('pieces', version.pieceId)
+  const piece = versionTarget(tx, version, origin)
   if (!piece) return
-  if (version.titleId !== piece.titleId) tx.put('versions', { ...version, titleId: piece.titleId })
+  if (version.titleId !== piece.titleId || version.pieceId !== piece.id) {
+    tx.put('versions', { ...version, pieceId: piece.id, titleId: piece.titleId })
+  }
   const versionIds = [...piece.versionIds]
   if (!versionIds.includes(version.id)) versionIds.splice(insertIndex(versionIds, origin), 0, version.id)
   const hasActive = piece.activeVersionId !== null && Boolean(tx.get('versions', piece.activeVersionId))
   const activeVersionId = origin.wasActive && !hasActive ? version.id : piece.activeVersionId
-  tx.put('pieces', { ...piece, versionIds, activeVersionId, updatedAt: now() })
+  // 別の幕から移って戻った稿もあるので、「第n稿」の番号が重ならないよう数を進めておく
+  const versionSeq = Math.max(piece.versionSeq, versionIds.length)
+  tx.put('pieces', { ...piece, versionIds, activeVersionId, versionSeq, updatedAt: now() })
 }
 
 /**
@@ -583,7 +612,7 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
     throw new DomainError('ゴミ箱の中身が見つからないため戻せません。')
   }
   return transact(data, (tx) => {
-    requireParents(tx, entry.kind, main.record)
+    requireParents(tx, entry.kind, main.record, entry.origin)
 
     // 同じ id のものが残っていれば新しい id を振る（残っている方は上書きしない）
     const ids = new Map<ID, ID>()
@@ -636,8 +665,19 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
       }
       case 'version': {
         const v = restored as Version
-        titleId = tx.get('pieces', v.pieceId)?.titleId ?? v.titleId
+        titleId = versionTarget(tx, v, origin)?.titleId ?? v.titleId
         relinkVersion(tx, v, origin)
+        // 1件に複数の稿があることがある（幕をつないだ・セパレートを解除した時の、採用していなかった稿）。
+        // 残りは本体の後ろに、もとの順で並べる
+        let prevId = v.id
+        for (const item of items) {
+          if (item.table !== 'versions' || item.record.id === main.record.id) continue
+          const id = ids.get(item.record.id) ?? item.record.id
+          const other = tx.get('versions', id)
+          if (!other) continue
+          relinkVersion(tx, other, { ...origin, index: -1, prevId, wasActive: false })
+          prevId = id
+        }
         break
       }
       case 'memo': {

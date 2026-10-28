@@ -1,12 +1,15 @@
 // 本編（章・第n話・特殊ブロック・推敲バージョン）の更新操作。
 // すべて純粋関数で、新しい AppData を返す。仕様違反は DomainError を投げる。
+// 幕に分けた話（セパレート。src/domain/acts.ts）の稿・採用は、セパレートを解除するまで変えられない。
 import {
+  actsOf,
   canDeletePiece,
   chaptersOf,
   effectiveNumbering,
   episodeLabel,
   episodeNumbers,
   flatten,
+  isSplit,
   lastEpisodeInScope,
   locatePiece,
   pieceFullLabel,
@@ -38,6 +41,21 @@ function requirePiece(tx: Tx, pieceId: ID): Piece {
   const p = tx.get('pieces', pieceId)
   if (!p) throw new DomainError('話が見つかりません')
   return p
+}
+
+/** 幕に分けた話の採用を変えようとした時 */
+export const SPLIT_ADOPT_LOCKED = '幕に分けた話の採用を変えるには、先にセパレートを解除してください'
+/** 幕に分けた話の稿を変えようとした時 */
+export const SPLIT_VERSIONS_LOCKED = '幕に分けた話の稿は変えられません。各幕の画面で編集するか、先にセパレートを解除してください'
+
+/** 幕に分けた話（稿・採用を変えられない）なら DomainError */
+function requireUnsplit(piece: Piece, message = SPLIT_VERSIONS_LOCKED): void {
+  if (isSplit(piece)) throw new DomainError(message)
+}
+
+/** 幕は本編の並び（structure・chapter.pieceIds）に載らないので、並べ替え・移動はできない */
+function requireNotAct(piece: Piece): void {
+  if (piece.kind === 'act') throw new DomainError('幕は並べ替えられません（話の中の幕の順は、つなぐ・さらに分けるで変わります）')
 }
 
 function requireChapter(tx: Tx, chapterId: ID): Chapter {
@@ -80,7 +98,7 @@ function attachPiece(tx: Tx, titleId: ID, pieceId: ID, slot: Slot): void {
   }
 }
 
-function makeVersion(piece: Piece, seq: number, body = '', sourceVersionId: ID | null = null, name?: string): Version {
+export function makeVersion(piece: Piece, seq: number, body = '', sourceVersionId: ID | null = null, name?: string): Version {
   const ts = now()
   return {
     id: newId(),
@@ -389,15 +407,24 @@ export function updatePiece(data: AppData, pieceId: ID, patch: { subtitle?: stri
     const next: Piece = { ...p, updatedAt: now() }
     if (patch.subtitle !== undefined) next.subtitle = patch.subtitle
     if (patch.label !== undefined) {
-      // 第n話の表記は変更できない（特殊ブロックのみ見出しを編集できる）
-      if (p.kind !== 'special') throw new DomainError('第n話の表記は変更できません')
+      // 第n話・第x幕の表記は変更できない（特殊ブロックのみ見出しを編集できる）
+      if (p.kind !== 'special')
+        throw new DomainError(p.kind === 'act' ? '第x幕の表記は変更できません' : '第n話の表記は変更できません')
       next.label = patch.label
     }
     tx.put('pieces', next)
   }).data
 }
 
-/** 話をその稿ごとゴミ箱へ移す（途中の話数は削除できない） */
+/** 話の稿（versionIds の順。載っていない稿（壊れたデータ）も後ろに付ける） */
+function versionsOfPiece(tx: Tx, p: Piece): Version[] {
+  return [
+    ...p.versionIds.map((vid) => tx.get('versions', vid)).filter((v): v is Version => Boolean(v)),
+    ...tx.all('versions').filter((v) => v.pieceId === p.id && !p.versionIds.includes(v.id)),
+  ]
+}
+
+/** 話をその稿ごとゴミ箱へ移す（途中の話数は削除できない）。幕に分けた話は、幕とその稿もいっしょに1件にまとめる */
 export function deletePiece(data: AppData, pieceId: ID): AppData {
   const perm = canDeletePiece(data, pieceId)
   if (!perm.ok) throw new DomainError(perm.reason ?? '削除できません')
@@ -406,11 +433,16 @@ export function deletePiece(data: AppData, pieceId: ID): AppData {
     const title = requireTitle(tx, p.titleId)
     const origin = pieceOrigin(tx.data, pieceId)
     const chapter = origin.chapterId ? tx.get('chapters', origin.chapterId) : undefined
-    // versionIds に載っていない稿（壊れたデータ）も一緒に移す
-    const versions = [
-      ...p.versionIds.map((vid) => tx.get('versions', vid)).filter((v): v is Version => Boolean(v)),
-      ...tx.all('versions').filter((v) => v.pieceId === pieceId && !p.versionIds.includes(v.id)),
+    const records: { table: 'pieces' | 'versions'; record: Piece | Version }[] = [
+      { table: 'pieces', record: p },
+      ...versionsOfPiece(tx, p).map((record) => ({ table: 'versions' as const, record })),
     ]
+    // 幕（並びに載っていないが、この話を指している幕も）とその稿
+    const acts = [...actsOf(tx.data, p), ...tx.all('pieces').filter((a) => a.kind === 'act' && a.parentId === p.id)]
+    for (const act of new Set(acts)) {
+      records.push({ table: 'pieces', record: act })
+      for (const v of versionsOfPiece(tx, act)) records.push({ table: 'versions', record: v })
+    }
     const label = pieceFullLabel(tx.data, p)
     detachPiece(tx, pieceId)
     putInTrash(tx, {
@@ -419,7 +451,7 @@ export function deletePiece(data: AppData, pieceId: ID): AppData {
       titleName: title.name,
       parentLabel: chapter ? trashLabel.chapter(chapter) : undefined,
       origin,
-      records: [{ table: 'pieces', record: p }, ...versions.map((record) => ({ table: 'versions' as const, record }))],
+      records,
     })
     touchTitle(tx, p.titleId)
   }).data
@@ -429,6 +461,7 @@ export function deletePiece(data: AppData, pieceId: ID): AppData {
 export function movePiece(data: AppData, pieceId: ID, slot: Slot): AppData {
   return transact(data, (tx) => {
     const p = requirePiece(tx, pieceId)
+    requireNotAct(p)
     detachPiece(tx, pieceId)
     attachPiece(tx, p.titleId, pieceId, slot)
   }).data
@@ -442,6 +475,7 @@ export function movePiece(data: AppData, pieceId: ID, slot: Slot): AppData {
 export function movePieceStep(data: AppData, pieceId: ID, dir: -1 | 1): AppData {
   const piece = data.pieces[pieceId]
   if (!piece) throw new DomainError('話が見つかりません')
+  requireNotAct(piece)
   const title = data.titles[piece.titleId]
   const from = locatePiece(data, pieceId)
   if (!title || !from) return data
@@ -629,6 +663,7 @@ export function addVersion(
 ): { data: AppData; result: ID } {
   return transact(data, (tx) => {
     const p = requirePiece(tx, pieceId)
+    requireUnsplit(p)
     const seq = p.versionSeq + 1
     const v = makeVersion(p, seq, opts.body ?? '', opts.sourceVersionId ?? null, opts.name)
     tx.put('versions', v)
@@ -661,6 +696,8 @@ export function updateVersion(data: AppData, versionId: ID, patch: { name?: stri
   return transact(data, (tx) => {
     const v = tx.get('versions', versionId)
     if (!v) throw new DomainError('バージョンが見つかりません')
+    const p = tx.get('pieces', v.pieceId)
+    if (p) requireUnsplit(p)
     tx.put('versions', { ...v, ...patch, updatedAt: now() })
   }).data
 }
@@ -671,6 +708,7 @@ export function deleteVersion(data: AppData, versionId: ID): AppData {
     const v = tx.get('versions', versionId)
     if (!v) return
     const p = requirePiece(tx, v.pieceId)
+    requireUnsplit(p)
     const index = p.versionIds.indexOf(versionId)
     putInTrash(tx, {
       kind: 'version',
@@ -699,6 +737,7 @@ export function deleteVersion(data: AppData, versionId: ID): AppData {
 export function setActiveVersion(data: AppData, pieceId: ID, versionId: ID | null): AppData {
   return transact(data, (tx) => {
     const p = requirePiece(tx, pieceId)
+    requireUnsplit(p, SPLIT_ADOPT_LOCKED)
     if (versionId !== null && !p.versionIds.includes(versionId)) throw new DomainError('この話のバージョンではありません')
     tx.put('pieces', { ...p, activeVersionId: versionId, updatedAt: now() })
   }).data

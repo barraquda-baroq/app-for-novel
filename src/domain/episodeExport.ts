@@ -4,7 +4,18 @@
 // 第n話が章ごとに重なっても、名前の順が読む順になり、どの章の話か分かるように。見出しにも章名を入れる。
 // 同じ名前になる時（同じ見出しの特殊ブロックなど）は (2)(3)… を付ける。
 // 本文はルビ・傍点の記法（カクヨム式）のまま書き出す（そのまま投稿できるように）。
-import { activeVersion, chaptersOf, effectiveNumbering, episodeNumbers, flatten, pieceLabel } from './structure'
+// 幕に分けた話も1話1ファイルで、各幕の本文の前に幕の見出し（第1幕…）を入れる。採用稿のない幕は飛ばす。
+import {
+  actLabel,
+  actParts,
+  adoptedText,
+  chaptersOf,
+  effectiveNumbering,
+  episodeNumbers,
+  flatten,
+  isSplit,
+  pieceLabel,
+} from './structure'
 import type { AppData, ID } from './types'
 
 export interface EpisodeFile {
@@ -27,8 +38,10 @@ export interface EpisodeEntry {
   name: string
   /** 「第1話　旅立ち」のような見出し */
   heading: string
-  /** 採用原稿の本文（記法のまま） */
+  /** 採用原稿の本文（記法のまま。幕に分けた話は各幕の採用稿をつないだもの） */
   body: string
+  /** 幕に分けた話: 書き出す幕（採用稿のある幕だけ。読む順）。分けていなければ無い */
+  acts?: { label: string; body: string }[]
 }
 
 /** ファイル名に使えない文字を置き換える（Windows・iPhone・Android のどれでも使える名前にする） */
@@ -72,7 +85,7 @@ export function episodeEntries(data: AppData, titleId: ID, date: Date): EpisodeE
   const entries: EpisodeEntry[] = []
   for (const item of flatten(data, titleId)) {
     const piece = data.pieces[item.pieceId]
-    const v = activeVersion(data, piece)
+    const v = adoptedText(data, piece)
     if (!v) continue
     const label = pieceLabel(data, piece, numbers)
     const ch = perChapter && item.chapterId ? data.chapters[item.chapterId] : undefined
@@ -85,14 +98,30 @@ export function episodeEntries(data: AppData, titleId: ID, date: Date): EpisodeE
     used.add(nameKey(name))
     const head = ch ? `${chName}　${label}` : label
     const heading = piece.subtitle.trim() ? `${head}　${piece.subtitle.trim()}` : head
-    entries.push({ pieceId: piece.id, name: `${name}.txt`, heading, body: v.body })
+    const entry: EpisodeEntry = { pieceId: piece.id, name: `${name}.txt`, heading, body: v.body }
+    if (isSplit(piece)) {
+      entry.acts = actParts(data, piece).flatMap((x) => (x.version ? [{ label: actLabel(x.number), body: x.version.body }] : []))
+    }
+    entries.push(entry)
   }
   return entries
 }
 
+/** 末尾の改行（幕の見出しの前に空行を1つだけ入れるため） */
+const trailingBreaks = /(?:\r\n|\r|\n)+$/
+
+/** 本文の部分。幕に分けた話は、各幕の見出し・空行・幕の本文を空行でつなぐ */
+function entryBody(entry: Pick<EpisodeEntry, 'body' | 'acts'>): string {
+  if (!entry.acts) return entry.body
+  return entry.acts
+    .map((a, i) => `${a.label}\n\n${i < entry.acts!.length - 1 ? a.body.replace(trailingBreaks, '') : a.body}`)
+    .join('\n\n')
+}
+
 /** 1話分のテキストファイルの中身（見出しを入れるなら先頭に見出しと空行） */
-export function episodeFileText(entry: Pick<EpisodeEntry, 'heading' | 'body'>, withHeading: boolean): string {
-  return toCrlf(withHeading ? `${entry.heading}\n\n${entry.body}` : entry.body)
+export function episodeFileText(entry: Pick<EpisodeEntry, 'heading' | 'body' | 'acts'>, withHeading: boolean): string {
+  const body = entryBody(entry)
+  return toCrlf(withHeading ? `${entry.heading}\n\n${body}` : body)
 }
 
 export function episodeFiles(data: AppData, titleId: ID, opts: EpisodeExportOptions): EpisodeFile[] {

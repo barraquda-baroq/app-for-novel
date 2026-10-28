@@ -5,7 +5,7 @@
 // 長編（数百話・数百万字）でも画面を長く止めないよう、本文のテキスト化・圧縮は1話ずつ行い、間で処理を譲る。
 import { strToU8, Zip, ZipDeflate } from 'fflate'
 import { episodeEntries, episodeFileText, fileSafe, yyyymmdd, type EpisodeEntry } from '../../domain/episodeExport'
-import { activeVersion, flatten } from '../../domain/structure'
+import { adoptedText, flatten, missingActs } from '../../domain/structure'
 import type { AppData, ID } from '../../domain/types'
 
 // ---------- 書き出す前の一覧 ----------
@@ -17,6 +17,8 @@ export interface ExportPreview {
   skippedEpisodes: number
   /** 採用原稿がなく、書き出さない特殊ブロックの数 */
   skippedSpecials: number
+  /** 幕に分けた話のうち、採用稿がなく書き出さない幕の数（話のファイルには入らない） */
+  skippedActs: number
   /** スマホなどで1つにまとめる時の ZIP の名前 */
   zipName: string
 }
@@ -29,9 +31,13 @@ export function zipFileName(titleName: string, date: Date): string {
 export function exportPreview(data: AppData, titleId: ID, date: Date): ExportPreview {
   let skippedEpisodes = 0
   let skippedSpecials = 0
+  let skippedActs = 0
   for (const item of flatten(data, titleId)) {
     const piece = data.pieces[item.pieceId]
-    if (activeVersion(data, piece)) continue
+    if (adoptedText(data, piece)) {
+      skippedActs += missingActs(data, piece)
+      continue
+    }
     if (piece.kind === 'episode') skippedEpisodes += 1
     else skippedSpecials += 1
   }
@@ -39,15 +45,17 @@ export function exportPreview(data: AppData, titleId: ID, date: Date): ExportPre
     entries: episodeEntries(data, titleId, date),
     skippedEpisodes,
     skippedSpecials,
+    skippedActs,
     zipName: zipFileName(data.titles[titleId]?.name ?? '', date),
   }
 }
 
-/** 「採用原稿のない2話・特殊ブロック1件は書き出しません。」（飛ばす話がなければ空文字） */
-export function skippedNotice(episodes: number, specials: number): string {
+/** 「採用原稿のない2話・特殊ブロック1件・1幕は書き出しません。」（飛ばすものがなければ空文字） */
+export function skippedNotice(episodes: number, specials: number, acts = 0): string {
   const parts: string[] = []
   if (episodes > 0) parts.push(`${episodes}話`)
   if (specials > 0) parts.push(`特殊ブロック${specials}件`)
+  if (acts > 0) parts.push(`${acts}幕`)
   return parts.length > 0 ? `採用原稿のない${parts.join('・')}は書き出しません。` : ''
 }
 

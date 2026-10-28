@@ -1,16 +1,21 @@
 // 本編タブ・章ページで使う、表示用の純粋な計算（データは変更しない）。
+import { joinError } from '../../../domain/acts'
 import { entriesOf } from '../../../domain/entityOps'
-import { formatProgress, titleProgress, type PieceProgress } from '../../../domain/progress'
+import { actProgress, formatProgress, titleProgress, type PieceProgress } from '../../../domain/progress'
 import { hasRubyMarkup, parseRuby, type RubySegment } from '../../../domain/ruby'
 import * as S from '../../../domain/storyOps'
 import type { InsertOption } from '../../../domain/storyOps'
 import {
   activeVersion,
+  actLabel,
+  actParts,
+  adoptedText,
   canDeletePiece,
   effectiveNumbering,
   episodeLabel,
   episodeNumbers,
   flatten,
+  isSplit,
   locatePiece,
   pieceFullLabel,
   pieceLabel,
@@ -384,14 +389,24 @@ export interface PieceGroupStats {
   missingEpisodes: number
   /** 採用原稿のない特殊ブロックの数 */
   missingSpecials: number
+  /** 幕に分けた話のうち、採用稿のない幕の数（missingActive にも入る） */
+  missingActs: number
   /** 採用原稿の文字数（空白・改行除く） */
   chars: number
   /** 400字詰め原稿用紙換算（各話を新しいページから書き始めた場合） */
   pages: number
 }
 
-/** 話と採用中の稿の組から集計する（文字数・枚数は稿ごとのキャッシュを使うので、本文を数え直さない） */
-export function statsOf(entries: readonly { piece: Piece; version: Version | null }[]): PieceGroupStats {
+/** 集計する1話分。text は上位に反映される本文（幕に分けた話は各幕の採用稿をつないだもの） */
+export interface StatsEntry {
+  piece: Piece
+  text: { body: string } | null
+  /** 幕に分けた話の幕（採用稿のない幕を数える）。分けていなければ null */
+  acts?: readonly { version: Version | null }[] | null
+}
+
+/** 話と採用原稿の組から集計する（文字数・枚数は稿ごとのキャッシュを使うので、本文を数え直さない） */
+export function statsOf(entries: readonly StatsEntry[]): PieceGroupStats {
   const s: PieceGroupStats = {
     pieces: 0,
     episodes: 0,
@@ -399,20 +414,26 @@ export function statsOf(entries: readonly { piece: Piece; version: Version | nul
     missingActive: 0,
     missingEpisodes: 0,
     missingSpecials: 0,
+    missingActs: 0,
     chars: 0,
     pages: 0,
   }
-  for (const { piece, version } of entries) {
+  for (const { piece, text, acts } of entries) {
     s.pieces += 1
     if (piece.kind === 'episode') s.episodes += 1
     else s.specials += 1
-    if (!version) {
+    if (acts) {
+      // 幕に分けた話は、採用稿のない幕を採用原稿のないものとして数える
+      const missing = acts.reduce((n, a) => n + (a.version ? 0 : 1), 0)
+      s.missingActs += missing
+      s.missingActive += missing
+    } else if (!text) {
       s.missingActive += 1
       if (piece.kind === 'episode') s.missingEpisodes += 1
       else s.missingSpecials += 1
-      continue
     }
-    const m = bodyMetrics(version)
+    if (!text) continue
+    const m = bodyMetrics(text)
     s.chars += m.chars
     s.pages += m.manuscriptPages
   }
@@ -420,10 +441,10 @@ export function statsOf(entries: readonly { piece: Piece; version: Version | nul
 }
 
 export function statsOfPieces(data: AppData, pieceIds: ID[]): PieceGroupStats {
-  const entries: { piece: Piece; version: Version | null }[] = []
+  const entries: StatsEntry[] = []
   for (const id of pieceIds) {
     const piece = data.pieces[id]
-    if (piece) entries.push({ piece, version: activeVersion(data, piece) })
+    if (piece) entries.push({ piece, text: adoptedText(data, piece), acts: isSplit(piece) ? actParts(data, piece) : null })
   }
   return statsOf(entries)
 }
@@ -447,8 +468,14 @@ export function titleStats(data: AppData, titleId: ID): PieceGroupStats {
  */
 export interface PieceRowData {
   piece: Piece
-  /** 採用中の稿（なければ null） */
+  /** 採用中の稿（なければ null。幕に分けた話では話自身の（分けた時の）採用稿） */
   version: Version | null
+  /** 上位に反映される本文（幕に分けた話は各幕の採用稿をつないだもの。本文が変わらない限り同じオブジェクト） */
+  text: { body: string } | null
+  /** 幕に分けた話の幕の行（読む順）。分けていなければ null */
+  acts: ActRowData[] | null
+  /** セパレート（幕に分ける）できるか（採用原稿のある、分けていない第n話） */
+  canSeparate: boolean
   versionCount: number
   /** 第n話・特殊ブロックの見出し */
   label: string
@@ -465,6 +492,24 @@ export interface PieceRowData {
    * 表示する値だけを持つので、ほかの話の文字数が少し変わっても表示が変わらない行は描き直さない
    */
   progress: number | null
+}
+
+/** 幕に分けた話の、幕の1行 */
+export interface ActRowData {
+  act: Piece
+  /** 幕の採用稿（なければ null） */
+  version: Version | null
+  versionCount: number
+  /** 「第2幕」 */
+  label: string
+  /** 「第3話　旅立ち　第2幕」 */
+  fullLabel: string
+  /** 幕の終わりがタイトル全体（採用原稿）の何 % の位置か */
+  progress: number | null
+  /** 最後の幕（次の幕とつなげない） */
+  isLast: boolean
+  /** 次の幕とつなげない理由（つなげれば null） */
+  joinBlocked: string | null
 }
 
 /**
@@ -523,11 +568,42 @@ export function progressLabel(percent: number | null): string {
   return formatProgress(percent === null ? null : percent / 100)
 }
 
-/** 進捗の説明（読み上げ・マウスを乗せた時の説明） */
-export function progressDescription(percent: number | null, hasActive: boolean): string {
+/** 進捗の説明（読み上げ・マウスを乗せた時の説明）。what は「この話」「この幕」 */
+export function progressDescription(percent: number | null, hasActive: boolean, what = 'この話'): string {
   if (percent === null) return 'タイトル全体の採用原稿がまだ0字のため、位置は出せません'
-  const base = `この話の終わりは、タイトル全体（採用原稿）の ${percent}% の位置です`
+  const base = `${what}の終わりは、タイトル全体（採用原稿）の ${percent}% の位置です`
   return hasActive ? base : `${base}（採用原稿がないので0字として数えています）`
+}
+
+/** 前回作った幕の行（幕が変わっていなければ同じ配列を渡し、行を描き直さない） */
+const actRowsCache = new WeakMap<Piece, ActRowData[]>()
+
+/** 幕に分けた話の幕の行（読む順） */
+export function actRows(
+  data: AppData,
+  piece: Piece,
+  episodeProgress: PieceProgress | undefined,
+  numbers?: Record<ID, number>,
+): ActRowData[] {
+  const parts = actParts(data, piece)
+  const progress = actProgress(data, piece, episodeProgress)
+  const head = pieceFullLabel(data, piece, numbers)
+  const rows = parts.map(
+    (x, i): ActRowData => ({
+      act: x.act,
+      version: x.version,
+      versionCount: versionCountOf(data, x.act),
+      label: actLabel(x.number),
+      fullLabel: `${head}　${actLabel(x.number)}`,
+      progress: progressPercent(progress.get(x.act.id)?.end),
+      isLast: i === parts.length - 1,
+      joinBlocked: i === parts.length - 1 ? null : joinError(data, x.act.id),
+    }),
+  )
+  const prev = actRowsCache.get(piece)
+  if (prev && prev.length === rows.length && prev.every((r, i) => shallowEqual(r, rows[i]))) return prev
+  actRowsCache.set(piece, rows)
+  return rows
 }
 
 /** タイトルの全行（読む順の pieceId → 行の値） */
@@ -539,9 +615,14 @@ export function pieceRows(data: AppData, titleId: ID, opts: PieceRowOptions = {}
     const piece = data.pieces[f.pieceId]
     const step = opts.steps?.[piece.id]
     const del = opts.deletable?.[piece.id]
+    const version = activeVersion(data, piece)
+    const split = isSplit(piece)
     out[piece.id] = {
       piece,
-      version: activeVersion(data, piece),
+      version,
+      text: adoptedText(data, piece),
+      acts: split ? actRows(data, piece, progress.get(piece.id), numbers) : null,
+      canSeparate: piece.kind === 'episode' && !split && version !== null && version.pieceId === piece.id,
       versionCount: versionCountOf(data, piece),
       label: pieceLabel(data, piece, numbers),
       fullLabel: pieceFullLabel(data, piece, numbers),

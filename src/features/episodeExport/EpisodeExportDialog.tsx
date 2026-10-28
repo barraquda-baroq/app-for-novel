@@ -56,7 +56,7 @@ export function EpisodeExportDialog({
     [story, titleName, titleId, date],
   )
   const { entries, zipName } = preview
-  const skipped = skippedNotice(preview.skippedEpisodes, preview.skippedSpecials)
+  const skipped = skippedNotice(preview.skippedEpisodes, preview.skippedSpecials, preview.skippedActs)
   const displayName = titleName.trim() || '無題のタイトル'
 
   const run = async () => {

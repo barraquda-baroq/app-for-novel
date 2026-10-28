@@ -166,6 +166,17 @@ export function repairData(input: AppData): RepairResult {
   dropOrphans('settingCategories', '設定項目')
   dropOrphans('submissions', '応募計画')
 
+  // 幕: 属する話（同じタイトルの第n話）がなければ見えなくする（同期の途中で、話より先に幕が届いた時など）。
+  // 幕の稿も、話のない稿として下で一緒に見えなくなる
+  for (const p of Object.values(d.pieces)) {
+    if (p.kind !== 'act') continue
+    const parent = typeof p.parentId === 'string' ? d.pieces[p.parentId] : undefined
+    if (!parent || parent.kind === 'special' || parent.kind === 'act' || parent.titleId !== p.titleId) {
+      delete d.pieces[p.id]
+      fix('属する話のない幕を表示から外しました')
+    }
+  }
+
   // 章・メモ・設定項目の必須項目
   for (const c of Object.values(d.chapters)) {
     const next: Chapter = {
@@ -265,6 +276,14 @@ export function repairData(input: AppData): RepairResult {
     list.push(v.id)
     versionsByPiece.set(v.pieceId, list)
   }
+  // 話を指している幕（作られた順）。幕の並びに載っていない幕を後ろに足すのに使う
+  const actsByParent = new Map<ID, ID[]>()
+  for (const p of Object.values(d.pieces).sort((a, b) => num(a.createdAt) - num(b.createdAt))) {
+    if (p.kind !== 'act' || typeof p.parentId !== 'string') continue
+    const list = actsByParent.get(p.parentId) ?? []
+    list.push(p.id)
+    actsByParent.set(p.parentId, list)
+  }
   for (const p of Object.values(d.pieces)) {
     const owned = versionsByPiece.get(p.id) ?? []
     const listed = (Array.isArray(p.versionIds) ? p.versionIds : []).filter(
@@ -272,9 +291,11 @@ export function repairData(input: AppData): RepairResult {
     )
     const versionIds = [...listed, ...owned.filter((id) => !listed.includes(id))]
     const activeVersionId = p.activeVersionId && versionIds.includes(p.activeVersionId) ? p.activeVersionId : null
+    // 幕（kind 'act'）は幕のまま（第n話にしない）
+    const kind = p.kind === 'special' || p.kind === 'act' ? p.kind : 'episode'
     const next: Piece = {
       ...p,
-      kind: p.kind === 'special' ? 'special' : 'episode',
+      kind,
       label: str(p.label),
       subtitle: str(p.subtitle),
       versionIds,
@@ -283,9 +304,18 @@ export function repairData(input: AppData): RepairResult {
       createdAt: num(p.createdAt),
       updatedAt: num(p.updatedAt),
     }
+    // 幕に分けた話の幕の並び: この話を指している幕だけを残し（重複も除く）、載っていない幕は作られた順に後ろへ足す。
+    // 第n話以外の幕の並びは使わない（そのまま残すが、どこからも読まない）
+    if (kind === 'episode') {
+      const mine = actsByParent.get(p.id) ?? []
+      const raw = Array.isArray(p.actIds) ? p.actIds : []
+      const kept = raw.filter((id, i) => typeof id === 'string' && mine.includes(id) && raw.indexOf(id) === i)
+      const actIds = [...kept, ...mine.filter((id) => !kept.includes(id))]
+      if (Array.isArray(p.actIds) || actIds.length > 0) next.actIds = actIds
+    }
     if (!same(next, p)) {
       d.pieces[p.id] = next
-      fix('話の推敲バージョン一覧を直しました')
+      fix(kind === 'act' ? '幕の推敲バージョン一覧を直しました' : '話の推敲バージョン一覧・幕の並びを直しました')
     }
   }
 
@@ -295,7 +325,8 @@ export function repairData(input: AppData): RepairResult {
   const keepPiece = (t: Title, pid: unknown): pid is ID => {
     if (typeof pid !== 'string') return false
     const p = d.pieces[pid]
-    if (!p || p.titleId !== t.id || placed.has(pid)) return false
+    // 幕は本編の並びに載せない（話の幕の並びにだけ載る）
+    if (!p || p.titleId !== t.id || p.kind === 'act' || placed.has(pid)) return false
     placed.add(pid)
     return true
   }
@@ -327,7 +358,7 @@ export function repairData(input: AppData): RepairResult {
       fix(`構成から外れていた章「${ch.name}」を戻しました`)
     }
     for (const p of Object.values(d.pieces).sort((a, b) => num(a.createdAt) - num(b.createdAt))) {
-      if (p.titleId !== t.id || placed.has(p.id)) continue
+      if (p.titleId !== t.id || p.kind === 'act' || placed.has(p.id)) continue
       placed.add(p.id)
       structure.push({ type: 'piece', id: p.id })
       fix('構成から外れていた話を末尾に戻しました')

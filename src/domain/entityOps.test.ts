@@ -127,6 +127,7 @@ describe('タイトル配下', () => {
       missingActive: 1,
       missingEpisodes: 1,
       missingSpecials: 0,
+      missingActs: 0,
       activeChars: 7,
     })
   })

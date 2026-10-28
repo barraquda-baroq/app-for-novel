@@ -113,7 +113,15 @@ describe('タイトルカードの情報', () => {
 describe('タイトル削除の確認文', () => {
   it('ゴミ箱へ移るものと、アイデアが「どのタイトルにも属さない」へ移ることを書く', () => {
     const msg = deleteTitleMessage({
-      summary: { episodes: 4, specials: 1, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 },
+      summary: {
+        episodes: 4,
+        specials: 1,
+        missingActive: 0,
+        missingEpisodes: 0,
+        missingSpecials: 0,
+        missingActs: 0,
+        activeChars: 0,
+      },
       versionCount: 7,
       ideaCount: 2,
     })
@@ -126,7 +134,15 @@ describe('タイトル削除の確認文', () => {
 
   it('アイデアがなくても移動先を説明する', () => {
     const msg = deleteTitleMessage({
-      summary: { episodes: 0, specials: 0, missingActive: 0, missingEpisodes: 0, missingSpecials: 0, activeChars: 0 },
+      summary: {
+        episodes: 0,
+        specials: 0,
+        missingActive: 0,
+        missingEpisodes: 0,
+        missingSpecials: 0,
+        missingActs: 0,
+        activeChars: 0,
+      },
       versionCount: 0,
       ideaCount: 0,
     })
