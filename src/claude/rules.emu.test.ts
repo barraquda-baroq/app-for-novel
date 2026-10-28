@@ -20,6 +20,7 @@ import emuRules from '../../firestore.emu.rules?raw'
 import prodRules from '../../firestore.rules?raw'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { decodeRecord, encodeRecord, type RecordDoc } from '../sync/codec'
+import type { Rec } from '../sync/merge'
 import { appModelRef } from '../sync/appModel'
 import type { TableName } from '../domain/types'
 
@@ -61,7 +62,7 @@ async function googleUser(account: string): Promise<Owner> {
 const account = (name: string) => `${name}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
 function recordDoc(table: TableName, id: string, rec: Record<string, unknown>, device = 'owner-device') {
-  const enc = encodeRecord({ id, ...rec })
+  const enc = encodeRecord({ id, ...rec } as Rec)
   return { table, id, json: enc.json, chunks: 0, deleted: false, hash: enc.hash, updated: serverTimestamp(), device }
 }
 
@@ -120,7 +121,7 @@ interface ConnectorWrite {
 }
 
 function connectorRecord(table: string, id: string, rec: Record<string, unknown> = {}): ConnectorWrite {
-  const enc = encodeRecord({ id, v: 1, source: 'claude', titleId: 't1', createdAt: 1, updatedAt: 1, ...rec })
+  const enc = encodeRecord({ id, v: 1, source: 'claude', titleId: 't1', createdAt: 1, updatedAt: 1, ...rec } as Rec)
   return { table, id, json: enc.json!, hash: enc.hash }
 }
 

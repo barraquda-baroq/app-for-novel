@@ -280,12 +280,12 @@ describe('2.3 の記録のマージ', () => {
     expect(r.joined).toEqual(['body'])
   })
   it('改稿案を片方で削除・片方で編集したら、削除を優先し、編集された内容を控える。推敲案は短い項目だけ', () => {
-    expect(mergeRemote('revisionIdeas', idea, null, { ...idea, body: '編集' }, D)).toEqual({
-      record: null,
-      deletedEdit: { ...idea, body: '編集' },
-    })
-    const s = { id: 's', titleId: 't', flagged: false, done: false, doneAt: null, updatedAt: 1 }
-    const r = mergeRemote('proofSuggestions', s, { ...s, flagged: true }, { ...s, done: true, doneAt: 3 }, D)
+    const edited = { ...idea, body: '編集' }
+    expect(mergeRemote('revisionIdeas', idea, null, edited, D)).toEqual({ record: null, deletedEdit: edited })
+    const s = { id: 's', titleId: 't', flagged: false, done: false, doneAt: null as number | null, updatedAt: 1 }
+    const flagged = { ...s, flagged: true }
+    const done = { ...s, done: true, doneAt: 3 }
+    const r = mergeRemote('proofSuggestions', s, flagged, done, D)
     expect(r.record).toMatchObject({ flagged: true, done: true, doneAt: 3 })
   })
   it('戦略メモのコンテストの候補は候補ごとに合わせる（2台で別々に［応募計画にする］を押しても両方残る）', () => {

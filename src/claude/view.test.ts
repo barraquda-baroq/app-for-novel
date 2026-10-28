@@ -81,7 +81,7 @@ describe('採用原稿（readTextView）', () => {
     let cursor: string | null = null
     let text = ''
     for (let i = 0; i < 20; i++) {
-      const r = ok(readTextView(n.data, n.titleId, { charBudget: 2_000, ...(cursor ? { cursor } : {}) }))
+      const r: { text: string; nextCursor: string | null } = ok(readTextView(n.data, n.titleId, { charBudget: 2_000, ...(cursor ? { cursor } : {}) }))
       text += `${r.text.replace(/\n続き: cursor=.*$/, '')}\n`
       cursor = r.nextCursor
       if (!cursor) break

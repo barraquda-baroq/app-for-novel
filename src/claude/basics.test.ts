@@ -1,6 +1,4 @@
 // src/claude の小さな部品（種類・内容から作る id・見せる範囲・話の指し方・日付）
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { addChapter, setChaptersEnabled, setNumbering, movePiece } from '../domain/storyOps'
 import { emptyData, type AppData, type Title } from '../domain/types'
@@ -193,21 +191,35 @@ describe('日付（日本時間）', () => {
 
 describe('コネクタが一緒に使える（React・Dexie・Firebase・Zustand を読み込まない）', () => {
   it('src/claude の部品と、その読み込む src/domain・src/sync の部品', () => {
-    const root = join(__dirname, '..')
-    const seen = new Set<string>()
+    const files = import.meta.glob(['./*.ts', '../domain/*.ts', '../sync/*.ts', '../store/*.ts', '../db/*.ts'], {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>
+    // glob の名前（'./x.ts'・'../domain/x.ts'）を src からの名前（'claude/x.ts'・'domain/x.ts'）にして、相対の読み込みをたどる
+    const fromSrc = (k: string) => (k.startsWith('./') ? `claude/${k.slice(2)}` : k.slice(3))
+    const sources = new Map(Object.entries(files).map(([k, v]) => [fromSrc(k), v]))
+    const resolve = (file: string, rel: string) => {
+      const parts = file.split('/').slice(0, -1)
+      for (const seg of rel.split('/')) {
+        if (seg === '..') parts.pop()
+        else if (seg !== '.') parts.push(seg)
+      }
+      return `${parts.join('/')}.ts`
+    }
     const banned = /from '(react|react-dom|dexie|firebase[^']*|zustand[^']*|react-router-dom)'/
+    const seen = new Set<string>()
     const visit = (file: string) => {
       if (seen.has(file)) return
       seen.add(file)
-      const src = readFileSync(file, 'utf8')
+      const src = sources.get(file)
+      expect(src, `読み込めない: ${file}`).toBeTypeOf('string')
       expect(src, file).not.toMatch(banned)
-      for (const m of src.matchAll(/from '(\.[^']+)'/g)) {
-        const target = join(file, '..', m[1])
-        visit(`${target}.ts`)
-      }
+      for (const m of src!.matchAll(/from '(\.[^']+)'/g)) visit(resolve(file, m[1]))
     }
-    for (const f of readdirSync(join(root, 'claude')).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))) visit(join(root, 'claude', f))
-    expect([...seen].some((f) => f.includes('/sync/merge.ts'))).toBe(true)
-    expect([...seen].every((f) => !f.includes('/store/') && !f.includes('/db/') && !f.includes('/features/'))).toBe(true)
+    for (const f of [...sources.keys()].filter((f) => f.startsWith('claude/') && !f.endsWith('.test.ts'))) visit(f)
+    expect(seen.has('sync/merge.ts')).toBe(true)
+    expect(seen.has('domain/structure.ts')).toBe(true)
+    expect([...seen].every((f) => !f.startsWith('store/') && !f.startsWith('db/') && !f.startsWith('features/'))).toBe(true)
   })
 })
