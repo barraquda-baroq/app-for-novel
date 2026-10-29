@@ -238,4 +238,5 @@ npm --prefix connector run bundle-check   # dexie・firebase・react・zustand �
 - 手元で動かす: `npx firebase emulators:start --config firebase.emu.json --only auth,firestore --project demo-novel-studio` を動かしたまま、
   `connector/.dev.vars` に `FIREBASE_EMULATOR_HOST=127.0.0.1`・`FIREBASE_PROJECT_ID=demo-novel-studio`・`FIREBASE_API_KEY=fake-api-key`・
   `TOKEN_ENC_KEY=（16字以上の適当な文字）`・`APP_ORIGIN=http://localhost:5173`・`ALLOW_LOCALHOST_APP=true` を書いて `npm --prefix connector run dev`
-  （`.dev.vars` は Git に入りません）
+  （`.dev.vars` は Git に入りません。手元の Vault・KV の中身は `connector/.wrangler/` に残り、消すと最初からになります）
+  動いていれば `http://localhost:8787/` に「未連携」と出て、`/connect/identity` がエミュレーターの匿名の身元を返します
