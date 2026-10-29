@@ -5,7 +5,7 @@ import { vaultConfig, type Env } from '../env'
 import { logError } from '../log'
 import { VaultCore, type CallOptions, type GrantProps, type HealthState, type PairingCheck } from './core'
 import { ConnectorError, MESSAGES } from './errors'
-import type { RateKind } from './ratelimit'
+import type { RateKind, RateResult } from './ratelimit'
 import type { SqlRunner, SqlValue } from './store'
 import type { ToolResult } from './tools/common'
 
@@ -74,8 +74,8 @@ export class Vault extends DurableObject<Env> {
     return this.#core.callTool(name, args, opts)
   }
 
-  takeRate(kind: RateKind): boolean {
-    return this.#core.takeRate(kind)
+  takeRate(kind: RateKind, bucket?: string): RateResult {
+    return this.#core.takeRate(kind, bucket)
   }
 
   nightly(): Promise<'ok' | 'rescan' | 'skipped'> {

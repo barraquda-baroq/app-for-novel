@@ -14,6 +14,7 @@ import { errorPage, escapeHtml, json, page } from '../http'
 import { log, logError } from '../log'
 import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../version'
 import { CALLBACK_PATH, IDENTITY_PATH, connectPageUrl, isPairingKey, pairingHash, validState } from '../../../src/claude/pairing'
+import { RATE_LIMITS, sourceBucket } from '../vault/ratelimit'
 import { vault } from '../vault/Vault'
 import { checkClient } from './clientPolicy'
 import { consentPage } from './consentPage'
@@ -95,6 +96,21 @@ async function health(env: Env): Promise<Response> {
   )
 }
 
+/** 接続の要求の回数の上限に当たった時の説明（どの上限か・いつ戻るか。送ったのは持ち主ではないかもしれない） */
+export function rateLimitMessage(scope: 'source' | 'global', window: 'hour' | 'day'): string {
+  const others = 'あなたが何度も押していないなら、ほかの人が送った要求かもしれません（いま使えている Claude との接続はそのまま使えます）。'
+  if (scope === 'global')
+    return (
+      `このコネクタへの接続の要求が、今日は多すぎます（全体で1日${RATE_LIMITS.authorize.global.perDay}回まで）。` +
+      `日本時間の午前9時を過ぎてから、claude.ai でもう一度「接続」を押してください。${others}`
+    )
+  const wait = window === 'hour' ? '1時間ほど待ってから' : '日本時間の午前9時を過ぎてから'
+  return (
+    `このネットワークからの接続の要求が多すぎます。${wait}、claude.ai でもう一度「接続」を押してください` +
+    `（Wi-Fi とモバイル通信を切り替えると、すぐに通ることがあります）。${others}`
+  )
+}
+
 async function authorizeGet(request: Request, env: Env): Promise<Response> {
   const oauth = helpers(env)
   const cfg = workerConfig(env, request.url)
@@ -117,9 +133,12 @@ async function authorizeGet(request: Request, env: Env): Promise<Response> {
     log('authorize_refused', { reason: policy.reason })
     return errorPage(policy.message, 400)
   }
-  if (!(await vault(env).takeRate('authorize'))) {
-    log('authorize_rate_limited')
-    return errorPage('接続の要求が多すぎます。1時間ほど待ってから、claude.ai でもう一度「接続」を押してください。', 429)
+  // 送ってきたネットワークごとと、コネクタ全体で数える（生の IP は残さない・ログに書かない）
+  const bucket = await sourceBucket(request.headers.get('CF-Connecting-IP'), env.TOKEN_ENC_KEY ?? '')
+  const rate = await vault(env).takeRate('authorize', bucket)
+  if (!rate.ok) {
+    log('authorize_rate_limited', { scope: rate.scope, window: rate.window })
+    return errorPage(rateLimitMessage(rate.scope, rate.window), 429)
   }
   try {
     const details = await oauth.describeConsent(authRequest)

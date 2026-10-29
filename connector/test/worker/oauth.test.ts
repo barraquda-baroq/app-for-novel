@@ -17,6 +17,9 @@ let fake: FakeFirebase
 let realFetch: typeof fetch
 /** 攻撃する側の CIMD に載せる公開鍵（private_key_jwt。テストごとに空に戻す） */
 let evilJwk: JsonWebKey | null = null
+/** テストごとに別のネットワークから（接続の要求はネットワークごとに数える） */
+let clientIp = ''
+let ipCount = 0
 
 const cimdDoc = {
   client_id: CLAUDE_CIMD,
@@ -33,6 +36,7 @@ beforeEach(async () => {
   await reset()
   fake = new FakeFirebase()
   evilJwk = null
+  clientIp = `198.51.100.${++ipCount}`
   realFetch = globalThis.fetch
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -127,7 +131,9 @@ async function connect(
   opts: { k?: string; keyInApp?: string; pairedAt?: number; dropCookie?: boolean; redirectUri?: string } = {},
 ) {
   const { verifier, challenge } = await pkce()
-  const get = await SELF.fetch(authorizeUrl(challenge, opts.redirectUri ? { redirect_uri: opts.redirectUri } : {}))
+  const get = await SELF.fetch(authorizeUrl(challenge, opts.redirectUri ? { redirect_uri: opts.redirectUri } : {}), {
+    headers: { 'CF-Connecting-IP': clientIp },
+  })
   expect(get.status).toBe(200)
   const html = await get.text()
   const handle = /name="handle" value="([^"]+)"/.exec(html)![1]
@@ -231,7 +237,7 @@ describe('発見（メタデータ）と 401', () => {
 describe('GET /authorize（受け付けるクライアント）', () => {
   it('claude.ai の公開の識別子なら、日本語の同意の画面（枠に入れさせない・cookie で結び付ける）', async () => {
     const { challenge } = await pkce()
-    const res = await SELF.fetch(authorizeUrl(challenge))
+    const res = await SELF.fetch(authorizeUrl(challenge), { headers: { 'CF-Connecting-IP': clientIp } })
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html).toContain('Novel Studio への接続を求めています')
@@ -457,13 +463,24 @@ describe('/connect/identity（アプリの連携の画面が読む）', () => {
 })
 
 describe('回数の上限（最後に確かめる: 同じ Durable Object に数えるため）', () => {
-  it('1時間に20回を超える接続の要求は断る（それまでは同意の画面）', async () => {
+  it('1つのネットワークから1時間に10回を超える接続の要求は断る（それまでは同意の画面）。ほかのネットワークからは接続できる', async () => {
     const { challenge } = await pkce()
+    const from = (ip: string) => SELF.fetch(authorizeUrl(challenge), { headers: { 'CF-Connecting-IP': ip } })
     const statuses: number[] = []
-    for (let i = 0; i < 21; i++) statuses.push((await SELF.fetch(authorizeUrl(challenge))).status)
-    expect(statuses).toContain(200)
-    expect(statuses[statuses.length - 1]).toBe(429)
-    expect(statuses.indexOf(429)).toBeGreaterThan(0)
-    expect(statuses.slice(statuses.indexOf(429)).every((x) => x === 429)).toBe(true)
+    for (let i = 0; i < 11; i++) statuses.push((await from('203.0.113.50')).status)
+    expect(statuses.slice(0, 10).every((x) => x === 200)).toBe(true)
+    expect(statuses[10]).toBe(429)
+    const refused = await from('203.0.113.50')
+    expect(refused.status).toBe(429)
+    const text = await refused.text()
+    expect(text).toContain('このネットワークからの接続の要求が多すぎます')
+    expect(text).toContain('ほかの人が送った要求かもしれません')
+    // IPv6 は /48 ごと: 同じ /48 の別のアドレスも同じに数える
+    for (let i = 0; i < 10; i++) expect((await from(`2001:db8:77:${i.toString(16)}::1`)).status).toBe(200)
+    expect((await from('2001:db8:77:ff::2')).status).toBe(429)
+    // 持ち主のほかのネットワーク（モバイル通信など）からは通る
+    const owner = await from('192.0.2.10')
+    expect(owner.status).toBe(200)
+    expect(await owner.text()).toContain('Novel Studio への接続を求めています')
   })
 })

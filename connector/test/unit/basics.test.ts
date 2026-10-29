@@ -1,4 +1,4 @@
-// 小さな部品: 値の変換・太平洋時間の日付・暗号・書き込みの形・Firestore の失敗の扱い。
+// 小さな部品: 値の変換・太平洋時間の日付・暗号・書き込みの形・Firestore の失敗の扱い・接続の要求の回数の上限。
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { decodeRecord } from '../../../src/sync/codec'
@@ -9,6 +9,9 @@ import { fromFields, fromValue, timestampMicros, toValue } from '../../src/vault
 import { EncodeError, prepareWrite, rowsOfCommit } from '../../src/vault/writer'
 import { safeError, safeUrl, safeValue } from '../../src/log'
 import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../../src/version'
+import { RATE_LIMITS, sourceBucket, sourceNetwork, takeRate } from '../../src/vault/ratelimit'
+import { MirrorStore } from '../../src/vault/store'
+import { nodeSql } from '../support/nodeSql'
 import { APP_VERSION, DATA_MODEL } from '../../../src/sync/appModel'
 import { PAIRING_FIXTURE as F } from '../../../src/test/pairingFixture'
 
@@ -182,5 +185,58 @@ describe('ログの値', () => {
     expect(safeValue({ a: 1 })).toBe('[object]')
     expect(safeUrl('https://x.workers.dev/pair/callback?state=s&k=secret')).toBe('x.workers.dev/pair/callback')
     expect(safeError(new Error(`token ${'a'.repeat(50)}`))).toBe('Error: token […]')
+  })
+})
+
+describe('接続の要求の回数の上限（ネットワークごと＋全体）', () => {
+  const at = Date.UTC(2026, 9, 29, 3, 0, 0)
+
+  it('1つのネットワークからは1時間10回まで。ほかのネットワークは通る。次の時間・次の日にまた通る', () => {
+    const store = new MirrorStore(nodeSql())
+    const a = 'bucket-a'
+    for (let i = 0; i < 10; i++) expect(takeRate(store, 'authorize', at + i, a)).toEqual({ ok: true })
+    expect(takeRate(store, 'authorize', at + 10, a)).toEqual({ ok: false, scope: 'source', window: 'hour' })
+    expect(takeRate(store, 'authorize', at + 11, 'bucket-b')).toEqual({ ok: true })
+    // 1時間後: その時間の分は戻るが、1日20回まで
+    for (let i = 0; i < 10; i++) expect(takeRate(store, 'authorize', at + 3_600_000 + i, a).ok).toBe(true)
+    expect(takeRate(store, 'authorize', at + 7_200_000, a)).toEqual({ ok: false, scope: 'source', window: 'day' })
+    // 次の日（UTC の0時 = 日本時間の9時）にまた通り、前の日のネットワークの数は残さない
+    expect(takeRate(store, 'authorize', Date.UTC(2026, 9, 30, 0, 0, 1), a)).toEqual({ ok: true })
+    expect(Object.keys(store.getMeta<{ buckets: Record<string, unknown> }>('rate:authorize:sources')!.buckets)).toEqual([a])
+  })
+
+  it('たくさんのネットワークからでも、全体で1日300回まで（断った分は数えない）', () => {
+    const store = new MirrorStore(nodeSql())
+    let ok = 0
+    for (let i = 0; i < 400; i++) if (takeRate(store, 'authorize', at + i, `net-${i % 40}`).ok) ok++
+    expect(ok).toBe(RATE_LIMITS.authorize.global.perDay)
+    expect(takeRate(store, 'authorize', at + 500, 'net-new')).toEqual({ ok: false, scope: 'global', window: 'day' })
+    // ネットワークごとの記録は、通した分だけ（全体の上限まで）
+    expect(Object.keys(store.getMeta<{ buckets: Record<string, unknown> }>('rate:authorize:sources')!.buckets)).toHaveLength(40)
+  })
+
+  it('bucket が無ければ unknown にまとめる。DCR の登録は全体だけ', () => {
+    const store = new MirrorStore(nodeSql())
+    for (let i = 0; i < 10; i++) expect(takeRate(store, 'authorize', at + i).ok).toBe(true)
+    expect(takeRate(store, 'authorize', at + 10, 'unknown')).toEqual({ ok: false, scope: 'source', window: 'hour' })
+    for (let i = 0; i < 10; i++) expect(takeRate(store, 'register', at + i, `net-${i}`).ok).toBe(true)
+    expect(takeRate(store, 'register', at + 10, 'net-x')).toEqual({ ok: false, scope: 'global', window: 'day' })
+  })
+
+  it('数える単位: IPv4 はアドレス、IPv6 は /48。生の IP は残さない', async () => {
+    expect(sourceNetwork('203.0.113.7')).toBe('203.0.113.7')
+    expect(sourceNetwork('::ffff:203.0.113.7')).toBe('203.0.113.7')
+    expect(sourceNetwork('2001:db8:abcd:12::1')).toBe('2001:db8:abcd::/48')
+    expect(sourceNetwork('2001:0DB8:ABCD:0099:0000:0000:0000:0001')).toBe('2001:db8:abcd::/48')
+    expect(sourceNetwork('2001:db8::1')).toBe('2001:db8:0::/48')
+    expect(sourceNetwork('')).toBe('unknown')
+    expect(sourceNetwork(null)).toBe('unknown')
+    expect(sourceNetwork('not-an-ip')).toBe('unknown')
+    const b = await sourceBucket('203.0.113.7', 'salt')
+    expect(b).toMatch(/^[0-9a-f]{16}$/)
+    expect(b).not.toContain('203')
+    expect(await sourceBucket('2001:db8:abcd:1::1', 'salt')).toBe(await sourceBucket('2001:db8:abcd:ffff::2', 'salt'))
+    expect(await sourceBucket('203.0.113.8', 'salt')).not.toBe(b)
+    expect(await sourceBucket(null, 'salt')).toBe('unknown')
   })
 })

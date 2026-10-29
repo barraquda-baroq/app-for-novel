@@ -22,7 +22,7 @@ import {
   writeBudgetMessage,
   type QuotaCounts,
 } from './quota'
-import { takeRate, type RateKind } from './ratelimit'
+import { takeRate, type RateKind, type RateResult } from './ratelimit'
 import { MirrorStore, type SqlRunner } from './store'
 import { fail, type ToolResult } from './tools/common'
 import * as R from './tools/read'
@@ -675,8 +675,8 @@ export class VaultCore {
     }
   }
 
-  /** 回数の上限（/authorize・DCR）。超えていれば false */
-  takeRate(kind: RateKind): boolean {
-    return takeRate(this.store, kind, this.#now())
+  /** 回数の上限（/authorize はネットワークごと＋全体・DCR は全体）。超えていれば、どの上限か */
+  takeRate(kind: RateKind, bucket?: string): RateResult {
+    return takeRate(this.store, kind, this.#now(), bucket)
   }
 }

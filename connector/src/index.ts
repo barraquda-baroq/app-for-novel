@@ -33,7 +33,7 @@ export function oauthOptions(env: Env, requestUrl?: string): OAuthProviderOption
               log('register_refused', { reason: policy.reason })
               return { code: 'invalid_redirect_uri', description: policy.message, status: 400 }
             }
-            if (!(await vault(env).takeRate('register'))) {
+            if (!(await vault(env).takeRate('register')).ok) {
               log('register_rate_limited')
               return { code: 'invalid_client_metadata', description: 'too many registrations today', status: 429 }
             }
