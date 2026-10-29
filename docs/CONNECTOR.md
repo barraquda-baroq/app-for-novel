@@ -142,6 +142,9 @@ npm run deploy
 
 `npm run deploy` は、アプリ・アクセスルール・コネクタをまとめて公開します（`connector.local.json` がある時だけコネクタも）。
 
+`connector/wrangler.jsonc` を書き換えた時（§5 の `WORK_BUDGET_CHARS`・`limits`、Claude Code 用の `ALLOW_CLAUDE_CODE`）は、`git pull` が
+「Your local changes … would be overwritten」で止まることがあります。その時は `git stash` → `git pull` → `git stash pop` の順に実行してから続けてください。
+
 `connector.local.json` は、`npm run connector:setup` を実行したパソコンにだけあります（Git には入りません）。別のパソコン
 （Windows と Mac など）から更新する時は、そのパソコンでも先に一度 `npm run connector:setup` を実行するか（同じコネクタ・KV・鍵・連携を
 そのまま使います）、`connector.local.json` をそのパソコンのリポジトリの直下にコピーしてください。無いまま `npm run deploy` をすると、
@@ -178,7 +181,7 @@ npm run deploy
 | 「コネクタの部品が入っていません」 | `npm --prefix connector ci` |
 | `npm` で「スクリプトの実行が無効になっているため…npm.ps1 を読み込むことができません」（Windows） | PowerShell で `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行して `Y`、PowerShell を開き直す（`npm.cmd`・`npx.cmd` と打っても動く） |
 | claude.ai で「Authorization with the MCP server failed」など | `npm run connector:check` を実行して ✗ の行を直す。エラーの画面の `ofid_…` を控えておく |
-| それでもつながらない | 最後の手段: `connector/wrangler.jsonc` の `ENABLE_DCR` を `"true"` にして `npm run deploy`。claude.ai でコネクタを削除し、OAuth クライアントを「自動的に登録」にして追加し直す（認証の設定は後から変えられないため）。その後の `npm run connector:check`・`npm run connector:setup` は、wrangler.jsonc に合わせて DCR が有効なことを確かめる |
+| それでもつながらない | 最後の手段: リポジトリの直下の `connector.local.json` に `"enableDcr": true` を足して（例: `{ "origin": "https://…", "enableDcr": true }`）`npm run deploy`。claude.ai でコネクタを削除し、OAuth クライアントを「自動的に登録」にして追加し直す（認証の設定は後から変えられないため）。その後の `npm run connector:check`・`npm run connector:setup` は、この設定に合わせて DCR が有効なことを確かめる（`connector/wrangler.jsonc` は書き換えない: 書き換えると `git pull` が止まる。書き換えてしまった時は `git checkout connector/wrangler.jsonc` で戻してから、`connector.local.json` に足す） |
 | Novel Studio の画面で「このアカウントは Novel Studio の持ち主ではありません」 | 最初に同期を始めた Google アカウントでログインし直す |
 | 「連携の確かめの期限が切れたか、別のブラウザで開かれました」 | claude.ai で接続を始めたのと同じブラウザで、もう一度「接続」から（iPhone では、パソコンで接続するのがおすすめ） |
 | claude.ai で接続すると「接続の要求が多すぎます」 | 自分で何度も押していなければ、ほかの人が送った要求かもしれません（いまの接続はそのまま使えます）。「このネットワークから」なら1時間ほど待つか Wi-Fi とモバイル通信を切り替えて、「今日は多すぎます」なら日本時間の午前9時を過ぎてから、もう一度「接続」（§7） |

@@ -4,9 +4,9 @@
 import { pathToFileURL } from 'node:url'
 import { deployVarArgs, parseWorkersUrl, readLocalConfig, say, wrangler, wranglerProblem, wranglerProblemHint } from './lib.mjs'
 
-/** 公開する。戻り値は wrangler の出力にあった URL（無ければ null） */
-export async function deployConnector({ origin = readLocalConfig()?.origin ?? null } = {}) {
-  const args = ['deploy', ...(origin ? deployVarArgs(origin) : [])]
+/** 公開する（DCR は connector.local.json の "enableDcr": true の時だけ）。戻り値は wrangler の出力にあった URL（無ければ null） */
+export async function deployConnector({ origin = readLocalConfig()?.origin ?? null, enableDcr = readLocalConfig()?.enableDcr ?? false } = {}) {
+  const args = ['deploy', ...(origin ? deployVarArgs(origin, { enableDcr }) : [])]
   const r = await wrangler(args, { capture: true })
   if (r.code !== 0) return { ok: false, url: null, output: `${r.stdout}\n${r.stderr}` }
   return { ok: true, url: parseWorkersUrl(`${r.stdout}\n${r.stderr}`), output: r.stdout }
@@ -15,7 +15,7 @@ export async function deployConnector({ origin = readLocalConfig()?.origin ?? nu
 async function main() {
   const local = readLocalConfig()
   if (!local) say('（../connector.local.json がありません。初めての時は、リポジトリの直下で npm run connector:setup を実行してください）')
-  const r = await deployConnector({ origin: local?.origin ?? null })
+  const r = await deployConnector({ origin: local?.origin ?? null, enableDcr: local?.enableDcr ?? false })
   if (!r.ok) {
     say(wranglerProblemHint(wranglerProblem(r.output), 'node connector/scripts/deploy.mjs') ?? 'コネクタを公開できませんでした（上の wrangler の表示を見てください）。')
     process.exitCode = 1

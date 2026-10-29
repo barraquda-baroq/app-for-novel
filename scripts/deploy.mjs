@@ -83,12 +83,12 @@ async function main() {
       ])
       const { deployConnector } = await import(pathToFileURL(path.join(repoDir, 'connector', 'scripts', 'deploy.mjs')).href)
       say('\n▶ Claude 用のコネクタの公開')
-      let r = await deployConnector({ origin: local.origin })
+      let r = await deployConnector({ origin: local.origin, enableDcr: local.enableDcr })
       // Cloudflare のログインが切れた（出力を控えて動かすので、wrangler はブラウザを開けない）: ここでログインして、もう一度
       if (!r.ok && wranglerProblem(r.output) === 'login' && process.stdin.isTTY) {
         say('\nCloudflare へのログインが切れています。ブラウザが開いたら Cloudflare にログインして「Allow」を押してください。')
         const login = await wrangler(['login'])
-        if (login.code === 0) r = await deployConnector({ origin: local.origin })
+        if (login.code === 0) r = await deployConnector({ origin: local.origin, enableDcr: local.enableDcr })
       }
       if (!r.ok) {
         const hint = wranglerProblemHint(wranglerProblem(r.output))

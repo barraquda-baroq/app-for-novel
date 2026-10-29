@@ -24,7 +24,8 @@
     "FIREBASE_PROJECT_ID": "novel-studio-3352e",
     // Firebase の Web アプリの公開の識別子（src/sync/firebase.ts と同じ。秘密ではない）
     "FIREBASE_API_KEY": "AIzaSyADnvD0uAVwicAMol6_Txl-7CRV_xxsg00",
-    // つながらない時の最後の手段: "true" にすると claude.ai の「自動的に登録」（DCR）を受け付ける
+    // claude.ai の「自動的に登録」（DCR）を受け付けるか。つながらない時の最後の手段で有効にする時は、ここではなく
+    // リポジトリの直下の connector.local.json に "enableDcr": true を足す（ここを書き換えると git pull が止まる。docs/CONNECTOR.md の 5）
     "ENABLE_DCR": "false",
     // Claude Code からも使う時は "true"（Claude Code の公開の識別子とローカルの戻り先を受け付ける）
     "ALLOW_CLAUDE_CODE": "false",

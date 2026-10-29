@@ -79,7 +79,7 @@ async function main() {
   // 2. 公開して URL を控える
   say('\n[2/7] コネクタを公開します（初めての時は KV と Durable Object も作られます）')
   const before = readLocalConfig()
-  const first = await deployConnector({ origin: before?.origin ?? null })
+  const first = await deployConnector({ origin: before?.origin ?? null, enableDcr: before?.enableDcr ?? false })
   if (!first.ok || !first.url) {
     ng('公開できなかったか、URL が分かりませんでした。')
     const hint = first.ok ? null : wranglerProblemHint(wranglerProblem(first.output), 'npm run connector:setup')
@@ -94,10 +94,11 @@ async function main() {
 
   // 3. URL を控えて、URL を渡して公開し直す
   say('\n[3/7] URL を connector.local.json に書き、URL を渡して公開し直します')
-  writeLocalConfig(origin)
+  // DCR を有効にしていれば（"enableDcr": true）、そのまま残す
+  writeLocalConfig(origin, { enableDcr: before?.enableDcr })
   ok(`${path.relative(repoDir, path.join(repoDir, 'connector.local.json'))} に書きました（Git には入りません）`)
   if (before?.origin !== origin) {
-    const second = await deployConnector({ origin })
+    const second = await deployConnector({ origin, enableDcr: before?.enableDcr ?? false })
     if (!second.ok) {
       ng('公開し直せませんでした。もう一度実行してください。')
       process.exitCode = 1

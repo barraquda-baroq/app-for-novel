@@ -35,8 +35,9 @@ export async function checkConnector(origin, { fetch: f = fetch, expectDcr = fal
   add(asj.client_id_metadata_document_supported === true, 'Claude の公開の識別子（CIMD）を受け付ける')
   add(Array.isArray(asj.token_endpoint_auth_methods_supported) && asj.token_endpoint_auth_methods_supported.includes('none'), '秘密の無いクライアント（none）')
   add(Array.isArray(asj.scopes_supported) && asj.scopes_supported.includes('offline_access'), '更新用トークン（offline_access）')
-  // wrangler.jsonc の ENABLE_DCR と、公開した状態が合っているか（合わなければ公開し直す）
-  const redeploy = '公開した状態が connector/wrangler.jsonc の ENABLE_DCR と合いません。npm run deploy をもう一度実行してください'
+  // connector.local.json の "enableDcr" と、公開した状態が合っているか（合わなければ公開し直す）
+  const redeploy =
+    '公開した状態が、DCR の設定（リポジトリの直下の connector.local.json の "enableDcr"）と合いません。npm run deploy をもう一度実行してください'
   if (expectDcr) add(typeof asj.registration_endpoint === 'string', '自動的に登録（DCR）が有効', redeploy)
   else add(asj.registration_endpoint === undefined, '自動的に登録（DCR）は無効', redeploy)
 

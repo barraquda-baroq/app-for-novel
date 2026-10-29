@@ -62,12 +62,43 @@ describe('スクリプトの部品', () => {
     const off = path.join(dir, 'off.jsonc')
     fs.writeFileSync(on, '{\n  // "true" にすると…\n  "vars": { "ENABLE_DCR": "true" }\n}\n')
     fs.writeFileSync(off, '{\n  // つながらない時の最後の手段: "true" にすると DCR を受け付ける\n  "vars": { "ENABLE_DCR": "false" }\n}\n')
-    expect(dcrEnabledInConfig(on)).toBe(true)
-    expect(dcrEnabledInConfig(off)).toBe(false)
-    expect(dcrEnabledInConfig(path.join(dir, 'none.jsonc'))).toBe(false)
-    expect(dcrEnabledInConfig()).toBe(false)
+    const noLocal = path.join(dir, 'none.json')
+    expect(dcrEnabledInConfig(on, noLocal)).toBe(true)
+    expect(dcrEnabledInConfig(off, noLocal)).toBe(false)
+    expect(dcrEnabledInConfig(path.join(dir, 'none.jsonc'), noLocal)).toBe(false)
+    expect(dcrEnabledInConfig(undefined, noLocal)).toBe(false)
     expect(parseCheckArgs(['--dcr'])).toEqual({ origin: '', dcr: true })
     expect(parseCheckArgs(['https://c.example.workers.dev', '--dcr'])).toEqual({ origin: 'https://c.example.workers.dev', dcr: true })
+  })
+
+  it('DCR は connector.local.json の "enableDcr": true で有効にする（Git に入る wrangler.jsonc を書き換えない）。準備し直しても残る', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-dcr-local-'))
+    const local = path.join(dir, 'connector.local.json')
+    const jsonc = path.join(dir, 'wrangler.jsonc')
+    fs.writeFileSync(jsonc, '{ "vars": { "ENABLE_DCR": "false" } }')
+    const origin = 'https://novel-studio-connector.baroq.workers.dev'
+    fs.writeFileSync(local, JSON.stringify({ origin, enableDcr: true }))
+    const read = readLocalConfig(local)
+    expect(read).toEqual({ origin, enableDcr: true })
+    expect(dcrEnabledInConfig(jsonc, local)).toBe(true)
+    expect(deployVarArgs(origin, { enableDcr: read.enableDcr })).toEqual([
+      '--var',
+      `MCP_RESOURCE:${origin}/mcp`,
+      '--var',
+      `PUBLIC_ORIGIN:${origin}`,
+      '--var',
+      'ENABLE_DCR:true',
+    ])
+    // npm run connector:setup が書き直しても、enableDcr は残る
+    writeLocalConfig(origin, { enableDcr: read.enableDcr }, local)
+    expect(readLocalConfig(local)).toEqual({ origin, enableDcr: true })
+    writeLocalConfig(origin, {}, local)
+    expect(JSON.parse(fs.readFileSync(local, 'utf8'))).toEqual({ origin })
+    expect(dcrEnabledInConfig(jsonc, local)).toBe(false)
+    // docs は wrangler.jsonc の書き換えを勧めない
+    const doc = fs.readFileSync(path.resolve(import.meta.dirname, '../../../docs/CONNECTOR.md'), 'utf8')
+    expect(doc).toContain('"enableDcr": true')
+    expect(doc).not.toMatch(/wrangler\.jsonc` の `ENABLE_DCR` を `"true"` にして/)
   })
 
   it('準備のスクリプト・コネクタの案内が指す docs/CONNECTOR.md の手順の番号が合っている', () => {
@@ -126,11 +157,11 @@ describe('スクリプトの部品', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conn-'))
     const file = path.join(dir, 'connector.local.json')
     expect(readLocalConfig(file)).toBeNull()
-    writeLocalConfig('https://novel-studio-connector.baroq.workers.dev', file)
-    expect(readLocalConfig(file)).toEqual({ origin: 'https://novel-studio-connector.baroq.workers.dev' })
+    writeLocalConfig('https://novel-studio-connector.baroq.workers.dev', {}, file)
+    expect(readLocalConfig(file)).toEqual({ origin: 'https://novel-studio-connector.baroq.workers.dev', enableDcr: false })
     fs.writeFileSync(file, '{"origin":"javascript:alert(1)"}')
     expect(readLocalConfig(file)).toBeNull()
-    expect(() => writeLocalConfig('http://insecure.example', file)).toThrow()
+    expect(() => writeLocalConfig('http://insecure.example', {}, file)).toThrow()
   })
 
   it('はい・いいえの答え: 日本語入力のままの全角の ｙ も「はい」', () => {

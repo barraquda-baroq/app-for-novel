@@ -33,19 +33,23 @@ export function isConnectorOrigin(v) {
   }
 }
 
-/** ../connector.local.json（{ "origin": "https://…" }）。無い・形が違えば null */
+/**
+ * ../connector.local.json（{ "origin": "https://…", "enableDcr": true }。enableDcr はつながらない時の最後の手段で足す。
+ * Git に入らないので、git pull の邪魔をしない）。無い・形が違えば null
+ */
 export function readLocalConfig(file = localConfigPath) {
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'))
-    return isConnectorOrigin(j?.origin) ? { origin: j.origin } : null
+    return isConnectorOrigin(j?.origin) ? { origin: j.origin, enableDcr: j?.enableDcr === true } : null
   } catch {
     return null
   }
 }
 
-export function writeLocalConfig(origin, file = localConfigPath) {
+/** connector.local.json を書く（enableDcr は true の時だけ書く） */
+export function writeLocalConfig(origin, { enableDcr = false } = {}, file = localConfigPath) {
   if (!isConnectorOrigin(origin)) throw new Error(`コネクタの URL の形が違います: ${origin}`)
-  fs.writeFileSync(file, `${JSON.stringify({ origin }, null, 2)}\n`)
+  fs.writeFileSync(file, `${JSON.stringify({ origin, ...(enableDcr ? { enableDcr: true } : {}) }, null, 2)}\n`)
 }
 
 /**
@@ -62,8 +66,12 @@ export function appBuildEnv(env = process.env, local = null) {
   }
 }
 
-/** wrangler.jsonc の ENABLE_DCR が "true" か（つながらない時の最後の手段にした時。公開した状態もこれに合うはず） */
-export function dcrEnabledInConfig(file = path.join(connectorDir, 'wrangler.jsonc')) {
+/**
+ * DCR を有効にしたか（つながらない時の最後の手段。公開した状態もこれに合うはず）: connector.local.json の "enableDcr": true。
+ * 前の版の手順で connector/wrangler.jsonc の ENABLE_DCR を "true" に書き換えた時も
+ */
+export function dcrEnabledInConfig(file = path.join(connectorDir, 'wrangler.jsonc'), localFile = localConfigPath) {
+  if (readLocalConfig(localFile)?.enableDcr) return true
   try {
     return /"ENABLE_DCR"\s*:\s*"true"/.test(fs.readFileSync(file, 'utf8'))
   } catch {
@@ -71,9 +79,9 @@ export function dcrEnabledInConfig(file = path.join(connectorDir, 'wrangler.json
   }
 }
 
-/** 公開する時に渡す変数（wrangler.jsonc には書かない） */
-export function deployVarArgs(origin) {
-  return ['--var', `MCP_RESOURCE:${origin}/mcp`, '--var', `PUBLIC_ORIGIN:${origin}`]
+/** 公開する時に渡す変数（wrangler.jsonc には書かない。enableDcr = connector.local.json の "enableDcr": true） */
+export function deployVarArgs(origin, { enableDcr = false } = {}) {
+  return ['--var', `MCP_RESOURCE:${origin}/mcp`, '--var', `PUBLIC_ORIGIN:${origin}`, ...(enableDcr ? ['--var', 'ENABLE_DCR:true'] : [])]
 }
 
 /** 秘密の鍵（32バイトの乱数の base64url）。画面には出さない */
