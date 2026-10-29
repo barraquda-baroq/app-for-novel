@@ -250,6 +250,12 @@ export class VaultCore {
     return true
   }
 
+  /** 止めずに数えるだけ（連携の記録・データの形の版など、無いと何もできない読み取り） */
+  #countReads(n: number): void {
+    const q = this.#quota()
+    this.store.setMeta('quota', { ...q, reads: q.reads + n } satisfies QuotaCounts)
+  }
+
   #takeWrites(n: number): boolean {
     const q = this.#quota()
     if (q.writes + n > this.#d.config.dailyWriteBudget) return false
@@ -283,6 +289,7 @@ export class VaultCore {
   /** config/connector を読む。writes を返す（読めない・このコネクタのものでない = null） */
   async #readConnector(): Promise<boolean | null> {
     try {
+      this.#countReads(3)
       const d = (await this.fs.batchGet(['config/connector'])).get('config/connector')
       if (!d) return null
       const f = fromFields(d.fields)
@@ -340,7 +347,15 @@ export class VaultCore {
     }
     if (!forWrite && this.#now() - this.#lastSync < (this.#d.freshMs ?? FRESH_MS)) return {}
     for (let i = 0; i < (forWrite ? 5 : 1); i++) {
-      const out = await this.#syncStep(8)
+      let out: SyncOutcome
+      try {
+        out = await this.#syncStep(8)
+      } catch (e) {
+        // 読むだけなら、つながらない時は前に取り込んだ内容で答える（連携の解除・権限の問題はそのまま返す）
+        if (!forWrite && e instanceof ConnectorError && e.code === 'unavailable')
+          return { note: '（いまクラウドに接続できないため、前に取り込んだ内容です）' }
+        throw e
+      }
       if (out.done) return {}
       if (out.outOfReads) {
         if (forWrite) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
@@ -457,6 +472,7 @@ export class VaultCore {
     const owner = this.pairing().ownerUid
     if (!owner) throw new ConnectorError('unpaired', MESSAGES.unpaired)
     try {
+      this.#countReads(3)
       const d = (await this.fs.batchGet([`users/${owner}/meta/app`])).get(`users/${owner}/meta/app`)
       const m = d ? fromFields(d.fields).model : null
       const model = typeof m === 'number' ? m : null

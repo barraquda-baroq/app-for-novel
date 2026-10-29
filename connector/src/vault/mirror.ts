@@ -8,6 +8,7 @@
 // - 知らない表（新しい版のアプリが足したもの）の文書も保存だけしておく（取り込み直さずに済むように）
 import { decodeRecord, type ChunkDoc, type RecordDoc } from '../../../src/sync/codec'
 import type { Rec } from '../../../src/sync/merge'
+import { bodyMetrics } from '../../../src/domain/text'
 import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../../../src/domain/types'
 import { log } from '../log'
 import type { FirestoreRest, FsDoc } from './firestore'
@@ -174,6 +175,8 @@ export class Mirror {
     this.#unreadable.delete(row.name)
     if (cleanup && row.chunks > 0) this.#store.deleteChunks(row.name, row.chunks)
     table[row.id] = rec
+    // 取り込んだ稿の文字数・枚数を先に数えておく（ツールの呼び出しの時に数え直さない。アプリと同じ bodyMetrics のキャッシュ）
+    if (cleanup && row.tbl === 'versions' && typeof (rec as { body?: unknown }).body === 'string') bodyMetrics(rec as unknown as { body: string })
     return true
   }
 
