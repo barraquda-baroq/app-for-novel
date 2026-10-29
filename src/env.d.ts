@@ -1,0 +1,4 @@
+// ビルドの時に埋め込む値（vite.config.ts の define）
+
+/** Claude 用のコネクタの origin（https://novel-studio-connector.….workers.dev。未設定は空） */
+declare const __CONNECTOR_ORIGIN__: string

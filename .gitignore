@@ -8,3 +8,4 @@ e2e/artifacts
 .claude/worktrees
 .firebase
 test-results
+connector.local.json

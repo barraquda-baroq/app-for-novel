@@ -1,0 +1,208 @@
+/* ===== 作品批評タブ（cq-）。カードの形は戦略タブの sx- と同じ（strategy/claudeSections.css） ===== */
+
+.cq-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.cq-intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--area) 30%, var(--border));
+  background: var(--area-soft);
+}
+
+.cq-intro p {
+  flex: 1 1 280px;
+  margin: 0;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.cq-intro-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cq-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cq-head h2 {
+  display: flex;
+  align-items: baseline;
+  font-size: 18px;
+}
+
+.cq-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cq-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cq-group-head h3 {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.cq-group-empty {
+  margin: 0;
+}
+
+.cq-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 10px;
+}
+
+.cq-prompt-actions .btn {
+  min-height: 34px;
+}
+
+.textarea.cq-prompt-body {
+  min-height: 120px;
+  line-height: 1.75;
+}
+
+.empty.cq-empty p {
+  margin: 0;
+}
+
+.empty.cq-empty p + p {
+  margin-top: 6px;
+}
+
+.cq-days {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cq-day {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cq-day-head {
+  position: relative;
+  padding-left: 14px;
+  font-size: 14px;
+  color: var(--area-text);
+}
+
+.cq-day-head::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--area);
+  transform: translateY(-50%);
+}
+
+.cq-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0 0 0 14px;
+  border-left: 2px solid color-mix(in srgb, var(--area) 30%, var(--border));
+  list-style: none;
+}
+
+.cq-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.cq-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.cq-result-title {
+  min-width: 0;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.cq-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cq-snapshot {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.cq-snapshot summary {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cq-snapshot-text {
+  margin: 0;
+  padding: 0 12px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.cq-url-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cq-url-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.cq-url-row .btn {
+  flex: none;
+  min-height: 38px;
+}
