@@ -13,6 +13,7 @@ import {
 } from './appStore'
 import { markDraftDirty } from './draftRegistry'
 import { saveBeforeLeave } from './lifecycle'
+import { toBackup } from '../domain/backup'
 import { emptyData, type AppData } from '../domain/types'
 import { emptyOutcome, fakePersistence } from '../test/fakePersistence'
 
@@ -178,6 +179,57 @@ describe('複数タブ・保存失敗', () => {
     expect(saved.futureTop).toBe('新しい版の項目')
     expect(saved.snapshot).toEqual(snapshot)
     other.close()
+  })
+
+  it('ただし修復が表示から外した記録の中の項目は、削除して戻す・バックアップの書き出し・復元では残らない（古い版の端末で応募時の控えが消える仕組み。SPEC-2 の 9.）', async () => {
+    // 新しい版の端末が書いた内容を、この版の修復が知らない項目として扱う（2.4 までの端末と `snapshot.synopsis` の関係と同じ）
+    const snapshot = { at: 1, charCount: 0, activeVersions: {}, futureField: '新しい版の控え' }
+    const seedNewer = async () => {
+      const name = `test-db-${++n}`
+      await initStore(createPersistence(name))
+      const subId = actions.addSubmission(actions.createTitle('作品'), 'A賞')
+      await flushNow()
+      resetStoreForTests()
+      const writer = createPersistence(name)
+      const disk = await writer.load()
+      const raw = { ...disk.submissions[subId], snapshot, futureTop: '新しい版の項目' }
+      const newer = { ...disk, submissions: { [subId]: raw } }
+      await writer.save(disk, newer)
+      writer.close()
+      await initStore(createPersistence(name))
+      const loadSaved = async () => {
+        const other = createPersistence(name)
+        const saved = (await other.load()).submissions[subId] as unknown as Record<string, unknown> | undefined
+        other.close()
+        return saved
+      }
+      return { subId, newer, loadSaved }
+    }
+    const kept = (rec: unknown) => {
+      const r = rec as Record<string, unknown>
+      // 応募計画そのものの知らない項目は残り、記録の中の知らない項目は消える
+      expect(r.futureTop).toBe('新しい版の項目')
+      expect((r.snapshot as Record<string, unknown>).futureField).toBeUndefined()
+      expect(r.snapshot).toMatchObject({ at: 1, charCount: 0 })
+    }
+
+    // 削除してゴミ箱から戻す（ゴミ箱の写しは表示用の内容から作る）
+    const a = await seedNewer()
+    actions.deleteSubmission(a.subId)
+    expect(await flushNow()).toBe(true)
+    expect(await a.loadSaved()).toBeUndefined()
+    const entryId = Object.keys(useApp.getState().data.trashEntries)[0]
+    actions.restoreTrashEntry(entryId)
+    expect(await flushNow()).toBe(true)
+    kept(await a.loadSaved())
+    resetStoreForTests()
+
+    // バックアップの書き出し（表示用の内容を書き出す）
+    const b = await seedNewer()
+    kept(toBackup(useApp.getState().data).data.submissions[b.subId])
+    // バックアップからの復元（修復した内容で端末内を置き換える。同期中ならクラウドも）
+    await replaceAllData(b.newer)
+    kept(await b.loadSaved())
   })
 
   it('別タブで削除されたレコードは、このタブの古い内容で復活させない', async () => {
