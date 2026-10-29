@@ -23,7 +23,7 @@ import {
   type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore'
-import type { Change, OutboxItem } from '../db/persistence'
+import { tableSendRank, type Change, type OutboxItem } from '../db/persistence'
 import type { TableName } from '../domain/types'
 import { watchAppModel, type AppModel } from './appModel'
 import { decideBatch, nothingToSend, selectBatch } from './batch'
@@ -590,6 +590,10 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       }
       if (!local.has(`${data.table}/${data.id}`)) doomed.push(d.id)
     })
+    // 子（稿など）を親（話・タイトル）より先に消す（送信待ちを送る順と同じ）。何回かに分けて書いても、受け取った端末には
+    // クラウドにあった子の削除が親の削除より先か同じ通知で届くので、親が消えた時に残っている子はその端末だけのもの（控える）
+    const rank = (id: string) => tableSendRank(id.slice(0, id.indexOf(':')))
+    doomed.sort((a, b) => rank(a) - rank(b))
     for (let i = 0; i < doomed.length; i += 200) {
       const batch = writeBatch(fs)
       for (const id of doomed.slice(i, i + 200)) {

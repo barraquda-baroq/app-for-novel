@@ -179,10 +179,12 @@ const SEND_ORDER: TableName[] = [
   'chapters',
   'titles',
 ]
-const sendRank = (k: string) => {
-  const i = SEND_ORDER.indexOf(k.slice(0, k.indexOf('/')) as TableName)
+/** 送る順番の中の表の位置（子の表ほど前。知らない表は最後） */
+export function tableSendRank(table: string): number {
+  const i = SEND_ORDER.indexOf(table as TableName)
   return i < 0 ? SEND_ORDER.length : i
 }
+const sendRank = (k: string) => tableSendRank(k.slice(0, k.indexOf('/')))
 
 /** 親の表と、その親を指す項目（親が無ければ見えない子になる。項目が無いレコードは確かめない） */
 const PARENT_OF: Partial<Record<TableName, { table: TableName; field: string }[]>> = {
@@ -465,16 +467,17 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     /**
      * 消えた親（タイトル・話・設定項目）の子を片付ける。別の端末で親が消された時に、この端末で作った・変えた子が
      * 誰にも見えないまま残らないように、文章はゴミ箱に控えて（同じ内容がゴミ箱にあれば控えない）から消す。
+     * 復元・すべて削除で親が消えた時も同じ: クラウドにあった子の削除は、親の削除より先か同じ通知で届いて消えている
+     * （子から先に書く。SEND_ORDER・エンジンの pushAuthoritative）ので、ここで見つかる子はこの端末だけのもの（送っていない・
+     * 書き換えたまま・復元の後に送った）。
      * keepActVersion を渡すと、消えた話・幕の稿をゴミ箱に入れる前にそれに渡す（true を返したら、applyRemote が残る幕・話の稿か
      * ゴミ箱の1件として残すので、ここでは控えない）
      */
     const sweepOrphans = async (
       parents: Map<TableName, Set<string>>,
       hooks: ConflictHooks,
-      resetQuiet: ReadonlySet<string> = new Set(),
       keepActVersion?: (child: AnyRecord, piece: AnyRecord) => Promise<boolean>,
     ) => {
-      let resetParents = resetQuiet
       const pending = new Map(parents)
       let trash: AnyRecord[] | null = null
       const inTrash = async (table: TableName, rec: AnyRecord) => {
@@ -494,8 +497,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
             .toArray()
           for (const child of children) {
             const parentId = (child as unknown as Record<string, string>)[field]
-            const quiet = resetParents.has(outboxKey(parentTable, parentId))
-            if (!quiet && TEXT_TABLES.has(table) && !(await inTrash(table, child))) {
+            if (TEXT_TABLES.has(table) && !(await inTrash(table, child))) {
               const parent = parentTable === 'pieces' ? gone.get(parentId) : undefined
               const kept = table === 'versions' && parent && keepActVersion ? await keepActVersion(child, parent) : false
               if (!kept) await keepInTrash(table, child, hooks, child.id, parent ? { piece: parent } : undefined)
@@ -505,7 +507,6 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
               const set = pending.get(table) ?? new Set<string>()
               set.add(child.id)
               pending.set(table, set)
-              if (quiet) resetParents = new Set([...resetParents, outboxKey(table, child.id)])
             }
           }
         }
@@ -569,8 +570,6 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
   ): Promise<void> {
     const w = writer(at, written)
     const parents = new Map<TableName, Set<string>>()
-    /** 復元・すべて削除で消えた親（子は控えずに片付ける。子にも削除が届く） */
-    const resetParents = new Set(changes.filter((c) => c.reset && !c.record).map((c) => outboxKey(c.table, c.id)))
     const piecesT = db.tableOf('pieces')
     const versionsT = db.tableOf('versions')
     const getPiece = async (id: string) => ((await piecesT.get(id)) as PieceRec | undefined) ?? null
@@ -1054,7 +1053,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
 
     // ---------- 6. 消えた親の子を片付ける ----------
     if (parents.size)
-      await w.sweepOrphans(parents, opts, resetParents, async (child, piece) => {
+      await w.sweepOrphans(parents, opts, async (child, piece) => {
         // 消えた幕の稿、幕の構成のまとまりの話が消えた時のその話の稿は、反映の最後に残す（それ以外は今までどおりゴミ箱）
         const ep = isActRecord(piece) ? parentIdOf(piece) : units.has(piece.id) ? piece.id : null
         if (!ep) return false

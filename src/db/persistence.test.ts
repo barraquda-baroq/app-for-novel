@@ -229,7 +229,7 @@ describe('第2回の見直しで直したこと', () => {
   })
 
   it('ほかの端末の復元・すべて削除はその内容を正とし、この端末で送っていない文章だけ控える。子は控えずに片付ける', async () => {
-    const { data, titleId, memoId, versionId } = sample()
+    const { data, titleId, pieceId, memoId, versionId } = sample()
     const p = fresh()
     await seed(p, data)
     const edited = { ...data, memos: { ...data.memos, [memoId]: { ...data.memos[memoId], body: '送っていない追記' } } }
@@ -239,9 +239,12 @@ describe('第2回の見直しで直したこと', () => {
       hooks(() => data),
     )
     const h = hooks(() => edited)
+    // 復元は、クラウドにあったものをすべて（子から先に）消す
     await p.applyRemote(
       [
+        { table: 'versions', id: versionId, record: null, reset: true },
         { table: 'memos', id: memoId, record: null, reset: true },
+        { table: 'pieces', id: pieceId, record: null, reset: true },
         { table: 'titles', id: titleId, record: null, reset: true },
       ],
       h,
@@ -251,6 +254,33 @@ describe('第2回の見直しで直したこと', () => {
     expect(disk.versions[versionId]).toBeUndefined()
     const kept = Object.values(disk.trashRecords).map((r) => (r.record as { body?: string }).body)
     expect(kept).toEqual(['送っていない追記'])
+  })
+
+  it('ほかの端末の復元で親が消えた時、この端末だけの子（送っていない稿）はゴミ箱に控える', async () => {
+    const { data, titleId, pieceId, memoId, versionId } = sample()
+    const p = fresh()
+    await seed(p, data)
+    const added = addVersion(data, pieceId, { body: '送っていない稿' })
+    await p.save(
+      data,
+      added.data,
+      hooks(() => data),
+    )
+    const h = hooks(() => added.data)
+    await p.applyRemote(
+      [
+        { table: 'versions', id: versionId, record: null, reset: true },
+        { table: 'memos', id: memoId, record: null, reset: true },
+        { table: 'pieces', id: pieceId, record: null, reset: true },
+        { table: 'titles', id: titleId, record: null, reset: true },
+      ],
+      h,
+    )
+    const disk = await p.load()
+    expect(disk.versions[added.result]).toBeUndefined()
+    const kept = Object.values(disk.trashRecords).map((r) => (r.record as { body?: string }).body)
+    expect(kept).toEqual(['送っていない稿'])
+    expect(h.notes).toEqual(['trash'])
   })
 
   it('同じまとまりで応募計画と一緒に消された本文の控えは消す（使っている計画が無くなるので）', async () => {

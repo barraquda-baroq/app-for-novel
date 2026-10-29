@@ -578,6 +578,43 @@ describe('同期（エミュレーター）', () => {
     }
   })
 
+  it('復元でこの端末に無いクラウドのレコードを消す時は、子から先に消す（何回かに分けて書いても）', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await a.edit((d) => E.createTitle(d, '作品').data)
+    await b.online()
+    await settle(a, b)
+    const backup = await a.load()
+    // A がオフラインの間に、B が大きなタイトルを作った（A は受け取っていないので、復元でまとめて消す）
+    a.offline()
+    let titleId = ''
+    await b.edit((d) => {
+      const r = withTitle(d, '長編')
+      titleId = r.titleId
+      let data = r.data
+      for (let i = 0; i < 250; i++) data = S.addVersion(data, r.pieceId, { body: `稿${i}` }).data
+      return data
+    })
+    await settle(b)
+    await a.restore(backup)
+    await a.online()
+    await settle(a, b)
+    // 消した文書の時刻: 稿（子）はどれも、話・タイトル（親）より後に消されていない
+    const docs = (await getDocs(collection(a.fs, 'users', a.uid, 'records'))).docs.map(
+      (x) => x.data() as { table: string; deleted: boolean; reset?: boolean; updated: { toMillis(): number } },
+    )
+    const gone = (table: string) => docs.filter((x) => x.table === table && x.deleted && x.reset).map((x) => x.updated.toMillis())
+    expect(gone('versions')).toHaveLength(251)
+    expect(Math.max(...gone('versions'))).toBeLessThanOrEqual(Math.min(...gone('pieces')))
+    expect(Math.max(...gone('pieces'))).toBeLessThanOrEqual(Math.min(...gone('titles')))
+    // 受け取った端末は、消えた親の子を控えない（子の削除が先か同じ通知で届いている）
+    const data = await b.load()
+    expect(data.titles[titleId]).toBeUndefined()
+    expect(Object.keys(data.trashEntries)).toEqual([])
+  })
+
   it('受け取り済みの復元の書き込みが、購読し直して届き直しても、その後の書き換えを戻さない', async () => {
     const who = account()
     const a = await makeDevice('a', who)

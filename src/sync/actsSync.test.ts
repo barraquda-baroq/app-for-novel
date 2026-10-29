@@ -309,6 +309,102 @@ describe('バックアップからの復元と幕', () => {
       })
     }
   }
+
+  // 戻したバックアップにその話が無い（話を作る前・削除した後に取ったバックアップ、すべて削除）: 話は消えるが、
+  // Y が送っていない幕・稿（クラウドに無いので、削除は届かない）の文章は、ゴミ箱に残して知らせる
+  const unsent: [string, number[] | null, (d: AppData, ep: ID) => AppData, 'acts' | 'trash'][] = [
+    ...variants.map(([name, splitAt, op]): [string, number[] | null, (d: AppData, ep: ID) => AppData, 'acts'] => [
+      name,
+      splitAt,
+      (d, ep) => {
+        const next = op(d, ep)
+        const last = actsIds(next, ep).at(-1)!
+        return S.updateVersion(next, next.pieces[last].activeVersionId!, { body: 'Yの追記', note: 'Yのメモ' })
+      },
+      'acts',
+    ]),
+    ['話に稿を足した', null, (d, ep) => S.addVersion(d, ep, { body: 'Yだけの新しい稿' }).data, 'trash'],
+  ]
+  for (const [name, splitAt, op, kind] of unsent) {
+    it(`${name}端末と、その話の無いバックアップから戻した端末（戻した方が先に送る）`, async () => {
+      const start = scenarioStart({ body: 'ABCDEFGHI', splitAt })
+      const ep = start.ep
+      const cloud = new FakeCloud()
+      const x = new FakeDevice('X', cloud)
+      const y = new FakeDevice('Y', cloud)
+      await x.edit(() => start.data)
+      await settle(x, y)
+      const backup = S.deletePiece(await x.load(), ep)
+      x.notes = []
+      y.notes = []
+      y.offline()
+      await y.edit((d) => op(d, ep))
+      const seen = texts(await y.load())
+      const seenV = seenVersions(await y.load(), start.data)
+      await x.restore(backup)
+      await x.sync()
+      await y.receive()
+      await y.sync()
+      await settle(x, y)
+      expect(await sameData(x, y)).toBe(true)
+      const d = await x.load()
+      expect(d.pieces[ep]).toBeUndefined()
+      const all = texts(d)
+      expect([...new Set(seen)].filter((t) => !all.some((q) => q.includes(t)))).toEqual([])
+      expect(lostVersions(seenV, d)).toEqual([])
+      expect([...structureProblems(d), ...restoreProblems(d, ep)]).toEqual([])
+      if (kind === 'acts')
+        expect(y.notes.filter((n) => n.kind === 'acts').map((n) => [n.id, 'detail' in n ? n.detail : ''])).toEqual([
+          [ep, 'deletedThere'],
+        ])
+      else expect(y.notes.map((n) => n.kind)).toEqual(['trash'])
+    })
+  }
+})
+
+describe('バックアップから戻して消えた話の下の、送っていない稿・幕', () => {
+  // X がバックアップを取った後に作った話 E2 は同期済み。Y がオフラインで E2 に稿を足した・E2 を分けて書き換えた後、
+  // X がバックアップ（E2 が無い）から戻した。Y の稿・幕はクラウドに無いので、削除は届かない
+  for (const variant of ['稿を足した', '分けて第2幕を書き換えた', '稿を足して、復元の後・受け取る前に送った'] as const) {
+    it(`${variant}: Y の文章はゴミ箱に残る`, async () => {
+      const start = scenarioStart({ body: 'ABCDEFGHI', splitAt: null })
+      const cloud = new FakeCloud()
+      const x = new FakeDevice('X', cloud)
+      const y = new FakeDevice('Y', cloud)
+      await x.edit(() => start.data)
+      await settle(x, y)
+      const backup = await x.load()
+      let e2 = ''
+      await x.edit((d) => {
+        const r = S.addEpisode(d, d.pieces[start.ep].titleId)
+        e2 = r.result
+        const vid = r.data.pieces[e2].versionIds[0]
+        return S.setActiveVersion(S.updateVersion(r.data, vid, { body: 'E2本文ABCDEF' }), e2, vid)
+      })
+      await settle(x, y)
+      y.offline()
+      const want = variant === '分けて第2幕を書き換えた' ? 'DEF+Yだけの追記' : 'Yだけの新しい稿'
+      if (variant === '分けて第2幕を書き換えた') {
+        await y.edit((d) => A.separatePiece(d, e2, [3]).data)
+        await y.edit((d) => S.updateVersion(d, d.pieces[actsIds(d, e2)[1]].activeVersionId!, { body: want }))
+      } else await y.edit((d) => S.addVersion(d, e2, { body: want }).data)
+      await x.restore(backup)
+      await x.sync()
+      if (variant === '稿を足して、復元の後・受け取る前に送った') {
+        // 稿はクラウドに無かったので書ける（E2 の更新は書けない）
+        await y.uploadBatch()
+        expect([...cloud.docs.values()].some((doc) => (doc.record as { body?: string } | null)?.body === want)).toBe(true)
+      }
+      await y.receive()
+      await settle(x, y)
+      expect(await sameData(x, y)).toBe(true)
+      const d = await y.load()
+      expect(d.pieces[e2]).toBeUndefined()
+      expect(texts(d).some((t) => t.includes(want))).toBe(true)
+      expect(y.notes.length).toBeGreaterThan(0)
+      expect(structureProblems(d)).toEqual([])
+    })
+  }
 })
 
 describe('バックアップから戻した端末と、その後の幕の操作', () => {
