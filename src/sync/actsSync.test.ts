@@ -345,6 +345,49 @@ describe('バックアップから戻した端末と、その後の幕の操作'
   })
 })
 
+describe('バックアップから戻した直後の操作（1台）', () => {
+  // 復元を送り終えてから、受け取り直す（自分の復元の書き込みが届く）までの間に、戻した話を操作した
+  const ops: [string, (d: AppData, ep: ID) => AppData][] = [
+    ['分けた', (d, ep) => A.separatePiece(d, ep, [3]).data],
+    [
+      '稿を複製して採用した',
+      (d, ep) => {
+        const r = S.duplicateVersion(d, d.pieces[ep].activeVersionId!)
+        return S.setActiveVersion(r.data, ep, r.result)
+      },
+    ],
+  ]
+  for (const [name, op] of ops) {
+    it(`${name}: 自分の復元の書き込みが届いても、操作は取り消されず、知らせも出ない`, async () => {
+      const start = scenarioStart({ body: 'ABCDEFGHI', splitAt: null })
+      const ep = start.ep
+      const cloud = new FakeCloud()
+      const x = new FakeDevice('X', cloud)
+      await x.edit(() => start.data)
+      await x.sync()
+      const backup = await x.load()
+      await x.restore(backup)
+      // エンジンと同じ: クラウドを揃えて送り終えるまで受け取らない
+      await x.pushAuthoritative()
+      for (;;) if ((await x.uploadBatch()).done) break
+      await x.edit((d) => op(d, ep))
+      const before = await x.load()
+      const trash = Object.keys(before.trashEntries).length
+      x.notes = []
+      await x.receive()
+      await x.sync()
+      const d = await x.load()
+      expect(x.notes).toEqual([])
+      expect(structureProblems(d)).toEqual([])
+      expect(d.pieces[ep]).toEqual(before.pieces[ep])
+      expect(Object.keys(d.versions).sort()).toEqual(Object.keys(before.versions).sort())
+      expect(Object.keys(d.trashEntries)).toHaveLength(trash)
+      for (const id of actsIds(d, ep)) expect(cloud.docs.get(`pieces:${id}`)?.record).toEqual(d.pieces[id])
+      expect(cloud.docs.get(`pieces:${ep}`)?.record).toEqual(d.pieces[ep])
+    })
+  }
+})
+
 describe('分けてから解除した話と、元の稿の書き換え', () => {
   it('解除の後で書き換えられた元の稿と解除した稿をまとめて受け取った端末には、知らせを出さない', async () => {
     const start = scenarioStart({ body: 'ABCDEF', splitAt: null })

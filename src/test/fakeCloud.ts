@@ -71,7 +71,7 @@ export class FakeDevice {
   }
 
   /** エンジンの pushAuthoritative と同じ: 復元の後、この端末に無いクラウドのレコードを消す（1回の書き込み） */
-  private async pushAuthoritative(): Promise<void> {
+  async pushAuthoritative(): Promise<void> {
     if (!(await this.p.getMeta('authoritative'))) return
     const local = await this.p.localKeys()
     const ts = ++this.cloud.ts

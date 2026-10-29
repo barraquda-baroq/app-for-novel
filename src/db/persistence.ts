@@ -877,7 +877,8 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     // 稿の一覧がこの端末の幕・稿を載せているので片付けない
     const localOnly = async (table: TableName, id: string) => (await rowOf(table, id))?.base === null
     for (const ch of changes) {
-      if (!ch.reset || ch.table !== 'pieces' || !ch.record || !resetApplied.has(ch.id)) continue
+      // この端末の復元の返事は見ない（復元で端末内を置き換えたので、この端末だけの幕・稿は、その後で作ったもの）
+      if (ch.own || !ch.reset || ch.table !== 'pieces' || !ch.record || !resetApplied.has(ch.id)) continue
       const rec = ch.record as PieceRec
       const ep = isEpisodeRecord(rec) ? ch.id : isActRecord(rec) ? parentIdOf(rec) : null
       if (!ep) continue
