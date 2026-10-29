@@ -874,10 +874,34 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     // （稿は 7 で、残る幕・話の稿「（競合: ○○での幕の操作）」か、採用原稿にそのまま入っていればゴミ箱の1件に）。
     // 2 で戻した内容をそのまま当てた話・幕だけ（端末内 = 戻した内容）。この端末の内容を残した話・幕は、端末内の幕の並び・
     // 稿の一覧がこの端末の幕・稿を載せているので片付けない
-    const localOnly = async (table: TableName, id: string) => (await rowOf(table, id))?.base === null
-    for (const ch of changes) {
-      // この端末の復元の返事は見ない（復元で端末内を置き換えたので、この端末だけの幕・稿は、その後で作ったもの）
-      if (ch.own || !ch.reset || ch.table !== 'pieces' || !ch.record || !resetApplied.has(ch.id)) continue
+    // この端末の復元の返事は見ない（復元で端末内を置き換えたので、この端末だけの幕・稿は、その後で作ったもの）
+    const restored = changes.filter((ch) => !ch.own && ch.reset && ch.table === 'pieces' && ch.record && resetApplied.has(ch.id))
+    // この端末だけの幕・稿（base が null の送信待ち。2 で、届いた復元のレコードの送信待ちは消してある）を、話・幕ごとに
+    // 一度だけ集める（復元はすべての話・幕に届くので、話・幕ごとに表を読み直さない）
+    const unsentActs = new Map<string, PieceRec[]>()
+    const unsentVersions = new Map<string, VersionRec[]>()
+    if (restored.length) {
+      const localOnlyIds = async (t: TableName) =>
+        (await db.outbox.where('k').startsWith(`${t}/`).toArray()).filter((r) => r.base === null).map((r) => r.id)
+      for (const p of (await piecesT.bulkGet(await localOnlyIds('pieces'))) as (PieceRec | undefined)[]) {
+        const parentId = p && isActRecord(p) ? parentIdOf(p) : null
+        if (p && parentId) unsentActs.set(parentId, [...(unsentActs.get(parentId) ?? []), p])
+      }
+      for (const v of (await versionsT.bulkGet(await localOnlyIds('versions'))) as (VersionRec | undefined)[])
+        if (v && typeof v.pieceId === 'string') unsentVersions.set(v.pieceId, [...(unsentVersions.get(v.pieceId) ?? []), v])
+    }
+    /** 話・幕の稿（片付ける幕がある時だけ、稿の表を一度だけ読む） */
+    let versionsByPiece: Map<string, VersionRec[]> | null = null
+    const versionsUnder = async (pieceId: string) => {
+      if (!versionsByPiece) {
+        const byPiece = new Map<string, VersionRec[]>()
+        for (const v of (await versionsT.toArray()) as VersionRec[])
+          if (typeof v.pieceId === 'string') byPiece.set(v.pieceId, [...(byPiece.get(v.pieceId) ?? []), v])
+        versionsByPiece = byPiece
+      }
+      return versionsByPiece.get(pieceId) ?? []
+    }
+    for (const ch of restored) {
       const rec = ch.record as PieceRec
       const ep = isEpisodeRecord(rec) ? ch.id : isActRecord(rec) ? parentIdOf(rec) : null
       if (!ep) continue
@@ -885,10 +909,9 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         keeps.push({ record: v, episodeId: ep, pieceId, mine: true, reason: 'acts', live: true, detail: 'lost' })
       if (isEpisodeRecord(rec)) {
         const listed = new Set(actIdsOf(rec))
-        const acts = await piecesT.filter((r) => isActRecord(r) && parentIdOf(r) === ch.id && !listed.has(r.id)).toArray()
-        for (const a of acts) {
-          if (!(await localOnly('pieces', a.id))) continue
-          for (const v of await versionsT.filter((r) => (r as VersionRec).pieceId === a.id).toArray()) keepLocal(v, a.id)
+        for (const a of unsentActs.get(ch.id) ?? []) {
+          if (listed.has(a.id)) continue
+          for (const v of await versionsUnder(a.id)) keepLocal(v, a.id)
           await w.delLocal('pieces', a.id)
           noteActs(ep, 'lost')
         }
@@ -896,11 +919,11 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         units.delete(ch.id)
       }
       const listedVersions = new Set(Array.isArray(rec.versionIds) ? rec.versionIds : [])
-      for (const v of await versionsT.filter((r) => (r as VersionRec).pieceId === ch.id && !listedVersions.has(r.id)).toArray()) {
-        if (!(await localOnly('versions', v.id))) continue
+      for (const v of unsentVersions.get(ch.id) ?? []) {
+        if (listedVersions.has(v.id)) continue
         // 幕の操作（さらに分ける・つなぐ・解除）で作った稿（sourceHash）だけ控える。ふつうに足した・複製した稿は、
         // 名前も変えずに戻した話・幕の稿の一覧に載せ直す（幕の操作ではないので、幕の知らせも出さない）
-        if (typeof (v as VersionRec).sourceHash !== 'string') {
+        if (typeof v.sourceHash !== 'string') {
           await w.listVersion(ch.id, v.id)
           continue
         }

@@ -1,10 +1,10 @@
 // 端末内の保存と送信待ち: 同期の規則（どちらの文章も黙って消さない）が、ほかの画面の保存・クラウドからの反映の
 // どちらでも守られること。
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { joinActWithNext, separatePiece } from '../domain/acts'
 import { addMemo, addSubmission, createTitle, recordSubmissionSnapshot } from '../domain/entityOps'
 import { addEpisode, addVersion, setActiveVersion, updatePiece, updateVersion } from '../domain/storyOps'
-import { emptyData, type AppData, type Version } from '../domain/types'
+import { TABLE_NAMES, emptyData, type AppData, type Version } from '../domain/types'
 import { newId } from '../domain/util'
 import { conflictTrash, conflictVersionCopy, createConflictHooks } from '../sync/conflicts'
 import { deepEqual } from '../sync/merge'
@@ -465,5 +465,69 @@ describe('幕（2.2）の送信待ちと反映', () => {
     expect(disk.pieces[acts[0]].versionIds).toContain(copy.id)
     expect(notes).toEqual([{ kind: 'acts', table: 'pieces', id: ep, detail: 'theirsDropped', kept: { versions: 1, trash: 0 } }])
     expect(await outboxProblems(p, apply(data, [change]))).toEqual([])
+  })
+})
+
+// ---------- 読む量（大きな作品で、反映・送信待ちの読み出しが話の数の2乗にならない） ----------
+
+/** fn の間に IndexedDB を表ごとに読んだ回数（scan = 表を全件読んだ、get = 1件ずつ読んだ） */
+async function countReads(fn: () => Promise<unknown>): Promise<Record<string, { scan: number; get: number }>> {
+  const counts: Record<string, { scan: number; get: number }> = {}
+  const proto = IDBObjectStore.prototype as unknown as Record<'openCursor' | 'getAll' | 'get', (...a: unknown[]) => unknown>
+  const spies = (['openCursor', 'getAll', 'get'] as const).map((m) => {
+    const orig = proto[m]
+    return vi.spyOn(proto, m).mockImplementation(function (this: IDBObjectStore, ...args: unknown[]) {
+      const c = (counts[this.name] ??= { scan: 0, get: 0 })
+      if (m === 'get') c.get += 1
+      else if (args[0] == null) c.scan += 1
+      return orig.apply(this, args)
+    })
+  })
+  try {
+    await fn()
+  } finally {
+    for (const spy of spies) spy.mockRestore()
+  }
+  return counts
+}
+
+/** n 話（どれも稿が2つ。split 話ごとに1話を幕に分ける）の作品 */
+function largeTitle(n: number, split: number): { data: AppData; titleId: string; episodes: string[] } {
+  const t = createTitle(emptyData(), '長編')
+  let data = t.data
+  const episodes: string[] = []
+  for (let i = 0; i < n; i++) {
+    const e = addEpisode(data, t.result)
+    episodes.push(e.result)
+    const v0 = e.data.pieces[e.result].versionIds[0]
+    data = updateVersion(e.data, v0, { body: `第${i}話ABCDEF` })
+    data = setActiveVersion(addVersion(data, e.result, { body: `第${i}話の別稿` }).data, e.result, v0)
+    if (i % split === 0) data = separatePiece(data, e.result, [3]).data
+  }
+  return { data, titleId: t.result, episodes }
+}
+
+const allChanges = (d: AppData, extra: Partial<Change> = {}): Change[] =>
+  TABLE_NAMES.flatMap((t) =>
+    Object.values(d[t] as Record<string, AnyRecord>).map((r) => ({ table: t, id: r.id, record: r, ...extra })),
+  )
+
+describe('大きな作品の反映・送信待ちの読む量', () => {
+  it('ほかの端末の復元をまとめて受け取っても、話・稿の表を話ごとに読み直さない', async () => {
+    const { data } = largeTitle(30, 3)
+    const p = fresh()
+    await seed(p, data)
+    const restored: AppData = { ...data, pieces: { ...data.pieces }, versions: { ...data.versions } }
+    for (const t of ['pieces', 'versions'] as const)
+      for (const [id, r] of Object.entries(restored[t])) (restored[t] as Record<string, AnyRecord>)[id] = { ...r, updatedAt: 99 }
+    const counts = await countReads(() =>
+      p.applyRemote(
+        allChanges(restored, { reset: true }),
+        hooks(() => data),
+      ),
+    )
+    expect(counts.pieces?.scan ?? 0).toBeLessThanOrEqual(1)
+    expect(counts.versions?.scan ?? 0).toBeLessThanOrEqual(1)
+    expect(await p.load()).toEqual(restored)
   })
 })
