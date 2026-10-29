@@ -462,8 +462,8 @@ function ApproveForm({
         <span>
           推敲案などの書き込みも許可
           <span className="tiny faint cn-writes-hint">
-            （Claude が推敲案・改稿案・戦略メモ・批評の結果を足せます。本文は書き換えません。後から 設定 → Claude 連携
-            で止められます）
+            （Claude が推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果を足せます。本文は書き換えません。後から 設定 → Claude
+            連携 で止められます）
           </span>
         </span>
       </label>

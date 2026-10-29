@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { setChaptersEnabled } from '../../domain/storyOps'
 import { novel } from '../../test/claudeFixture'
-import { itemStatusTone, manualFileName, resolveRange, sourceLabel } from './claudeUi'
+import { WRITE_TOOL_LABELS } from '../../claude/records'
+import { CLAUDE_ACCESS_HINTS } from './ClaudeAccessControl'
+import { CLAUDE_CAN, itemStatusTone, manualFileName, resolveRange, sourceLabel } from './claudeUi'
 
 describe('手動連携の範囲', () => {
   it('タイトル全体・章・話の範囲（番号は範囲の中に収め、逆なら入れ替える）', () => {
@@ -45,5 +47,20 @@ describe('表記', () => {
     expect(itemStatusTone('previously_deleted')).toBe('skip')
     expect(itemStatusTone('not_found')).toBe('warn')
     expect(itemStatusTone('ambiguous')).toBe('warn')
+  })
+})
+
+describe('Claude ができること（同意・設定の画面）', () => {
+  it('読めるもの（すべての稿・アイデアも）と、足せるもの（書き込みのツールすべて）を書く', () => {
+    const can = CLAUDE_CAN.join('\n')
+    for (const word of ['採用していない稿', 'すべての稿', 'アイデア', '作品批評', '推敲案を読む']) expect(can).toContain(word)
+    // 書き込みのツールで足せるもの（「推敲案を追加」→ 推敲案、「作品批評の結果を記録」→ 批評の結果）
+    const subjects = Object.values(WRITE_TOOL_LABELS).map((l) =>
+      l.replace(/を(追加|保存|記録)$/, '').replace(/^作品批評の/, '批評の'),
+    )
+    for (const s of subjects) {
+      expect(CLAUDE_ACCESS_HINTS.write, s).toContain(s)
+      expect(can, s).toContain(s)
+    }
   })
 })

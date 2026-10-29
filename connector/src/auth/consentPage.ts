@@ -19,7 +19,7 @@ export function consentPage(details: ConsentDescription, handle: string, appOrig
 <div class="card">
   <p>次の画面（Novel Studio: ${app}）で、Claude に見せるタイトルを選んで許可します。</p>
   <ul>
-    <li>Claude ができること: 見せたタイトルの採用原稿・設定・メモ・戦略を読む、推敲案・改稿案・戦略メモ・作品批評を<strong>足す</strong></li>
+    <li>Claude ができること: 見せたタイトルの採用原稿と採用していない稿を含むすべての稿・設定・メモ・アイデア・戦略・作品批評を読む、推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果を<strong>足す</strong></li>
     <li>Claude ができないこと: 本文（稿）の書き換え・削除、ほかのタイトルを見ること</li>
   </ul>
   <p class="warn">この画面は claude.ai で「接続」を押した直後にだけ出ます。心当たりがなければ［やめる］を押してください。</p>

@@ -12,8 +12,8 @@ import './claude.css'
 
 export const CLAUDE_ACCESS_HINTS: Record<ClaudeAccess, string> = {
   none: 'Claude のコネクタにこのタイトルを出しません',
-  read: '採用原稿・設定などを読めますが、推敲案などは足せません',
-  write: '読んで、推敲案・改稿案・戦略メモ・批評の結果を足せます（本文は書き換えません）',
+  read: '採用原稿・すべての稿・設定などを読めますが、推敲案などは足せません',
+  write: '読んで、推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果を足せます（本文は書き換えません）',
 }
 
 export function ClaudeAccessControl({ title }: { title: Title }) {
