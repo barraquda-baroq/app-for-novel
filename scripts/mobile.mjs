@@ -657,7 +657,10 @@ async function iosOpen() {
   ok('Firebase の設定・Google ログインの戻り先・チーム ID がそろっています')
   await buildAndSync('ios')
   await step('Xcode で開く（cap open ios）', nodeBin('@capacitor/cli', 'cap'), ['open', 'ios'])
-  say('\nXcode が開いたら、上の送り先を「Any iOS Device (arm64)」にして Product > Archive（docs/MOBILE.md「iPhone」の 6）。')
+  say(
+    '\nXcode が開いたら、上の送り先を「Any iOS Device (arm64)」にして Product > Archive（docs/MOBILE.md「iPhone」の 6）。' +
+      '\n初めての時は先に iPhone を USB でつないで、送り先に一度選んでください（同じく 6 の 2。Apple に iPhone を登録します）。',
+  )
 }
 
 const USAGE = `使い方（docs/MOBILE.md）:

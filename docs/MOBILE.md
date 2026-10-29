@@ -223,7 +223,7 @@ Xcode のメニュー **Xcode > Settings…（設定…）> Accounts** の左下
 | SKU | `novelstudio`（自分用の管理番号。何でもよい） |
 | ユーザアクセス | フルアクセス |
 
-バンドル ID が一覧に出ない時は、先に手順 6 のアーカイブを一度行ってから（Xcode が登録します）戻ってきてください。
+バンドル ID が一覧に出ない時は、先に手順 6 の 1〜2（iPhone をつないで送り先に選ぶ。Xcode が登録します）をしてから戻ってきてください。
 
 ### 6. アーカイブして TestFlight に上げる
 
@@ -234,12 +234,17 @@ npm run ios:open
 アプリの画面をビルドして、Xcode でプロジェクトを開きます。
 
 1. 初めて開いた時は、部品（Swift Package）の取得に数分〜10分かかります（左下に進み具合）。終わるまで待つ。
-2. Xcode の上の真ん中で、送り先を **「Any iOS Device (arm64)」** にする。
-3. メニュー **Product > Archive**。数分でビルドが終わり、「Organizer」の画面が開きます。
-4. 「Distribute App」→ **「TestFlight & App Store」** →「Distribute」。チームや署名は設定済みなので、選ぶ必要はありません。
+2. **最初に一度だけ**: iPhone を USB で Mac につなぎ、ロックを外して「このコンピュータを信頼しますか？」で「信頼」（iPhone のパスコード）。
+   iPhone の **設定 > プライバシーとセキュリティ > デベロッパモード** をオンにする（再起動します）。
+   Xcode の上の真ん中の送り先で自分の iPhone を一度選ぶ。Xcode が iPhone とアプリ（バンドル ID）を Apple に登録します（「Register Device」と出たら押す）。
+   左の「App」> **Signing & Capabilities** に赤いエラーが無くなれば OK（iPhone は外してよい）。
+   Apple は、登録した iPhone が1台も無いと署名の設定（プロビジョニングプロファイル）を作れないので、これをしないと次の Archive が失敗します。
+3. Xcode の上の真ん中で、送り先を **「Any iOS Device (arm64)」** にする。
+4. メニュー **Product > Archive**。数分でビルドが終わり、「Organizer」の画面が開きます。
+5. 「Distribute App」→ **「TestFlight & App Store」** →「Distribute」。チームや署名は設定済みなので、選ぶ必要はありません。
    - 「codesign がキーチェーンの…を使用しようとしています」と出たら、Mac のログインパスワードを入れて「常に許可」
    - 暗号化（輸出コンプライアンス）の質問は出ません（設定済み）
-5. 「Uploaded」と出れば完了です。
+6. 「Uploaded」と出れば完了です。
 
 ### 7. TestFlight で iPhone に入れる
 
@@ -267,6 +272,7 @@ npm run ios:open
 | Xcode の左の一覧で `GoogleService-Info.plist` が赤い | 同上（ファイルはリポジトリに入らないので、Mac ごとに作ります） |
 | 「Signing for "App" requires a development team」 | 同上（チーム ID が `ios/App/local.xcconfig` に無い） |
 | 「Xcode ではなく Command Line Tools が選ばれています」 | ターミナルで `sudo xcode-select -s /Applications/Xcode.app`（Mac のログインパスワード） |
+| 「Your team has no devices from which to generate a provisioning profile」・「No profiles for 'jp.barraquda.novelstudio' were found」 | iPhone が Apple に登録されていません。手順 6 の 2（USB でつないで「信頼」、送り先に自分の iPhone を選ぶ）をしてから、送り先を「Any iOS Device (arm64)」に戻して Product > Archive |
 | Apple から「ITMS-91053: Missing API declaration」のメール | メールの本文（API の名前）を Claude に見せる（`ios/App/App/PrivacyInfo.xcprivacy` に足します） |
 | 部品（Swift Package）の取得に失敗する | Xcode のメニュー **File > Packages > Reset Package Caches**、それでもだめなら Xcode を閉じて `npm run ios:open` をもう一度 |
 
@@ -281,7 +287,7 @@ iPhone で「Google でログイン」を押しても何も起きない・「ロ
 
 キーボードの上の記号バーなどを細かく確かめる時は、TestFlight を通さずに Xcode から直接 iPhone に入れられます。
 
-1. iPhone を USB で Mac につなぎ、iPhone の **設定 > プライバシーとセキュリティ > デベロッパモード** をオンにする（再起動します）。
+1. iPhone を USB で Mac につなぎ、iPhone の **設定 > プライバシーとセキュリティ > デベロッパモード** をオンにする（再起動します。手順 6 の 2 で済んでいれば、つなぐだけ）。
 2. `npm run ios:open` → Xcode の送り先に自分の iPhone を選び、▶ を押す。
 3. 画面の中を調べる時は、iPhone の **設定 > アプリ > Safari > 詳細 > Web インスペクタ** をオンにし、Mac の Safari の **設定 > 詳細 >「Web 開発者用の機能を表示」**をオンにして、Safari の「開発」メニューから iPhone の Novel Studio を選ぶ。
 
