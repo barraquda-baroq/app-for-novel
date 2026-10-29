@@ -30,6 +30,7 @@ import {
   validState,
   type ConnectorIdentity,
 } from './connectLogic'
+import { leaveTo } from './leave'
 import './claude.css'
 
 /** 同期が揃うのを待つ長さ */
@@ -354,7 +355,7 @@ function ApproveForm({ identity, ownerUid, state, error, onSaving, onDone, onErr
             attempt(() => actions.setTitleClaudeAccess(titleId, a))
           },
           flush: (limitMs) => flushAll(limitMs),
-          navigate: (url) => window.location.assign(url),
+          navigate: (url) => leaveTo(url),
           randomKey: () => randomPairingKey(),
           deviceLabel: () => deviceLabel(),
         },

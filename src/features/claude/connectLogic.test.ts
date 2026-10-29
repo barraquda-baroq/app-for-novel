@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
   approvePairing,
@@ -17,7 +16,11 @@ import {
 } from './connectLogic'
 
 const ORIGIN = 'https://novel-studio-connector.example.workers.dev'
-const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex')
+/** 実装とは別に crypto.subtle で数える（式が sha256hex(s + '.' + k) であることを確かめる） */
+async function sha(text: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
 
 function deps(over: Partial<PairingDeps> = {}) {
   const calls: string[] = []
@@ -136,7 +139,9 @@ describe('連携の鍵と指紋', () => {
   })
 
   it("指紋は sha256hex(s + '.' + k)（コネクタと同じ式）", async () => {
-    expect(await pairingHash('state1', 'key1')).toBe(sha('state1.key1'))
+    expect(await pairingHash('state1', 'key1')).toBe(await sha('state1.key1'))
+    // 知られている値（SHA-256 の 'abc'）
+    expect(await sha('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
   })
 })
 
@@ -152,7 +157,7 @@ describe('［許可する］', () => {
     })
     expect(r.ok).toBe(true)
     const k = 'K'.repeat(43)
-    expect(t.written).toEqual([{ uid: 'anonUid123', pairing: sha(`st-1.${k}`), approvedOn: 'Mac', writes: true, v: 1 }])
+    expect(t.written).toEqual([{ uid: 'anonUid123', pairing: await sha(`st-1.${k}`), approvedOn: 'Mac', writes: true, v: 1 }])
     expect(JSON.stringify(t.written)).not.toContain(k)
     expect(t.access).toEqual([['t1', 'read']])
     // タイトルの設定 → 連携の記録 → 送信 → 移動 の順

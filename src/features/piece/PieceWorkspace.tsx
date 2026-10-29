@@ -258,6 +258,15 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
   const [proofOpen, setProofOpen] = useState(false)
   const [proofFocus, setProofFocus] = useState<ID | null>(null)
   const jumpToProof = useProofJump(title.id, piece, active, hub)
+  const jumpRef = useRef(jumpToProof)
+  jumpRef.current = jumpToProof
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const proofParam = params.get(PROOF_PARAM)
   useEffect(() => {
     if (!proofParam) return
@@ -274,9 +283,11 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
     setProofFocus(s.id)
     // 狭い画面では一覧を開かず、本文のその箇所だけを見せる
     if (!window.matchMedia?.('(max-width: 720px)').matches) setProofOpen(true)
-    // 本文欄ができてから選ぶ
-    const t = window.setTimeout(() => jumpToProof(s), 50)
-    return () => window.clearTimeout(t)
+    // 本文欄ができてから選ぶ（URL から外しても取り消さない）
+    window.setTimeout(() => {
+      const cur = getData().proofSuggestions[s.id]
+      if (mounted.current && cur) jumpRef.current(cur)
+    }, 50)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proofParam])
   const closeProof = useCallback(() => setProofOpen(false), [])

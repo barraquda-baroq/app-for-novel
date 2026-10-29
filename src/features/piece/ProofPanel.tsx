@@ -2,7 +2,7 @@
 // 一覧の推敲案を押すと、本文（保存していない編集を含む）の中でその箇所を選ぶ。本文が変わっていれば探し直し
 // （幕をつないだ・解除した後は属していた話で）、見つからなければ「本文が変わりました（直した可能性）」。
 // 別の幕・話にあれば、そこを開いて選ぶ（?ps=<推敲案の id>。戦略タブから開いた時も同じ）。
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { reanchor, type ReanchorResult } from '../../claude/anchor'
 import { openProofSuggestionsFor, sortProofSuggestions } from '../../claude/order'
@@ -17,7 +17,7 @@ import { ProofItem } from '../title/strategy/ProofSuggestions'
 import { LOST_LABEL, proofPlace, type ProofPlace } from '../title/strategy/proofLogic'
 import '../title/strategy/claudeSections.css'
 import { caretLine } from './caret'
-import type { EditorHub } from './editorHub'
+import { useSessionValue, type EditorHub } from './editorHub'
 import './proofPanel.css'
 import { versionField } from './session'
 
@@ -135,10 +135,13 @@ export function ProofPanel({ titleId, piece, active, hub, focusId, onClose, jump
     () => episodeNumbers(data, titleId),
     [data.titles, data.chapters, data.pieces, titleId], // eslint-disable-line react-hooks/exhaustive-deps
   )
+  // 保存していない本文の編集も含めて場所を探す（打っている間は少し遅らせて）
+  const live = useDeferredValue(useSessionValue(hub.session, active ? versionField(active.id, 'body') : null, active?.body ?? ''))
   const places = useMemo(() => {
     const d = liveData(data, hub, active)
     return new Map<ID, ProofPlace>(list.map((s) => [s.id, proofPlace(d, s, numbers)]))
-  }, [list, data, hub, active, numbers])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list, data, hub, active, numbers, live])
   const [selected, setSelected] = useState<ID | null>(focusId)
   const ref = useRef<HTMLElement>(null)
 
@@ -153,7 +156,8 @@ export function ProofPanel({ titleId, piece, active, hub, focusId, onClose, jump
   useEffect(() => {
     if (!focusId) return
     setSelected(focusId)
-    ref.current?.querySelector(`[data-proof-id="${CSS.escape(focusId)}"]`)?.scrollIntoView?.({ block: 'nearest' })
+    const items = ref.current?.querySelectorAll<HTMLElement>('[data-proof-id]') ?? []
+    for (const el of items) if (el.dataset.proofId === focusId) el.scrollIntoView?.({ block: 'nearest' })
   }, [focusId])
 
   const onJump = useCallback(
