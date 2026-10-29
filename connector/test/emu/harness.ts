@@ -92,6 +92,7 @@ export async function makeDevice(name: string, who: string): Promise<Device> {
   const target: SyncTarget = {
     readOutbox: (n) => p.readOutbox(n),
     completeUpload: (s) => p.completeUpload(s),
+    markUnconfirmed: (keys) => p.markUnconfirmed(keys),
     applyRemote: async (changes, cursor, opts) => {
       const before = repairData(await p.load()).data
       const hooks = createConflictHooks({ device: name, data: () => before, newId, report: (n) => notes.push(n) })
