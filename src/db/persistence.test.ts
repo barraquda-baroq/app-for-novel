@@ -530,4 +530,18 @@ describe('大きな作品の反映・送信待ちの読む量', () => {
     expect(counts.versions?.scan ?? 0).toBeLessThanOrEqual(1)
     expect(await p.load()).toEqual(restored)
   })
+
+  it('新しい端末が全件を1回で受け取っても、届いた稿を幕に分けた話ごとに読み直さない', async () => {
+    const { data } = largeTitle(30, 3)
+    const p = fresh()
+    const counts = await countReads(() =>
+      p.applyRemote(
+        allChanges(data),
+        hooks(() => emptyData()),
+      ),
+    )
+    const versions = Object.keys(data.versions).length
+    expect(counts.versions?.get ?? 0).toBeLessThanOrEqual(3 * versions)
+    expect(await p.load()).toEqual(data)
+  })
 })

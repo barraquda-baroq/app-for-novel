@@ -1109,28 +1109,30 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       if (piece && isEpisodeRecord(piece) && actIdsOf(piece).length > 0 && piece.activeVersionId === v.id)
         noteActs(piece.id, 'source')
     }
-    for (const u of units.values()) {
-      if (u.kind !== 'theirs') continue
-      for (const vid of newVersions) {
-        const v = await getVersion(vid)
-        if (!v || typeof v.sourceHash !== 'string' || typeof v.sourceVersionId !== 'string') continue
-        // 同じ反映で別の端末から届いた元の稿の書き換えは見ない（分けた・つないだ後の書き換えのことがある。オフラインだった
-        // 端末が両方をまとめて受け取った時・送った端末がオフラインの間に両方をした時）
-        const srcChange = incoming.get(outboxKey('versions', v.sourceVersionId))
-        if (srcChange && !srcChange.own) continue
-        const piece = await getPiece(String(v.pieceId))
-        if (!piece || (piece.id !== u.episodeId && parentIdOf(piece) !== u.episodeId)) continue
-        const src = await getVersion(v.sourceVersionId)
-        if (src && typeof src.body === 'string' && textHash(src.body) !== v.sourceHash) {
-          noteActs(u.episodeId, 'stale')
-          break
-        }
-      }
+    /** 届いた新しい稿のうち、幕の操作で作った稿（元の稿と、その本文の指紋を控えている）。届いた内容で選ぶ（読み直さない） */
+    const fromActs = newVersions.filter((vid) => {
+      const inc = incoming.get(outboxKey('versions', vid))?.record as VersionRec | null | undefined
+      return Boolean(inc) && typeof inc!.sourceHash === 'string' && typeof inc!.sourceVersionId === 'string'
+    })
+    for (const vid of fromActs) {
+      const v = await getVersion(vid)
+      if (!v || typeof v.sourceHash !== 'string' || typeof v.sourceVersionId !== 'string') continue
+      // 同じ反映で別の端末から届いた元の稿の書き換えは見ない（分けた・つないだ後の書き換えのことがある。オフラインだった
+      // 端末が両方をまとめて受け取った時・送った端末がオフラインの間に両方をした時）
+      const srcChange = incoming.get(outboxKey('versions', v.sourceVersionId))
+      if (srcChange && !srcChange.own) continue
+      // 別の端末だけが幕の構成を変えた話（稿の話そのもの、または幕の属する話）
+      const piece = await getPiece(String(v.pieceId))
+      if (!piece) continue
+      const ep = units.get(piece.id)?.kind === 'theirs' ? piece.id : parentIdOf(piece)
+      if (!ep || units.get(ep)?.kind !== 'theirs') continue
+      const src = await getVersion(v.sourceVersionId)
+      if (src && typeof src.body === 'string' && textHash(src.body) !== v.sourceHash) noteActs(ep, 'stale')
     }
 
     // ---------- 8b. セパレートを解除した話の採用稿が、書き換えられる前の話の稿から分けた本文だった ----------
     // 別の端末が分けてから解除した（この端末ではずっと分けていない）時は、どの記録の幕の並びも空なので、まとまりはできない
-    for (const vid of newVersions) {
+    for (const vid of fromActs) {
       const v = await getVersion(vid)
       if (!v || typeof v.sourceHash !== 'string' || typeof v.sourceVersionId !== 'string') continue
       const piece = await getPiece(String(v.pieceId))
