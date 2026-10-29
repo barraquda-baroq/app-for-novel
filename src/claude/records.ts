@@ -296,7 +296,7 @@ export function recordFits(record: ClaudeRecord): boolean {
   return stableStringify(record).length <= RECORD_LIMITS.recordJson
 }
 
-/** 分けた各部の見出し（「（1/2）」など）の分の余裕 */
+/** 分けた各部の見出し（「（1/2）」など。番号の順に並べる。order.ts の partMarkOf）の分の余裕 */
 const SPLIT_MARGIN = 2_000
 
 /**
@@ -660,7 +660,8 @@ export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx
       ctx,
       '改稿案',
       rec.body,
-      (k) => `body を${k}つ以上に分け、別々の改稿案にして送ってください（見出しに「（1/${k}）」などを付ける）`,
+      (k) =>
+        `body を${k}つ以上に分け、1つ目から順に、別々の改稿案にして送ってください（見出しに「（1/${k}）」「（2/${k}）」…と番号を付ける）`,
       'heading を短くしてください',
     )
     if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
@@ -774,7 +775,7 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
     '戦略メモ',
     rec.body,
     (k) =>
-      `body を${k}つ以上に分け、novel_add_strategy_note を分けて呼んでください（見出しに「（1/${k}）」などを付ける。contests は1つ目にだけ入れる）`,
+      `body を${k}つ以上に分け、novel_add_strategy_note を分けて呼んでください（同じ run_date で、見出しに「（1/${k}）」「（2/${k}）」…と番号を付ける。アプリと一覧はこの番号の順に並べます。contests は1つ目にだけ入れる）`,
     'contests の相性（fit）・方針（plan）を短くするか、コンテストの候補を別の戦略メモに分けてください',
   )
   if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes }
@@ -820,7 +821,8 @@ export function buildCritiquePrompt(data: AppData, input: CritiquePromptInput, c
     ctx,
     '批評プロンプト',
     rec.body,
-    (k) => `body を短くするか、${k}つ以上の批評プロンプトに分けて保存してください（名前に「（1/${k}）」などを付ける）`,
+    (k) =>
+      `body を短くするか、1つ目から順に ${k}つ以上の批評プロンプトに分けて保存してください（名前に「（1/${k}）」「（2/${k}）」…と番号を付ける）`,
     'name を短くしてください',
   )
   if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes: [] }
@@ -934,7 +936,7 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
     '批評の結果',
     markdown,
     (k) =>
-      `result_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、novel_add_critique_result を分けて呼んでください（同じ prompt_id・scope で、各部の先頭に「（1/${k}）」などを書く）`,
+      `result_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、novel_add_critique_result を分けて呼んでください（同じ prompt_id・scope・run_date で、各部の result_markdown の1行目に「（1/${k}）」「（2/${k}）」…と番号を書く。アプリと一覧はこの番号の順に並べます）`,
     'プロンプトの控え（prompt_text。省いた時は prompt_id の本文）が長すぎて、結果と一緒に入りません。prompt_text に依頼の要約（短いもの）を入れてください',
   )
   if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes }

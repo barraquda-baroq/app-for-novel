@@ -52,7 +52,7 @@ export function prepareWrite(fs: FirestoreRest, ownerUid: string, rec: NewRecord
       recordTooLarge(
         enc.json?.length ?? enc.parts.reduce((n, p) => n + p.length, 0),
         '記録',
-        '内容を2つ以上に分けて、ツールを分けて呼んでください（長い批評の結果は前半・後半のように分けて記録する）',
+        '内容を2つ以上に分けて、ツールを分けて呼んでください（長い批評の結果は前半・後半のように分け、各部の1行目に「（1/2）」「（2/2）」と番号を書く）',
       ),
     )
   // 端末と同じ読み方で読み戻せること

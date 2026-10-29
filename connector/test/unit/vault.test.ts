@@ -421,7 +421,7 @@ describe('書き込み（作るだけ）', () => {
   it('長い批評の結果（前の上限 60,000字を超える）も、1件が 200,000字に入れば作る。超えれば作らず、何件に分けるかを返す', async () => {
     const fake = new FakeFirebase()
     const n = novel(['本文'])
-    const { core } = await pairedCore(fake, n.data)
+    const { core, clock } = await pairedCore(fake, n.data)
     const docs = () => fake.recordDocs(OWNER).filter((d) => d.name.includes('/critiqueResults:'))
     const para = (label: string) => `${label}の段落。${'あ'.repeat(93)}\n`
     const long = (label: string, chars: number) => para(label).repeat(Math.ceil(chars / 100)).slice(0, chars)
@@ -443,6 +443,8 @@ describe('書き込み（作るだけ）', () => {
     expect(k).toBeGreaterThanOrEqual(2)
     const size = Math.ceil(markdown.length / k)
     for (let i = 0; i < k; i++) {
+      // Claude は1つ目から順に、少しずつ時間をおいて送る
+      clock.now += 1_000
       const part = await core.callTool('novel_add_critique_result', {
         title_id: n.titleId,
         result_markdown: `（${i + 1}/${k}）\n${markdown.slice(i * size, (i + 1) * size)}`,
@@ -450,6 +452,11 @@ describe('書き込み（作るだけ）', () => {
       expect(part.text).toContain('追加 1件')
     }
     expect(docs()).toHaveLength(1 + k)
+    // 一覧（novel_get_critique）では、分けた部分が（1/k）から読む順に並ぶ（新しい順のままだと（k/k）が先になる）
+    const listed = (await core.callTool('novel_get_critique', { title_id: n.titleId })).text
+    const order = [...listed.matchAll(/（(\d+)\/\d+）/g)].map((m) => Number(m[1]))
+    expect(order).toEqual(Array.from({ length: k }, (_, i) => i + 1))
+    expect(listed.indexOf(`（${k}/${k}）`)).toBeLessThan(listed.indexOf('一回目の段落'))
   })
 
   it('同時に同じ呼び出しが来ても1つしか作らない', async () => {

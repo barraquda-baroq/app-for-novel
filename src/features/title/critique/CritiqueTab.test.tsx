@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { previewPaste } from '../../../claude/paste'
 import { shortId } from '../../../claude/refs'
 import { createPersistence } from '../../../db/persistence'
 import type { ID } from '../../../domain/types'
@@ -155,6 +156,41 @@ describe('批評の結果', () => {
     await user.type(within(card).getByTestId('critique-result-note'), '第2章を見直す')
     await user.tab()
     await waitFor(() => expect(getData().critiqueResults[result.id].note).toBe('第2章を見直す'))
+  })
+
+  it('長い結果（25万字）は、閉じている間は最初の部分だけを変換し、「全文を表示」で少しずつ最後まで出す', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    const sections = Array.from(
+      { length: 1_300 },
+      (_, i) => `## 第${i + 1}節\n\n${'人物の弧がはっきりしています。'.repeat(12)}\n\n- 良い点\n- 直す点\n`,
+    )
+    const markdown = sections.join('\n')
+    expect(markdown.length).toBeGreaterThan(250_000)
+    const p = previewPaste(getData(), markdown, { titleId, now: Date.now(), plainCritique: { promptId: null, artifactUrl: '' } })
+    if (!p.ok) throw new Error(p.error)
+    actions.addClaudeRecords(p.records)
+    renderTab(titleId)
+    const body = await screen.findByTestId('critique-result-body')
+    await waitFor(() => expect(body.querySelector('h2')?.textContent).toBe('第1節'))
+    // 閉じている間: 頭（数千字）だけ
+    expect(body.textContent!.length).toBeLessThan(8_000)
+    expect(body.querySelectorAll('h2').length).toBeLessThan(30)
+    expect(body.querySelector('.md-section')).toBeNull()
+
+    await user.click(screen.getByTestId('critique-result-more'))
+    // 全文: 分けた部分を1つずつ足して、最後の見出しまで
+    await waitFor(() => expect(screen.getByTestId('critique-result-body').querySelectorAll('h2')).toHaveLength(1_300), {
+      timeout: 10_000,
+    })
+    const full = screen.getByTestId('critique-result-body')
+    expect(full.querySelectorAll('.md-section').length).toBeGreaterThan(10)
+    expect(full.querySelectorAll('h2')[1_299].textContent).toBe('第1300節')
+    expect(full.getAttribute('aria-busy')).toBeNull()
+
+    // 折りたたむと、また頭だけ
+    await user.click(screen.getByTestId('critique-result-more'))
+    await waitFor(() => expect(screen.getByTestId('critique-result-body').querySelectorAll('h2').length).toBeLessThan(30))
   })
 })
 
