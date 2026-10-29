@@ -1,0 +1,120 @@
+// ツールの一覧（名前・日本語の題・説明・ヒント）。並びは固定（tools/list でいつも同じ順）。
+// - 名前は ASCII の novel_*（64字以内）、題（title）は日本語の「〜する」形（承認の画面・スマホの狭い画面に出る）
+// - 説明は「何をするか・いつ使うか・何を返すか・何をしないか」。Claude への指図（手順）は書かない
+//   （手順はサーバーの説明 instructions.ts と、アプリの手動連携の依頼文 src/claude/prompts.ts に書く）
+// - 読むツール: readOnlyHint true。書き込みツール: 記録を足すだけで書き換え・削除はしないので destructiveHint false、
+//   同じ内容をもう一度送っても増えない（内容から作る id）ので idempotentHint true
+import type { ToolName } from './schemas.gen'
+
+export interface ToolAnnotations {
+  title: string
+  readOnlyHint: boolean
+  destructiveHint: boolean
+  idempotentHint: boolean
+  openWorldHint: boolean
+}
+
+export interface ToolDef {
+  name: ToolName
+  title: string
+  description: string
+  kind: 'read' | 'write'
+  annotations: ToolAnnotations
+}
+
+const read = (name: ToolName, title: string, description: string): ToolDef => ({
+  name,
+  title,
+  description,
+  kind: 'read',
+  annotations: { title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+})
+
+const write = (name: ToolName, title: string, description: string): ToolDef => ({
+  name,
+  title,
+  description,
+  kind: 'write',
+  annotations: { title, readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+})
+
+export const TOOL_DEFS: readonly ToolDef[] = [
+  read(
+    'novel_status',
+    'コネクタの状態を見る',
+    'Novel Studio コネクタの状態を返す。連携しているか、書き込みが許可されているか、アプリとコネクタのデータの形の版、初回の取り込みの進み具合、最後に取り込んだ時刻、今日使った読み取り・書き込みの数と上限、読めなかった記録の数、Claude に見せていないタイトルの数が分かる。原稿は返さない。',
+  ),
+  read(
+    'novel_list_titles',
+    'タイトル一覧を見る',
+    'Claude に見せているタイトルの一覧を返す。タイトルごとに短い id（t:…）、読む＋書き込むか読むだけか、採用原稿の文字数と原稿用紙の枚数、第n話・特殊ブロックの数、採用原稿の無い話の数、最終更新日、チェックしていない推敲案・改稿案の数、最新の作品批評の日付を出す。ほかのツールの title_id にはここの t:… を使える。',
+  ),
+  read(
+    'novel_get_outline',
+    '目次と文字数を見る',
+    'タイトルの目次を返す。話（第n話・特殊ブロック）ごとに読む順の番号 #12、短い id（p:…）、採用原稿の文字数、タイトル全体の中の位置（進捗の % の範囲）、採用している稿を1行で出し、幕に分けた話は幕の行（#12.1 第1幕 …）も出す。章・範囲（from・to）で絞れる。400行を超える時は最後の 続き: cursor="…" で続きを読む。本文は返さない。',
+  ),
+  read(
+    'novel_read_text',
+    '採用原稿を読む',
+    '採用原稿（話ごとに採用している稿の本文。幕に分けた話は各幕の採用稿）を読む順に返す。各話の前に「=== #12 第12話　題（第3稿・4,812字・38–40%）[p:… v:…] ===」の見出しを付け、幕は「--- 第1幕（…）---」で区切る。char_budget（既定 20,000字）を超える分は段落の切れ目で分け、最後の 続き: cursor="…" で続きを読む（途中で本文が変わっていたらその段落から読み直して知らせる）。範囲（from・to・chapter）・話の指定（pieces）・稿の指定（version_id）で読む所を選べる。ruby=strip でルビ・傍点の記法と読みを除く。端末で保存していない編集は含まれない。',
+  ),
+  read(
+    'novel_list_versions',
+    '稿の一覧を見る',
+    '1つの話（第n話・特殊ブロック・幕）の稿の一覧を返す。稿ごとに短い id（v:…）、名前、文字数、作成日・更新日、採用中かどうか、推敲メモの書き出し、同期の競合で残した稿かどうかを出す。幕に分けた話は幕の一覧と各幕の採用稿も出す。稿の本文は novel_read_text の version_id で読む。',
+  ),
+  read(
+    'novel_search_text',
+    '本文を検索',
+    'タイトルの本文を言葉か正規表現で探し、一致した箇所を「#3 第3話 ¶14 o:1234 [p:… v:…] [...]前後の文字【一致】前後の文字[...]」の形で返す（¶ は段落の番号、o: は記法込みの本文の中の位置）。ルビ・傍点の記法と読みを除いた本文で探す。採用原稿（既定）かすべての稿、範囲（from・to）を選べ、count_only で話ごとの件数だけにできる。多い時は最後の 続き: cursor="…" で続きを探す。本文は書き換えない。',
+  ),
+  read(
+    'novel_get_notes',
+    '設定・メモ・アイデアを読む',
+    'タイトルの設定項目（キャラクター・世界観などの項目とそのエントリ）、メモ、アイデアのどれかを返す。ids も full も無い時は一覧（短い id・名前・文字数・書き出し）だけ、ids で選んだものか full=true の時は本文まで返す（char_budget まで。残りは 続き: cursor="…"）。どのタイトルにも属さないアイデアは返さない。',
+  ),
+  read(
+    'novel_get_strategy',
+    '戦略を読む',
+    'タイトルの戦略を返す。今日の日付（日本時間）、採用原稿の文字数と枚数、全体戦略（タイトルのメモ）、戦略メモ（Claude の提案のカード）、改稿案（チェックしていない案が先）、応募計画（締切までの日数と、規定の文字数・枚数に収まっているか）。submission_id・note_id・revision_idea_id で1つを全文で読む。',
+  ),
+  read(
+    'novel_get_critique',
+    '作品批評を読む',
+    'タイトルの作品批評を返す。批評プロンプト（このタイトルのものと、どのタイトルでも使う共通のもの）と、批評の結果（新しい日付から。使ったプロンプト・範囲・その時の原稿の文字数）の一覧。prompt_id・result_id で1つを全文で読む。',
+  ),
+  read(
+    'novel_list_proofreading',
+    '推敲案の一覧を見る',
+    'タイトルの推敲案（誤字脱字・ら抜き・既成表現などの指摘）を、アプリと同じ順（フラグを立てた案が先、次に新しい順）で返す。案ごとに短い id（x:…）、場所（#12 第12話 ¶14）、種類、「引用」→ 直し案、理由を出し、本文が変わって引用が見つからない案には印を付ける。状態（open = チェックしていない、既定）・種類・範囲・実行で絞れ、実行（ワードサーチ）の記録と「未確認 #41〜#300、本文が変わった話 #12」の確認の範囲も出す。',
+  ),
+  write(
+    'novel_add_proofreading',
+    '推敲案を追加',
+    '推敲案（誤字脱字・ら抜き・既成表現・作者の癖などの指摘と直し案）を、タイトルの推敲案一覧にまとめて追加する。各案の excerpt はその話・幕の採用原稿から原文どおりに引用し（ルビの記法を含む、100字以内）、サーバーが話・幕・段落の位置を探して記録する。見つからない引用・場所が決まらない引用・既にある案・以前に削除された案は追加せず、案ごとに理由を返す（同じ内容を送り直しても増えない）。1回100件まで。run_label で一連の推敲を日付付きでまとめ、covered に確認し終えた話を渡すと、指摘の無かった話も確認済みとして残る。本文（稿）は書き換えない。',
+  ),
+  write(
+    'novel_add_revision_ideas',
+    '改稿案を追加',
+    '改稿案（構成・場面・人物などの直し方の案）をタイトルの改稿案一覧に追加する。本文は長くてよい（ワンシーン丸ごとの書き直し案も可、1件50,000字まで）。関係する話を pieces で付けられる。同じ見出しと本文の案が既にあれば追加しない。1回20件まで。本文（稿）は書き換えない。',
+  ),
+  write(
+    'novel_add_strategy_note',
+    '戦略メモを追加',
+    'タイトルの戦略領域に戦略メモ（Markdown のカード）を1つ追加する。狙うコンテストの候補（名前・主催・URL・締切・規定の長さ・相性・改稿の方針）を contests に付けられ、アプリで「応募計画にする」を押すと応募計画になり、「全体戦略に追記」を押すと全体戦略に足される。全体戦略や応募計画をコネクタが直接書き換えることはない。同じ日付・見出し・本文のメモが既にあれば追加しない。',
+  ),
+  write(
+    'novel_save_critique_prompt',
+    '批評プロンプトを保存',
+    '作品批評の領域の批評プロンプト一覧に、プロンプトを1つ追加する。scope=title はこのタイトルだけ、scope=shared はどのタイトルでも使う共通のプロンプト。同じ名前と本文のプロンプトが既にあれば追加しない。既にあるプロンプトは書き換えない。',
+  ),
+  write(
+    'novel_add_critique_result',
+    '作品批評の結果を記録',
+    '作品批評の結果を、作品批評の領域に日付ごとに記録する。結果の Markdown（60,000字まで）かアーティファクトの URL（https）の少なくとも一方が要る。使ったプロンプトは prompt_id（または prompt_text）で残し、範囲（scope）を省くとタイトル全体の批評になる。その時点の採用原稿の文字数・話数を一緒に控える（アプリで「現在 +3,200字」のように出る）。同じ内容の結果が既にあれば追加しない。',
+  ),
+]
+
+export const TOOL_NAMES = TOOL_DEFS.map((t) => t.name)
+export const READ_TOOLS = new Set(TOOL_DEFS.filter((t) => t.kind === 'read').map((t) => t.name))

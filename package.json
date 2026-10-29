@@ -15,7 +15,11 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
     "test:sync": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-novel-studio \"vitest run --config vitest.emu.config.ts\"",
     "test:e2e:sync": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-novel-studio \"playwright test -c playwright.sync.config.ts\"",
-    "deploy": "npm run build && firebase deploy --only hosting,firestore"
+    "test:connector": "npm --prefix connector test",
+    "test:connector:emu": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-novel-studio \"npm --prefix connector run test:emu\"",
+    "connector:setup": "node connector/scripts/setup.mjs",
+    "connector:check": "node connector/scripts/check.mjs",
+    "deploy": "node scripts/deploy.mjs"
   },
   "dependencies": {
     "dexie": "^4.4.7",

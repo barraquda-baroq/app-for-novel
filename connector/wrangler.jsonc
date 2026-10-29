@@ -1,0 +1,40 @@
+// Novel Studio の Claude 用コネクタ（Cloudflare Worker・無料プラン）。説明は docs/CONNECTOR.md。
+// - 公開の URL（MCP_RESOURCE・PUBLIC_ORIGIN）はこのファイルに書かず、公開する時に ../connector.local.json から渡す
+//   （npm run deploy / npm run connector:setup。scripts/deploy.mjs）。空の時はリクエストの URL から決める
+// - 秘密は TOKEN_ENC_KEY だけ（npm run connector:setup が作って wrangler secret put に渡す。画面には出さない）
+// - KV（OAUTH_KV）と Durable Object（Vault）は最初の公開で自動で作られる
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "novel-studio-connector",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }],
+  "durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }],
+  // 毎日 4:17（日本時間）: 期限切れの OAuth の記録の片付けと、取り込んだ記録の数の確かめ
+  "triggers": { "crons": ["17 19 * * *"] },
+  "vars": {
+    "MCP_RESOURCE": "",
+    "PUBLIC_ORIGIN": "",
+    "APP_ORIGIN": "https://novel-studio-3352e.web.app",
+    "FIREBASE_PROJECT_ID": "novel-studio-3352e",
+    // Firebase の Web アプリの公開の識別子（src/sync/firebase.ts と同じ。秘密ではない）
+    "FIREBASE_API_KEY": "AIzaSyADnvD0uAVwicAMol6_Txl-7CRV_xxsg00",
+    // つながらない時の最後の手段: "true" にすると claude.ai の「自動的に登録」（DCR）を受け付ける
+    "ENABLE_DCR": "false",
+    // Claude Code からも使う時は "true"（Claude Code の公開の識別子とローカルの戻り先を受け付ける）
+    "ALLOW_CLAUDE_CODE": "false",
+    // 重いツール（よく使う言い回しの集計）を出す時は "true"（有料プランの時だけ）
+    "HEAVY_TOOLS": "false",
+    // 1回の呼び出しで調べる本文の文字数の上限（無料プランの CPU 時間の目安。有料プランなら 20000000）
+    "WORK_BUDGET_CHARS": "300000",
+    // 1日（太平洋時間）にコネクタが使う Firestore の読み取り・書き込みの上限（アプリの同期の分を残すため）
+    "DAILY_READ_BUDGET": "15000",
+    "DAILY_WRITE_BUDGET": "5000"
+  }
+  // 有料プラン（Workers Paid）にした時だけ: "limits": { "cpu_ms": 30000 }
+}

@@ -8,4 +8,8 @@ e2e/artifacts
 .claude/worktrees
 .firebase
 test-results
+# 2.3 Claude 用コネクタ（公開の URL。npm run connector:setup が作る）
 connector.local.json
+connector/dist
+connector/.wrangler
+connector/.dev.vars
