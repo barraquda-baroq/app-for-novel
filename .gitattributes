@@ -4,3 +4,9 @@
 *.jpg binary
 *.ico binary
 *.woff2 binary
+*.jar binary
+# 2.4 iPhone / Android のプロジェクト（docs/MOBILE.md）。Windows のコマンド（gradlew.bat）だけは CRLF
+android/gradlew text eol=lf
+*.bat text eol=crlf
+# Xcode のプロジェクトのファイル。改行は LF のまま、取り込む時は両方の行を残す
+*.pbxproj text eol=lf -diff merge=union
