@@ -943,23 +943,27 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     // 一度だけ集める（復元はすべての話・幕に届くので、話・幕ごとに表を読み直さない）
     const unsentActs = new Map<string, PieceRec[]>()
     const unsentVersions = new Map<string, VersionRec[]>()
+    const add = <T>(m: Map<string, T[]>, k: string, v: T) => {
+      const list = m.get(k)
+      if (list) list.push(v)
+      else m.set(k, [v])
+    }
     if (restored.length) {
       const localOnlyIds = async (t: TableName) =>
         (await db.outbox.where('k').startsWith(`${t}/`).toArray()).filter((r) => r.base === null).map((r) => r.id)
       for (const p of (await piecesT.bulkGet(await localOnlyIds('pieces'))) as (PieceRec | undefined)[]) {
         const parentId = p && isActRecord(p) ? parentIdOf(p) : null
-        if (p && parentId) unsentActs.set(parentId, [...(unsentActs.get(parentId) ?? []), p])
+        if (p && parentId) add(unsentActs, parentId, p)
       }
       for (const v of (await versionsT.bulkGet(await localOnlyIds('versions'))) as (VersionRec | undefined)[])
-        if (v && typeof v.pieceId === 'string') unsentVersions.set(v.pieceId, [...(unsentVersions.get(v.pieceId) ?? []), v])
+        if (v && typeof v.pieceId === 'string') add(unsentVersions, v.pieceId, v)
     }
     /** 話・幕の稿（片付ける幕がある時だけ、稿の表を一度だけ読む） */
     let versionsByPiece: Map<string, VersionRec[]> | null = null
     const versionsUnder = async (pieceId: string) => {
       if (!versionsByPiece) {
         const byPiece = new Map<string, VersionRec[]>()
-        for (const v of (await versionsT.toArray()) as VersionRec[])
-          if (typeof v.pieceId === 'string') byPiece.set(v.pieceId, [...(byPiece.get(v.pieceId) ?? []), v])
+        for (const v of (await versionsT.toArray()) as VersionRec[]) if (typeof v.pieceId === 'string') add(byPiece, v.pieceId, v)
         versionsByPiece = byPiece
       }
       return versionsByPiece.get(pieceId) ?? []
