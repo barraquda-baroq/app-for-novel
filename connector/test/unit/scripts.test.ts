@@ -4,17 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { vaultConfig, workerConfig } from '../../src/config'
+// prettier-ignore
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import {
-  appBuildEnv,
-  dcrEnabledInConfig,
-  deployVarArgs,
-  isConnectorOrigin,
-  newTokenKey,
-  parseWorkersUrl,
-  readLocalConfig,
-  writeLocalConfig,
-} from '../../scripts/lib.mjs'
+import { appBuildEnv, dcrEnabledInConfig, deployVarArgs, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector, parseCheckArgs } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
