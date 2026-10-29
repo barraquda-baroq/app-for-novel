@@ -6,7 +6,9 @@ Cloudflare Worker（無料プラン）で動く、Novel Studio 専用のコネ�
 - 準備（初めての時に1回）: リポジトリの直下で `npm run connector:setup`
 - 公開（更新）: リポジトリの直下で `npm run deploy`（アプリ・アクセスルールと一緒に）
 - 確かめ: `npm run connector:check`
-- テスト: `npm run test:connector`（単体・workerd・公開する形）、`npm run test:connector:emu`（Firebase エミュレーター）
+- テスト: `npm run test:connector`（単体・workerd・公開する形）、`npm run test:connector:emu`（Firebase エミュレーター）、
+  `npm run test:e2e:sync` の `e2e/pairing.sync.spec.ts`（この Worker・アプリの画面・エミュレーターでの連携の通し）
+- アプリとの連携の決まり（URL の形・k・指紋・15分）は `../src/claude/pairing.ts`（アプリの連携の画面と同じファイル）
 
 部品の版は決めてあります（`package.json`。公開から2週間以上たった版）。`npm --prefix connector ci` で入れてください。
 

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { normalizeOrigin } from './src/claude/pairing'
 
 /**
  * Claude 用のコネクタ（Cloudflare Worker）の場所。ビルドの時に決めて埋め込む（URL からは受け取らない。docs/CONNECTOR.md）。
@@ -23,15 +24,10 @@ function connectorOrigin(): string {
   if (!raw) raw = process.env.VITE_CONNECTOR_ORIGIN ?? ''
   raw = raw.trim()
   if (!raw) return ''
-  try {
-    const u = new URL(raw)
-    const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
-    if ((u.protocol === 'https:' || local) && (u.pathname === '/' || u.pathname === '') && !u.search && !u.hash) return u.origin
-  } catch {
-    /* 下で知らせる */
-  }
-  console.warn(`コネクタの origin が正しくありません（https://… の origin だけ）: ${raw}`)
-  return ''
+  // アプリの画面・コネクタと同じ決まり（src/claude/pairing.ts）: https の origin（開発中は localhost も）だけ
+  const origin = normalizeOrigin(raw)
+  if (!origin) console.warn(`コネクタの origin が正しくありません（https://… の origin だけ）: ${raw}`)
+  return origin
 }
 
 export default defineConfig({

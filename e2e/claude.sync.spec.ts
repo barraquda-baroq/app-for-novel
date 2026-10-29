@@ -1,5 +1,5 @@
 // Claude 用のコネクタとの連携の E2E テスト（Firebase エミュレーター）。コネクタは仮のもので、ページの通信を横取りして答える
-// （/connect/identity と /pair/callback）。連携の記録（config/connector）には k の指紋だけが書かれ、k そのものは
+// （/connect/identity と /pair/callback。答えの形・CORS は本物のコネクタと同じ。本物のコネクタとの通しは e2e/pairing.sync.spec.ts）。連携の記録（config/connector）には k の指紋だけが書かれ、k そのものは
 // コネクタへ移る URL にだけ入ること、タイトルの「Claude に見せる」の変更を送ってから移ること、設定の Claude 連携で
 // 「書き込みを許可」を変えても指紋・時刻が変わらないこと、［連携を解除］で記録が消えることを確かめる。
 import { expect, test, type Page } from '@playwright/test'
@@ -62,11 +62,15 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
   // 仮のコネクタ
   const identityRequests: string[] = []
   let callback = ''
+  const appOrigin = new URL(page.url()).origin
   await context.route(`${origin}/connect/identity`, async (route) => {
     identityRequests.push(route.request().url())
+    // 本物のコネクタと同じく、アプリの origin だけに答える（Cookie は送られない）
+    const from = (await route.request().allHeaders()).origin
+    expect(from).toBe(appOrigin)
     await route.fulfill({
       status: 200,
-      headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*' },
+      headers: { 'content-type': 'application/json', 'access-control-allow-origin': from, vary: 'Origin' },
       body: JSON.stringify({ uid: 'anon-e2e-connector', version: 'e2e', model: 3 }),
     })
   })

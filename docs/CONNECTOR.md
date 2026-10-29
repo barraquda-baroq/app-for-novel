@@ -225,6 +225,7 @@ npm run deploy
 ```
 npm run test:connector        # 単体テスト・Workers の実行環境（workerd）のテスト・公開する形の確かめ
 npm run test:connector:emu    # Firebase エミュレーターでの結合テスト（本番のアクセスルール・アプリの端末と一緒に。Java が必要）
+npm run test:e2e:sync         # ブラウザでの同期の E2E。e2e/pairing.sync.spec.ts は本物のコネクタ・アプリの画面・エミュレーターで連携を通しで確かめる
 npm --prefix connector run typecheck
 npm --prefix connector run gen-schemas    # ツールの入力の形（src/mcp/schemas.ts）を変えた時
 npm --prefix connector run bundle-check   # dexie・firebase・react・zustand が入っていないか
@@ -235,8 +236,20 @@ npm --prefix connector run bundle-check   # dexie・firebase・react・zustand �
 - `connector/src/mcp/`: MCP のサーバー（`@modelcontextprotocol/server`。状態を持たない）・ツールの一覧・入力の形・サーバーの説明
 - `connector/src/vault/`: Vault（Durable Object）の中身（身元・写し・書き込み・数の上限・ツールの結果の文字の形）
 - アプリの純粋な部品（`src/domain`・`src/claude`・`src/sync/codec.ts`・`merge.ts`）をそのまままとめて使う（文字数・話数・id・推敲案の場所がアプリと同じ）
+- アプリとの連携の決まり（連携の画面の URL・`/connect/identity` の答え・k・指紋 `sha256hex(s + '.' + k)`・`/pair/callback` の引数・15分）は
+  `src/claude/pairing.ts` にあり、アプリの連携の画面（`src/features/claude/connectLogic.ts`）とコネクタ（`connector/src/auth/routes.ts`・
+  `connector/src/vault/core.ts`）が同じものを使う。決まりの値は `src/test/pairingFixture.ts`（両方のテストで使う）
+- `e2e/pairing.sync.spec.ts`: wrangler の `createTestHarness` でこの Worker をテストの中に立ち上げ（workerd。Durable Object・KV も本物）、
+  ブラウザのアプリ（開発サーバー）からコネクタへの通信をそこへ渡して、接続 → 同意 → アプリで許可 → トークン → ツール → 書き込みの停止 →
+  連携の解除 を確かめる。claude.ai の代わりはテストが務める（クライアントは DCR で登録。CIMD は workerd のテストで確かめる）。
+  コネクタの部品が無ければ飛ばす
 - 手元で動かす: `npx firebase emulators:start --config firebase.emu.json --only auth,firestore --project demo-novel-studio` を動かしたまま、
   `connector/.dev.vars` に `FIREBASE_EMULATOR_HOST=127.0.0.1`・`FIREBASE_PROJECT_ID=demo-novel-studio`・`FIREBASE_API_KEY=fake-api-key`・
   `TOKEN_ENC_KEY=（16字以上の適当な文字）`・`APP_ORIGIN=http://localhost:5173`・`ALLOW_LOCALHOST_APP=true` を書いて `npm --prefix connector run dev`
   （`.dev.vars` は Git に入りません。手元の Vault・KV の中身は `connector/.wrangler/` に残り、消すと最初からになります）
   動いていれば `http://localhost:8787/` に「未連携」と出て、`/connect/identity` がエミュレーターの匿名の身元を返します
+- アプリもこの手元のコネクタにつなぐ時は、もう1つの画面で開発サーバーを動かします（`connector.local.json` があれば、そちらが優先されます）
+  - Mac（ターミナル）: `VITE_FIREBASE_EMULATOR=127.0.0.1 VITE_CONNECTOR_ORIGIN=http://localhost:8787 npm run dev`
+  - Windows（PowerShell）: `$env:VITE_FIREBASE_EMULATOR="127.0.0.1"; $env:VITE_CONNECTOR_ORIGIN="http://localhost:8787"; npm run dev`
+  - 設定 → Claude 連携 に `http://localhost:8787/mcp` が出ます。連携の画面（`#/claude/connect`）は claude.ai の接続から開かれるので、
+    手で通して試すより `e2e/pairing.sync.spec.ts` を動かす方が確実です

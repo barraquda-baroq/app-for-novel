@@ -121,9 +121,12 @@ Firebase のエミュレーター（Java が必要）で、本物のクラウド
 
 ```
 npm run test:sync           # 同期の結合テスト（2台の端末を動かす）
-npm run test:e2e:sync       # ブラウザ2つで同期を確かめる E2E テスト
+npm run test:e2e:sync       # ブラウザ2つで同期を確かめる E2E テスト（Claude 用のコネクタとの連携の通しのテストも）
 npm run test:connector:emu  # Claude 用のコネクタの結合テスト（docs/CONNECTOR.md）
 ```
+
+`npm run test:e2e:sync` の `e2e/pairing.sync.spec.ts` は、本物のコネクタ（Cloudflare Worker）をテストの中で動かすので、
+先に `npm --prefix connector ci` が要ります（入っていなければ、そのテストだけ飛ばします）。
 
 手で試す時（テスト用のアクセスルール firestore.emu.rules を使う。持ち主の制限は外してある）は、1つ目の画面でエミュレーターを動かしたまま、
 2つ目の画面で開発サーバーを動かします。
