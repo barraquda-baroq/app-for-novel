@@ -129,6 +129,14 @@ claude.ai のチャットで（Novel Studio のコネクタをオンにして）
 大きなタイトル（数十万字）は、Claude が 2万字ずつ（多い時は6万字ずつ）読み進めます。推敲は範囲を区切って何回かに分けると確実です
 （推敲案の一覧に「未確認 #41〜#300」のように残りの範囲が出ます）。
 
+批評の結果・批評プロンプト・改稿案・戦略メモの文章の長さに上限はありません。ただしコネクタが書く記録は1件を JSON にして 200,000 字まで
+（コネクタは分割文書を書かないため。アクセスルールも同じ値）で、それを超える長い批評の結果などは、コネクタが「何件に分ければよいか」を答え、
+Claude が前半・後半のように分けて、各部の1行目に「（1/2）」「（2/2）」と番号を付けて記録します（アプリと Claude の一覧では番号の順に並びます）。
+アプリの「結果を貼り付け」には、この上限もありません（端末が分割して同期します）。長い批評の結果は、閉じている間は最初の部分だけを表示し、
+［全文を表示］で少しずつ最後まで出します（数十万字の結果でも画面が止まらないように）。
+上限があるのは短い項目だけです（推敲案の引用 100字・直前の文字 30字・種類の名前 20字・直し方 500字・理由 300字、見出し・名前 60〜80字、
+URL 2,000字、推敲案は1回100件など）。
+
 ---
 
 ## 3. 更新する時
@@ -268,6 +276,9 @@ npm --prefix connector run bundle-check   # dexie・firebase・react・zustand �
 - `connector/src/auth/`: 受け付けるクライアント・同意の画面・連携の確かめ（`/authorize`・`/pair/callback`・`/connect/identity`）
 - `connector/src/mcp/`: MCP のサーバー（`@modelcontextprotocol/server`。状態を持たない）・ツールの一覧・入力の形・サーバーの説明
 - `connector/src/vault/`: Vault（Durable Object）の中身（身元・写し・書き込み・数の上限・ツールの結果の文字の形）
+- 入力の上限（短い項目と件数だけ）は `src/claude/records.ts` の `RECORD_LIMITS`（ツールの JSON Schema の `maxLength` と同じ値。
+  長い文章には `maxLength` を付けない）。コネクタが書く1件の記録の大きさ（JSON にして 200,000 字）は同じファイルの作り方と
+  `connector/src/vault/writer.ts` で確かめ、超える時は分け方を書いたエラーを返す
 - アプリの純粋な部品（`src/domain`・`src/claude`・`src/sync/codec.ts`・`merge.ts`）をそのまままとめて使う（文字数・話数・id・推敲案の場所がアプリと同じ）
 - アプリとの連携の決まり（連携の画面の URL・`/connect/identity` の答え・k・指紋 `sha256hex(s + '.' + k)`・`/pair/callback` の引数・15分）は
   `src/claude/pairing.ts` にあり、アプリの連携の画面（`src/features/claude/connectLogic.ts`）とコネクタ（`connector/src/auth/routes.ts`・

@@ -29,8 +29,10 @@ import { dayHeading, groupByDate, resultHeading, scopeLabel } from './critiqueLo
 import '../strategy/claudeSections.css'
 import './critique.css'
 
-/** 閉じている時に見せる結果の長さ（これより長ければ「全文を表示」） */
+/** 閉じている時に見せる結果の長さ（これより長ければ「全文を表示」。閉じている間は頭だけを変換する。Markdown.tsx） */
 const LONG_RESULT = 900
+/** 閉じたプロンプトの1行の見本を作る時に見る、依頼文の最初の字数 */
+const PREVIEW_SOURCE = 1_000
 
 export function CritiqueTab({ titleId }: { titleId: ID }) {
   const data = useData()
@@ -306,7 +308,10 @@ const PromptCard = memo(function PromptCard({
             <span className={`sx-card-name${name ? '' : ' is-empty'}`} data-testid="prompt-name">
               {name || '名前のないプロンプト'}
             </span>
-            {!expanded && p.body.trim() ? <span className="sx-card-preview">{previewText(p.body)}</span> : null}
+            {!expanded && p.body.trim() ? (
+              // 長い依頼文でも、見せる最初の部分だけを整える
+              <span className="sx-card-preview">{previewText(p.body.slice(0, PREVIEW_SOURCE))}</span>
+            ) : null}
           </span>
           <ChevronRightIcon className="icon sx-chevron" />
         </button>
@@ -457,7 +462,7 @@ const ResultCard = memo(function ResultCard({
       {r.resultMarkdown.trim() ? (
         <>
           <div className={`cq-result-body${long && !full ? ' is-clamped' : ''}`}>
-            <Markdown text={r.resultMarkdown} testId="critique-result-body" />
+            <Markdown text={r.resultMarkdown} preview={long && !full} testId="critique-result-body" />
           </div>
           {long ? (
             <button

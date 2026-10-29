@@ -7,6 +7,12 @@ import { darkSurfaces, noHorizontalScroll, openApp, seed, seedTitleWithEpisodes,
 
 const fence = (v: unknown) => '```novel-studio-v1\n' + JSON.stringify(v) + '\n```'
 
+/**
+ * 長い批評の結果を出す時に許す、いちばん長い処理（ms。CPU を4倍遅くした開発用のビルドで）。
+ * 頭だけを変換するようにする前は、25万字の結果1件で 2,000ms を超えていた
+ */
+const LONG_TASK_MS = 400
+
 const proofAnswer = fence({
   tool: 'novel_add_proofreading',
   input: {
@@ -26,6 +32,54 @@ async function seedNovel(page: Page) {
     '最初の段落。\n\n窓から見れる景色は、いつもと同じだった。',
     'ありきたりな夕焼けだった。明日も来れる。',
   ])
+}
+
+/** 見出し・段落・リスト・引用が続く、批評の結果らしい長い Markdown（見出しの数も返す） */
+function longCritique(chars: number): { markdown: string; headings: number } {
+  const blocks: string[] = []
+  let n = 0
+  while (n < chars) {
+    const i = blocks.length + 1
+    const block = [
+      `## ${i}. 第${i}章についての所見`,
+      '',
+      `主人公の葛藤が${'丁寧に描かれていますが、場面の切り替えがやや急です。'.repeat(3)}`,
+      '',
+      '- **良い点**: 人物の動機がはっきりしている',
+      '- **直す点**: 説明の台詞が続く',
+      '- 情景描写の密度を上げる',
+      '',
+      '> 「窓の外を見た」から始まる段落は、視点が揺れています。',
+      '',
+      `${'文末の「〜た」が続く箇所があります。リズムを変えると読みやすくなります。'.repeat(4)}`,
+      '',
+    ].join('\n')
+    blocks.push(block)
+    n += block.length + 1
+  }
+  return { markdown: blocks.join('\n'), headings: blocks.length }
+}
+
+/** ここから後の長い処理（50ms を超えて画面が止まった処理。Chromium の long task）を記録する */
+async function watchLongTasks(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __longTasks: number[]; __longTaskObserver?: PerformanceObserver }
+    w.__longTaskObserver?.disconnect()
+    w.__longTasks = []
+    w.__longTaskObserver = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) w.__longTasks.push(Math.round(e.duration))
+    })
+    w.__longTaskObserver.observe({ type: 'longtask' })
+  })
+}
+
+/** 記録した長い処理の時間（ms） */
+async function longTasks(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __longTasks: number[]; __longTaskObserver: PerformanceObserver }
+    for (const e of w.__longTaskObserver.takeRecords()) w.__longTasks.push(Math.round(e.duration))
+    return w.__longTasks.slice()
+  })
 }
 
 /** 「結果を貼り付け」で Claude の答えを貼り、追加する */
@@ -179,6 +233,95 @@ test.describe('Claude 連携（2.3）', () => {
     await result.getByTestId('critique-result-url').fill('http://example.com')
     await result.getByTestId('critique-result-url').press('Enter')
     await expect(result).toContainText('https:// で始まる URL')
+  })
+
+  test('作品批評: 長い批評プロンプト（約7万字）と25万字の結果も、貼り付けでそのまま記録できる（長さの上限なし）', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000)
+    await openApp(page)
+    const { titleId } = await seedNovel(page)
+    await openApp(page, `/t/${titleId}?tab=critique`)
+    const promptBody = '構成・人物・文章を見てください。\n'.repeat(4_000)
+    const markdown = `## 総評\n${'人物の弧がはっきりしています。\n'.repeat(16_000)}`
+    expect(markdown.length).toBeGreaterThan(250_000)
+    await page.getByTestId('critique-paste').click()
+    const dialog = page.getByTestId('paste-dialog')
+    // 貼り付けと同じく、一度に入れる（Playwright の fill は30万字ほどの文だと20秒ほどかかるため）
+    await dialog.getByTestId('paste-input').evaluate(
+      (el, text) => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+        setValue.call(el, text)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      },
+      fence([
+        { tool: 'novel_save_critique_prompt', input: { scope: 'title', name: '長い依頼', body: promptBody } },
+        { tool: 'novel_add_critique_result', input: { result_markdown: markdown } },
+      ]),
+    )
+    await expect(page.getByTestId('paste-item')).toHaveCount(2, { timeout: 30_000 })
+    await expect(page.getByTestId('paste-item').first()).toHaveAttribute('data-status', 'created')
+    await expect(page.getByTestId('paste-item').last()).toHaveAttribute('data-status', 'created')
+    await expect(page.getByTestId('paste-add')).toHaveText('追加（2件）')
+    await page.getByTestId('paste-add').click()
+    await expect(dialog).toHaveCount(0, { timeout: 30_000 })
+    await expect(page.getByTestId('critique-result')).toHaveCount(1, { timeout: 30_000 })
+    const saved = await page.evaluate(() => {
+      const d = window.__ns.getData()
+      return {
+        prompts: Object.values(d.critiquePrompts).map((p) => p.body.length),
+        results: Object.values(d.critiqueResults).map((r) => r.resultMarkdown.length),
+      }
+    })
+    expect(saved).toEqual({ prompts: [promptBody.length], results: [markdown.length] })
+  })
+
+  test('作品批評: 25万字の結果は閉じている間は頭だけを表示し、タブを開いても画面が止まらない。全文は少しずつ最後まで出す', async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName !== 'chromium', 'CPU を遅くする・long task を数えるのは Chromium だけ')
+    test.setTimeout(120_000)
+    await openApp(page)
+    const { titleId } = await seedNovel(page)
+    const { markdown, headings } = longCritique(250_000)
+    // 「結果を貼り付け」と同じ作り方で足す（画面からの貼り付けは上のテスト）
+    const added = await seed(page, ({ pasteClaude }, a) => pasteClaude(a.titleId, a.text), {
+      titleId,
+      text: fence({ tool: 'novel_add_critique_result', input: { result_markdown: markdown } }),
+    })
+    expect(added).toBe(1)
+    await openApp(page, `/t/${titleId}?tab=strategy`)
+    await expect(page.getByTestId('strategy-tab')).toBeVisible()
+    // スマホくらいの速さ（CPU を4倍遅く）で、戦略 → 作品批評のタブに切り替える
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+    try {
+      await watchLongTasks(page)
+      await page.getByTestId('tab-critique').click()
+      const body = page.getByTestId('critique-result-body')
+      await expect(body.locator('h2').first()).toHaveText('1. 第1章についての所見', { timeout: 30_000 })
+      await page.waitForTimeout(500)
+      // 閉じている間は、最初の数千字だけを変換する（全文の25万字を変換・配置すると、ここで2秒ほど止まっていた）
+      const collapsed = await longTasks(page)
+      expect(Math.max(0, ...collapsed), `long tasks: ${collapsed.join(', ')}`).toBeLessThan(LONG_TASK_MS)
+      expect(await body.evaluate((e) => e.textContent!.length)).toBeLessThan(8_000)
+      expect(await body.locator('h2').count()).toBeLessThan(20)
+
+      // 全文を表示: 分けた部分を1つずつ足して、最後の見出しまで出る。その間も長く止まらない
+      await watchLongTasks(page)
+      await page.getByTestId('critique-result-more').click()
+      await expect(body.locator('h2')).toHaveCount(headings, { timeout: 60_000 })
+      await expect(body.locator('h2').last()).toHaveText(`${headings}. 第${headings}章についての所見`)
+      await expect(body).not.toHaveAttribute('aria-busy', 'true')
+      const expanded = await longTasks(page)
+      expect(Math.max(0, ...expanded), `long tasks: ${expanded.join(', ')}`).toBeLessThan(LONG_TASK_MS)
+      // 折りたたむと、また頭だけ
+      await page.getByTestId('critique-result-more').click()
+      await expect.poll(() => body.evaluate((e) => e.textContent!.length)).toBeLessThan(8_000)
+    } finally {
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 })
+    }
   })
 
   test('Claude に頼む（手動）: 依頼文と本文を 50,000 字以内のパートに分けてコピーし、.txt で保存できる', async ({

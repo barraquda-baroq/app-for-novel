@@ -204,6 +204,28 @@
   font-size: 13px;
 }
 
+/* 長い Markdown を分けた部分（markdownParts.ts）。画面の外の部分は描かない（高さは MarkdownView の見積もり、
+   描いた後は実際の高さ）。部分の間は、ひと続きで描いた時と同じくらいの間を空ける */
+.md-section {
+  content-visibility: auto;
+}
+
+.md-section > :first-child {
+  margin-top: 0;
+}
+
+.md-section > :last-child {
+  margin-bottom: 0;
+}
+
+.md-section + .md-section {
+  margin-top: 0.8em;
+}
+
+.md-section + .md-section > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0.3em;
+}
+
 /* ---------- 手動連携（Claude に頼む・結果を貼り付け） ---------- */
 .cl-manual,
 .cl-paste {

@@ -173,6 +173,29 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     expect(Object.keys((await owner.load()).revisionIdeas)).toHaveLength(1)
   })
 
+  it('長い批評の結果（前の上限 60,000字の3倍）も、1件が 200,000字に入ればアクセスルールを通って端末に届く。超えれば作らずに分け方を返す', async () => {
+    const { owner, titleId } = await ownerWithNovel(['本文'])
+    const { core } = makeConnector()
+    await pair(core, owner)
+    const line = `批評の段落。${'あ'.repeat(93)}\n`
+    // JSON にして 200,000字に近い（改行は \\n の2字）
+    const markdown = line.repeat(1_900)
+    const ok = await tool(core, 'novel_add_critique_result', { title_id: titleId, result_markdown: markdown })
+    expect(ok.text).toContain('追加 1件')
+    const got = await waitFor(async () => Object.values((await owner.load()).critiqueResults)[0], '端末に届く', 30_000)
+    expect(got.resultMarkdown).toBe(markdown)
+    const snap = await getDoc(doc(owner.fs, 'users', owner.uid, 'records', `critiqueResults:${got.id}`))
+    const json = (snap.data() as RecordDoc).json!
+    expect(json.length).toBeGreaterThan(190_000)
+    expect(json.length).toBeLessThanOrEqual(200_000)
+    // 超える: 作らず、分けて呼ぶように返す（端末には増えない）
+    const big = await tool(core, 'novel_add_critique_result', { title_id: titleId, result_markdown: line.repeat(2_600) })
+    expect(big.isError).toBe(true)
+    expect(big.text).toMatch(/result_markdown を\d+つ以上に分け/)
+    await settle(owner)
+    expect(Object.keys((await owner.load()).critiqueResults)).toHaveLength(1)
+  })
+
   it('端末が分割して書いた30万字の改稿案を、写しで組み立てて読める', async () => {
     const { owner, titleId } = await ownerWithNovel(['本文'])
     const big = '長い改稿案の段落。\n'.repeat(30_000)

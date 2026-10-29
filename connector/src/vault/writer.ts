@@ -1,11 +1,13 @@
 // Firestore への書き込み（作るだけ）。書き換え・削除・分割文書・復元の印は書かない（アクセスルールでも書けない）。
+// - 1件の記録は JSON にして 200,000 字まで（分割文書を書かないため。アクセスルールと同じ値）。超える記録は、ふだんは
+//   src/claude/records.ts が分け方を書いた理由で断る。ここは最後の守り（それでも届いたら、分けて呼ぶように返す）
 // - 文書の形は端末と同じ（src/sync/codec.ts の encodeRecord）。updated はサーバー時刻（REQUEST_TIME）、device は claude-connector
 // - 「無い時だけ作る」（currentDocument.exists = false）。内容から作った id なので、同じ結果を2回送っても1つしかできない
 // - 送る前に、端末と同じ decodeRecord で読み戻せることを確かめる（端末で「読み取れませんでした」にならないように）
 import { decodeRecord, encodeRecord } from '../../../src/sync/codec'
 import { stableStringify, type Rec } from '../../../src/sync/merge'
 import type { NewRecord } from '../../../src/claude/records'
-import { RECORD_LIMITS } from '../../../src/claude/records'
+import { RECORD_LIMITS, recordTooLarge } from '../../../src/claude/records'
 import { CONNECTOR_DEVICE } from '../version'
 import type { CommitResult, CommitWrite, FirestoreRest } from './firestore'
 import type { RecRow } from './store'
@@ -39,14 +41,20 @@ export class EncodeError extends Error {
   }
 }
 
-/** 記録を作る書き込みにする（分割が要る大きさ・読み戻せない形は断る） */
+/** 記録を作る書き込みにする（200,000 字を超える・分割が要る大きさ・読み戻せない形は断る） */
 export function prepareWrite(fs: FirestoreRest, ownerUid: string, rec: NewRecord): PreparedWrite {
   const record = rec.record as unknown as Rec
   if (!WRITABLE_TABLES.has(rec.table)) throw new EncodeError(`表 ${rec.table} には書き込めません`)
   if (typeof record.id !== 'string' || !record.id || record.id.length > 64) throw new EncodeError('記録の id が不正です')
   const enc = encodeRecord(record)
   if (enc.json === null || enc.parts.length > 0 || enc.json.length > RECORD_LIMITS.recordJson)
-    throw new EncodeError('記録が大きすぎます（200,000字まで）')
+    throw new EncodeError(
+      recordTooLarge(
+        enc.json?.length ?? enc.parts.reduce((n, p) => n + p.length, 0),
+        '記録',
+        '内容を2つ以上に分けて、ツールを分けて呼んでください（長い批評の結果は前半・後半のように分け、各部の1行目に「（1/2）」「（2/2）」と番号を書く）',
+      ),
+    )
   // 端末と同じ読み方で読み戻せること
   const back = decodeRecord(
     {
