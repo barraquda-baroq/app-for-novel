@@ -41,6 +41,8 @@ export function trashKindLabel(entry: Pick<TrashEntry, 'kind' | 'recordIds' | 'i
 export function trashPlace(entry: Pick<TrashEntry, 'kind' | 'titleName' | 'parentLabel' | 'origin'>): string {
   if (entry.kind === 'title') return ''
   if (entry.kind === 'idea' && !entry.origin?.titleId) return 'どのタイトルにも属さない'
+  // 共通の批評プロンプト（どのタイトルでも使う）はタイトルに属さない
+  if (entry.kind === 'critiquePrompt' && !entry.origin?.titleId) return '共通の批評プロンプト'
   const title = entry.titleName.trim() || '無題のタイトル'
   return entry.parentLabel ? `${title} › ${entry.parentLabel}` : title
 }
@@ -104,4 +106,4 @@ export const CONFLICT_HELP =
   '片方の端末で削除され、もう片方の端末で編集されていたので、編集された内容をここに残しました。元に戻す時、同じものが残っていれば複製として戻ります。'
 
 /** ページの説明 */
-export const TRASH_LEAD = `削除したタイトル・話・推敲バージョン・メモ・アイデアなどは、ここに${TRASH_RETENTION_DAYS}日間残ります。「元に戻す」で元の場所に戻せます。${TRASH_RETENTION_DAYS}日たつと自動で完全に削除されます。`
+export const TRASH_LEAD = `削除したタイトル・話・推敲バージョン・メモ・アイデア・推敲案・改稿案・批評などは、ここに${TRASH_RETENTION_DAYS}日間残ります。「元に戻す」で元の場所に戻せます。${TRASH_RETENTION_DAYS}日たつと自動で完全に削除されます。`

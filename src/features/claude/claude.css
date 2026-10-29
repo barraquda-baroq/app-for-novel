@@ -1,0 +1,675 @@
+/* ===== Claude 連携の共通の部品（cl-）と連携の画面（cn-） ===== */
+
+/* Claude が作った記録の印 */
+.badge.cl-badge {
+  background: var(--area-critique-soft);
+  color: var(--area-critique-text);
+}
+
+.badge.cl-badge .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.cl-lead {
+  margin: 0 0 12px;
+  line-height: 1.7;
+}
+
+.cl-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.cl-error-text {
+  color: var(--danger);
+}
+
+.cl-cands {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* タイトル画面の「Claude に見せる」 */
+.tpage-chip-item {
+  display: inline-flex;
+}
+
+.tpage-chip.cl-access-chip {
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tpage-chip.cl-access-chip:hover {
+  background: var(--surface-3);
+}
+
+.cl-access-chip .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--area-critique);
+}
+
+.cl-access-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.cl-access-chip.is-none .cl-access-value {
+  color: var(--text-muted);
+}
+
+.cl-access-chip.is-write .cl-access-value {
+  color: var(--area-critique-text);
+}
+
+.cl-access-blank {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+}
+
+/* ---------- Markdown（批評の結果・戦略メモ） ---------- */
+.md {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.md-plain {
+  white-space: pre-wrap;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md pre,
+.md table {
+  margin: 0 0 0.8em;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 1.1em 0 0.5em;
+  line-height: 1.45;
+}
+
+.md h1 {
+  font-size: 19px;
+}
+
+.md h2 {
+  font-size: 17px;
+}
+
+.md h3 {
+  font-size: 16px;
+}
+
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 15px;
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.4em;
+}
+
+.md li + li {
+  margin-top: 0.2em;
+}
+
+.md blockquote {
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.md code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  font-size: 0.9em;
+}
+
+.md pre {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.md pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.md a {
+  color: var(--accent);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+
+.md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.md th,
+.md td {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.md-image-link {
+  font-size: 13px;
+}
+
+/* ---------- 手動連携（Claude に頼む・結果を貼り付け） ---------- */
+.cl-manual,
+.cl-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cl-manual .cl-lead,
+.cl-paste .cl-lead {
+  margin: 0;
+}
+
+.segmented.cl-seg {
+  flex-wrap: wrap;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.segmented.cl-seg button {
+  min-height: 34px;
+}
+
+.cl-manual-task-one {
+  margin: 0;
+}
+
+.cl-manual-hint {
+  margin: -6px 0 0;
+  line-height: 1.6;
+}
+
+.cl-manual-pieces {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 480px) {
+  .cl-manual-pieces {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cl-manual-check {
+  align-items: flex-start;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+.cl-manual-check input,
+.cn-writes input {
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  flex: none;
+}
+
+.cl-manual-out {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.cl-manual-sum {
+  margin: 0;
+  font-weight: 700;
+}
+
+.cl-manual-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  line-height: 1.7;
+}
+
+.cl-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.btn.cl-part {
+  min-height: 40px;
+}
+
+.btn.cl-part.is-copied {
+  border-color: color-mix(in srgb, var(--active) 45%, var(--border));
+  color: var(--active);
+}
+
+.cl-part-size {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.btn.cl-save-txt {
+  align-self: flex-start;
+  white-space: normal;
+  text-align: left;
+}
+
+.textarea.cl-paste-input {
+  min-height: 160px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.cl-paste-critique {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .cl-paste-critique {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cl-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cl-preview-call {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.cl-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.cl-preview-sum {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.cl-preview-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.cl-preview-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  min-width: 0;
+}
+
+.cl-preview-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cl-preview-hint {
+  flex-basis: 100%;
+  padding-left: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.badge.cl-status.is-ok {
+  background: var(--active-soft);
+  color: var(--active);
+}
+
+.badge.cl-status.is-skip {
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+.badge.cl-status.is-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.cl-notes {
+  margin: 6px 0 0;
+  padding-left: 1.2em;
+}
+
+/* ---------- 設定 → Claude 連携 ---------- */
+.cl-url {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.cl-pairing {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px 14px;
+  margin: 4px 0 0;
+  font-weight: 400;
+}
+
+.cl-pairing dt {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.cl-pairing dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.cl-cando {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.cl-cando-list {
+  margin: 6px 0 0;
+  padding-left: 1.3em;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.cl-cando-list.is-cannot {
+  color: var(--text-muted);
+}
+
+/* ---------- 連携の画面（#/claude/connect） ---------- */
+.cn-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cn-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+.cn-title .icon {
+  width: 22px;
+  height: 22px;
+  color: var(--area-critique);
+}
+
+.cn-host {
+  margin: -6px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.cn-host code {
+  color: var(--text);
+}
+
+.cn-block,
+.cn-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  line-height: 1.7;
+}
+
+.cn-block p,
+.cn-form p {
+  margin: 0;
+}
+
+.cn-block .btn {
+  align-self: flex-start;
+}
+
+.cn-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.cn-spinner {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cn-spin 0.9s linear infinite;
+}
+
+@keyframes cn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cn-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  line-height: 1.7;
+}
+
+.cn-notice p {
+  margin: 0;
+}
+
+.cn-notice.is-warn {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--border));
+  background: var(--warn-soft);
+}
+
+.cn-notice.is-danger {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--danger-soft);
+}
+
+.cn-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.cn-box {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.cn-box h2,
+.cn-titles h2 {
+  font-size: 15px;
+}
+
+.cn-box ul {
+  margin: 6px 0 0;
+  padding-left: 1.3em;
+  font-size: 13px;
+}
+
+.cn-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cn-title-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cn-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.cn-title-name {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.segmented.cn-seg {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.segmented.cn-seg button {
+  min-height: 34px;
+  padding-inline: 10px;
+}
+
+.cn-writes {
+  align-items: flex-start;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.cn-writes-hint {
+  display: block;
+  font-weight: 400;
+}
+
+.cn-warn {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cn-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cn-actions .btn {
+  min-width: 120px;
+  min-height: 42px;
+}
+
+@media (max-width: 480px) {
+  .cn-actions .btn {
+    flex: 1;
+  }
+}
+
+/* タイトル画面の「Claude に見せる」: 指で操作する端末ではタップしやすい大きさに */
+@media (max-width: 720px), (pointer: coarse) {
+  .tpage-chip.cl-access-chip {
+    min-height: 34px;
+  }
+}

@@ -1,0 +1,6 @@
+# 改行は LF にそろえる（Windows で取り出しても、生成したファイルの比べ・Prettier の確かめが CRLF で失敗しないように）
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

@@ -41,6 +41,20 @@ describe('ゴミ箱の一覧の表記', () => {
     expect(trashPlace(entry({ kind: 'idea', titleName: '', origin: { titleId: null, index: 0 } }))).toBe(
       'どのタイトルにも属さない',
     )
+    // 2.3: 共通の批評プロンプトはタイトルに属さない。タイトルの推敲案はタイトル › 話
+    expect(
+      trashPlace(
+        entry({
+          kind: 'critiquePrompt',
+          titleName: '',
+          parentLabel: '共通の批評プロンプト',
+          origin: { titleId: null, index: 0 },
+        }),
+      ),
+    ).toBe('共通の批評プロンプト')
+    expect(trashPlace(entry({ kind: 'proofSuggestion', parentLabel: '第12話　題　第2幕' }))).toBe('作品A › 第12話　題　第2幕')
+    expect(trashKindLabel({ kind: 'critiqueResult', recordIds: [], id: 'e' }, {})).toBe('批評の結果')
+    expect(trashKindLabel({ kind: 'revisionIdea', recordIds: [], id: 'e' }, {})).toBe('改稿案')
   })
 
   it('残り日数と、戻した後のお知らせ', () => {

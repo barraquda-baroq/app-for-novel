@@ -2,8 +2,12 @@
 // レコードはキーを並べ替えた JSON 文字列として保存する（端末内の内容とそのまま比べられ、
 // Firestore が扱えない値（undefined など）にも困らない）。1MiB の文書の上限を超えそうな大きなレコードは
 // 分割文書（{表名}:{id}#{n}）に分けて同じトランザクションで書く。
+import { hashJson } from '../domain/hash'
 import type { TableName } from '../domain/types'
 import { stableStringify, type Rec } from './merge'
+
+// 指紋は 2.3 の内容から作る id（src/claude/derivedId.ts）と同じ関数（src/domain/hash.ts）
+export { hashJson }
 
 export const RECORDS = 'records'
 
@@ -42,25 +46,6 @@ export interface ChunkDoc {
 
 export const docIdOf = (table: string, id: string) => `${table}:${id}`
 export const chunkIdOf = (parent: string, index: number) => `${parent}#${index}`
-
-/** 53 ビットの文字列ハッシュ（cyrb53） */
-function cyrb53(str: string, seed: number): string {
-  let h1 = 0xdeadbeef ^ seed
-  let h2 = 0x41c6ce57 ^ seed
-  for (let i = 0; i < str.length; i++) {
-    const ch = str.charCodeAt(i)
-    h1 = Math.imul(h1 ^ ch, 2654435761)
-    h2 = Math.imul(h2 ^ ch, 1597334677)
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
-}
-
-export function hashJson(json: string | null): string {
-  if (json === null) return ''
-  return `${cyrb53(json, 1)}.${cyrb53(json, 2)}.${json.length.toString(36)}`
-}
 
 /** レコードの指紋（null = 無い） */
 export function hashRecord(rec: Rec | null | undefined): string {

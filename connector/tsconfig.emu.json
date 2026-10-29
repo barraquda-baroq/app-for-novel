@@ -1,0 +1,22 @@
+{
+  // エミュレーターの結合テスト（Node）。アプリの同期のエンジン（ブラウザの型を使う）も読み込むので DOM の型で確かめる
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.emu.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    // アプリの連携の画面の部品（src/features/claude）も読み込むので、アプリと同じビルドの時の値（../src/env.d.ts）・vite の型も使う
+    "types": ["node", "vite/client"]
+  },
+  "include": ["test/emu", "../src/env.d.ts"]
+}

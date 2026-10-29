@@ -1,0 +1,925 @@
+// Claude の結果（コネクタの書き込みツールの入力・手動連携で貼り付けた JSON）から、2.3 の記録を作る。
+// - 入力の形はコネクタの書き込みツール（W1〜W5）の入力と同じ（キーは snake_case）。貼り付けも同じ形を受け付ける
+// - id は内容から作る（src/claude/derivedId.ts）。同じ内容をもう一度足しても同じ id になり、もうあれば duplicate、
+//   以前に削除されたもの（ゴミ箱・クラウドの削除の印）は previously_deleted として作らない
+// - 推敲案の抜き出した箇所は、話（幕に分けた話は各幕）の採用原稿の中で探して場所を控える（src/claude/anchor.ts）
+// - どの記録も JSON にして 200,000 字まで（コネクタが分割文書を書かないため。アプリで手で書くものに上限はない）
+// 作るだけで、データには入れない（アプリはストアの addClaudeRecords、コネクタは Firestore への作成で入れる）。
+import { hashJson } from '../domain/hash'
+import { adoptedText, isSplit, pieceFullLabel, pieceLabel } from '../domain/structure'
+import type {
+  AppData,
+  ClaudeTableName,
+  CritiquePrompt,
+  CritiqueResult,
+  CritiqueScope,
+  ID,
+  Piece,
+  ProofBatch,
+  ProofCategory,
+  ProofCovered,
+  ProofSuggestion,
+  RevisionIdea,
+  StrategyContest,
+  StrategyNote,
+  Title,
+} from '../domain/types'
+import { stableStringify } from '../sync/merge'
+import { locateExcerpt, safeSlice } from './anchor'
+import { isProofCategory, PROOF_CATEGORY_GUIDE, PROOF_CATEGORY_LABELS } from './categories'
+import { isIsoDate, jstDate } from './dates'
+import {
+  critiquePromptId,
+  critiqueResultId,
+  proofBatchId,
+  proofRunId,
+  proofSuggestionId,
+  revisionIdeaId,
+  strategyNoteId,
+} from './derivedId'
+import { matchesId, readingOrder, resolvePiece, resolveTitle, shortId, type ReadingItem } from './refs'
+import { manuscriptOf } from './snapshot'
+import { canClaudeWrite, CLAUDE_RECORD_VERSION } from './visibility'
+
+// ---------- 上限 ----------
+
+/** 入力の上限（コネクタのツールの JSON Schema と同じ値。文字数は Unicode の文字（コードポイント）で数える） */
+export const RECORD_LIMITS = {
+  /** 1つの記録の JSON の長さ（UTF-16） */
+  recordJson: 200_000,
+  proofItems: 100,
+  proofCovered: 200,
+  runLabel: 60,
+  excerpt: 100,
+  contextBefore: 30,
+  categoryLabel: 20,
+  suggestion: 500,
+  reason: 300,
+  revisionItems: 20,
+  revisionHeading: 80,
+  revisionBody: 50_000,
+  revisionPieces: 50,
+  noteHeading: 80,
+  noteBody: 30_000,
+  contests: 10,
+  contestName: 80,
+  contestOrganizer: 80,
+  contestFit: 300,
+  contestPlan: 2_000,
+  promptName: 60,
+  promptBody: 20_000,
+  resultMarkdown: 60_000,
+  url: 2_000,
+  model: 60,
+} as const
+
+// ---------- 入力の形（コネクタの書き込みツールの入力と同じ） ----------
+
+/** W1 novel_add_proofreading */
+export interface ProofreadingInput {
+  title_id: string
+  run_label?: string
+  /** YYYY-MM-DD（日本時間）。省略時は今日 */
+  run_date?: string
+  /** 確かめ終えた話（推敲案が無かった話も含む） */
+  covered?: string[]
+  items: ProofItemInput[]
+  model?: string
+}
+
+export interface ProofItemInput {
+  /** 話の指し方（#12・p:3f2a9c1b・第12話・第3話 第2幕） */
+  piece: string
+  /** 採用原稿から原文どおりに引用した箇所（ルビの記法も含む） */
+  excerpt: string
+  /** 同じ箇所が何度もある時に区別する直前の文字 */
+  context_before?: string
+  category: string
+  category_label?: string
+  suggestion?: string
+  reason: string
+  important?: boolean
+}
+
+/** W2 novel_add_revision_ideas */
+export interface RevisionIdeasInput {
+  title_id: string
+  items: { heading: string; body: string; pieces?: string[] }[]
+}
+
+/** W3 novel_add_strategy_note */
+export interface StrategyNoteInput {
+  title_id: string
+  heading: string
+  /** Markdown */
+  body: string
+  run_date?: string
+  contests?: ContestInput[]
+  model?: string
+}
+
+export interface ContestInput {
+  name: string
+  organizer?: string
+  /** https の URL */
+  url?: string
+  /** 締切 YYYY-MM-DD */
+  deadline?: string
+  limit?: { min?: number; max?: number; unit?: 'chars' | 'pages' }
+  /** このタイトルとの相性 */
+  fit?: string
+  /** 応募までの改稿の方針 */
+  plan?: string
+}
+
+/** W4 novel_save_critique_prompt */
+export interface CritiquePromptInput {
+  /** scope が title の時に必要 */
+  title_id?: string
+  scope: 'title' | 'shared'
+  name: string
+  body: string
+}
+
+/** W5 novel_add_critique_result */
+export interface CritiqueResultInput {
+  title_id: string
+  prompt_id?: string
+  /** 実行したプロンプト（省略時は prompt_id のプロンプトの本文） */
+  prompt_text?: string
+  result_markdown?: string
+  /** https の URL（アーティファクト） */
+  artifact_url?: string
+  run_date?: string
+  /** 範囲（省略時はタイトル全体） */
+  scope?: { from: string; to: string }
+  model?: string
+}
+
+/** 書き込みツールの名前（コネクタと手動連携の JSON の tool） */
+export const WRITE_TOOLS = [
+  'novel_add_proofreading',
+  'novel_add_revision_ideas',
+  'novel_add_strategy_note',
+  'novel_save_critique_prompt',
+  'novel_add_critique_result',
+] as const
+
+export type WriteTool = (typeof WRITE_TOOLS)[number]
+
+export type WriteToolInput = {
+  novel_add_proofreading: ProofreadingInput
+  novel_add_revision_ideas: RevisionIdeasInput
+  novel_add_strategy_note: StrategyNoteInput
+  novel_save_critique_prompt: CritiquePromptInput
+  novel_add_critique_result: CritiqueResultInput
+}
+
+export type WriteToolCall = { [K in WriteTool]: { tool: K; input: WriteToolInput[K] } }[WriteTool]
+
+export function isWriteTool(v: unknown): v is WriteTool {
+  return typeof v === 'string' && (WRITE_TOOLS as readonly string[]).includes(v)
+}
+
+/** 書き込みツールの日本語の名前（貼り付けの確認画面・結果の表示） */
+export const WRITE_TOOL_LABELS: Record<WriteTool, string> = {
+  novel_add_proofreading: '推敲案を追加',
+  novel_add_revision_ideas: '改稿案を追加',
+  novel_add_strategy_note: '戦略メモを追加',
+  novel_save_critique_prompt: '批評プロンプトを保存',
+  novel_add_critique_result: '作品批評の結果を記録',
+}
+
+// ---------- 結果の形 ----------
+
+export type ClaudeRecord = ProofSuggestion | ProofBatch | RevisionIdea | StrategyNote | CritiquePrompt | CritiqueResult
+
+export interface NewRecord {
+  table: ClaudeTableName
+  record: ClaudeRecord
+}
+
+/**
+ * 入力の1件ごとの結果。created = 作る、duplicate = 同じものがもうある、previously_deleted = 以前に削除された（作らない）、
+ * not_found = 話・抜き出した箇所が見つからない、ambiguous = 同じ箇所が何か所もある、invalid = 入力の形が違う・長すぎる
+ */
+export type ItemStatus = 'created' | 'duplicate' | 'previously_deleted' | 'not_found' | 'ambiguous' | 'invalid'
+
+export interface ItemResult {
+  /** 入力の items の何番目か（0から。items の無い入力は 0） */
+  index: number
+  status: ItemStatus
+  /** 作る・作った記録の id（not_found・ambiguous・invalid は無い） */
+  id?: ID
+  table?: ClaudeTableName
+  /** 何の結果か（「第12話 ¶14「見れる」」など） */
+  label: string
+  /** 直し方（日本語） */
+  hint?: string
+  /** 候補（ambiguous・not_found の時） */
+  candidates?: string[]
+}
+
+export interface BuildResult {
+  /** false = 入力全体を受け付けなかった（タイトルが無い・書き込めない・形が違う）。error に理由 */
+  ok: boolean
+  error?: string
+  candidates?: string[]
+  /** 作る記録（この順に作る。推敲案の実行の記録 proofBatches は最後） */
+  records: NewRecord[]
+  items: ItemResult[]
+  /** 補足（確かめた話の一部が見つからない・URL を外した など） */
+  notes: string[]
+}
+
+export interface BuildContext {
+  /** claude = コネクタ、paste = 手動連携の貼り付け */
+  source: 'claude' | 'paste'
+  /** 作った時刻（ms）。日付を省略した時の「今日」もこの時刻の日本時間 */
+  now: number
+  /** 以前に削除された記録か（アプリ: ゴミ箱の中身 trashedIdsOf、コネクタ: クラウドの削除の印） */
+  wasDeleted?: (table: ClaudeTableName, id: ID) => boolean
+}
+
+// ---------- 小さな道具 ----------
+
+/** 文字（コードポイント）の数 */
+export function charLength(s: string): number {
+  let n = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c >= 0xdc00 && c <= 0xdfff && i > 0) {
+      const h = s.charCodeAt(i - 1)
+      if (h >= 0xd800 && h <= 0xdbff) continue
+    }
+    n += 1
+  }
+  return n
+}
+
+/** 短く切る（表示用。サロゲートペアの途中では切らない） */
+function short(s: string, max = 16): string {
+  const one = s.replace(/\s+/g, ' ').trim()
+  if (charLength(one) <= max) return one
+  return `${Array.from(one).slice(0, max).join('')}…`
+}
+
+const isStr = (v: unknown): v is string => typeof v === 'string'
+const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
+
+/** https の URL か（空は false） */
+export function isHttpsUrl(v: unknown): v is string {
+  if (!isStr(v) || !v.trim() || charLength(v) > RECORD_LIMITS.url) return false
+  try {
+    return new URL(v.trim()).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/** 文字列の項目を確かめる（無い・空でよければ optional）。問題があれば日本語の理由 */
+function checkText(v: unknown, name: string, max: number, required: boolean): string | null {
+  if (v === undefined || v === null) return required ? `${name} がありません` : null
+  if (!isStr(v)) return `${name} は文字列にしてください`
+  if (required && !v.trim()) return `${name} が空です`
+  if (charLength(v) > max)
+    return `${name} が長すぎます（${max.toLocaleString('ja-JP')}字まで。いま ${charLength(v).toLocaleString('ja-JP')}字）`
+  return null
+}
+
+/** 記録を JSON にした長さが上限に収まるか */
+export function recordFits(record: ClaudeRecord): boolean {
+  return stableStringify(record).length <= RECORD_LIMITS.recordJson
+}
+
+/** ゴミ箱に入っている 2.3 の記録の id（表ごと）。アプリの貼り付けで previously_deleted を見分ける */
+export function trashedIdsOf(data: AppData): (table: ClaudeTableName, id: ID) => boolean {
+  const set = new Set<string>()
+  for (const r of Object.values(data.trashRecords)) {
+    const rec = r.record as { id?: unknown } | undefined
+    if (rec && typeof rec.id === 'string') set.add(`${r.table}:${rec.id}`)
+  }
+  return (table, id) => set.has(`${table}:${id}`)
+}
+
+/** 作る前の確かめ（もうある・以前に削除された・同じ入力の中で重なる） */
+function existing(data: AppData, ctx: BuildContext, table: ClaudeTableName, id: ID, seen: Set<string>): ItemStatus | null {
+  if ((data[table] as Record<ID, unknown>)[id] || seen.has(`${table}:${id}`)) return 'duplicate'
+  if (ctx.wasDeleted?.(table, id)) return 'previously_deleted'
+  return null
+}
+
+const STATUS_HINTS: Partial<Record<ItemStatus, string>> = {
+  duplicate: '同じ内容の記録がもうあります（追加しません）',
+  previously_deleted: '以前に削除された記録です（追加しません）',
+}
+
+interface TitleCheck {
+  title?: Title
+  error?: string
+  candidates?: string[]
+}
+
+/** タイトルを読み、コネクタの時は書き込めるタイトルかを確かめる */
+function writableTitle(data: AppData, ref: unknown, ctx: BuildContext): TitleCheck {
+  if (!isStr(ref) || !ref.trim()) return { error: 'title_id がありません' }
+  const r = resolveTitle(data, ref)
+  if (!r.ok) return { error: r.message, candidates: r.candidates }
+  if (ctx.source === 'claude' && !canClaudeWrite(r.value))
+    return {
+      error:
+        'このタイトルは書き込み不可です（アプリのタイトル画面の「Claude に見せる」を「読む＋書き込む」にすると書き込めます）',
+    }
+  return { title: r.value }
+}
+
+const fail = (error: string, candidates?: string[]): BuildResult => ({
+  ok: false,
+  error,
+  ...(candidates ? { candidates } : {}),
+  records: [],
+  items: [],
+  notes: [],
+})
+
+function base(ctx: BuildContext, titleId: ID) {
+  return { v: CLAUDE_RECORD_VERSION, source: ctx.source, titleId, createdAt: ctx.now, updatedAt: ctx.now }
+}
+
+/** 日付（省略・形が違う時は今日。形が違えば notes に書く） */
+function runDateOf(v: unknown, ctx: BuildContext, notes: string[]): string {
+  if (v === undefined || v === null || v === '') return jstDate(ctx.now)
+  if (isIsoDate(v)) return v
+  notes.push(`日付 '${String(v)}' は YYYY-MM-DD でないため、今日の日付にしました`)
+  return jstDate(ctx.now)
+}
+
+function modelOf(v: unknown): string | undefined {
+  return isStr(v) && v.trim() ? Array.from(v.trim()).slice(0, RECORD_LIMITS.model).join('') : undefined
+}
+
+// ---------- W1 推敲案 ----------
+
+/** 推敲案の表示（「第12話 ¶14「見れる」」） */
+function proofLabel(pieceText: string, paragraph: number | null, excerpt: string): string {
+  return `${pieceText}${paragraph ? ` ¶${paragraph}` : ''}「${short(excerpt)}」`
+}
+
+export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: BuildContext): BuildResult {
+  if (!isObj(input)) return fail('入力の形が違います')
+  const t = writableTitle(data, input.title_id, ctx)
+  if (!t.title) return fail(t.error!, t.candidates)
+  const title = t.title
+  if (!Array.isArray(input.items)) return fail('items がありません（推敲案の配列）')
+  if (input.items.length > RECORD_LIMITS.proofItems) return fail(`items が多すぎます（1回 ${RECORD_LIMITS.proofItems} 件まで）`)
+  const covered = input.covered ?? []
+  if (!Array.isArray(covered)) return fail('covered は話の指し方の配列にしてください')
+  if (covered.length > RECORD_LIMITS.proofCovered) return fail(`covered が多すぎます（${RECORD_LIMITS.proofCovered} 件まで）`)
+  const labelErr = checkText(input.run_label, 'run_label', RECORD_LIMITS.runLabel, false)
+  if (labelErr) return fail(labelErr)
+
+  const notes: string[] = []
+  const runLabel = (input.run_label ?? '').trim()
+  const runDate = runDateOf(input.run_date, ctx, notes)
+  const runId = proofRunId(title.id, runLabel, runDate)
+  const model = modelOf(input.model)
+  const order = readingOrder(data, title.id)
+  const seen = new Set<string>()
+  const items: ItemResult[] = []
+  const created: ProofSuggestion[] = []
+  /** この実行の推敲案（作るもの・もうあるもの）の id と種類 */
+  const batchItems: { id: ID; category: ProofCategory }[] = []
+
+  input.items.forEach((raw, index) => {
+    const bad = (hint: string, label = '推敲案') => items.push({ index, status: 'invalid', label, hint })
+    if (!isObj(raw)) return bad('推敲案の形が違います')
+    const item = raw as unknown as ProofItemInput
+    const err =
+      checkText(item.piece, 'piece', 200, true) ??
+      checkText(item.excerpt, 'excerpt', RECORD_LIMITS.excerpt, true) ??
+      checkText(item.context_before, 'context_before', RECORD_LIMITS.contextBefore, false) ??
+      checkText(item.category, 'category', 40, true) ??
+      checkText(item.category_label, 'category_label', RECORD_LIMITS.categoryLabel, false) ??
+      checkText(item.suggestion, 'suggestion', RECORD_LIMITS.suggestion, false) ??
+      checkText(item.reason, 'reason', RECORD_LIMITS.reason, true)
+    if (err) return bad(err, isStr(item.excerpt) ? `「${short(item.excerpt)}」` : '推敲案')
+    if (item.important !== undefined && typeof item.important !== 'boolean')
+      return bad('important は true か false にしてください')
+
+    const resolved = resolvePiece(data, title.id, item.piece, order)
+    if (!resolved.ok) {
+      items.push({
+        index,
+        status: 'not_found',
+        label: `「${short(item.excerpt)}」`,
+        hint: resolved.message,
+        candidates: resolved.candidates,
+      })
+      return
+    }
+    const piece = resolved.value
+    const where = pieceLabelOf(data, piece, order)
+    const located = locateExcerpt(data, piece, item.excerpt, item.context_before || undefined)
+    if (located.status === 'not_found') {
+      const none = !adoptedText(data, piece)
+      items.push({
+        index,
+        status: 'not_found',
+        label: proofLabel(where, null, item.excerpt),
+        hint: none
+          ? `${where}には採用原稿がありません`
+          : `抜き出した箇所が${where}の採用原稿に見つかりません。採用原稿から原文どおり（ルビの記法も含めて）引用してください`,
+      })
+      return
+    }
+    if (located.status === 'ambiguous') {
+      items.push({
+        index,
+        status: 'ambiguous',
+        label: proofLabel(where, null, item.excerpt),
+        hint: `同じ箇所が${where}に${located.count}か所あります。context_before に直前の文字（${RECORD_LIMITS.contextBefore}字以内）を入れて区別してください`,
+        candidates: located.candidates.map(
+          (c) =>
+            `${pieceLabelOf(data, data.pieces[c.pieceId] ?? piece, order)} ¶${c.paragraph} [...]${c.before}【${item.excerpt}】${c.after}[...]`,
+        ),
+      })
+      return
+    }
+    const seg = located.segment
+    const known = isProofCategory(item.category)
+    const category: ProofCategory = known ? (item.category as ProofCategory) : 'other'
+    const categoryLabel =
+      item.category_label?.trim() || (known ? PROOF_CATEGORY_LABELS[category] : short(item.category, RECORD_LIMITS.categoryLabel))
+    if (!known)
+      notes.push(`category '${short(item.category, 20)}' は使えないため other にしました（使える種類: ${PROOF_CATEGORY_GUIDE}）`)
+    const suggestion = item.suggestion ?? ''
+    const id = proofSuggestionId({
+      titleId: title.id,
+      pieceId: seg.piece.id,
+      contextBefore: item.context_before ?? '',
+      excerpt: item.excerpt,
+      occurrence: located.occurrence,
+      category,
+      suggestion,
+    })
+    const segLabel = pieceLabelOf(data, seg.piece, order)
+    const label = proofLabel(segLabel, located.anchor.paragraph, item.excerpt)
+    const status = existing(data, ctx, 'proofSuggestions', id, seen)
+    if (status !== 'previously_deleted') batchItems.push({ id, category })
+    if (status) {
+      items.push({ index, status, id, table: 'proofSuggestions', label, hint: STATUS_HINTS[status] })
+      return
+    }
+    seen.add(`proofSuggestions:${id}`)
+    const rec: ProofSuggestion = {
+      id,
+      ...base(ctx, title.id),
+      pieceId: seg.piece.id,
+      parentId: seg.parentId,
+      versionId: seg.version.id,
+      pieceLabel: pieceFullLabel(data, seg.piece),
+      anchor: located.anchor,
+      category,
+      categoryLabel,
+      excerpt: item.excerpt,
+      suggestion,
+      reason: item.reason,
+      flagged: item.important === true,
+      done: false,
+      doneAt: null,
+      runId,
+      batchId: null,
+      ...(model ? { model } : {}),
+    }
+    if (!recordFits(rec)) return bad('推敲案が大きすぎます', label)
+    created.push(rec)
+    items.push({ index, status: 'created', id, table: 'proofSuggestions', label })
+  })
+
+  // 確かめ終えた話
+  const coveredOut: ProofCovered[] = []
+  const coveredSeen = new Set<ID>()
+  for (const ref of covered) {
+    if (!isStr(ref)) {
+      notes.push('covered の中に文字列でないものがあったため飛ばしました')
+      continue
+    }
+    const r = resolvePiece(data, title.id, ref, order)
+    if (!r.ok) {
+      notes.push(`covered の '${short(ref, 30)}' は見つかりません（${r.message}）`)
+      continue
+    }
+    const piece = r.value
+    if (coveredSeen.has(piece.id)) continue
+    coveredSeen.add(piece.id)
+    const text = adoptedText(data, piece)
+    coveredOut.push({
+      pieceId: piece.id,
+      versionId: isSplit(piece) ? null : (piece.activeVersionId ?? null),
+      bodyHash: text ? hashJson(text.body) : '',
+      label: pieceFullLabel(data, piece),
+    })
+  }
+
+  const records: NewRecord[] = []
+  if (created.length || coveredOut.length) {
+    const itemIds = [...new Set(batchItems.map((x) => x.id))]
+    const batchId = proofBatchId(
+      runId,
+      coveredOut.map((c) => c.pieceId),
+      itemIds,
+    )
+    for (const rec of created) records.push({ table: 'proofSuggestions', record: { ...rec, batchId } })
+    if (!existing(data, ctx, 'proofBatches', batchId, seen)) {
+      const batch: ProofBatch = {
+        id: batchId,
+        ...base(ctx, title.id),
+        runId,
+        runLabel,
+        runDate,
+        categories: [...new Set(batchItems.map((x) => x.category))],
+        covered: coveredOut,
+        itemIds,
+        ...(model ? { model } : {}),
+      }
+      if (recordFits(batch)) records.push({ table: 'proofBatches', record: batch })
+      else notes.push('実行の記録が大きすぎるため残しませんでした')
+    }
+  }
+  return { ok: true, records, items, notes }
+}
+
+/** 話の表記（「#12 第12話」「#3.2 第3話 第2幕」） */
+function pieceLabelOf(data: AppData, piece: Piece, order: readonly ReadingItem[]): string {
+  if (piece.kind === 'act' && piece.parentId) {
+    const parentItem = order.find((x) => x.piece.id === piece.parentId)
+    const n = parentItem ? (parentItem.piece.actIds ?? []).indexOf(piece.id) + 1 : 0
+    return parentItem ? `#${parentItem.index}.${n} ${parentItem.label} ${pieceLabel(data, piece)}` : pieceLabel(data, piece)
+  }
+  const item = order.find((x) => x.piece.id === piece.id)
+  return item ? `#${item.index} ${item.label}` : pieceLabel(data, piece)
+}
+
+// ---------- W2 改稿案 ----------
+
+export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx: BuildContext): BuildResult {
+  if (!isObj(input)) return fail('入力の形が違います')
+  const t = writableTitle(data, input.title_id, ctx)
+  if (!t.title) return fail(t.error!, t.candidates)
+  const title = t.title
+  if (!Array.isArray(input.items)) return fail('items がありません（改稿案の配列）')
+  if (input.items.length > RECORD_LIMITS.revisionItems)
+    return fail(`items が多すぎます（1回 ${RECORD_LIMITS.revisionItems} 件まで）`)
+  const order = readingOrder(data, title.id)
+  const notes: string[] = []
+  const items: ItemResult[] = []
+  const records: NewRecord[] = []
+  const seen = new Set<string>()
+  let nextOrder =
+    Object.values(data.revisionIdeas)
+      .filter((r) => r.titleId === title.id)
+      .reduce((m, r) => Math.max(m, r.order), -1) + 1
+  input.items.forEach((raw, index) => {
+    if (!isObj(raw)) return items.push({ index, status: 'invalid', label: '改稿案', hint: '改稿案の形が違います' })
+    const item = raw as unknown as RevisionIdeasInput['items'][number]
+    const err =
+      checkText(item.heading, 'heading', RECORD_LIMITS.revisionHeading, true) ??
+      checkText(item.body, 'body', RECORD_LIMITS.revisionBody, true)
+    const label = isStr(item.heading) && item.heading.trim() ? `「${short(item.heading, 24)}」` : '改稿案'
+    if (err) return items.push({ index, status: 'invalid', label, hint: err })
+    const refs = item.pieces ?? []
+    if (!Array.isArray(refs) || refs.length > RECORD_LIMITS.revisionPieces)
+      return items.push({
+        index,
+        status: 'invalid',
+        label,
+        hint: `pieces は話の指し方の配列（${RECORD_LIMITS.revisionPieces}件まで）にしてください`,
+      })
+    const pieceIds: ID[] = []
+    const missing: string[] = []
+    for (const ref of refs) {
+      const r = isStr(ref) ? resolvePiece(data, title.id, ref, order) : null
+      if (r?.ok) {
+        if (!pieceIds.includes(r.value.id)) pieceIds.push(r.value.id)
+      } else missing.push(String(ref))
+    }
+    const id = revisionIdeaId(title.id, item.heading, item.body)
+    const status = existing(data, ctx, 'revisionIdeas', id, seen)
+    if (status) return items.push({ index, status, id, table: 'revisionIdeas', label, hint: STATUS_HINTS[status] })
+    const rec: RevisionIdea = {
+      id,
+      ...base(ctx, title.id),
+      heading: item.heading.trim(),
+      body: item.body,
+      checked: false,
+      checkedAt: null,
+      pieceIds,
+      order: nextOrder,
+    }
+    if (!recordFits(rec)) return items.push({ index, status: 'invalid', label, hint: '改稿案が大きすぎます' })
+    nextOrder += 1
+    seen.add(`revisionIdeas:${id}`)
+    records.push({ table: 'revisionIdeas', record: rec })
+    items.push({
+      index,
+      status: 'created',
+      id,
+      table: 'revisionIdeas',
+      label,
+      ...(missing.length ? { hint: `見つからない話を外しました: ${missing.map((m) => short(m, 20)).join('、')}` } : {}),
+    })
+  })
+  return { ok: true, records, items, notes }
+}
+
+// ---------- W3 戦略メモ ----------
+
+function contestOf(raw: unknown, i: number, notes: string[]): StrategyContest | string {
+  if (!isObj(raw)) return 'コンテストの形が違います'
+  const c = raw as unknown as ContestInput
+  const err =
+    checkText(c.name, 'name', RECORD_LIMITS.contestName, true) ??
+    checkText(c.organizer, 'organizer', RECORD_LIMITS.contestOrganizer, false) ??
+    checkText(c.fit, 'fit', RECORD_LIMITS.contestFit, false) ??
+    checkText(c.plan, 'plan', RECORD_LIMITS.contestPlan, false)
+  if (err) return err
+  let url = ''
+  if (c.url !== undefined && c.url !== '') {
+    if (isHttpsUrl(c.url)) url = c.url.trim()
+    else notes.push(`「${short(c.name, 20)}」の URL は https でないため外しました`)
+  }
+  let deadline = ''
+  if (c.deadline !== undefined && c.deadline !== '') {
+    if (isIsoDate(c.deadline)) deadline = c.deadline
+    else notes.push(`「${short(c.name, 20)}」の締切 '${String(c.deadline)}' は YYYY-MM-DD でないため外しました`)
+  }
+  const count = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null)
+  const limit = isObj(c.limit) ? c.limit : {}
+  return {
+    id: `k${i}`,
+    name: c.name.trim(),
+    organizer: (c.organizer ?? '').trim(),
+    url,
+    deadline,
+    minChars: count(limit.min),
+    maxChars: count(limit.max),
+    limitUnit: limit.unit === 'pages' ? 'pages' : 'chars',
+    fit: c.fit ?? '',
+    plan: c.plan ?? '',
+    submissionId: null,
+  }
+}
+
+export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: BuildContext): BuildResult {
+  if (!isObj(input)) return fail('入力の形が違います')
+  const t = writableTitle(data, input.title_id, ctx)
+  if (!t.title) return fail(t.error!, t.candidates)
+  const title = t.title
+  const label = isStr(input.heading) && input.heading.trim() ? `「${short(input.heading, 24)}」` : '戦略メモ'
+  const err =
+    checkText(input.heading, 'heading', RECORD_LIMITS.noteHeading, true) ??
+    checkText(input.body, 'body', RECORD_LIMITS.noteBody, true)
+  if (err) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: err }], notes: [] }
+  const rawContests = input.contests ?? []
+  if (!Array.isArray(rawContests) || rawContests.length > RECORD_LIMITS.contests)
+    return {
+      ok: true,
+      records: [],
+      items: [
+        {
+          index: 0,
+          status: 'invalid',
+          label,
+          hint: `contests はコンテストの配列（${RECORD_LIMITS.contests}件まで）にしてください`,
+        },
+      ],
+      notes: [],
+    }
+  const notes: string[] = []
+  const contests: StrategyContest[] = []
+  rawContests.forEach((raw, i) => {
+    const c = contestOf(raw, contests.length, notes)
+    if (typeof c === 'string') notes.push(`コンテスト ${i + 1} を外しました: ${c}`)
+    else contests.push(c)
+  })
+  const runDate = runDateOf(input.run_date, ctx, notes)
+  const id = strategyNoteId(title.id, runDate, input.heading, input.body)
+  const status = existing(data, ctx, 'strategyNotes', id, new Set())
+  if (status)
+    return {
+      ok: true,
+      records: [],
+      items: [{ index: 0, status, id, table: 'strategyNotes', label, hint: STATUS_HINTS[status] }],
+      notes,
+    }
+  const model = modelOf(input.model)
+  const rec: StrategyNote = {
+    id,
+    ...base(ctx, title.id),
+    runDate,
+    heading: input.heading.trim(),
+    body: input.body,
+    contests,
+    appliedAt: null,
+    ...(model ? { model } : {}),
+  }
+  if (!recordFits(rec))
+    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '戦略メモが大きすぎます' }], notes }
+  return {
+    ok: true,
+    records: [{ table: 'strategyNotes', record: rec }],
+    items: [{ index: 0, status: 'created', id, table: 'strategyNotes', label }],
+    notes,
+  }
+}
+
+// ---------- W4 批評プロンプト ----------
+
+export function buildCritiquePrompt(data: AppData, input: CritiquePromptInput, ctx: BuildContext): BuildResult {
+  if (!isObj(input)) return fail('入力の形が違います')
+  if (input.scope !== 'title' && input.scope !== 'shared')
+    return fail("scope は 'title'（このタイトル）か 'shared'（共通）にしてください")
+  let titleId: ID | null = null
+  if (input.scope === 'title') {
+    const t = writableTitle(data, input.title_id, ctx)
+    if (!t.title) return fail(t.error!, t.candidates)
+    titleId = t.title.id
+  }
+  const label = isStr(input.name) && input.name.trim() ? `「${short(input.name, 24)}」` : '批評プロンプト'
+  const err =
+    checkText(input.name, 'name', RECORD_LIMITS.promptName, true) ?? checkText(input.body, 'body', RECORD_LIMITS.promptBody, true)
+  if (err) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: err }], notes: [] }
+  const id = critiquePromptId(titleId, input.name, input.body)
+  const status = existing(data, ctx, 'critiquePrompts', id, new Set())
+  if (status)
+    return {
+      ok: true,
+      records: [],
+      items: [{ index: 0, status, id, table: 'critiquePrompts', label, hint: STATUS_HINTS[status] }],
+      notes: [],
+    }
+  const order =
+    Object.values(data.critiquePrompts)
+      .filter((p) => p.titleId === titleId)
+      .reduce((m, p) => Math.max(m, p.order), -1) + 1
+  const rec: CritiquePrompt = { id, ...base(ctx, ''), titleId, name: input.name.trim(), body: input.body, order }
+  return {
+    ok: true,
+    records: [{ table: 'critiquePrompts', record: rec }],
+    items: [{ index: 0, status: 'created', id, table: 'critiquePrompts', label }],
+    notes: [],
+  }
+}
+
+// ---------- W5 作品批評の結果 ----------
+
+/** タイトルで使える批評プロンプト（このタイトルのものと共通のもの）から、指し方（短い id・id・名前）で探す */
+export function resolveCritiquePrompt(
+  data: AppData,
+  titleId: ID,
+  ref: string,
+): { ok: true; value: CritiquePrompt } | { ok: false; message: string; candidates: string[] } {
+  const usable = Object.values(data.critiquePrompts).filter((p) => p.titleId === titleId || p.titleId === null)
+  const byId = usable.filter((p) => matchesId('critiquePrompt', ref, p.id))
+  const hits = byId.length ? byId : usable.filter((p) => p.name.trim() === ref.trim())
+  if (hits.length === 1) return { ok: true, value: hits[0] }
+  const candidates = (hits.length ? hits : usable).slice(0, 20).map((p) => `${shortId('critiquePrompt', p.id)}「${p.name}」`)
+  return {
+    ok: false,
+    message: hits.length ? `批評プロンプト '${ref}' が複数あります` : `批評プロンプト '${ref}' が見つかりません`,
+    candidates,
+  }
+}
+
+export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, ctx: BuildContext): BuildResult {
+  if (!isObj(input)) return fail('入力の形が違います')
+  const t = writableTitle(data, input.title_id, ctx)
+  if (!t.title) return fail(t.error!, t.candidates)
+  const title = t.title
+  const notes: string[] = []
+  let prompt: CritiquePrompt | null = null
+  if (input.prompt_id !== undefined && input.prompt_id !== null && input.prompt_id !== '') {
+    if (!isStr(input.prompt_id)) return fail('prompt_id は文字列にしてください')
+    const r = resolveCritiquePrompt(data, title.id, input.prompt_id)
+    if (!r.ok) return fail(r.message, r.candidates)
+    prompt = r.value
+  }
+  const label = prompt ? `「${short(prompt.name, 24)}」の結果` : '作品批評の結果'
+  const err =
+    checkText(input.prompt_text, 'prompt_text', RECORD_LIMITS.promptBody, false) ??
+    checkText(input.result_markdown, 'result_markdown', RECORD_LIMITS.resultMarkdown, false)
+  if (err) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: err }], notes }
+  const markdown = input.result_markdown ?? ''
+  let url = ''
+  if (input.artifact_url !== undefined && input.artifact_url !== null && input.artifact_url !== '') {
+    if (!isHttpsUrl(input.artifact_url))
+      return {
+        ok: true,
+        records: [],
+        items: [{ index: 0, status: 'invalid', label, hint: 'artifact_url は https の URL にしてください' }],
+        notes,
+      }
+    url = input.artifact_url.trim()
+  }
+  if (!markdown.trim() && !url)
+    return {
+      ok: true,
+      records: [],
+      items: [{ index: 0, status: 'invalid', label, hint: 'result_markdown か artifact_url のどちらかを入れてください' }],
+      notes,
+    }
+  let scope: CritiqueScope = { kind: 'whole' }
+  if (input.scope !== undefined && input.scope !== null) {
+    const s = input.scope
+    const order = readingOrder(data, title.id)
+    const from = isObj(s) && isStr(s.from) ? resolvePiece(data, title.id, s.from, order) : null
+    const to = isObj(s) && isStr(s.to) ? resolvePiece(data, title.id, s.to, order) : null
+    if (from?.ok && to?.ok) {
+      scope = {
+        kind: 'range',
+        fromPieceId: from.value.id,
+        toPieceId: to.value.id,
+        label: `${pieceFullLabel(data, from.value)}〜${pieceFullLabel(data, to.value)}`,
+      }
+    } else notes.push('scope の話が見つからないため、タイトル全体の批評として記録しました')
+  }
+  const runDate = runDateOf(input.run_date, ctx, notes)
+  const promptText = input.prompt_text ?? prompt?.body ?? ''
+  const id = critiqueResultId({ titleId: title.id, runDate, promptText, resultMarkdown: markdown, artifactUrl: url })
+  const status = existing(data, ctx, 'critiqueResults', id, new Set())
+  if (status)
+    return {
+      ok: true,
+      records: [],
+      items: [{ index: 0, status, id, table: 'critiqueResults', label, hint: STATUS_HINTS[status] }],
+      notes,
+    }
+  const rec: CritiqueResult = {
+    id,
+    ...base(ctx, title.id),
+    promptId: prompt?.id ?? null,
+    promptName: prompt?.name ?? '',
+    promptText,
+    runDate,
+    resultMarkdown: markdown,
+    artifactUrl: url,
+    scope,
+    manuscript: manuscriptOf(data, title.id, ctx.now),
+    model: modelOf(input.model) ?? '',
+    note: '',
+  }
+  if (!recordFits(rec))
+    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '批評の結果が大きすぎます' }], notes }
+  return {
+    ok: true,
+    records: [{ table: 'critiqueResults', record: rec }],
+    items: [{ index: 0, status: 'created', id, table: 'critiqueResults', label }],
+    notes,
+  }
+}
+
+// ---------- まとめ ----------
+
+/** 書き込みツールの呼び出し1つから記録を作る */
+export function buildToolCall(data: AppData, call: WriteToolCall, ctx: BuildContext): BuildResult {
+  switch (call.tool) {
+    case 'novel_add_proofreading':
+      return buildProofreading(data, call.input, ctx)
+    case 'novel_add_revision_ideas':
+      return buildRevisionIdeas(data, call.input, ctx)
+    case 'novel_add_strategy_note':
+      return buildStrategyNote(data, call.input, ctx)
+    case 'novel_save_critique_prompt':
+      return buildCritiquePrompt(data, call.input, ctx)
+    case 'novel_add_critique_result':
+      return buildCritiqueResult(data, call.input, ctx)
+    default:
+      return fail(`知らないツールです: ${String((call as { tool?: unknown }).tool)}`)
+  }
+}
+
+/** 結果の件数（「追加 12件・重複 3件・見つからない 1件」） */
+export function summarizeItems(items: readonly ItemResult[]): string {
+  const names: Record<ItemStatus, string> = {
+    created: '追加',
+    duplicate: '重複',
+    previously_deleted: '以前に削除',
+    not_found: '見つからない',
+    ambiguous: '場所が決まらない',
+    invalid: '形が違う',
+  }
+  const counts = new Map<ItemStatus, number>()
+  for (const it of items) counts.set(it.status, (counts.get(it.status) ?? 0) + 1)
+  return (Object.keys(names) as ItemStatus[])
+    .filter((s) => counts.get(s))
+    .map((s) => `${names[s]} ${counts.get(s)}件`)
+    .join('・')
+}
+
+/** 表示用に本文の一部を切り出す（サロゲートペアの途中で切らない） */
+export function excerptAround(body: string, offset: number, length: number, context = 20): string {
+  const before = safeSlice(body, offset - context, offset)
+  const hit = safeSlice(body, offset, offset + length)
+  const after = safeSlice(body, offset + length, offset + length + context)
+  return `${offset - context > 0 ? '[...]' : ''}${before}【${hit}】${after}${offset + length + context < body.length ? '[...]' : ''}`
+}

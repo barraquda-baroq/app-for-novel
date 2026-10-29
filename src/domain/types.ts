@@ -27,9 +27,17 @@ export interface Title {
   strategyNote: string
   /** タイトル一覧での並び順 */
   order: number
+  /**
+   * 2.3: Claude（コネクタ）に見せるか。none = 見せない、read = 読むだけ、write = 読む＋書き込む（推敲案などを足す）。
+   * 無い = write（個人のアプリで、原稿を Claude に見てもらうのが前提のため。src/claude/visibility.ts）
+   */
+  claudeAccess?: ClaudeAccess
   createdAt: number
   updatedAt: number
 }
+
+/** タイトルを Claude に見せるか（Title.claudeAccess） */
+export type ClaudeAccess = 'none' | 'read' | 'write'
 
 export interface Chapter {
   id: ID
@@ -218,6 +226,205 @@ export interface Submission {
   updatedAt: number
 }
 
+// ---------- 2.3: 推敲案・改稿案・戦略メモ・作品批評（Claude 連携） ----------
+// どれもタイトルの配下の1レコード = 1文書（並びはタイトルの側に持たない。order か日時で並べる）。
+// Claude（コネクタ）は新しく作るだけで、書き換え・削除はしない。作った後は端末のふつうのレコードとして編集・削除できる。
+// id は Claude・貼り付けで作ったものは内容から作る（src/claude/derivedId.ts。同じ結果を2回足しても1つ）、手で作ったものは newId()。
+
+/** 記録を作ったもの: claude = コネクタ、paste = 手動連携の貼り付け、manual = アプリで手で書いた */
+export type ClaudeSource = 'claude' | 'paste' | 'manual'
+
+/** 2.3 の記録に共通の項目 */
+export interface ClaudeRecordBase {
+  id: ID
+  /** 記録の形の版（いまは 1）。これより新しい版は新しいコネクタ・アプリが書いたもの（「新しいコネクタの記録」と出す） */
+  v: number
+  source: ClaudeSource
+  titleId: ID
+  createdAt: number
+  updatedAt: number
+}
+
+/**
+ * 推敲案の種類。知らない値（新しいコネクタが書いた種類）も消さずに残し、categoryLabel で表示する
+ * （一覧と日本語名は src/claude/categories.ts）
+ */
+export type ProofCategory =
+  | 'typo'
+  | 'ra_nuki'
+  | 'i_nuki'
+  | 'cliche'
+  | 'tic'
+  | 'repetition'
+  | 'notation'
+  | 'symbols'
+  | 'ruby'
+  | 'grammar'
+  | 'other'
+
+/** 推敲案の場所の控え（稿の本文の中の位置）。本文が変わったら excerpt を探し直す（src/claude/anchor.ts の reanchor） */
+export interface ProofAnchor {
+  /** 稿の本文（記法込みの生の本文）の中の位置（UTF-16） */
+  offset: number
+  /** excerpt が本文の中で占める長さ（UTF-16。ルビの記法を含む） */
+  length: number
+  /** 何段落目か（1から。空行は数えない） */
+  paragraph: number
+  /** 直前・直後の本文（最大20字。サロゲートペアの途中では切らない） */
+  before: string
+  after: string
+  /** 見つけた時の稿の本文の指紋（hashJson(body)。違えば本文が変わった） */
+  bodyHash: string
+}
+
+/** 推敲案（Claude のワードサーチなどの提案）。並びはフラグ → 新しい順、チェック済みは下へ */
+export interface ProofSuggestion extends ClaudeRecordBase {
+  /** 見つけた話・特殊ブロック・幕（幕に分けた話なら、excerpt を含む幕） */
+  pieceId: ID
+  /** pieceId が幕の時、幕の属する話（幕がつないだ・解除したことで無くなっても、話の本文で探し直せるように）。それ以外は null */
+  parentId: ID | null
+  /** 見つけた時の採用稿（見つからなかった・手で書いた時は null） */
+  versionId: ID | null
+  /** 作った時点の表記（「第12話　題　第2幕」。話が消えても場所が分かるように） */
+  pieceLabel: string
+  anchor: ProofAnchor | null
+  category: ProofCategory
+  /** 種類の日本語名（作った時点のもの。知らない種類でも表示できるように） */
+  categoryLabel: string
+  /** 本文から抜き出した箇所（記法込み・そのまま） */
+  excerpt: string
+  /** 直し方の案（無ければ空） */
+  suggestion: string
+  reason: string
+  /** フラグ（常に一番上）。Claude が important としたものは最初から立つ */
+  flagged: boolean
+  /** チェック（消し込み）。チェックしたものは斜線＋グレーで下へ */
+  done: boolean
+  doneAt: number | null
+  /** 実行（同じ名前・日付のワードサーチ。derivedId('run', …)）。手で書いたものは null */
+  runId: ID | null
+  /** 1回の追加（proofBatches）。手で書いたものは null */
+  batchId: ID | null
+  /** 提案したモデルの名前（分かれば） */
+  model?: string
+}
+
+/** 推敲案の1回の追加（ワードサーチの実行の記録）。確かめた範囲を控え、「未確認 #41〜#300」を出すのに使う */
+export interface ProofBatch extends ClaudeRecordBase {
+  /** 実行（同じ名前・日付の追加をまとめる） */
+  runId: ID
+  /** 実行の名前（「ワードサーチ（第1〜20話）」。無ければ空） */
+  runLabel: string
+  /** 実行した日（日本時間の YYYY-MM-DD） */
+  runDate: string
+  /** この追加の推敲案の種類（重複なし） */
+  categories: ProofCategory[]
+  /** 確かめた話（推敲案が無かった話も含む）と、その時の採用原稿の指紋 */
+  covered: ProofCovered[]
+  /** この追加で作った推敲案 */
+  itemIds: ID[]
+  model?: string
+}
+
+export interface ProofCovered {
+  pieceId: ID
+  /** 確かめた時の採用稿（幕に分けた話は null） */
+  versionId: ID | null
+  /** 確かめた時の採用原稿の指紋（hashJson(本文)。違えば「本文が変わった話」） */
+  bodyHash: string
+  /** その時の表記（第12話など） */
+  label: string
+}
+
+/** 改稿案。チェック（実装済み・ボツ）したものは斜線＋グレーで下へ沈む。本文の長さに制限はない（ワンシーン丸ごとの案もある） */
+export interface RevisionIdea extends ClaudeRecordBase {
+  heading: string
+  body: string
+  checked: boolean
+  checkedAt: number | null
+  /** 関係する話（チップで開ける）。消えた話は表示しない */
+  pieceIds: ID[]
+  /** チェックしていない案の並び順 */
+  order: number
+}
+
+/** 戦略メモの中のコンテストの候補（［応募計画にする］で応募計画の項目に入れる） */
+export interface StrategyContest {
+  /** メモの中での印（k0, k1, …。並びは変わらない） */
+  id: string
+  name: string
+  organizer: string
+  /** https の URL（無ければ空） */
+  url: string
+  /** 締切 YYYY-MM-DD（無ければ空） */
+  deadline: string
+  minChars: number | null
+  maxChars: number | null
+  limitUnit: LimitUnit
+  /** このタイトルとの相性（応募計画の概要に入れる） */
+  fit: string
+  /** 応募までの改稿の方針（応募計画の改稿方針に入れる） */
+  plan: string
+  /** ［応募計画にする］で作った応募計画（まだなら null） */
+  submissionId: ID | null
+}
+
+/** 戦略メモ（Claude が採用原稿をもとに考えた今後の戦略。［全体戦略に追記］［応募計画にする］で取り込む） */
+export interface StrategyNote extends ClaudeRecordBase {
+  /** 考えた日（日本時間の YYYY-MM-DD） */
+  runDate: string
+  heading: string
+  /** Markdown */
+  body: string
+  contests: StrategyContest[]
+  /** ［全体戦略に追記］した日時（まだなら null） */
+  appliedAt: number | null
+  model?: string
+}
+
+/** 批評プロンプト（タイトル全体を、採用原稿で Claude に批評してもらうための依頼文）。titleId = null はどのタイトルでも使える */
+export interface CritiquePrompt extends Omit<ClaudeRecordBase, 'titleId'> {
+  /** null = 共通（どのタイトルでも使う） */
+  titleId: ID | null
+  name: string
+  body: string
+  order: number
+}
+
+/** 批評の範囲 */
+export type CritiqueScope = { kind: 'whole' } | { kind: 'range'; fromPieceId: ID; toPieceId: ID; label: string }
+
+/** 批評した時点の採用原稿（「286,400字・120話の時点（現在 +3,200字）」を出す） */
+export interface CritiqueManuscript {
+  /** 採用原稿の文字数（空白・改行・記法を除く） */
+  chars: number
+  /** 話（第n話・特殊ブロック）の数 */
+  pieces: number
+  /** 採用原稿の指紋 */
+  hash: string
+  at: number
+}
+
+/** 作品批評の結果（日付ごと）。実行したプロンプトの控えと、結果（Markdown かアーティファクトの URL） */
+export interface CritiqueResult extends ClaudeRecordBase {
+  /** 使った批評プロンプト（無い・消えた時は promptName / promptText の控えを出す） */
+  promptId: ID | null
+  promptName: string
+  promptText: string
+  /** 批評した日（日本時間の YYYY-MM-DD） */
+  runDate: string
+  /** 結果（Markdown。無ければ空） */
+  resultMarkdown: string
+  /** アーティファクトの URL（https。無ければ空） */
+  artifactUrl: string
+  scope: CritiqueScope
+  manuscript: CritiqueManuscript | null
+  /** 批評したモデルの名前（分かれば。無ければ空） */
+  model: string
+  /** 利用者のメモ */
+  note: string
+}
+
 /** ゴミ箱に入れたものの種類（戻し方が変わる） */
 export type TrashKind =
   | 'title'
@@ -229,6 +436,11 @@ export type TrashKind =
   | 'settingCategory'
   | 'settingEntry'
   | 'submission'
+  | 'proofSuggestion'
+  | 'revisionIdea'
+  | 'strategyNote'
+  | 'critiquePrompt'
+  | 'critiqueResult'
 
 /** 削除した時点の場所。戻す時はここへ戻す（無くなっていれば近い所へ） */
 export interface TrashOrigin {
@@ -307,6 +519,13 @@ export interface AppData {
   settingEntries: Record<ID, SettingEntry>
   submissions: Record<ID, Submission>
   snapshotTexts: Record<ID, SnapshotText>
+  // 2.3（Claude 連携）
+  proofSuggestions: Record<ID, ProofSuggestion>
+  proofBatches: Record<ID, ProofBatch>
+  revisionIdeas: Record<ID, RevisionIdea>
+  strategyNotes: Record<ID, StrategyNote>
+  critiquePrompts: Record<ID, CritiquePrompt>
+  critiqueResults: Record<ID, CritiqueResult>
   trashEntries: Record<ID, TrashEntry>
   trashRecords: Record<ID, TrashRecord>
 }
@@ -327,9 +546,27 @@ export const TABLE_NAMES: TableName[] = [
   'settingEntries',
   'submissions',
   'snapshotTexts',
+  'proofSuggestions',
+  'proofBatches',
+  'revisionIdeas',
+  'strategyNotes',
+  'critiquePrompts',
+  'critiqueResults',
   'trashEntries',
   'trashRecords',
 ]
+
+/** 2.3（Claude 連携）の表。コネクタが作れるのはこの表のレコードだけ（firestore.rules） */
+export const CLAUDE_TABLES = [
+  'proofSuggestions',
+  'proofBatches',
+  'revisionIdeas',
+  'strategyNotes',
+  'critiquePrompts',
+  'critiqueResults',
+] as const satisfies readonly TableName[]
+
+export type ClaudeTableName = (typeof CLAUDE_TABLES)[number]
 
 export function emptyData(): AppData {
   return {
@@ -343,6 +580,12 @@ export function emptyData(): AppData {
     settingEntries: {},
     submissions: {},
     snapshotTexts: {},
+    proofSuggestions: {},
+    proofBatches: {},
+    revisionIdeas: {},
+    strategyNotes: {},
+    critiquePrompts: {},
+    critiqueResults: {},
     trashEntries: {},
     trashRecords: {},
   }

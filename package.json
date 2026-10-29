@@ -15,13 +15,18 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
     "test:sync": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-novel-studio \"vitest run --config vitest.emu.config.ts\"",
     "test:e2e:sync": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-novel-studio \"playwright test -c playwright.sync.config.ts\"",
-    "deploy": "npm run build && firebase deploy --only hosting,firestore"
+    "test:connector": "npm --prefix connector test",
+    "test:connector:emu": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-novel-studio \"npm --prefix connector run test:emu\"",
+    "connector:setup": "node connector/scripts/setup.mjs",
+    "connector:check": "node connector/scripts/check.mjs",
+    "deploy": "node scripts/deploy.mjs"
   },
   "dependencies": {
     "dexie": "^4.4.7",
     "diff": "^8.0.4",
     "fflate": "^0.8.2",
     "firebase": "^13.1.0",
+    "markdown-it": "15.0.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
@@ -44,5 +49,10 @@
     "vite": "^7.3.7",
     "vite-plugin-pwa": "^1.3.0",
     "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "markdown-it": {
+      "argparse": "3.0.2"
+    }
   }
 }

@@ -4,15 +4,35 @@ rules_version = '2';
 // - 持ち主: 最初にログインして同期を始めたアカウント（config/owner に記録。後から変えられない）。
 //   持ち主を変えたい時は、Firebase コンソールの Firestore で config/owner を消してから、新しい持ち主でログインする。
 // - 持ち主のデータは users/{uid}/records と、データの形の版 users/{uid}/meta/app だけ。ほかの場所は誰も読み書きできない。
+// - 2.3: Claude 用のコネクタ（Cloudflare Worker）は、持ち主がアプリで許可した匿名のアカウント（config/connector の uid）として、
+//   持ち主の記録を読み、Claude の6つの表（推敲案など）に新しい記録を作ることだけができる（書き換え・削除・原稿の表は不可）。
+//   持ち主の読み書きは今までどおり（|| の左で決まるので、コネクタのための読み取りは増えない）。
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
       return request.auth != null;
     }
 
+    function ownerUid() {
+      return get(/databases/$(database)/documents/config/owner).data.uid;
+    }
+
     function isOwner(uid) {
-      return signedIn() && request.auth.uid == uid
-        && get(/databases/$(database)/documents/config/owner).data.uid == uid;
+      return signedIn() && request.auth.uid == uid && ownerUid() == uid;
+    }
+
+    function connectorPath() {
+      return /databases/$(database)/documents/config/connector;
+    }
+
+    // コネクタ: 匿名のアカウントで、持ち主（uid）が config/connector に記録したもの。持ち主自身・Google のアカウントはコネクタにならない
+    function isConnector(uid) {
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == 'anonymous'
+        && request.auth.uid != uid
+        && ownerUid() == uid
+        && exists(connectorPath())
+        && get(connectorPath()).data.uid == request.auth.uid;
     }
 
     // 1レコード = 1文書（src/sync/codec.ts の RecordDoc / ChunkDoc）
@@ -24,22 +44,65 @@ service cloud.firestore {
         && d.updated == request.time;
     }
 
+    // コネクタが作れる記録: Claude の6つの表だけ。決まった項目だけで、分割・削除の印・復元の印は無く、文書の名前は {表名}:{id}。
+    // 書き込みは持ち主が「書き込みを許可」している間だけ（config/connector の writes）
+    function connectorCreate(docId) {
+      let d = request.resource.data;
+      return get(connectorPath()).data.writes == true
+        && d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
+        && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
+        && d.table in ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults']
+        && d.id is string && d.id.size() > 0 && d.id.size() <= 64
+        && docId == d.table + ':' + d.id
+        && d.device == 'claude-connector'
+        && d.chunks == 0
+        && d.deleted == false
+        && d.json is string && d.json.size() <= 200000
+        && d.hash is string && d.hash.size() <= 64;
+    }
+
     match /config/owner {
       allow get: if signedIn();
+      // 匿名のアカウント（コネクタ）は持ち主になれない
       allow create: if signedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
         && request.resource.data.uid == request.auth.uid;
     }
 
+    // コネクタとの連携（src/features/claude の連携の画面が書く）。持ち主だけが書け、持ち主と、記録されたコネクタだけが読める。
+    // pairing は連携の確かめの指紋、pairedAt は連携した時刻（作る時はサーバー時刻。「書き込みを許可」を変える時は変えない）
+    function validConnector() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v'])
+        && d.keys().hasAll(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v'])
+        && d.uid is string && d.uid.size() > 0 && d.uid.size() <= 128 && d.uid != request.auth.uid
+        && d.pairing is string && d.pairing.size() <= 128
+        && d.approvedOn is string && d.approvedOn.size() <= 100
+        && d.writes is bool
+        && d.v is int;
+    }
+
+    match /config/connector {
+      allow get: if signedIn() && (request.auth.uid == ownerUid() || resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && request.auth.uid == ownerUid() && validConnector()
+        && request.resource.data.pairedAt == request.time;
+      allow update: if signedIn() && request.auth.uid == ownerUid() && validConnector()
+        && (request.resource.data.pairedAt == request.time
+          || (request.resource.data.pairing == resource.data.pairing && request.resource.data.pairedAt == resource.data.pairedAt));
+      allow delete: if signedIn() && request.auth.uid == ownerUid();
+    }
+
     match /users/{uid}/records/{docId} {
-      allow read: if isOwner(uid);
-      allow create, update: if isOwner(uid) && validRecord();
+      allow read: if isOwner(uid) || isConnector(uid);
+      allow create: if (isOwner(uid) && validRecord()) || (isConnector(uid) && validRecord() && connectorCreate(docId));
+      allow update: if isOwner(uid) && validRecord();
       allow delete: if isOwner(uid);
     }
 
     // データの形の版（src/sync/appModel.ts）: データを書いたアプリの形の版。古い版のアプリは、これが自分より高いと送らない。
-    // 持ち主だけが読み書きでき、下げることはできない（戻したい時は、コンソールでこの文書を消す）。
-    // 2.3 で Claude 用のコネクタにも読ませる時は、ここに get を足す。
+    // 持ち主だけが書け、下げることはできない（戻したい時は、コンソールでこの文書を消す）。
+    // 連携したコネクタも読める（形の版が違えば、コネクタは書き込まない）。
     function validAppModel() {
       let d = request.resource.data;
       return d.keys().hasOnly(['model', 'appVersion', 'updatedAt'])
@@ -50,7 +113,7 @@ service cloud.firestore {
     }
 
     match /users/{uid}/meta/app {
-      allow get: if isOwner(uid);
+      allow get: if isOwner(uid) || isConnector(uid);
       allow create: if isOwner(uid) && validAppModel();
       allow update: if isOwner(uid) && validAppModel()
         && request.resource.data.model >= resource.data.model;

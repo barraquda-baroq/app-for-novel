@@ -11,6 +11,12 @@ async function flushAndReload(page: Page): Promise<void> {
   await page.evaluate(() => window.__ns.flushNow())
   await page.reload()
   await page.waitForFunction(() => Boolean(window.__ns))
+  // データの読み込みが終わるまで待つ（負荷が高い時に、読み込む前の空のデータを読まないように。
+  // 画面は最初に「読み込み中…」を出すので、何か描かれていて、それが消えていれば読み込み済み）
+  await page.waitForFunction(() => {
+    const root = document.getElementById('root')
+    return Boolean(root && root.childElementCount > 0 && !root.textContent?.includes('読み込み中…'))
+  })
 }
 
 /** ページ全体が横にスクロールしない（スマホ幅でのはみ出しチェック） */

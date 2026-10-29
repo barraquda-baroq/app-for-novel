@@ -21,6 +21,9 @@
 | セパレート（幕） | 採用した話を WEB 掲載用に「第n話　題　第x幕」へ分ける（話数は増えない）。一覧の右クリック（スマホは長押し）・「…」から。カーソルを置いて Enter か「ここで区切る」で分割点を置く。幕ごとに稿・採用・比較ができ、さらに分ける・次の幕とつなぐ・セパレート解除もできる |
 | 通し読み | 採用原稿だけをタイトル全体・章ごとに通して読む。採用原稿がない話は「採用原稿がありません。」と表示。縦書き表示・テキスト書き出し |
 | 戦略 | 応募先コンテストを応募順に並べ、締切・規定（文字数または原稿用紙換算枚数）・状態・結果・改稿方針・再応募方針を管理。応募時点の採用原稿（どの話にどの稿を採用していたかと本文の控え）を記録し、あとから読む・書き出せる |
+| 戦略メモ・改稿案・推敲案（2.3） | 戦略タブに、Claude が提案した戦略メモ（［応募計画にする］［全体戦略に追記］）、改稿案（チェックすると斜線＋グレーで下へ）、推敲案（フラグを立てたものが上・新しい順、種類つき。押すと本文のその箇所を開く。チェックで消し込み）を並べる |
+| 作品批評（2.3） | タイトルの新しいタブ。批評プロンプト（このタイトルのもの・共通のもの）と、日付ごとの批評の結果（Markdown・アーティファクトの URL・メモ） |
+| Claude 連携（2.3） | claude.ai に Novel Studio のコネクタ（リモート MCP）を足すと、Claude が「Claude に見せる」タイトルの採用原稿を読み、推敲案・改稿案・戦略メモ・作品批評を足せる（本文は書き換えない）。コネクタが無くても「Claude に頼む（手動）」でコピーと貼り付けで使える |
 | 同期 | Google でログインすると、どの端末で書いた内容も自動で同じになる。オフラインでも書け、つながった時に送る。同時に同じ稿の本文を直していたら、片方を「（競合: ○○での編集）」の別の稿として残す |
 | バックアップ | 全データを JSON で書き出し・復元。しばらく書き出していないとホームでお知らせ |
 
@@ -34,7 +37,7 @@
 - アプリの更新は「更新する」を押した時だけ（執筆中に勝手に再読み込みしない）
 
 詳しい仕様と設計上の決定は [docs/SPEC.md](docs/SPEC.md)（1.x）と [docs/SPEC-2.md](docs/SPEC-2.md)（2.x）を参照してください。
-公開（Firebase Hosting）と同期の準備は [docs/DEPLOY.md](docs/DEPLOY.md) にまとめています。
+公開（Firebase Hosting）と同期の準備は [docs/DEPLOY.md](docs/DEPLOY.md) に、Claude 用のコネクタ（2.3。claude.ai から原稿を読み、推敲案・作品批評などを足してもらう）の準備は [docs/CONNECTOR.md](docs/CONNECTOR.md) にまとめています（Windows でも Mac でも同じ手順）。
 
 ## 使い方（開発）
 
@@ -47,8 +50,12 @@ npm run build      # dist/ に本番ビルド（PWA）
 npm run format     # Prettier で整形
 
 npm run test:sync      # 同期の結合テスト（Firebase エミュレーター。Java が必要）
-npm run test:e2e:sync  # ブラウザ2つで同期を確かめる E2E テスト（同上）
-npm run deploy         # Firebase Hosting とアクセスルールを公開（docs/DEPLOY.md）
+npm run test:e2e:sync  # ブラウザ2つで同期を確かめる E2E テスト（同上。コネクタとの連携の通しのテストも）
+npm run deploy         # Firebase Hosting とアクセスルール（とコネクタ）を公開（docs/DEPLOY.md）
+
+npm run connector:setup     # Claude 用のコネクタの準備（初めての時に1回。docs/CONNECTOR.md）
+npm run test:connector      # コネクタのテスト（単体・Workers の実行環境・公開する形）
+npm run test:connector:emu  # コネクタの結合テスト（Firebase エミュレーター）
 ```
 
 `dist/` は相対パスで出力されるので、任意の静的ホスティング（GitHub Pages など）にそのまま置けます。
@@ -72,10 +79,12 @@ Web アプリのまま [Capacitor](https://capacitorjs.com/)（iOS / Android）�
 
 ```
 src/domain/    ドメインロジック（純粋関数・テスト済み）
+src/claude/    Claude 連携の純粋な部品（推敲案の場所・内容から作る id・Claude に渡す形・手動連携・コネクタとの連携の決まり。コネクタと共有）
 src/db/        IndexedDB への保存（Dexie）と同期の送信待ち
 src/sync/      クラウドとの同期（Firebase。マージ・送受信・ログイン）
 src/store/     状態管理（Zustand）と UI から呼ぶ actions
 src/ui/        共通部品（ダイアログ・分割ペイン・自動保存入力など）
 src/features/  各画面
 e2e/           Playwright の E2E テスト
+connector/     Claude 用のコネクタ（Cloudflare Worker。リモート MCP サーバー。src/domain・src/claude の純粋な部品を共有）
 ```

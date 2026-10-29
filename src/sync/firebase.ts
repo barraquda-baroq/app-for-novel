@@ -28,8 +28,11 @@ const config = {
   appId: '1:223868754377:web:37765607c43f63d4de3018',
 }
 
-/** 開発・テスト用: エミュレーターのホスト（例: 127.0.0.1）。設定するとクラウドではなくエミュレーターにつなぐ */
-const emulatorHost = import.meta.env.VITE_FIREBASE_EMULATOR as string | undefined
+/**
+ * 開発・テスト用: エミュレーターのホスト（例: 127.0.0.1）。設定するとクラウドではなくエミュレーターにつなぐ。
+ * 公開するビルドでは使わない（環境変数が残ったままビルドしても、公開したアプリがエミュレーターにつながらないように）
+ */
+const emulatorHost = import.meta.env.DEV ? (import.meta.env.VITE_FIREBASE_EMULATOR as string | undefined) : undefined
 export const usingEmulator = Boolean(emulatorHost)
 
 /**

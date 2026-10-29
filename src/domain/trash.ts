@@ -10,14 +10,20 @@ import {
   type AppData,
   type Chapter,
   type ContentTableName,
+  type CritiquePrompt,
+  type CritiqueResult,
   type ID,
   type Idea,
   type Memo,
   type NodeRef,
   type Piece,
+  type ProofBatch,
+  type ProofSuggestion,
+  type RevisionIdea,
   type SettingCategory,
   type SettingEntry,
   type SnapshotText,
+  type StrategyNote,
   type Submission,
   type SubmissionSnapshot,
   type Title,
@@ -66,6 +72,11 @@ export const TRASH_KINDS: readonly TrashKind[] = [
   'settingCategory',
   'settingEntry',
   'submission',
+  'proofSuggestion',
+  'revisionIdea',
+  'strategyNote',
+  'critiquePrompt',
+  'critiqueResult',
 ]
 
 export function isTrashKind(v: unknown): v is TrashKind {
@@ -83,6 +94,11 @@ export const TRASH_KIND_TABLE: Record<TrashKind, ContentTableName> = {
   settingCategory: 'settingCategories',
   settingEntry: 'settingEntries',
   submission: 'submissions',
+  proofSuggestion: 'proofSuggestions',
+  revisionIdea: 'revisionIdeas',
+  strategyNote: 'strategyNotes',
+  critiquePrompt: 'critiquePrompts',
+  critiqueResult: 'critiqueResults',
 }
 
 export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
@@ -95,6 +111,22 @@ export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
   settingCategory: '設定項目',
   settingEntry: '設定エントリ',
   submission: '応募計画',
+  proofSuggestion: '推敲案',
+  revisionIdea: '改稿案',
+  strategyNote: '戦略メモ',
+  critiquePrompt: '批評プロンプト',
+  critiqueResult: '批評の結果',
+}
+
+/** 長い文章の最初の行（見出しが無い時の名前。長ければ切る） */
+function firstLine(text: string, max = 24): string {
+  const line =
+    text
+      .split(/\r\n?|\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? ''
+  const chars = Array.from(line)
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : line
 }
 
 /** 一覧に出す名前（画面の表記と同じ。空なら「無題の…」） */
@@ -118,6 +150,19 @@ export const trashLabel = {
   category: (c: Pick<SettingCategory, 'name'>) => c.name.trim() || '無題の設定項目',
   entry: (e: Pick<SettingEntry, 'name'>) => e.name.trim() || '（名前未設定）',
   submission: (s: Pick<Submission, 'contestName'>) => s.contestName.trim() || '（コンテスト名未設定）',
+  /** 「見れる」→「見られる」のような表記（抜き出した箇所と直し方） */
+  proofSuggestion: (p: Pick<ProofSuggestion, 'excerpt' | 'suggestion'>) => {
+    const ex = firstLine(p.excerpt, 16)
+    const sug = firstLine(p.suggestion, 16)
+    return (ex ? `「${ex}」${sug ? `→「${sug}」` : ''}` : sug) || '（空の推敲案）'
+  },
+  /** 「チェック済みを削除」でまとめて削除した推敲案 */
+  proofSuggestions: (n: number) => `チェック済みの推敲案（${n}件）`,
+  revisionIdea: (r: Pick<RevisionIdea, 'heading' | 'body'>) => r.heading.trim() || firstLine(r.body) || '（空の改稿案）',
+  strategyNote: (n: Pick<StrategyNote, 'heading' | 'runDate'>) => n.heading.trim() || `戦略メモ（${n.runDate}）`,
+  critiquePrompt: (p: Pick<CritiquePrompt, 'name'>) => p.name.trim() || '無題の批評プロンプト',
+  critiqueResult: (r: Pick<CritiqueResult, 'promptName' | 'runDate'>) =>
+    `${r.runDate ? `${r.runDate} ` : ''}${r.promptName.trim() || '作品批評'}の結果`,
 }
 
 /** 同じ id のものが残っていて複製として戻した稿の名前に付ける */
@@ -375,6 +420,18 @@ function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord, origin?:
       }
       return
     }
+    case 'proofSuggestion':
+    case 'revisionIdea':
+    case 'strategyNote':
+    case 'critiqueResult':
+      titleOf((record as { titleId: ID }).titleId)
+      return
+    case 'critiquePrompt': {
+      // 共通の批評プロンプト（titleId = null）は、どのタイトルにも属さない
+      const p = record as CritiquePrompt
+      if (p.titleId !== null) titleOf(p.titleId)
+      return
+    }
   }
 }
 
@@ -436,6 +493,57 @@ function rewriteRefs(table: ContentTableName, record: ContentRecord, ids: Map<ID
     }
     case 'snapshotTexts':
       return record
+    case 'proofSuggestions': {
+      const r = record as ProofSuggestion
+      return {
+        ...r,
+        id: m(r.id),
+        titleId: m(r.titleId),
+        pieceId: m(r.pieceId),
+        parentId: mn(r.parentId ?? null),
+        versionId: mn(r.versionId ?? null),
+        batchId: mn(r.batchId ?? null),
+      }
+    }
+    case 'proofBatches': {
+      const r = record as ProofBatch
+      return {
+        ...r,
+        id: m(r.id),
+        titleId: m(r.titleId),
+        covered: Array.isArray(r.covered)
+          ? r.covered.map((c) => ({ ...c, pieceId: m(c.pieceId), versionId: mn(c.versionId ?? null) }))
+          : r.covered,
+        itemIds: list(r.itemIds),
+      }
+    }
+    case 'revisionIdeas': {
+      const r = record as RevisionIdea
+      return { ...r, id: m(r.id), titleId: m(r.titleId), pieceIds: list(r.pieceIds) }
+    }
+    case 'strategyNotes': {
+      const r = record as StrategyNote
+      return {
+        ...r,
+        id: m(r.id),
+        titleId: m(r.titleId),
+        contests: Array.isArray(r.contests)
+          ? r.contests.map((c) => ({ ...c, submissionId: mn(c.submissionId ?? null) }))
+          : r.contests,
+      }
+    }
+    case 'critiquePrompts': {
+      const r = record as CritiquePrompt
+      return { ...r, id: m(r.id), titleId: mn(r.titleId) }
+    }
+    case 'critiqueResults': {
+      const r = record as CritiqueResult
+      const scope =
+        r.scope && r.scope.kind === 'range'
+          ? { ...r.scope, fromPieceId: m(r.scope.fromPieceId), toPieceId: m(r.scope.toPieceId) }
+          : r.scope
+      return { ...r, id: m(r.id), titleId: m(r.titleId), promptId: mn(r.promptId ?? null), scope }
+    }
   }
 }
 
@@ -495,7 +603,15 @@ function insertIndex(list: readonly ID[], origin: TrashOrigin): number {
   return knownIndex(origin) ? Math.min(origin.index, list.length) : list.length
 }
 
-type OrderedTable = 'titles' | 'memos' | 'ideas' | 'settingCategories' | 'settingEntries' | 'submissions'
+type OrderedTable =
+  | 'titles'
+  | 'memos'
+  | 'ideas'
+  | 'settingCategories'
+  | 'settingEntries'
+  | 'submissions'
+  | 'revisionIdeas'
+  | 'critiquePrompts'
 
 /**
  * order で並ぶ一覧へ戻す。先頭にあった（prevId = null）なら先頭、直前にあった要素がまだあればその直後、
@@ -673,6 +789,8 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
         restoreSnapshotText(tx, r.record as SnapshotText, texts)
         continue
       }
+      // 推敲案・推敲案の実行の記録は内容から作った id なので、同じ id が残っていれば同じ提案（もう一度足された）。複製は作らない
+      if ((r.table === 'proofSuggestions' || r.table === 'proofBatches') && tx.get(r.table, r.record.id)) continue
       if (tx.get(r.table, r.record.id)) ids.set(r.record.id, newId())
       items.push({ table: r.table, record: r.record })
     }
@@ -765,6 +883,24 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
         placeInOrder(tx, 'submissions', mainId, (x) => x.titleId === s.titleId, origin)
         break
       }
+      case 'revisionIdea': {
+        const r = restored as RevisionIdea
+        titleId = r.titleId
+        placeInOrder(tx, 'revisionIdeas', mainId, (x) => x.titleId === r.titleId, origin)
+        break
+      }
+      case 'critiquePrompt': {
+        const p = restored as CritiquePrompt
+        titleId = p.titleId
+        placeInOrder(tx, 'critiquePrompts', mainId, (x) => x.titleId === p.titleId, origin)
+        break
+      }
+      // 推敲案（「チェック済みを削除」の時は複数）・戦略メモ・批評結果は日時で並ぶので、戻すだけ
+      case 'proofSuggestion':
+      case 'strategyNote':
+      case 'critiqueResult':
+        titleId = (restored as { titleId: ID }).titleId
+        break
     }
 
     removeEntries(tx, new Set([entry.id]))

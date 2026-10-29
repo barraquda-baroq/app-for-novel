@@ -1,6 +1,6 @@
 // 採用原稿（左／上）。アクティブなバージョンだけが章・タイトル・通し読みに反映される。
 // 本文・稿の名前の編集は「保存」を押すまで画面の中だけで持つ（usePieceSession.ts）。
-import { useDeferredValue, useId, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { NO_ACTIVE_MESSAGE } from '../../domain/readthrough'
 import type { Version } from '../../domain/types'
 import { actions } from '../../store/actions'
@@ -17,12 +17,13 @@ import { versionField } from './session'
 import { SessionInput, SessionTextarea } from './SessionField'
 import type { WorkspaceApi } from './VersionsPane'
 
-export function ActivePane({ api, active }: { api: WorkspaceApi; active: Version | null }) {
+/** extra: 採用原稿の操作の先頭に置くもの（「推敲案 n」） */
+export function ActivePane({ api, active, extra }: { api: WorkspaceApi; active: Version | null; extra?: ReactNode }) {
   if (!active) return <NoActive api={api} />
-  return <ActiveEditor api={api} active={active} />
+  return <ActiveEditor api={api} active={active} extra={extra} />
 }
 
-function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
+function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Version; extra?: ReactNode }) {
   const { hub } = api
   const bodyKey = versionField(active.id, 'body')
   // 保存していない編集も含めた本文（文字数用）
@@ -91,6 +92,7 @@ function ActiveEditor({ api, active }: { api: WorkspaceApi; active: Version }) {
           data-testid="active-version-name"
         />
         <div className="pw-tools" role="group" aria-label="採用原稿の操作">
+          {extra}
           <button
             type="button"
             className="btn pw-tbtn"

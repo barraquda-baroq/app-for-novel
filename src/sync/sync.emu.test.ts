@@ -23,6 +23,7 @@ import prodRules from '../../firestore.rules?raw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence, type ConflictNote, type Persistence } from '../db/persistence'
 import * as A from '../domain/acts'
+import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import { repairData } from '../domain/repair'
 import * as S from '../domain/storyOps'
@@ -39,7 +40,8 @@ import {
 } from '../test/actsScenarios'
 import { appModelRef, type AppModel } from './appModel'
 import { createConflictHooks } from './conflicts'
-import { createSyncEngine, type SyncEngine, type SyncTarget } from './engine'
+import { encodeRecord } from './codec'
+import { createSyncEngine, SYNC_SCHEMA, type SyncEngine, type SyncTarget } from './engine'
 import { stableStringify } from './merge'
 
 /**
@@ -1190,6 +1192,134 @@ describe('データの形の版（エミュレーター）', () => {
         rules: { files: [{ name: 'firestore.rules', content: emuRules }] },
       })
     }
+  })
+})
+
+describe('2.3 の推敲案・改稿案などの同期（エミュレーター）', () => {
+  it('2.3 の表も届き、チェック・フラグは項目ごとに合わさる。片方で削除・片方で編集した改稿案は控える', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    let ideaId = ''
+    let suggestionId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      titleId = r.titleId
+      const withBody = S.updateVersion(r.data, r.data.pieces[r.pieceId].versionIds[0], { body: '窓から見れる景色' })
+      const idea = C.addRevisionIdea(withBody, titleId, { heading: '冒頭', body: '短くする' })
+      ideaId = idea.result
+      const s = C.addProofSuggestion(idea.data, titleId, { pieceId: r.pieceId, excerpt: '見れる', category: 'ra_nuki' })
+      suggestionId = s.result
+      return C.addCritiquePrompt(s.data, null, { name: '共通', body: '批評して' }).data
+    })
+    await settle(a, b)
+    expect((await b.load()).proofSuggestions[suggestionId].anchor?.offset).toBe(3)
+    // オフラインの間に、Aはフラグ、Bはチェック
+    b.offline()
+    await a.edit((d) => C.setProofFlagged(d, suggestionId, true))
+    await settle(a)
+    await b.edit((d) => C.setProofDone(d, suggestionId, true))
+    await b.online()
+    await settle(a, b)
+    expect((await a.load()).proofSuggestions[suggestionId]).toMatchObject({ flagged: true, done: true })
+    // Aは改稿案を削除、Bは編集
+    b.offline()
+    await a.edit((d) => C.deleteRevisionIdea(d, ideaId))
+    await settle(a)
+    await b.edit((d) => C.updateRevisionIdea(d, ideaId, { body: '短くする。Bで足した' }))
+    await b.online()
+    await settle(a, b)
+    const data = await a.load()
+    expect(data.revisionIdeas[ideaId]).toBeUndefined()
+    const kept = Object.values(data.trashRecords).find(
+      (r) => r.table === 'revisionIdeas' && (r.record as { body: string }).body.includes('Bで足した'),
+    )
+    expect(kept).toBeDefined()
+    expect(data.trashEntries[kept!.entryId].reason).toBe('conflict')
+    // タイトルを削除すると、共通の批評プロンプト以外の 2.3 の記録も片付く
+    await a.edit((d) => E.deleteTitle(d, titleId))
+    await settle(a, b)
+    const after = await b.load()
+    expect(Object.keys(after.proofSuggestions)).toHaveLength(0)
+    expect(Object.values(after.critiquePrompts).map((p) => p.name)).toEqual(['共通'])
+  })
+
+  it('コネクタが作った記録（device: claude-connector）は、送信待ちのある端末にも競合なしで届く', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    await a.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      titleId = r.titleId
+      return r.data
+    })
+    await settle(a)
+    a.offline()
+    await a.edit((d) => E.updateTitle(d, titleId, { strategyNote: 'この端末で書いた全体戦略' }))
+    const note = {
+      id: 'cn-test.1',
+      v: 1,
+      source: 'claude',
+      titleId,
+      createdAt: 1,
+      updatedAt: 1,
+      runDate: '2026-10-28',
+      heading: '戦略',
+      body: '## 狙い',
+      contests: [],
+      appliedAt: null,
+    }
+    const enc = encodeRecord(note)
+    await setDoc(doc(a.fs, 'users', a.uid, 'records', `strategyNotes:${note.id}`), {
+      table: 'strategyNotes',
+      id: note.id,
+      json: enc.json,
+      chunks: 0,
+      deleted: false,
+      hash: enc.hash,
+      updated: serverTimestamp(),
+      device: 'claude-connector',
+    })
+    await a.online()
+    await settle(a)
+    const data = await a.load()
+    expect(data.strategyNotes[note.id]).toEqual(note)
+    expect(data.titles[titleId].strategyNote).toBe('この端末で書いた全体戦略')
+    expect(a.notes).toEqual([])
+    expect(Object.keys(data.trashEntries)).toHaveLength(0)
+  })
+
+  it('同期の形の版が古い端末は、次の同期で全件を受け取り直す（古い版が飛ばした表も届く）', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    await a.online()
+    let ideaId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      const idea = C.addRevisionIdea(r.data, r.titleId, { heading: '案' })
+      ideaId = idea.result
+      return idea.data
+    })
+    await settle(a)
+    // 受け取った位置がずっと先にある端末（2.2 の端末が知らない表を飛ばして位置を進めた時と同じ）
+    const far = { s: 4_000_000_000, n: 0 }
+    const b = await makeDevice('b', who)
+    await b.p.setMeta('uid', b.uid)
+    await b.p.setMeta('cursor', far)
+    await b.p.setMeta('syncSchema', SYNC_SCHEMA)
+    await b.online()
+    await b.engine?.idle()
+    await new Promise((r) => setTimeout(r, 500))
+    expect((await b.load()).revisionIdeas[ideaId]).toBeUndefined()
+    b.offline()
+    await b.p.setMeta('syncSchema', 1)
+    await b.online()
+    await waitFor(async () => (await b.load()).revisionIdeas[ideaId], '受け取り直す')
+    expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
   })
 })
 

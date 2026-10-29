@@ -1,4 +1,4 @@
-// タイトル画面: タイトル名・あらすじ・集計と、本編／設定項目／戦略／アイデアのタブ。
+// タイトル画面: タイトル名・あらすじ・集計（と「Claude に見せる」）と、本編／設定項目／戦略／作品批評／アイデアのタブ。
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { missingActiveLabel } from '../../domain/entityOps'
@@ -12,6 +12,8 @@ import { useDocumentTitle } from '../../ui/hooks'
 import { BookIcon, ChevronRightIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
+import { ClaudeAccessControl } from '../claude/ClaudeAccessControl'
+import { CritiqueTab } from './critique/CritiqueTab'
 import { TitleIdeasTab } from './ideas/TitleIdeasTab'
 import { SettingsTab } from './settings/SettingsTab'
 import { StoryTab } from './story/StoryTab'
@@ -24,6 +26,7 @@ const TABS: { id: TitleTab; label: string }[] = [
   { id: 'story', label: '本編' },
   { id: 'settings', label: '設定項目' },
   { id: 'strategy', label: '戦略' },
+  { id: 'critique', label: '作品批評' },
   { id: 'ideas', label: 'アイデア' },
 ]
 
@@ -117,6 +120,9 @@ export function TitlePage() {
                 章あり
               </li>
             ) : null}
+            <li className="tpage-chip-item">
+              <ClaudeAccessControl title={title} />
+            </li>
           </ul>
 
           <div className={`tpage-synopsis${synopsisOpen ? ' is-open' : ''}`}>
@@ -187,6 +193,7 @@ export function TitlePage() {
           {tab === 'story' ? <StoryTab titleId={titleId} /> : null}
           {tab === 'settings' ? <SettingsTab titleId={titleId} /> : null}
           {tab === 'strategy' ? <StrategyTab titleId={titleId} /> : null}
+          {tab === 'critique' ? <CritiqueTab titleId={titleId} /> : null}
           {tab === 'ideas' ? <TitleIdeasTab titleId={titleId} /> : null}
         </div>
       </main>

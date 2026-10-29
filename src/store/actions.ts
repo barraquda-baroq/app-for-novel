@@ -1,6 +1,8 @@
 // UI から呼ぶ操作。ドメインの純粋関数を現在のデータに適用して保存する。
 // 仕様違反は DomainError を投げるので、UI 側では attempt() で受けてトースト表示する。
+import type { NewRecord } from '../claude/records'
 import * as A from '../domain/acts'
+import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import {
   applyPieceEdits,
@@ -11,7 +13,7 @@ import {
 } from '../domain/pieceEdits'
 import * as S from '../domain/storyOps'
 import * as T from '../domain/trash'
-import type { AppData, ID, NumberingMode, SettingEntry, Slot } from '../domain/types'
+import type { AppData, ClaudeAccess, ID, NumberingMode, SettingEntry, Slot } from '../domain/types'
 import { commit, getData } from './appStore'
 
 function apply(fn: (d: AppData) => AppData): void {
@@ -104,6 +106,60 @@ export const actions = {
   moveSubmissionStep: (submissionId: ID, dir: -1 | 1) => apply((d) => E.moveSubmissionStep(d, submissionId, dir)),
   deleteSubmission: (submissionId: ID) => apply((d) => E.deleteSubmission(d, submissionId)),
   recordSubmissionSnapshot: (submissionId: ID) => apply((d) => E.recordSubmissionSnapshot(d, submissionId)),
+
+  // 2.3: Claude に見せるか（タイトルの設定）
+  setTitleClaudeAccess: (titleId: ID, access: ClaudeAccess) => apply((d) => C.setTitleClaudeAccess(d, titleId, access)),
+
+  // 2.3: 改稿案
+  addRevisionIdea: (titleId: ID, init?: Parameters<typeof C.addRevisionIdea>[2]) =>
+    run((d) => C.addRevisionIdea(d, titleId, init)),
+  updateRevisionIdea: (id: ID, patch: Parameters<typeof C.updateRevisionIdea>[2]) =>
+    apply((d) => C.updateRevisionIdea(d, id, patch)),
+  setRevisionIdeaChecked: (id: ID, checked: boolean) => apply((d) => C.setRevisionIdeaChecked(d, id, checked)),
+  moveRevisionIdeaStep: (id: ID, dir: -1 | 1) => apply((d) => C.moveRevisionIdeaStep(d, id, dir)),
+  moveRevisionIdeaTo: (id: ID, index: number) => apply((d) => C.moveRevisionIdeaTo(d, id, index)),
+  deleteRevisionIdea: (id: ID) => apply((d) => C.deleteRevisionIdea(d, id)),
+
+  // 2.3: 推敲案
+  addProofSuggestion: (titleId: ID, init: Parameters<typeof C.addProofSuggestion>[2]) =>
+    run((d) => C.addProofSuggestion(d, titleId, init)),
+  updateProofSuggestion: (id: ID, patch: Parameters<typeof C.updateProofSuggestion>[2]) =>
+    apply((d) => C.updateProofSuggestion(d, id, patch)),
+  setProofFlagged: (id: ID, flagged: boolean) => apply((d) => C.setProofFlagged(d, id, flagged)),
+  setProofDone: (id: ID, done: boolean) => apply((d) => C.setProofDone(d, id, done)),
+  deleteProofSuggestion: (id: ID) => apply((d) => C.deleteProofSuggestion(d, id)),
+  /** 「チェック済みを削除」（ゴミ箱の1件にまとめる。ids を渡すとその中のチェックしたものだけ） */
+  deleteCheckedProofSuggestions: (titleId: ID, ids?: readonly ID[]) =>
+    apply((d) => C.deleteCheckedProofSuggestions(d, titleId, ids)),
+
+  // 2.3: 作品批評
+  addCritiquePrompt: (titleId: ID | null, init?: Parameters<typeof C.addCritiquePrompt>[2]) =>
+    run((d) => C.addCritiquePrompt(d, titleId, init)),
+  updateCritiquePrompt: (id: ID, patch: Parameters<typeof C.updateCritiquePrompt>[2]) =>
+    apply((d) => C.updateCritiquePrompt(d, id, patch)),
+  moveCritiquePromptStep: (id: ID, dir: -1 | 1) => apply((d) => C.moveCritiquePromptStep(d, id, dir)),
+  moveCritiquePromptTo: (id: ID, index: number) => apply((d) => C.moveCritiquePromptTo(d, id, index)),
+  deleteCritiquePrompt: (id: ID) => apply((d) => C.deleteCritiquePrompt(d, id)),
+  addCritiqueResult: (titleId: ID, init?: Parameters<typeof C.addCritiqueResult>[2]) =>
+    run((d) => C.addCritiqueResult(d, titleId, init)),
+  updateCritiqueResult: (id: ID, patch: Parameters<typeof C.updateCritiqueResult>[2]) =>
+    apply((d) => C.updateCritiqueResult(d, id, patch)),
+  deleteCritiqueResult: (id: ID) => apply((d) => C.deleteCritiqueResult(d, id)),
+
+  // 2.3: 戦略メモ（Claude の提案）
+  /** ［全体戦略に追記］ */
+  appendStrategyNoteToTitle: (noteId: ID) => apply((d) => C.appendStrategyNoteToTitle(d, noteId)),
+  /** ［応募計画にする］。戻り値は応募計画の id（もう作ってあればその id） */
+  contestToSubmission: (noteId: ID, contestId: string) => run((d) => C.contestToSubmission(d, noteId, contestId)),
+  /** 手で書く・直す（見出し・本文・コンテストの候補）。addStrategyNote の戻り値は戦略メモの id */
+  addStrategyNote: (titleId: ID, init?: Parameters<typeof C.addStrategyNote>[2]) =>
+    run((d) => C.addStrategyNote(d, titleId, init)),
+  updateStrategyNote: (id: ID, patch: Parameters<typeof C.updateStrategyNote>[2]) =>
+    apply((d) => C.updateStrategyNote(d, id, patch)),
+  deleteStrategyNote: (id: ID) => apply((d) => C.deleteStrategyNote(d, id)),
+
+  // 2.3: 手動連携の貼り付けで作った記録を入れる（もうある・ゴミ箱にあるものは入れない）。戻り値は入れた記録の id
+  addClaudeRecords: (records: readonly NewRecord[]) => run((d) => C.addClaudeRecords(d, records)),
 
   // ゴミ箱（削除の操作は上の各 delete… がゴミ箱へ移す）
   restoreTrashEntry: (entryId: ID) => run((d) => T.restoreTrashEntry(d, entryId)),

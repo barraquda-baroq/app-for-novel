@@ -1,0 +1,36 @@
+{
+  "name": "novel-studio-connector",
+  "private": true,
+  "version": "2.3.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -b --noEmit",
+    "test": "node scripts/test.mjs",
+    "test:unit": "vitest run",
+    "test:worker": "vitest run --config vitest.workers.config.ts",
+    "test:emu": "vitest run --config vitest.emu.config.ts",
+    "gen-schemas": "node scripts/gen-schemas.mjs",
+    "bundle-check": "node scripts/bundle-check.mjs",
+    "check": "node scripts/check.mjs",
+    "setup": "node scripts/setup.mjs"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.3",
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.23.0",
+    "@cloudflare/workers-types": "5.20261014.1",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "22.20.5",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.151.0"
+  }
+}

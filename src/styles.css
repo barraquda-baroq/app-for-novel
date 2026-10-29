@@ -69,6 +69,9 @@
   --area-ideas: #c98a12;
   --area-ideas-text: #83590a;
   --area-ideas-soft: #fcf2db;
+  --area-critique: #7a56d0;
+  --area-critique-text: #5e3fa8;
+  --area-critique-soft: #efeafb;
 
   --radius: 10px;
   --radius-sm: 6px;
@@ -146,6 +149,9 @@
   --area-ideas: #e2b04a;
   --area-ideas-text: #efcd86;
   --area-ideas-soft: #2a2211;
+  --area-critique: #a98be8;
+  --area-critique-text: #cbb8f6;
+  --area-critique-soft: #241b37;
   color-scheme: dark;
 }
 
@@ -212,6 +218,9 @@
   --area-ideas: #57503d;
   --area-ideas-text: #aeaca6;
   --area-ideas-soft: #1d1c18;
+  --area-critique: #514b5c;
+  --area-critique-text: #aeaca6;
+  --area-critique-soft: #1d1b21;
   color-scheme: dark;
 }
 
@@ -239,6 +248,12 @@
   --area: var(--area-ideas);
   --area-text: var(--area-ideas-text);
   --area-soft: var(--area-ideas-soft);
+}
+
+[data-area='critique'] {
+  --area: var(--area-critique);
+  --area-text: var(--area-critique-text);
+  --area-soft: var(--area-critique-soft);
 }
 
 /* ===== ベース ===== */
@@ -1312,7 +1327,8 @@ h4 {
 /* 指で操作する端末（スマホ・タブレット・横持ち含む）ではタップしやすい大きさを確保する */
 @media (max-width: 720px), (pointer: coarse) {
   .btn-sm,
-  .segmented button {
+  .segmented button,
+  .switch {
     min-height: 34px;
   }
 }

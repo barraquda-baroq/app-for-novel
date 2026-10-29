@@ -117,6 +117,14 @@ const metricsCache = new WeakMap<object, BodyMetrics>()
  * レコードは編集のたびに新しいオブジェクトに置き換わるので、オブジェクト単位でキャッシュできる
  * （長編で一覧や集計を描き直すたびに全文を数え直さないため）。
  */
+/**
+ * 数えてある値を、本文を読まずにレコードのキャッシュに入れる（コネクタ: 取り込んだ時に数えて保存した値を、
+ * 本文を後から読むレコードに渡す）
+ */
+export function primeBodyMetrics(record: object, m: BodyMetrics): void {
+  metricsCache.set(record, m)
+}
+
 export function bodyMetrics(record: { body: string }): BodyMetrics {
   let m = metricsCache.get(record)
   if (!m) {

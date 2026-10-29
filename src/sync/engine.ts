@@ -112,8 +112,11 @@ export interface SyncEngine {
   readonly status: SyncStatus
 }
 
-/** 同期の形の版。文書の形や表を変えたら上げる（次の起動で全件を受け取り直す） */
-export const SYNC_SCHEMA = 1
+/**
+ * 同期の形の版。文書の形や表を変えたら上げる（次の起動で全件を受け取り直す）。
+ * 2 = 2.3（推敲案などの表を追加。古い版は知らない表を飛ばしたまま受け取った位置を進めているので、受け取り直して届ける）
+ */
+export const SYNC_SCHEMA = 2
 
 /** クラウドの持ち主を記録する文書 */
 export const OWNER_DOC = ['config', 'owner'] as const

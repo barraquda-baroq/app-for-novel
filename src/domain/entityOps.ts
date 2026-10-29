@@ -6,6 +6,7 @@ export { textHash }
 import { orderOrigin, putInTrash, trashLabel, type TrashSpec } from './trash'
 import { Tx, transact } from './tx'
 import {
+  CLAUDE_TABLES,
   DomainError,
   type AppData,
   type ID,
@@ -107,7 +108,8 @@ export function moveTitleStep(data: AppData, titleId: ID, dir: -1 | 1): AppData 
 }
 
 /**
- * タイトルと配下（章・話・稿・メモ・設定項目・応募計画と、その応募時の原稿の控え）をまとめてゴミ箱へ移す。
+ * タイトルと配下（章・話・稿・メモ・設定項目・応募計画と、その応募時の原稿の控え、2.3 の推敲案・改稿案・戦略メモ・
+ * 作品批評）をまとめてゴミ箱へ移す。共通の批評プロンプト（titleId = null）はほかのタイトルでも使うので残す。
  * タイトルに紐づくアイデアは「どのタイトルにも属さない」へ移す（ゴミ箱から戻してもアイデアは戻らない）
  */
 export function deleteTitle(data: AppData, titleId: ID): AppData {
@@ -139,6 +141,12 @@ export function deleteTitle(data: AppData, titleId: ID): AppData {
         .map((record) => ({ table: 'settingEntries' as const, record })),
       ...submissions.map((record) => ({ table: 'submissions' as const, record })),
       ...usedSnapshotTexts(tx, submissions).map((record) => ({ table: 'snapshotTexts' as const, record })),
+      ...CLAUDE_TABLES.flatMap((table) =>
+        (tx.all(table) as { id: ID; titleId: ID | null; createdAt: number }[])
+          .filter(belongs)
+          .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+          .map((record) => ({ table, record }) as TrashSpec['records'][number]),
+      ),
     ]
     putInTrash(tx, {
       kind: 'title',

@@ -1,0 +1,117 @@
+/* ===== 原稿画面の推敲案（「推敲案 n」と一覧。ProofPanel.tsx） ===== */
+
+.pw-root .pw-proof-btn {
+  flex: none;
+  min-height: 34px;
+  padding: 4px 9px;
+  gap: 5px;
+  font-size: 13px;
+  border-color: color-mix(in srgb, var(--area-strategy) 40%, var(--border));
+  color: var(--area-strategy-text);
+}
+
+.pw-root .pw-proof-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.pw-root .pw-proof-btn.is-open {
+  background: var(--area-strategy-soft);
+  border-color: var(--area-strategy);
+}
+
+.pw-proof-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--area-strategy-soft);
+  color: var(--area-strategy-text);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pw-proof-panel {
+  position: fixed;
+  z-index: 40;
+  top: calc(var(--header-h) + var(--safe-top) + 64px);
+  right: 12px;
+  bottom: 64px;
+  width: min(400px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.pw-proof-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 6px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pw-proof-head h2 {
+  display: flex;
+  align-items: baseline;
+  font-size: 15px;
+}
+
+.pw-proof-empty {
+  margin: 0;
+  padding: 14px;
+}
+
+.ps-list.pw-proof-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+}
+
+.ps-item.is-selected {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.pw-proof-foot {
+  margin: 0;
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* 狭いペインでは印と数だけ（名前は読み上げとマウスを乗せた時に出す） */
+@container pw-pane (max-width: 560px) {
+  .pw-root .pw-proof-btn {
+    padding: 4px 7px;
+  }
+
+  .pw-root .pw-proof-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 720px) {
+  .pw-proof-panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 58dvh;
+    border-radius: 14px 14px 0 0;
+    padding-bottom: var(--safe-bottom);
+  }
+}
