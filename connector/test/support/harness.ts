@@ -20,7 +20,6 @@ export function config(fake: FakeFirebase, over: Partial<VaultConfig> = {}): Vau
     workBudgetChars: 300_000,
     dailyReadBudget: 15_000,
     dailyWriteBudget: 5_000,
-    heavyTools: false,
     ...over,
   }
 }

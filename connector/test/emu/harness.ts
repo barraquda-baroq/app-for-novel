@@ -195,7 +195,6 @@ export function emuConfig(over: Partial<VaultConfig> = {}): VaultConfig {
     workBudgetChars: 300_000,
     dailyReadBudget: 1_000_000,
     dailyWriteBudget: 100_000,
-    heavyTools: false,
     ...over,
   }
 }

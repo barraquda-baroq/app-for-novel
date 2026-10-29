@@ -12,7 +12,6 @@ export interface ConfigEnv {
   FIREBASE_API_KEY: string
   ENABLE_DCR: string
   ALLOW_CLAUDE_CODE: string
-  HEAVY_TOOLS: string
   WORK_BUDGET_CHARS: string
   DAILY_READ_BUDGET: string
   DAILY_WRITE_BUDGET: string
@@ -43,7 +42,6 @@ export interface VaultConfig {
   workBudgetChars: number
   dailyReadBudget: number
   dailyWriteBudget: number
-  heavyTools: boolean
 }
 
 export function vaultConfig(env: ConfigEnv): VaultConfig {
@@ -59,7 +57,6 @@ export function vaultConfig(env: ConfigEnv): VaultConfig {
     workBudgetChars: count(env.WORK_BUDGET_CHARS, 300_000),
     dailyReadBudget: count(env.DAILY_READ_BUDGET, 15_000),
     dailyWriteBudget: count(env.DAILY_WRITE_BUDGET, 5_000),
-    heavyTools: flag(env.HEAVY_TOOLS),
   }
 }
 

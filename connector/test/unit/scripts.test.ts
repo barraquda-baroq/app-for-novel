@@ -3,12 +3,33 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { vaultConfig, workerConfig } from '../../src/config'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { deployVarArgs, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { bundleCheck, bundleProblems } from '../../scripts/bundle-check.mjs'
+
+describe('wrangler.jsonc の変数', () => {
+  it('どの変数もコネクタのコードが読む（効かない設定を書かない）', () => {
+    const dir = path.resolve(import.meta.dirname, '../..')
+    const text = fs.readFileSync(path.join(dir, 'wrangler.jsonc'), 'utf8')
+    const vars = /"vars"\s*:\s*\{([\s\S]*?)\}/.exec(text)?.[1] ?? ''
+    const names = [...vars.matchAll(/^\s*"([A-Z0-9_]+)"\s*:/gm)].map((m) => m[1])
+    expect(names.length).toBeGreaterThan(5)
+    const src = fs.readFileSync(path.join(dir, 'src/config.ts'), 'utf8')
+    for (const name of names) expect(src, name).toMatch(new RegExp(`env\\.${name}\\b`))
+    // 設定から作った値も、どれかのコードが使う（読むだけで何にも効かない設定を作らない）
+    const env = Object.fromEntries(names.map((n) => [n, '']))
+    const keys = [...Object.keys(vaultConfig(env as never)), ...Object.keys(workerConfig(env as never, 'https://c.example/'))]
+    const files = (fs.readdirSync(path.join(dir, 'src'), { recursive: true }) as string[])
+      .filter((f) => f.endsWith('.ts') && !f.endsWith('config.ts'))
+      .map((f) => fs.readFileSync(path.join(dir, 'src', f), 'utf8'))
+      .join('\n')
+    for (const key of keys) expect(files, key).toMatch(new RegExp(`\\.${key}\\b`))
+  })
+})
 
 describe('スクリプトの部品', () => {
   it('wrangler deploy の出力から URL を取り出す', () => {

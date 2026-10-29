@@ -28,8 +28,6 @@
     "ENABLE_DCR": "false",
     // Claude Code からも使う時は "true"（Claude Code の公開の識別子とローカルの戻り先を受け付ける）
     "ALLOW_CLAUDE_CODE": "false",
-    // 重いツール（よく使う言い回しの集計）を出す時は "true"（有料プランの時だけ）
-    "HEAVY_TOOLS": "false",
     // 1回の呼び出しで調べる本文の文字数の上限（無料プランの CPU 時間の目安。有料プランなら 20000000）
     "WORK_BUDGET_CHARS": "300000",
     // 1日（太平洋時間）にコネクタが使う Firestore の読み取り・書き込みの上限（アプリの同期の分を残すため）
