@@ -6,16 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { deleteApp, initializeApp, type FirebaseApp } from 'firebase/app'
 import { GoogleAuthProvider, connectAuthEmulator, getAuth, signInWithCredential } from 'firebase/auth'
-import {
-  connectFirestoreEmulator,
-  doc,
-  initializeFirestore,
-  memoryLocalCache,
-  serverTimestamp,
-  setDoc,
-  terminate,
-  type Firestore,
-} from 'firebase/firestore'
+import { connectFirestoreEmulator, initializeFirestore, memoryLocalCache, terminate, type Firestore } from 'firebase/firestore'
 import { createPersistence, type ConflictNote, type Persistence } from '../../../src/db/persistence'
 import { repairData } from '../../../src/domain/repair'
 import type { AppData } from '../../../src/domain/types'
@@ -26,7 +17,9 @@ import { createSyncEngine, type SyncEngine, type SyncTarget } from '../../../src
 import { stableStringify } from '../../../src/sync/merge'
 import type { VaultConfig } from '../../src/config'
 import { VaultCore } from '../../src/vault/core'
-import { base64url, pairingHash } from '../../src/vault/crypto'
+import { pairingHash, randomPairingKey } from '../../../src/claude/pairing'
+import { approvePairing, prepareConnect } from '../../../src/features/claude/connectLogic'
+import { readOwnerUid, writeConnector } from '../../../src/features/claude/connectorDoc'
 import { nodeSql } from '../support/nodeSql'
 
 export const PROJECT = 'demo-novel-studio'
@@ -223,26 +216,48 @@ export function makeConnector(opts: { sql?: ReturnType<typeof nodeSql>; config?:
 }
 
 /**
- * アプリの連携の画面と同じことをする: コネクタの身元を読み、持ち主として config/connector に指紋を書き、
- * コネクタの /pair/callback と同じ確かめをする（state は claude.ai から、k はアプリの中だけ）
+ * アプリの連携の画面と同じ手順で連携する（src/features/claude/connectLogic.ts の prepareConnect・approvePairing と、
+ * connectorDoc.ts の readOwnerUid・writeConnector をそのまま使う。Firestore は持ち主の端末のもの）:
+ * 持ち主か確かめ、コネクタの身元を受け取り、config/connector に指紋を書いて、アプリが移る /pair/callback の URL の
+ * state と k で、コネクタの /pair/callback と同じ確かめをする（state は claude.ai から、k はアプリの中だけ）
  */
 export async function pair(core: VaultCore, owner: Device, opts: { writes?: boolean } = {}) {
-  const { uid } = await core.connectIdentity()
+  const origin = 'https://connector.emu.test'
   const state = `state-${Math.random().toString(36).slice(2)}`
-  const k = base64url(crypto.getRandomValues(new Uint8Array(32)))
-  await setDoc(doc(owner.fs, 'config', 'connector'), {
-    uid,
-    pairing: await pairingHash(state, k),
-    pairedAt: serverTimestamp(),
-    approvedOn: 'テストの Mac',
-    writes: opts.writes ?? true,
-    v: 1,
-  })
-  const r = await core.verifyPairing(await pairingHash(state, k))
+  const prep = await prepareConnect(
+    {
+      origin,
+      readOwnerUid: () => readOwnerUid(owner.fs),
+      waitSynced: async () => true,
+      fetchIdentity: async () => {
+        const id = await core.connectIdentity()
+        return { ok: true, identity: { uid: id.uid, version: id.version, model: id.model } }
+      },
+      cancelled: () => false,
+    },
+    owner.uid,
+  )
+  if (prep.step !== 'ready') throw new Error(`連携の画面が先へ進みません: ${prep.step}`)
+  let url = ''
+  const approved = await approvePairing(
+    {
+      origin,
+      writeConnector: (d) => writeConnector(d, owner.fs),
+      setAccess: () => undefined,
+      flush: async () => undefined,
+      navigate: (u) => (url = u),
+      randomKey: () => randomPairingKey(),
+      deviceLabel: () => 'テストの Mac',
+    },
+    { state, identity: prep.identity, ownerUid: prep.ownerUid, writes: opts.writes ?? true, access: [] },
+  )
+  if (!approved.ok) throw new Error(`連携を記録できません: ${approved.error}`)
+  const back = new URL(url)
+  const r = await core.verifyPairing(await pairingHash(back.searchParams.get('state') ?? '', back.searchParams.get('k') ?? ''))
   if (!r.ok) throw new Error(`連携できません: ${r.reason} ${r.message}`)
   // 初回の取り込み（alarm と同じ）
   for (let i = 0; i < 500; i++) if ((await core.alarm()) === null) break
-  return { uid }
+  return { uid: prep.identity.uid }
 }
 
 /** ツールを呼ぶ（freshMs: 0 なので、毎回クラウドの変更を読み直す） */

@@ -15,7 +15,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node"]
+    // アプリの連携の画面の部品（src/features/claude）も読み込むので、アプリと同じビルドの時の値（../src/env.d.ts）・vite の型も使う
+    "types": ["node", "vite/client"]
   },
-  "include": ["test/emu"]
+  "include": ["test/emu", "../src/env.d.ts"]
 }
