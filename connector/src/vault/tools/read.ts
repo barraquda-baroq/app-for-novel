@@ -414,6 +414,11 @@ function itemCursor(args: Args, k: 'strategy' | 'critique', titleId: ID): { whic
   return { which: c.which, id: c.id, o: c.o }
 }
 
+/** 戦略・作品批評の一覧に、中身の頭まで出す数（それより後は id と見出しだけ） */
+const LIST_NOTES = 30
+const LIST_IDEAS = 60
+const LIST_RESULTS = 60
+
 export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
   const t = titleArg(ctx.view, args.title_id)
   if ('error' in t) return t.error
@@ -525,15 +530,30 @@ export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
     title.strategyNote.trim() ? overallHead(title.strategyNote) : '（まだありません）',
     `--- 戦略メモ（${notes.length}件。新しい順）---`,
   ]
-  for (const n of notes.slice(0, 30))
+  for (const n of notes.slice(0, LIST_NOTES))
     lines.push(
       `${shortId('strategyNote', n.id)} ${n.runDate}「${n.heading}」${n.appliedAt ? '（全体戦略に追記済み）' : ''}${n.contests.length ? ` コンテスト${n.contests.length}件: ${n.contests.map((c) => c.name).join('、')}` : ''}\n  ${head(n.body, 80)}`,
     )
+  // 入りきらない分も id は出す（note_id で読めるように。見出しだけ）
+  if (notes.length > LIST_NOTES)
+    lines.push(
+      `（ほか${notes.length - LIST_NOTES}件・古いものは見出しだけ）: ${notes
+        .slice(LIST_NOTES)
+        .map((n) => `${shortId('strategyNote', n.id)} ${n.runDate}「${head(n.heading, 40)}」`)
+        .join(' / ')}`,
+    )
   const open = ideas.filter((i) => !i.checked)
   lines.push(`--- 改稿案（未チェック ${open.length}件・チェック済み ${ideas.length - open.length}件）---`)
-  for (const i of ideas.slice(0, 60))
+  for (const i of ideas.slice(0, LIST_IDEAS))
     lines.push(
       `${shortId('revisionIdea', i.id)} ${i.checked ? '（チェック済み）' : ''}「${i.heading}」${i.pieceIds.length ? `（${pieceNames(i.pieceIds)}）` : ''}: ${head(i.body, 60)}`,
+    )
+  if (ideas.length > LIST_IDEAS)
+    lines.push(
+      `（ほか${ideas.length - LIST_IDEAS}件・見出しだけ。revision_idea_id で全文）: ${ideas
+        .slice(LIST_IDEAS)
+        .map((i) => `${shortId('revisionIdea', i.id)}${i.checked ? '（チェック済み）' : ''}「${head(i.heading, 40)}」`)
+        .join(' / ')}`,
     )
   lines.push(`--- 応募計画（${subs.length}件）---`)
   for (const x of subs)
@@ -615,9 +635,16 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
     )
   if (!allPrompts.length) lines.push('（ありません）')
   lines.push(`--- 批評の結果（${results.length}件。新しい日付から）---`)
-  for (const r of results.slice(0, 60))
+  for (const r of results.slice(0, LIST_RESULTS))
     lines.push(
       `${shortId('critiqueResult', r.id)} ${r.runDate}「${r.promptName || '（プロンプトなし）'}」${r.scope.kind === 'range' ? r.scope.label : 'タイトル全体'}・${r.manuscript ? manuscriptLabel(r.manuscript, current) : '原稿の控えなし'}${r.resultMarkdown ? `・Markdown ${formatCount(length(r.resultMarkdown))}字` : ''}${r.artifactUrl ? '・URL あり' : ''}${r.resultMarkdown ? `\n  ${head(r.resultMarkdown, 80)}` : ''}`,
+    )
+  if (results.length > LIST_RESULTS)
+    lines.push(
+      `（ほか${results.length - LIST_RESULTS}件・古いものは見出しだけ。result_id で全文）: ${results
+        .slice(LIST_RESULTS)
+        .map((r) => `${shortId('critiqueResult', r.id)} ${r.runDate}「${head(r.promptName || '（プロンプトなし）', 40)}」`)
+        .join(' / ')}`,
     )
   if (!results.length) lines.push('（ありません）')
   lines.push('1つを全文で読むには prompt_id・result_id を指定してください。')

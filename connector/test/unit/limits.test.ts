@@ -4,7 +4,7 @@ import { shortId } from '../../../src/claude/refs'
 import { decodeCursor } from '../../../src/claude/view'
 import type { VaultCore } from '../../src/vault/core'
 import { RESULT_LIMIT } from '../../src/vault/tools/common'
-import { addCritiqueResult, addRevisionIdea } from '../../../src/domain/claudeOps'
+import { addCritiqueResult, addRevisionIdea, addStrategyNote } from '../../../src/domain/claudeOps'
 import { addMemo, updateMemo, updateTitle } from '../../../src/domain/entityOps'
 import { novel } from '../../../src/test/claudeFixture'
 import { novel300, type Novel300 } from '../fixtures/novel300'
@@ -182,5 +182,39 @@ describe('長い1つのメモ・改稿案・全体戦略・批評の結果', () 
     } finally {
       core = save
     }
+  })
+})
+
+describe('一覧に入りきらない改稿案・戦略メモ・批評の結果', () => {
+  it('多くても、すべての id が一覧に出る（後ろは見出しだけ）', async () => {
+    const t = novel(['本文'])
+    let data = t.data
+    const ideas: string[] = []
+    const notes: string[] = []
+    const results: string[] = []
+    for (let i = 0; i < 80; i++) {
+      const r = addRevisionIdea(data, t.titleId, { heading: `改稿案${i + 1}`, body: `中身${i + 1}` })
+      data = r.data
+      ideas.push(r.result)
+    }
+    for (let i = 0; i < 35; i++) {
+      const r = addStrategyNote(data, t.titleId, { heading: `戦略${i + 1}`, body: `本文${i + 1}` })
+      data = r.data
+      notes.push(r.result)
+    }
+    for (let i = 0; i < 65; i++) {
+      const r = addCritiqueResult(data, t.titleId, { resultMarkdown: `批評${i + 1}` })
+      data = r.data
+      results.push(r.result)
+    }
+    const made = await pairedCore(new FakeFirebase(), data, { config: { dailyReadBudget: 1_000_000 } })
+    const strategy = (await made.core.callTool('novel_get_strategy', { title_id: t.titleId })).text
+    for (const id of ideas) expect(strategy).toContain(shortId('revisionIdea', id))
+    for (const id of notes) expect(strategy).toContain(shortId('strategyNote', id))
+    expect(strategy).toContain('ほか20件')
+    expect(strategy).toContain('ほか5件')
+    const critique = (await made.core.callTool('novel_get_critique', { title_id: t.titleId })).text
+    for (const id of results) expect(critique).toContain(shortId('critiqueResult', id))
+    expect(critique).toContain('ほか5件')
   })
 })
