@@ -115,15 +115,18 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
   await expect(info.getByTestId('claude-writes-state')).toHaveText('許可')
   await settings.locator('label:has([data-testid="claude-writes-toggle"])').click()
   await expect(info.getByTestId('claude-writes-state')).toHaveText('停止中（読むだけ）', { timeout: 20_000 })
+  // サーバーが受け取ってから知らせる
+  await expect(settings.getByText('Claude の書き込みを止めました（読むことはできます）')).toBeVisible({ timeout: 20_000 })
+  await expect.poll(async () => (await readDoc('config/connector'))?.writes.booleanValue, { timeout: 20_000 }).toBe(false)
   const after = await readDoc('config/connector')
-  expect(after!.writes.booleanValue).toBe(false)
   expect(after!.pairing.stringValue).toBe(conn!.pairing.stringValue)
   expect(after!.pairedAt.timestampValue).toBe(conn!.pairedAt.timestampValue)
 
   await settings.getByTestId('claude-unpair').click()
   await settings.getByRole('dialog').getByRole('button', { name: '連携を解除' }).click()
+  await expect(settings.getByText('Claude との連携を解除しました')).toBeVisible({ timeout: 20_000 })
   await expect(settings.getByTestId('claude-pairing-none')).toBeVisible({ timeout: 20_000 })
-  expect(await readDoc('config/connector')).toBeNull()
+  await expect.poll(() => readDoc('config/connector'), { timeout: 20_000 }).toBeNull()
   await context.close()
 })
 

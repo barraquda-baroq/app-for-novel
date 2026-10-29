@@ -19,13 +19,16 @@ export type ConnectorState =
   | { state: 'paired'; status: ConnectorStatus }
   | { state: 'error'; message: string }
 
-/** 連携の記録を見張る（サーバーから届いた内容だけを出す） */
+/**
+ * 連携の記録を見張る（サーバーから届いた内容だけを出す。この端末で変えた内容も、サーバーが受け取るまでは出さない:
+ * 「連携を解除」「書き込みを許可」が本当に効いたかを出すため）
+ */
 export function watchConnector(fn: (s: ConnectorState) => void): () => void {
   return onSnapshot(
     connectorRef(),
     { includeMetadataChanges: true },
     (snap) => {
-      if (snap.metadata.fromCache) return
+      if (snap.metadata.fromCache || snap.metadata.hasPendingWrites) return
       if (!snap.exists()) return fn({ state: 'none' })
       const status = parseConnectorDoc(snap.data({ serverTimestamps: 'estimate' }))
       fn(status ? { state: 'paired', status } : { state: 'none' })

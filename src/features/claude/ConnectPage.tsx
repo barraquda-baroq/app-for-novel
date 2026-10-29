@@ -114,6 +114,7 @@ export function ConnectPage() {
     void (async () => {
       set({ step: 'checking' })
       const doc = await import('./connectorDoc')
+      if (cancelled) return
       let owner: string | null
       try {
         owner = await doc.readOwnerUid()
@@ -123,12 +124,15 @@ export function ConnectPage() {
       if (owner && owner !== uid) return set({ step: 'notOwner' })
       set({ step: 'sync' })
       if (!(await waitForSynced(SYNC_WAIT_MS))) return set({ step: 'syncTimeout' })
+      if (cancelled) return
       if (!owner) {
         // 初めての同期で持ち主が記録されたところ
         owner = await doc.readOwnerUid().catch(() => null)
         if (!owner) return set({ step: 'noOwner' })
         if (owner !== uid) return set({ step: 'notOwner' })
       }
+      // 画面を離れた・やり直した後は、コネクタに問い合わせない（問い合わせると、コネクタは匿名のアカウントを作る）
+      if (cancelled) return
       set({ step: 'identity' })
       const r = await fetchIdentity(CONNECTOR_ORIGIN)
       if (!r.ok) return set({ step: 'identityError', error: r.error })
