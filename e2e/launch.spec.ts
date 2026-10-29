@@ -66,6 +66,63 @@ test.describe('起動アニメーション', () => {
     await expect(page).toHaveURL(/#\/$/)
   })
 
+  test('指で押しても（タップ・押したまま）すぐ消え、下の画面は押されない', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'mobile', '指で押せる（hasTouch）スマホだけ')
+    await recordLaunchEnd(page)
+    const settings = page.getByRole('link', { name: 'アプリの設定・バックアップ' })
+    /** 重なりを出し、その下に設定のボタンができて 0.4 秒たつまで待つ（ボタンの真ん中を返す） */
+    let opened = 0
+    async function open() {
+      await page.evaluate(() => sessionStorage.clear())
+      // 同じ URL（# だけ違う）だと読み込み直さないので、毎回 URL を変える
+      await page.goto(`/?launch=1&n=${++opened}#/`, { waitUntil: 'commit' })
+      await expect(overlay(page)).toBeVisible()
+      const shown = Date.now()
+      await expect(settings).toBeAttached({ timeout: 10_000 })
+      await page.waitForTimeout(Math.max(0, 400 - (Date.now() - shown)))
+      await expect(overlay(page)).toBeVisible()
+      expect(await overlay(page).getAttribute('data-launch-end')).toBeNull()
+      const box = (await settings.boundingBox())!
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+
+    // タップ（指を離した所でクリックが作られる。重なりが先に押せなくなっていると、下のボタンが押される）
+    await page.goto('/#/', { waitUntil: 'commit' })
+    let p = await open()
+    await page.touchscreen.tap(p.x, p.y)
+    await expect(overlay(page)).toHaveCount(0)
+    expect(await launchEnd(page)).toBe('skip')
+    await page.waitForTimeout(300)
+    await expect(page).toHaveURL(/#\/$/)
+    await expect(settings).toBeVisible()
+
+    // 押したまま（重なりが消え始めて取り除かれる時間より長く）から離す
+    p = await open()
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] })
+    await page.waitForTimeout(350)
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect(overlay(page)).toHaveCount(0)
+    expect(await launchEnd(page)).toBe('skip')
+    await page.waitForTimeout(300)
+    await expect(page).toHaveURL(/#\/$/)
+    await expect(settings).toBeVisible()
+
+    // 長押し: 押したままの間は、消えても（見えなくても）重なりが残って押す操作を受け、離してから取り除かれる
+    p = await open()
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] })
+    await page.waitForTimeout(1000)
+    await expect(overlay(page)).toHaveAttribute('data-launch-end', 'skip')
+    expect(await overlay(page).evaluate((e) => getComputedStyle(e).pointerEvents)).toBe('auto')
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect(overlay(page)).toHaveCount(0)
+    await page.waitForTimeout(300)
+    await expect(page).toHaveURL(/#\/$/)
+    // 取り除いた後は、ふつうにアプリを押せる
+    await settings.tap()
+    await expect(page).toHaveURL(/#\/settings$/)
+  })
+
   test('キーを押してもすぐ消える', async ({ page }) => {
     await recordLaunchEnd(page)
     await page.goto('/?launch=1#/', { waitUntil: 'commit' })

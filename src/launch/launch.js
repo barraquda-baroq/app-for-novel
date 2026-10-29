@@ -13,7 +13,8 @@
 //   設定の「起動アニメーション」をオフにすると出さない。テスト（navigator.webdriver）では、localStorage の novel-studio:launch を
 //   'force' にするか URL に launch=1 を付けた時だけ出す（e2e/launch.spec.ts）
 // - 消える時: アニメーションが終わり（約1.75秒）、アプリが最初の画面を出せた（src/main.tsx が NovelStudioLaunch.appReady() を呼ぶ）
-//   の両方がそろったら、0.25秒で消える。押す・キーを押すとすぐ消える。アプリが知らせてこなくても5秒で消える。
+//   の両方がそろったら、0.25秒で消える。押す・キーを押すとすぐ消える（押した時は、離すまで見えない重なりが残って押す操作の
+//   続きを受け止めるので、下のアプリは押されない）。アプリが知らせてこなくても5秒で消える。
 //   端末の「視差効果を減らす」では動かさず、最後の絵（ロゴ）を0.5秒ほど出してから消える
 // - アプリでは、重なり（起動の画面と同じ地の色）を置いたらすぐに起動の画面（スプラッシュ。ロゴの無い無地）を消す（docs/SPEC-2.md の 10.）
 //
@@ -1053,6 +1054,16 @@
   }
 
   var SKIP_EVENTS = ['pointerdown', 'click', 'keydown']
+  /**
+   * 重なりを押した後に続く出来事（離す・クリック・長押しのメニュー）。重なりの上で起きたものは、ここで止めてアプリに渡さない。
+   * 指で押した時のクリックは、指を離した後に、その時に指の下にある所へ送られる。重なりが先に押せなくなっていると、
+   * 消えかけた重なりの下のアプリのボタン（設定・作品・アイデアの「済み」など）が押されてしまう
+   */
+  var PRESS_EVENTS = ['pointerup', 'pointercancel', 'touchend', 'mousedown', 'mouseup', 'click', 'contextmenu']
+  /** 押した指・マウスを離してから、重なりを押せなくする（下のアプリを押せるようにする）まで */
+  var RELEASE_MS = 100
+  /** 押したままでも、これより長くは重なりを残さない（消え始めてから） */
+  var HOLD_CAP_MS = 3000
 
   /** canvas に描ける（描けなければ起動アニメーションを出さない） */
   function canvasAvailable() {
@@ -1100,8 +1111,41 @@
     document.documentElement.appendChild(el)
 
     var player = null
-    function onInput() {
+    // 重なりを押している間（押してから、離して RELEASE_MS たつまで）は、消え始めても重なりを押せるまま・取り除かずに残し、
+    // その押す操作の続き（離す・クリック・長押し）を重なりが受けて止める
+    var holding = false
+    var removeLater = false
+    var holdTimer = 0
+    function inOverlay(target) {
+      return target === el || (!!target && typeof target.nodeType === 'number' && el.contains(target))
+    }
+    function onInput(e) {
+      if (e && e.type === 'pointerdown' && inOverlay(e.target)) holding = true
       if (current) current.controller.skip()
+    }
+    function onPress(e) {
+      // 指を離した（touchend）のを止めると、そのタップのクリックは作られない
+      if (inOverlay(e.target)) {
+        if (e.cancelable) e.preventDefault()
+        e.stopPropagation()
+      }
+      if (holding && (e.type === 'pointerup' || e.type === 'pointercancel' || e.type === 'touchend')) {
+        window.clearTimeout(holdTimer)
+        holdTimer = window.setTimeout(endHold, RELEASE_MS)
+      }
+    }
+    function endHold() {
+      window.clearTimeout(holdTimer)
+      holding = false
+      el.style.pointerEvents = 'none'
+      if (removeLater) removeNow()
+    }
+    function removeNow() {
+      for (var i = 0; i < PRESS_EVENTS.length; i++) window.removeEventListener(PRESS_EVENTS[i], onPress, true)
+      if (el.parentNode) el.parentNode.removeChild(el)
+      if (player) player.dispose()
+      player = null
+      current = null
     }
     function unlisten() {
       for (var i = 0; i < SKIP_EVENTS.length; i++) window.removeEventListener(SKIP_EVENTS[i], onInput, true)
@@ -1119,14 +1163,14 @@
         unlisten()
         if (player) player.stop()
         el.setAttribute('data-launch-end', reason)
-        el.style.pointerEvents = 'none'
+        // 押している間は押せるまま（離した後で押せなくする）。それ以外は、消え始めたらすぐ下のアプリを押せる
+        if (holding) holdTimer = window.setTimeout(endHold, HOLD_CAP_MS)
+        else el.style.pointerEvents = 'none'
         el.style.opacity = '0'
       },
       onRemove: function () {
-        if (el.parentNode) el.parentNode.removeChild(el)
-        if (player) player.dispose()
-        player = null
-        current = null
+        if (holding) removeLater = true
+        else removeNow()
       },
     })
     current = { controller: controller, element: el }
@@ -1166,6 +1210,8 @@
       else playInPage()
     }, 0)
     for (var i = 0; i < SKIP_EVENTS.length; i++) window.addEventListener(SKIP_EVENTS[i], onInput, true)
+    for (var j = 0; j < PRESS_EVENTS.length; j++)
+      window.addEventListener(PRESS_EVENTS[j], onPress, { capture: true, passive: false })
     controller.start()
     // アプリ: 重なり（起動の画面と同じ地の色。アニメーションの最初の絵）を置いたので、起動の画面（無地）を消す。Android は
     // 起動の画面を消すまでページを描かない（requestAnimationFrame も来ないことがある）ので、待ちすぎない

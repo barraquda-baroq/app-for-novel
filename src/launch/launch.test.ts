@@ -353,11 +353,103 @@ describe('起動アニメーション（boot）', () => {
     expect(overlay()).toBeNull()
   })
 
-  it('キーを押してもすぐ消える', () => {
+  it('キーを押してもすぐ消える（下のアプリはすぐ押せる）', () => {
     load().boot()
     t(100)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
     expect(overlay()!.getAttribute('data-launch-end')).toBe('skip')
+    expect(overlay()!.style.pointerEvents).toBe('none')
+  })
+
+  describe('重なりを押した時（指のタップ・長押し）', () => {
+    const press = (target: EventTarget, type: string) => {
+      const e =
+        type === 'click'
+          ? new MouseEvent(type, { bubbles: true, cancelable: true })
+          : new Event(type, { bubbles: true, cancelable: true })
+      target.dispatchEvent(e)
+      return e
+    }
+    let appGot: string[]
+    const app = (e: Event) => appGot.push(e.type)
+    const PRESS = ['pointerup', 'pointercancel', 'touchend', 'mousedown', 'mouseup', 'click', 'contextmenu']
+    beforeEach(() => {
+      appGot = []
+      for (const type of PRESS) document.addEventListener(type, app)
+    })
+    afterEach(() => {
+      for (const type of PRESS) document.removeEventListener(type, app)
+    })
+
+    it('離すまでは押せるまま残し、押す操作の続き（離す・クリック）を止める。離して0.1秒で取り除く', () => {
+      load().boot()
+      t(300)
+      const el = overlay()!
+      press(el, 'pointerdown')
+      expect(el.getAttribute('data-launch-end')).toBe('skip')
+      expect(el.style.opacity).toBe('0')
+      // 指を離した後のクリックは、その時に指の下にある所へ送られる。重なりが押せないと、下のアプリが押されてしまう
+      expect(el.style.pointerEvents).not.toBe('none')
+      t(400)
+      expect(overlay()).toBe(el)
+      expect(press(el, 'pointerup').defaultPrevented).toBe(true)
+      // 指を離したのを止めると、そのタップのクリックは作られない
+      expect(press(el, 'touchend').defaultPrevented).toBe(true)
+      expect(press(el, 'mouseup').defaultPrevented).toBe(true)
+      expect(press(el.querySelector('canvas') ?? el, 'click').defaultPrevented).toBe(true)
+      expect(appGot).toEqual([])
+      t(99)
+      expect(overlay()).toBe(el)
+      t(1)
+      expect(overlay()).toBeNull()
+      // 取り除いた後は、アプリへの操作を止めない
+      const click = press(document.body, 'click')
+      expect(click.defaultPrevented).toBe(false)
+      expect(appGot).toEqual(['click'])
+    })
+
+    it('すぐ離した時は、離して0.1秒で押せなくなり、消え始めて0.25秒で取り除く', () => {
+      load().boot()
+      t(300)
+      const el = overlay()!
+      press(el, 'pointerdown')
+      press(el, 'pointerup')
+      press(el, 'click')
+      t(99)
+      expect(el.style.pointerEvents).not.toBe('none')
+      t(1)
+      expect(el.style.pointerEvents).toBe('none')
+      expect(overlay()).toBe(el)
+      t(150)
+      expect(overlay()).toBeNull()
+      expect(appGot).toEqual([])
+    })
+
+    it('押したまま（長押し）でも、消え始めて3秒で取り除く。長押しのメニューも止める', () => {
+      load().boot()
+      t(300)
+      const el = overlay()!
+      press(el, 'pointerdown')
+      t(1000)
+      expect(press(el, 'contextmenu').defaultPrevented).toBe(true)
+      t(1999)
+      expect(overlay()).toBe(el)
+      expect(el.style.pointerEvents).not.toBe('none')
+      t(1)
+      expect(overlay()).toBeNull()
+      expect(appGot).toEqual([])
+    })
+
+    it('重なりの外（消え始めた後の下のアプリ）への操作は止めない', () => {
+      load().boot()
+      t(300)
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+      expect(press(document.body, 'click').defaultPrevented).toBe(false)
+      expect(press(document.body, 'pointerup').defaultPrevented).toBe(false)
+      expect(appGot).toEqual(['click', 'pointerup'])
+      t(250)
+      expect(overlay()).toBeNull()
+    })
   })
 
   it('アプリが知らせてこなくても、5秒で消える', () => {
