@@ -40,6 +40,17 @@ describe('wrangler.jsonc の変数', () => {
   })
 })
 
+describe('CI（.github/workflows/ci.yml）', () => {
+  it('コネクタの部品を入れ、型・単体・Workers・エミュレーターのテストを動かす（同期の E2E の前に入れる）', () => {
+    const ci = fs.readFileSync(path.resolve(import.meta.dirname, '../../../.github/workflows/ci.yml'), 'utf8')
+    const at = (s: string) => ci.indexOf(s)
+    for (const s of ['npm --prefix connector ci', 'npm --prefix connector run typecheck', 'npm run test:connector\n', 'npm run test:connector:emu'])
+      expect(at(s), s).toBeGreaterThan(0)
+    expect(at('npm --prefix connector ci')).toBeLessThan(at('npm run test:e2e:sync'))
+    expect(ci).toContain('connector/package-lock.json')
+  })
+})
+
 describe('docs/CONNECTOR.md のコマンド', () => {
   it('リポジトリの直下で動かす wrangler のコマンドには、Worker の名前を付ける（直下には wrangler.jsonc が無い）', () => {
     const dir = path.resolve(import.meta.dirname, '../..')
