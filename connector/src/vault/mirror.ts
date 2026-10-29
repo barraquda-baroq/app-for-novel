@@ -173,7 +173,9 @@ export class Mirror {
     }
     this.#pending.delete(row.name)
     this.#unreadable.delete(row.name)
-    if (cleanup && row.chunks > 0) this.#store.deleteChunks(row.name, row.chunks)
+    // 使わなくなった分割文書を片付ける（分割しなくなった（chunks 0）時は全部。端末は Firestore から消しているが、消したことは
+    // 差分の読み取りには届かないので、残すと夜の確かめで数が合わなくなる）
+    if (cleanup) this.#store.deleteChunks(row.name, row.chunks)
     table[row.id] = rec
     // 取り込んだ稿の文字数・枚数を先に数えておく（ツールの呼び出しの時に数え直さない。アプリと同じ bodyMetrics のキャッシュ）
     if (cleanup && row.tbl === 'versions' && typeof (rec as { body?: unknown }).body === 'string') bodyMetrics(rec as unknown as { body: string })

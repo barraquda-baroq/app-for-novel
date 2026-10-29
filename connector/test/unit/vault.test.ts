@@ -198,6 +198,30 @@ describe('写し（差分の読み取り）', () => {
     expect(core.mirror.unreadableCount()).toBe(0)
   })
 
+  it('分割した記録が短くなって分割しなくなったら、写しの分割文書も消す（夜の確かめで数が合う）', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['短い本文', '長い本文の段落。\n'.repeat(400)])
+    const v = n.data.versions[n.data.pieces[n.ids[1]].versionIds[0]]
+    const { core, clock } = await pairedCore(fake, null, { config: { dailyReadBudget: 1_000_000 } })
+    fake.putMany(OWNER, [{ table: 'titles', rec: n.data.titles[n.titleId] as never }])
+    for (const id of n.ids) fake.putRecord(OWNER, 'pieces', n.data.pieces[id] as never)
+    fake.putRecord(OWNER, 'versions', n.data.versions[n.data.pieces[n.ids[0]].versionIds[0]] as never)
+    fake.putRecord(OWNER, 'versions', v as never, { chunkSize: 1_000 })
+    clock.now += 20_000
+    expect(await call(core, 'novel_read_text', { title_id: n.titleId, pieces: ['#2'] })).toContain('長い本文の段落。')
+    expect(core.mirror.counts().chunks).toBeGreaterThan(0)
+    expect(await core.nightly()).toBe('ok')
+    // 端末が短くした: 親の文書を分割せずに書き直し、分割文書は消す（消したことは差分の読み取りに出ない）
+    for (const k of [...fake.docs.keys()]) if (k.includes(`/records/versions:${v.id}#`)) fake.docs.delete(k)
+    fake.putRecord(OWNER, 'versions', { ...v, body: '短くした本文。', updatedAt: v.updatedAt + 1 } as never)
+    clock.now += 20_000
+    expect(await call(core, 'novel_read_text', { title_id: n.titleId, pieces: ['#2'] })).toContain('短くした本文。')
+    expect(core.mirror.counts().chunks).toBe(0)
+    expect(core.views().view.versions[v.id].body).toBe('短くした本文。')
+    expect(await core.nightly()).toBe('ok')
+    expect(core.mirror.warm().done).toBe(true)
+  })
+
   it('削除の印が届くと写しから消え、以前に削除された記録として覚える', async () => {
     const fake = new FakeFirebase()
     const n = novel(['本文'])
