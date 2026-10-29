@@ -131,3 +131,6 @@ jobs:
         run: node scripts/mobile/ci.mjs ios-settings
       - name: Google ログインの設定が無い時に止まることの確かめ
         run: node scripts/mobile/ci.mjs ios-missing-google
+      # Mac の Product > Archive に近い形（実機用・Release。署名だけしない）
+      - name: iPhone のビルド（実機用・Release）
+        run: node scripts/mobile/ci.mjs ios-build-device

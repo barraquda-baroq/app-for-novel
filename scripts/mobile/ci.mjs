@@ -3,7 +3,8 @@
 //   android-version <apk>            版（versionCode・versionName）が package.json と同じ
 //   android-keystore <jks>           使い捨ての鍵を作り、android/keystore.properties を書く（mobile:keystore と同じ形）
 //   android-signature <apk> <jks>    APK がその鍵で署名されている
-//   ios-build                        シミュレーター用にビルドする（署名なし）
+//   ios-build                        シミュレーター用に Debug でビルドする（署名なし）
+//   ios-build-device                 実機用に Release でビルドする（署名なし。Mac の Product > Archive に近い形）
 //   ios-app <App.app>                できたアプリの Info.plist・中身
 //   ios-settings                     xcconfig（版・最低の iOS・local.xcconfig）が Debug・Release の両方で効く
 //   ios-missing-google               Google ログインの設定が無い時に、ビルドが日本語の案内で止まる
@@ -119,6 +120,31 @@ const commands = {
       } else console.log(`  ✓ ${resolved} はリポジトリのものと同じ`)
     }
   },
+  'ios-build-device'() {
+    const r = spawnSync(
+      'xcodebuild',
+      xcodebuildArgs(['GOOGLE_REVERSED_CLIENT_ID=com.googleusercontent.apps.ci'], { device: true }),
+      {
+        cwd: repoDir,
+        stdio: 'inherit',
+      },
+    )
+    if (r.status !== 0) {
+      console.log('✗ 実機用（Release）のビルドに失敗しました')
+      process.exit(r.status || 1)
+    }
+    const app = path.join(
+      process.env.IOS_DERIVED_DATA || path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'dd'),
+      'Build',
+      'Products',
+      'Release-iphoneos',
+      'App.app',
+    )
+    const info = JSON.parse(must('plutil', ['-convert', 'json', '-o', '-', path.join(app, 'Info.plist')]))
+    check('CFBundleShortVersionString（Release）', info.CFBundleShortVersionString, version)
+    check('CFBundleVersion（Release）', info.CFBundleVersion, String(code))
+    check('CAPACITOR_DEBUG（Release では空）', info.CAPACITOR_DEBUG ?? '', '')
+  },
   'ios-app'(app) {
     const info = JSON.parse(must('plutil', ['-convert', 'json', '-o', '-', path.join(app, 'Info.plist')]))
     check('CFBundleIdentifier', info.CFBundleIdentifier, APP_ID)
@@ -176,7 +202,7 @@ const commands = {
   },
 }
 
-function xcodebuildArgs(extra) {
+function xcodebuildArgs(extra, { device = false } = {}) {
   const tmp = process.env.RUNNER_TEMP || os.tmpdir()
   return [
     '-project',
@@ -184,11 +210,11 @@ function xcodebuildArgs(extra) {
     '-scheme',
     'App',
     '-configuration',
-    'Debug',
+    device ? 'Release' : 'Debug',
     '-sdk',
-    'iphonesimulator',
+    device ? 'iphoneos' : 'iphonesimulator',
     '-destination',
-    'generic/platform=iOS Simulator',
+    device ? 'generic/platform=iOS' : 'generic/platform=iOS Simulator',
     '-derivedDataPath',
     process.env.IOS_DERIVED_DATA || path.join(tmp, 'dd'),
     '-clonedSourcePackagesDirPath',
