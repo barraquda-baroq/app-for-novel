@@ -1,7 +1,8 @@
 import UIKit
 import Capacitor
 
-@UIApplicationMain
+// @UIApplicationMain は Swift 6 で使えなくなるので @main にしておく
+@main
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?

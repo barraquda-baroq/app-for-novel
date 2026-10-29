@@ -19,6 +19,7 @@ const pbxprojs = import.meta.glob('../../ios/App/App.xcodeproj/project.pbxproj',
   eager: true,
 })
 const xcconfig = Object.values(xcconfigs)[0]
+const pbxproj = Object.values(pbxprojs)[0] as string | undefined
 
 /** Android の versionCode と iPhone の CURRENT_PROJECT_VERSION（2.4.0 → 20400） */
 const buildNumber = (v: string) => {
@@ -43,6 +44,16 @@ describe('アプリの版', () => {
     if (!xcconfig) return
     expect(setting(xcconfig, 'MARKETING_VERSION')).toBe(version)
     expect(setting(xcconfig, 'CURRENT_PROJECT_VERSION')).toBe(String(buildNumber(version)))
+  })
+
+  it('iPhone のプロジェクトは版を xcconfig だけに書き、最低の iOS は xcconfig と同じ', () => {
+    if (!pbxproj || !xcconfig) return
+    // ターゲットに書くと xcconfig より強くなり、版を上げても変わらなくなる
+    expect(pbxproj).not.toMatch(/MARKETING_VERSION|CURRENT_PROJECT_VERSION|DEVELOPMENT_TEAM/)
+    // Capacitor の cap sync は pbxproj の最初の IPHONEOS_DEPLOYMENT_TARGET を Package.swift に使う
+    const targets = [...pbxproj.matchAll(/IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/g)].map((m) => m[1])
+    expect(targets.length).toBeGreaterThan(0)
+    for (const t of targets) expect(t).toBe(setting(xcconfig, 'IPHONEOS_DEPLOYMENT_TARGET'))
   })
 
   it('ビルド番号の作り方', () => {

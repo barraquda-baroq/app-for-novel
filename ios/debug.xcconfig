@@ -1,1 +1,3 @@
 CAPACITOR_DEBUG = true
+// 版・最低の iOS・手元の設定（Release と同じ）
+#include "App/novelstudio.xcconfig"
