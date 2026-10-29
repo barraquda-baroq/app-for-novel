@@ -1,5 +1,7 @@
 // 連携の決まり（アプリとコネクタが同じこのファイルを使う）。値は src/test/pairingFixture.ts（コネクタのテストと同じ）
 import { describe, expect, it } from 'vitest'
+import emuRules from '../../firestore.emu.rules?raw'
+import prodRules from '../../firestore.rules?raw'
 import { PAIRING_FIXTURE as F } from '../test/pairingFixture'
 import {
   callbackUrl,
@@ -85,10 +87,11 @@ describe('身元と記録の形', () => {
     expect(parseIdentity([F.identity])).toBeNull()
   })
 
-  it('config/connector のキーはアクセスルール（validConnector）と同じ', async () => {
-    const fs = await import('node:fs')
-    for (const file of ['firestore.rules', 'firestore.emu.rules']) {
-      const rules = fs.readFileSync(file, 'utf8')
+  it('config/connector のキーはアクセスルール（validConnector）と同じ', () => {
+    for (const [file, rules] of [
+      ['firestore.rules', prodRules],
+      ['firestore.emu.rules', emuRules],
+    ]) {
       const m = /function validConnector\(\)[\s\S]*?hasOnly\(\[([^\]]*)\]\)/.exec(rules)
       expect(m, file).not.toBeNull()
       const keys = m![1].split(',').map((k) => k.trim().replace(/'/g, ''))
