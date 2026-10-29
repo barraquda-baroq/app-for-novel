@@ -151,7 +151,8 @@ export class FakeDevice {
       id: d.id,
       record: d.record as Change['record'],
       ...(d.device === this.name ? { own: true } : {}),
-      ...(d.reset ? { reset: true } : {}),
+      // エンジンと同じ: 記録した位置より後に書かれた復元の文書だけを、復元として当てる（届き直したものはふつうの変更）
+      ...(d.reset && d.ts > this.cursor ? { reset: true } : {}),
     }
   }
 
@@ -177,10 +178,13 @@ export class FakeDevice {
     return r
   }
 
-  /** 受け取っていない書き込みを反映する。戻った最初はまとめて、その後は書き込みごとに */
-  async receive(): Promise<boolean> {
+  /**
+   * 受け取っていない書き込みを反映する。戻った最初はまとめて、その後は書き込みごとに。
+   * from を渡すと、その時刻より後の書き込みを受け取り直す（購読し直して、記録した位置と同じ時刻の書き込みが届き直した時）
+   */
+  async receive(from?: number): Promise<boolean> {
     const docs = [...this.cloud.docs.entries()]
-      .filter(([, d]) => d.ts > this.cursor)
+      .filter(([, d]) => d.ts > (from ?? this.cursor))
       .sort((a, b) => a[1].ts - b[1].ts || (a[0] < b[0] ? -1 : 1))
     if (!docs.length) return false
     const groups: [string, CloudDoc][][] = []
@@ -197,8 +201,9 @@ export class FakeDevice {
       const changes = g.map(([k, d]) => this.changeOf(k, d)).filter((c): c is Change => c !== null)
       const cursor = g[g.length - 1][1].ts
       // 復元をクラウドに当てるまでは受け取らない（当てた後で、記録した位置から受け取り直す）
-      if ((await this.apply(changes, cursor)) === null) return false
-      this.cursor = cursor
+      if ((await this.apply(changes, cursor > this.cursor ? cursor : undefined)) === null) return false
+      // 位置は戻さない（届き直した書き込みの時刻は、記録した位置より前のことがある）
+      this.cursor = Math.max(this.cursor, cursor)
     }
     return true
   }

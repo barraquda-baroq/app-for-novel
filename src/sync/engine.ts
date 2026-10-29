@@ -125,6 +125,10 @@ const SENT_MEMORY = 20
 
 const later = (a: StoredCursor, b: StoredCursor | null) => !b || a.s > b.s || (a.s === b.s && a.n > b.n)
 
+/** 文書の更新時刻（サーバーの時刻。まだ付いていなければ null） */
+const timeOf = (data: { updated?: unknown }): StoredCursor | null =>
+  data.updated instanceof Timestamp ? { s: data.updated.seconds, n: data.updated.nanoseconds } : null
+
 export class SyncError extends Error {
   constructor(
     readonly code: string,
@@ -228,10 +232,20 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   function isSuperseded(id: string, data: RecordDoc): boolean {
     const old = replaced.get(id)
     if (!old) return false
-    const at = data.updated instanceof Timestamp ? { s: data.updated.seconds, n: data.updated.nanoseconds } : null
+    const at = timeOf(data)
     if (at && !later(at, old)) return true
     replaced.delete(id)
     return false
+  }
+
+  /**
+   * 復元・すべて削除の文書を、その内容を正とする変更として当てるか。記録した位置より後に書かれたものだけ。
+   * 購読し直すと、記録した位置と同じ時刻の文書（受け取って位置を記録した時に反映したもの）が届き直し、復元の印は次に
+   * 書かれるまで残る。それを復元として当て直すと、その後のこの端末の変更（送る前の幕の操作・稿の編集）を戻すので、
+   * ふつうの変更として 3者マージする（同じ時刻の、まだ受け取っていない別の書き込みは、同じ通知でいっしょに届く）
+   */
+  function freshReset(data: RecordDoc, at: StoredCursor | null): boolean {
+    return Boolean(data.reset) && (!at || later(at, cursor))
   }
 
   /** この端末が先に送った古い版の通知か（その後にもっと新しい版を送っている） */
@@ -365,10 +379,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     let newest: StoredCursor | null = null
     for (const d of changed) {
       const data = d.data({ serverTimestamps: 'none' }) as RecordDoc | ChunkDoc
-      if (data.updated instanceof Timestamp) {
-        const at = { s: data.updated.seconds, n: data.updated.nanoseconds }
-        if (later(at, newest)) newest = at
-      }
+      const at = timeOf(data)
+      if (at && later(at, newest)) newest = at
       if (data.table === '_chunk') continue
       const recDoc = data as RecordDoc
       if (isStaleEcho(d.id, recDoc) || isSuperseded(d.id, recDoc)) continue
@@ -386,7 +398,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         id: recDoc.id,
         record: rec as Change['record'],
         ...(recDoc.device === deviceId ? { own: true } : {}),
-        ...(recDoc.reset ? { reset: true } : {}),
+        ...(freshReset(recDoc, at) ? { reset: true } : {}),
       })
     }
     const advance = !fromCache && newest && later(newest, cursor) ? newest : undefined
@@ -513,8 +525,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           change: { table: b.it.table, id: b.it.id, record: b.it.local },
           hash: b.enc.hash,
           // 置き換えた版の時刻（クラウドに無かった時は覚えない）
-          replaced:
-            cloud && cloud.updated instanceof Timestamp ? { s: cloud.updated.seconds, n: cloud.updated.nanoseconds } : null,
+          replaced: cloud ? timeOf(cloud) : null,
         })
       })
       return { written, conflicts: decision.conflicts }
@@ -552,7 +563,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           id: it.id,
           record: rec as Change['record'],
           ...(data.device === deviceId ? { own: true } : {}),
-          ...(data.reset ? { reset: true } : {}),
+          ...(freshReset(data, timeOf(data)) ? { reset: true } : {}),
         })
     }
     if (changes.length) await target.applyRemote(changes, undefined, { direct: true })

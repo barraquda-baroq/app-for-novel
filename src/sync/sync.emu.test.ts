@@ -578,6 +578,49 @@ describe('同期（エミュレーター）', () => {
     }
   })
 
+  it('受け取り済みの復元の書き込みが、購読し直して届き直しても、その後の書き換えを戻さない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let versionId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      versionId = r.data.pieces[r.pieceId].versionIds[0]
+      return S.updateVersion(r.data, versionId, { body: '戻した本文' })
+    })
+    await settle(a, b)
+    // A がバックアップから戻し（1回の書き込み）、B が受け取った（B の受け取った位置 = その書き込みの時刻）
+    await a.restore(await a.load())
+    await settle(a, b)
+    // B は閉じている間に書き換えてから開き直した: 記録した位置から購読し直すと、その時刻の復元の書き込みが届き直す
+    // （復元の印は次に書かれるまで残る）。届き直した通知を反映するまで、B は送らない
+    b.offline()
+    await b.edit((d) => S.updateVersion(d, versionId, { body: 'Bで後から書いた' }))
+    let applied: () => void = () => undefined
+    const firstApply = new Promise<void>((r) => (applied = r))
+    const realApply = b.p.applyRemote.bind(b.p)
+    b.p.applyRemote = async (changes, opts) => {
+      const r = await realApply(changes, opts)
+      if (changes.some((c) => c.table === 'versions' && c.id === versionId)) applied()
+      return r
+    }
+    const realRead = b.p.readOutbox.bind(b.p)
+    b.p.readOutbox = async (n) => {
+      await firstApply
+      return realRead(n)
+    }
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.versions[versionId].body).toBe('Bで後から書いた')
+      expect(Object.keys(data.trashEntries)).toEqual([])
+    }
+    expect(b.notes).toEqual([])
+  })
+
   it('同じバックアップを入れた2台が初めてログインすると、クラウド側を採り、違う文章は控える', async () => {
     const who = account()
     const a = await makeDevice('a', who)

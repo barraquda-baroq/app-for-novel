@@ -345,6 +345,55 @@ describe('バックアップから戻した端末と、その後の幕の操作'
   })
 })
 
+describe('受け取り済みの復元の書き込みが届き直した時', () => {
+  // X の復元を受け取った Y が、送る前に購読し直した（再読み込み・オフラインから戻った）: 記録した位置と同じ時刻の
+  // 復元の書き込みが届き直す（印は次に書かれるまで残る）。もう反映したので、その後の Y の変更を戻さない
+  async function restoredOnY() {
+    const start = scenarioStart({ body: 'ABCDEFGHI', splitAt: null })
+    const ep = start.ep
+    const cloud = new FakeCloud()
+    const x = new FakeDevice('X', cloud)
+    const y = new FakeDevice('Y', cloud)
+    await x.edit(() => start.data)
+    await settle(x, y)
+    await x.restore(await x.load())
+    await x.sync()
+    await y.receive()
+    y.notes = []
+    return { ep, cloud, x, y, restoreTs: cloud.ts }
+  }
+
+  it('その後に分けて書き換えた話は、分けたまま', async () => {
+    const { ep, x, y, restoreTs } = await restoredOnY()
+    await y.edit((d) => A.separatePiece(d, ep, [3]).data)
+    await y.edit((d) => S.updateVersion(d, d.pieces[actsIds(d, ep)[1]].activeVersionId!, { body: 'DEFGHI+Y' }))
+    await y.receive(restoreTs - 1)
+    expect(structureProblems(await y.load())).toEqual([])
+    await settle(x, y)
+    expect(await sameData(x, y)).toBe(true)
+    const d = await y.load()
+    expect(structureProblems(d)).toEqual([])
+    const v = repairData(d).data
+    expect(isSplit(v.pieces[ep])).toBe(true)
+    expect(activeBody(v, v.pieces[ep])).toBe('ABCDEFGHI+Y')
+    expect(Object.keys(d.trashEntries)).toEqual([])
+    expect(y.notes).toEqual([])
+  })
+
+  it('その後に書き換えた稿は、書き換えたまま（ゴミ箱に移さない）', async () => {
+    const { ep, x, y, restoreTs } = await restoredOnY()
+    const vid = (await y.load()).pieces[ep].activeVersionId!
+    await y.edit((d) => S.updateVersion(d, vid, { body: 'ABCDEFGHI+後で' }))
+    await y.receive(restoreTs - 1)
+    await settle(x, y)
+    expect(await sameData(x, y)).toBe(true)
+    const d = await y.load()
+    expect(d.versions[vid].body).toBe('ABCDEFGHI+後で')
+    expect(Object.keys(d.trashEntries)).toEqual([])
+    expect(y.notes).toEqual([])
+  })
+})
+
 describe('バックアップから戻した直後の操作（1台）', () => {
   // 復元を送り終えてから、受け取り直す（自分の復元の書き込みが届く）までの間に、戻した話を操作した
   const ops: [string, (d: AppData, ep: ID) => AppData][] = [
