@@ -91,6 +91,68 @@ describe('連携の確かめ（/pair/callback）', () => {
   })
 })
 
+describe('連携の代（OAuth の許可を、いまの連携に結び付ける）', () => {
+  it('［連携を解除］して連携し直した後は、前の許可はどのツールも使えない（新しい許可は使える）', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock } = await pairedCore(fake, n.data)
+    const gen = core.pairing().gen!
+    expect(gen).toBeTruthy()
+    const old = { ownerUid: OWNER, gen }
+    expect(core.grantCurrent(old)).toBe(true)
+    expect((await core.callTool('novel_list_titles', {}, { grant: old })).isError).toBeFalsy()
+    // 解除（記録を消す）→ 別の Claude のアカウントで連携し直す（作り直した記録は作られた時刻が変わる）
+    fake.setConnector(null)
+    clock.now += 1_000
+    const hash = await pairingHash('state-2', 'm'.repeat(43))
+    fake.setConnector({ uid, pairing: hash, writes: true, pairedAt: clock.now })
+    const r = await core.verifyPairing(hash)
+    if (!r.ok) throw new Error(r.reason)
+    expect(r.gen).not.toBe(gen)
+    expect(core.grantCurrent(old)).toBe(false)
+    for (const tool of ['novel_status', 'novel_list_titles', 'novel_add_revision_ideas']) {
+      const res = await core.callTool(tool, { title_id: n.titleId, items: [{ heading: '案', body: '本文' }] }, { grant: old })
+      expect(res, tool).toMatchObject({ isError: true, auth: true })
+    }
+    const fresh = { ownerUid: OWNER, gen: r.gen }
+    expect(core.grantCurrent(fresh)).toBe(true)
+    expect(await call(core, 'novel_list_titles')).toContain('『星の庭』')
+    expect((await core.callTool('novel_list_titles', {}, { grant: fresh })).isError).toBeFalsy()
+    // 持ち主が違う許可・代の無い許可（前の版の許可）も使えない
+    expect(core.grantCurrent({ ownerUid: 'other-owner', gen: r.gen })).toBe(false)
+    expect(core.grantCurrent({ ownerUid: OWNER })).toBe(false)
+    expect(core.grantCurrent(undefined)).toBe(false)
+  })
+
+  it('解除しないで上書き（別の Claude を足す）・「書き込みを許可」の切り替えでは、前の許可も使える', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock } = await pairedCore(fake, n.data)
+    const old = { ownerUid: OWNER, gen: core.pairing().gen! }
+    const hash = await pairingHash('state-3', 'n'.repeat(43))
+    fake.setConnector({ uid, pairing: hash, writes: false, pairedAt: clock.now })
+    const r = await core.verifyPairing(hash)
+    if (!r.ok) throw new Error(r.reason)
+    expect(core.grantCurrent(old)).toBe(true)
+    clock.now += 61_000
+    expect((await core.callTool('novel_list_titles', {}, { grant: old })).isError).toBeFalsy()
+  })
+
+  it('解除の後に作り直した記録を確かめていなければ（連携し直しに失敗）、1分以内に前の許可で読めなくなる', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock } = await pairedCore(fake, n.data)
+    const old = { ownerUid: OWNER, gen: core.pairing().gen! }
+    fake.setConnector(null)
+    fake.setConnector({ uid, pairing: await pairingHash('state-4', 'p'.repeat(43)), writes: true, pairedAt: clock.now })
+    clock.now += 61_000
+    const res = await core.callTool('novel_read_text', { title_id: n.titleId }, { grant: old })
+    expect(res).toMatchObject({ isError: true, auth: true })
+    expect(res.text).not.toContain('本文です。')
+    expect(core.pairingState()).toBe('unpaired')
+  })
+})
+
 describe('写し（差分の読み取り）', () => {
   it('同じ時刻の文書が何ページにもまたがっても、読み直しも取りこぼしも無い', async () => {
     const fake = new FakeFirebase()

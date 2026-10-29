@@ -244,7 +244,7 @@ export async function pair(core: VaultCore, owner: Device, opts: { writes?: bool
       origin,
       writeConnector: (d) => writeConnector(d, owner.fs),
       setAccess: () => undefined,
-      flush: async () => undefined,
+      flush: async () => true,
       navigate: (u) => (url = u),
       randomKey: () => randomPairingKey(),
       deviceLabel: () => 'テストの Mac',

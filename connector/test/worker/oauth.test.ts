@@ -10,6 +10,7 @@ const H = 'https://connector.example'
 const APP = 'https://novel-studio-3352e.web.app'
 const CLAUDE_CIMD = 'https://claude.ai/oauth/mcp-oauth-client-metadata'
 const CLAUDE_CALLBACK = 'https://claude.ai/api/mcp/auth_callback'
+const CLAUDE_COM_CALLBACK = 'https://claude.com/api/mcp/auth_callback'
 const OWNER = 'owner-1'
 
 let fake: FakeFirebase
@@ -18,7 +19,7 @@ let realFetch: typeof fetch
 const cimdDoc = {
   client_id: CLAUDE_CIMD,
   client_name: 'Claude',
-  redirect_uris: [CLAUDE_CALLBACK],
+  redirect_uris: [CLAUDE_CALLBACK, CLAUDE_COM_CALLBACK],
   grant_types: ['authorization_code', 'refresh_token'],
   response_types: ['code'],
   token_endpoint_auth_method: 'none',
@@ -100,9 +101,11 @@ async function kvKeys(): Promise<number> {
 }
 
 /** claude.ai の「接続」から、アプリでの許可・コネクタへの戻りまで（attacker で途中を変える） */
-async function connect(opts: { k?: string; keyInApp?: string; pairedAt?: number; dropCookie?: boolean } = {}) {
+async function connect(
+  opts: { k?: string; keyInApp?: string; pairedAt?: number; dropCookie?: boolean; redirectUri?: string } = {},
+) {
   const { verifier, challenge } = await pkce()
-  const get = await SELF.fetch(authorizeUrl(challenge))
+  const get = await SELF.fetch(authorizeUrl(challenge, opts.redirectUri ? { redirect_uri: opts.redirectUri } : {}))
   expect(get.status).toBe(200)
   const html = await get.text()
   const handle = /name="handle" value="([^"]+)"/.exec(html)![1]
@@ -141,16 +144,16 @@ async function token(params: Record<string, string>) {
   })
 }
 
-async function exchange(cb: Response, verifier: string) {
+async function exchange(cb: Response, verifier: string, redirectUri = CLAUDE_CALLBACK) {
   const to = new URL(cb.headers.get('Location')!)
-  expect(`${to.origin}${to.pathname}`).toBe(CLAUDE_CALLBACK)
+  expect(`${to.origin}${to.pathname}`).toBe(redirectUri)
   expect(to.searchParams.get('state')).toBe('claude-state')
   const res = await token({
     grant_type: 'authorization_code',
     code: to.searchParams.get('code')!,
     code_verifier: verifier,
     client_id: CLAUDE_CIMD,
-    redirect_uri: CLAUDE_CALLBACK,
+    redirect_uri: redirectUri,
     resource: `${H}/mcp`,
   })
   expect(res.status).toBe(200)
@@ -232,6 +235,22 @@ describe('GET /authorize（受け付けるクライアント）', () => {
     expect(await kvKeys()).toBe(before)
   })
 
+  it('受け付けない client_id の URL は、取りに行く前に断る（GET /authorize・トークンの要求）', async () => {
+    const { challenge } = await pkce()
+    const spy = vi.mocked(globalThis.fetch)
+    const fetched = () => spy.mock.calls.map(([input]) => String(input instanceof Request ? input.url : input))
+    const evil = await SELF.fetch(authorizeUrl(challenge, { client_id: 'https://evil.example/cimd' }), { redirect: 'manual' })
+    expect(evil.status).toBe(400)
+    expect(await evil.text()).toContain('claude.ai からの接続だけ')
+    // claude.ai の別の URL も、公開の識別子でなければ取りに行かない
+    const other = await SELF.fetch(authorizeUrl(challenge, { client_id: 'https://claude.ai/some/other/path' }), { redirect: 'manual' })
+    expect(other.status).toBe(400)
+    const tok = await token({ grant_type: 'authorization_code', code: 'x', client_id: 'https://evil.example/cimd', code_verifier: 'v' })
+    expect(tok.status).toBe(401)
+    expect(((await tok.json()) as { error: string }).error).toBe('invalid_client')
+    expect(fetched().filter((u) => u.includes('evil.example') || u.includes('/some/other/path'))).toEqual([])
+  })
+
 })
 
 describe('連携（アプリでの許可 → /pair/callback → トークン → /mcp）', () => {
@@ -304,6 +323,41 @@ describe('連携（アプリでの許可 → /pair/callback → トークン →
     const refresh = await token({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: CLAUDE_CIMD })
     expect(refresh.status).toBe(400)
     expect(((await refresh.json()) as { error: string }).error).toBe('invalid_grant')
+  })
+})
+
+describe('連携の代（解除した Claude のアカウントは、連携し直した後も使えない）', () => {
+  it('解除の後に別の戻り先から連携し直すと、前の許可は 401・トークンの更新は invalid_grant。新しい許可は使える', async () => {
+    seed(novel(['本文']).data)
+    const first = await connect()
+    const x = await exchange(first.cb, first.verifier)
+    const ready = async (accessToken: string) => {
+      let res: Response | null = null
+      for (let i = 0; i < 20; i++) {
+        res = await mcp(accessToken, 'tools/call', { name: 'novel_list_titles', arguments: {} })
+        if (res.status !== 200) return res
+        const body = await rpcJson(res.clone())
+        if (!body.result.content[0].text.includes('取り込み中')) break
+      }
+      return res!
+    }
+    expect((await ready(x.access_token)).status).toBe(200)
+    // ［連携を解除］（X はその後ツールを呼ばない）→ claude.com から別の Claude のアカウント（Y）で連携し直す
+    fake.setConnector(null)
+    const second = await connect({ redirectUri: CLAUDE_COM_CALLBACK })
+    expect(second.cb.status).toBe(302)
+    const y = await exchange(second.cb, second.verifier, CLAUDE_COM_CALLBACK)
+    const stale = await mcp(x.access_token, 'tools/call', { name: 'novel_list_titles', arguments: {} })
+    expect(stale.status).toBe(401)
+    const refresh = await token({ grant_type: 'refresh_token', refresh_token: x.refresh_token, client_id: CLAUDE_CIMD })
+    expect(refresh.status).toBe(400)
+    expect(((await refresh.json()) as { error: string }).error).toBe('invalid_grant')
+    // Y の許可は取り消されていない
+    const res = await ready(y.access_token)
+    expect(res.status).toBe(200)
+    expect((await rpcJson(res)).result.content[0].text).toContain('『星の庭』')
+    const yRefresh = await token({ grant_type: 'refresh_token', refresh_token: y.refresh_token, client_id: CLAUDE_CIMD })
+    expect(yRefresh.status).toBe(200)
   })
 })
 

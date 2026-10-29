@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import { vaultConfig, type Env } from '../env'
 import { logError } from '../log'
-import { VaultCore, type CallOptions, type HealthState, type PairingCheck } from './core'
+import { VaultCore, type CallOptions, type GrantProps, type HealthState, type PairingCheck } from './core'
 import { ConnectorError, MESSAGES } from './errors'
 import type { RateKind } from './ratelimit'
 import type { SqlRunner, SqlValue } from './store'
@@ -63,6 +63,11 @@ export class Vault extends DurableObject<Env> {
 
   pairingState(): 'paired' | 'unpaired' {
     return this.#core.pairingState()
+  }
+
+  /** OAuth の許可が、いまの連携（同じ持ち主・同じ代）のものか */
+  grantCurrent(props: GrantProps | null | undefined): boolean {
+    return this.#core.grantCurrent(props)
   }
 
   callTool(name: string, args: Record<string, unknown>, opts: CallOptions): Promise<ToolResult> {

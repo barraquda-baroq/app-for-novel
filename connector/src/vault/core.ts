@@ -51,10 +51,21 @@ export interface PairingMeta {
   pairedAt: number | null
   /** 解除した理由（ログ・状態の表示用） */
   reason?: string
+  /**
+   * 連携の代（確かめた時の config/connector の作られた時刻 createTime）。［連携を解除］で消して作り直すと変わる
+   * （「書き込みを許可」の切り替え・解除せずに別の Claude を足すための上書きでは変わらない）
+   */
+  gen?: string | null
+}
+
+/** OAuth の許可に入れた値（props）。連携した持ち主と、連携の代 */
+export interface GrantProps {
+  ownerUid?: string
+  gen?: string
 }
 
 export type PairingCheck =
-  | { ok: true; ownerUid: string }
+  | { ok: true; ownerUid: string; gen: string }
   | { ok: false; reason: 'not_found' | 'uid' | 'hash' | 'expired' | 'used' | 'owner' | 'error'; message: string }
 
 export type HealthState = 'ready' | 'unpaired' | 'no_identity' | 'anonymous_disabled' | 'key_missing' | 'unavailable'
@@ -62,12 +73,14 @@ export type HealthState = 'ready' | 'unpaired' | 'no_identity' | 'anonymous_disa
 export interface CallOptions {
   /** クライアントの名前（Claude Code なら本文の既定の文字数を減らす） */
   client?: string
+  /** 呼び出しの OAuth の許可の props（渡せば、いまの連携の許可かを確かめる。/mcp からはいつも渡す） */
+  grant?: GrantProps
 }
 
 /** 読むツールの前に写しを新しくする間隔 */
 export const FRESH_MS = 15_000
-/** config/connector・meta/app を読み直す間隔（書き込みの前） */
-const RECHECK_MS = 60_000
+/** config/connector・meta/app を読み直す間隔（書き込みの前・読むツールの前） */
+export const RECHECK_MS = 60_000
 
 const PAIRING_MESSAGES: Record<Exclude<PairingCheck, { ok: true }>['reason'], string> = {
   not_found:
@@ -132,6 +145,16 @@ export class VaultCore {
 
   pairingState(): 'paired' | 'unpaired' {
     return this.pairing().state === 'paired' && this.identity.uid() ? 'paired' : 'unpaired'
+  }
+
+  /**
+   * OAuth の許可が、いまの連携（同じ持ち主・同じ代）のものか。［連携を解除］の後に連携し直した・持ち主が変わった後は、
+   * 前の許可は使えない（解除した Claude のアカウントが、別の連携で読めるようにならないように）
+   */
+  grantCurrent(p: GrantProps | null | undefined): boolean {
+    if (this.pairingState() !== 'paired' || !p) return false
+    const m = this.pairing()
+    return !!m.ownerUid && !!m.gen && p.ownerUid === m.ownerUid && p.gen === m.gen
   }
 
   #setUnpaired(reason: string): void {
@@ -205,16 +228,18 @@ export class VaultCore {
     }
     if (!ownerUid) return bad('owner')
     let conn: Record<string, unknown> | null = null
+    let gen = ''
     try {
       const d = (await this.fs.batchGet(['config/connector'])).get('config/connector')
       conn = d ? fromFields(d.fields) : null
+      gen = d?.createTime ?? ''
     } catch (e) {
       // 無い記録・自分の uid でない記録は、アクセスルールで読めない（403。どちらかは分からない）
       if (e instanceof FirestoreError && e.status === 403) return bad('not_found')
       logError('pairing_connector_failed', e)
       return bad('error')
     }
-    if (!conn) return bad('not_found')
+    if (!conn || !gen) return bad('not_found')
     if (conn.uid !== uid) return bad('uid')
     if (conn.pairing !== hash) return bad('hash')
     const pairedAt = timestampMillis((conn.pairedAt as Timestamp | null)?.timestamp ?? '')
@@ -227,12 +252,12 @@ export class VaultCore {
       this.mirror.reset()
       this.#views = null
     }
-    this.store.setMeta('pairing', { state: 'paired', ownerUid, pairedAt } satisfies PairingMeta)
+    this.store.setMeta('pairing', { state: 'paired', ownerUid, pairedAt, gen } satisfies PairingMeta)
     this.#writesCheck = { writes: conn.writes === true, at: now }
     this.#modelCheck = null
     log('paired', { writes: conn.writes === true })
     this.#d.schedule?.(now + 500)
-    return { ok: true, ownerUid }
+    return { ok: true, ownerUid, gen }
   }
 
   // ---------- 数の記録（太平洋時間の日ごと） ----------
@@ -285,7 +310,10 @@ export class VaultCore {
     throw new ConnectorError('unavailable', MESSAGES.unavailable)
   }
 
-  /** config/connector を読む。writes を返す（読めない・このコネクタのものでない = null） */
+  /**
+   * config/connector を読む。writes を返す（読めない・このコネクタのものでない・確かめた連携の後に作り直された = null。
+   * 作り直された記録は、連携の画面で許可しただけでまだ確かめていない（/pair/callback を通っていない）ので、前の許可では使わない）
+   */
   async #readConnector(): Promise<boolean | null> {
     try {
       this.#countReads(3)
@@ -293,6 +321,7 @@ export class VaultCore {
       if (!d) return null
       const f = fromFields(d.fields)
       if (f.uid !== this.identity.uid()) return null
+      if ((d.createTime ?? '') !== (this.pairing().gen ?? '')) return null
       const writes = f.writes === true
       this.#writesCheck = { writes, at: this.#now() }
       return writes
@@ -380,9 +409,16 @@ export class VaultCore {
 
   async callTool(name: string, args: Record<string, unknown>, opts: CallOptions = {}): Promise<ToolResult> {
     try {
+      // 前の連携の許可（解除した後・持ち主が変わった後）は、状態のツールも含めて使わない
+      if (opts.grant && !this.grantCurrent(opts.grant)) {
+        log('grant_stale', { tool: name })
+        throw new ConnectorError('unpaired', MESSAGES.unpaired)
+      }
       if (name === 'novel_status') return await this.#status()
       this.#requirePaired()
       if (isWriteTool(name)) return await this.#write(name, args)
+      // 連携の記録を1分ごとに確かめる（解除・作り直しに、写しを新しくする間隔より遅れずに気付く）
+      await this.#recheckConnector()
       const { note } = await this.#fresh(false)
       const { view, hidden } = this.views()
       const ctx: R.ReadContext = { view, now: this.#now(), client: opts.client, workBudget: this.#d.config.workBudgetChars }
@@ -479,6 +515,23 @@ export class VaultCore {
       return model
     } catch (e) {
       return this.#firestoreFailure(e)
+    }
+  }
+
+  /** 読むツールの前: config/connector を前に確かめてから RECHECK_MS 経っていれば読み直す（解除・作り直しなら連携を外す） */
+  async #recheckConnector(): Promise<void> {
+    if (this.#writesCheck && this.#now() - this.#writesCheck.at < RECHECK_MS) return
+    let writes: boolean | null
+    try {
+      writes = await this.#readConnector()
+    } catch (e) {
+      // つながらない時は、前に取り込んだ内容で答える（#fresh と同じ）
+      if (e instanceof ConnectorError && e.code === 'unavailable') return
+      throw e
+    }
+    if (writes === null) {
+      this.#setUnpaired('connector_gone')
+      throw new ConnectorError('unpaired', MESSAGES.unpaired)
     }
   }
 

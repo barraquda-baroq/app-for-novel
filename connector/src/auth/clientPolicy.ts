@@ -1,10 +1,12 @@
 // 受け付けるクライアント（GET /authorize で、同意の画面を作る前＝KV に書く前に確かめる）。
-// - claude.ai の公開の識別子（CIMD: client_id が https://claude.ai/… の URL）だけ。Claude Code は ALLOW_CLAUDE_CODE の時だけ
+// - claude.ai の公開の識別子（CIMD: client_id が CLAUDE_CIMD そのもの）だけ。Claude Code（CLAUDE_CODE_CIMD）は ALLOW_CLAUDE_CODE の時だけ
+//   （ほかの URL の client_id は、ライブラリが取りに行く前に断る）
 // - 戻り先は claude.ai / claude.com の決まった URL だけ（Claude Code はローカルの /callback）
 // - DCR（ENABLE_DCR）で登録したクライアントも、戻り先が同じ決まりに合う時だけ
 import type { WorkerConfig } from '../config'
 
 export const CLAUDE_REDIRECTS = ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback']
+export const CLAUDE_CIMD = 'https://claude.ai/oauth/mcp-oauth-client-metadata'
 export const CLAUDE_CODE_CIMD = 'https://claude.ai/oauth/claude-code-client-metadata'
 
 const isLoopbackCallback = (uri: string) => {
@@ -40,6 +42,8 @@ export function checkClient(req: { clientId: string; redirectUri: string }, cfg:
     if (host !== 'claude.ai') return refuse('client_host', 'このコネクタは claude.ai からの接続だけを受け付けます。')
     if (claudeCode && !cfg.allowClaudeCode)
       return refuse('claude_code', 'Claude Code からの接続は受け付けていません（wrangler.jsonc の ALLOW_CLAUDE_CODE）。')
+    if (!claudeCode && req.clientId !== CLAUDE_CIMD)
+      return refuse('client_id', 'このコネクタは claude.ai の公開の識別子での接続だけを受け付けます。')
   } else if (!cfg.enableDcr) {
     return refuse('client_dcr', 'このコネクタは claude.ai の「Claudeの公開されたアイデンティティを使用（推奨）」での接続だけを受け付けます。')
   }
@@ -48,6 +52,15 @@ export function checkClient(req: { clientId: string; redirectUri: string }, cfg:
   if (!allowedRedirect(req.redirectUri, loopbackOk))
     return refuse('redirect', '戻り先が claude.ai ではありません。この接続は受け付けません。')
   return { ok: true }
+}
+
+/**
+ * client_id が URL（公開の識別子）なら、受け付けるものだけ true（ライブラリが取りに行く前に確かめる。URL でない id は DCR で
+ * 登録したもので、ライブラリが確かめる）
+ */
+export function allowedCimdId(clientId: string, cfg: Pick<WorkerConfig, 'allowClaudeCode'>): boolean {
+  if (!/^https?:\/\//i.test(clientId)) return true
+  return clientId === CLAUDE_CIMD || (cfg.allowClaudeCode && clientId === CLAUDE_CODE_CIMD)
 }
 
 /** DCR の登録（ENABLE_DCR の時だけ）: 戻り先がすべて決まりに合う時だけ受け付ける */

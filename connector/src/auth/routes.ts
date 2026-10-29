@@ -17,7 +17,6 @@ import { CALLBACK_PATH, IDENTITY_PATH, connectPageUrl, isPairingKey, pairingHash
 import { vault } from '../vault/Vault'
 import { checkClient } from './clientPolicy'
 import { consentPage } from './consentPage'
-import { setPairingState } from './pairingCache'
 
 export const SCOPES_SUPPORTED = ['novel', 'offline_access']
 
@@ -99,6 +98,14 @@ async function health(env: Env): Promise<Response> {
 async function authorizeGet(request: Request, env: Env): Promise<Response> {
   const oauth = helpers(env)
   const cfg = workerConfig(env, request.url)
+  // 外への取得（ライブラリが client_id の URL の公開の識別子を取りに行く）の前に、問い合わせの値だけで受け付けるクライアントか
+  // 確かめる（知らない URL を取りに行かない・ログに書かない）。ライブラリが読むのと同じ値（無ければ空）
+  const q = new URL(request.url).searchParams
+  const pre = checkClient({ clientId: q.get('client_id') ?? '', redirectUri: q.get('redirect_uri') ?? '' }, cfg)
+  if (!pre.ok) {
+    log('authorize_refused', { reason: pre.reason })
+    return errorPage(pre.message, 400)
+  }
   let authRequest
   try {
     authRequest = await oauth.parseAuthRequest(request)
@@ -181,9 +188,9 @@ async function pairCallback(request: Request, env: Env): Promise<Response> {
       userId: check.ownerUid,
       metadata: { label: 'Claude' },
       scope: grantedScopes(resumed.request.scope),
-      props: { ownerUid: check.ownerUid },
+      // 許可を、いまの連携（持ち主・連携の代）に結び付ける（解除した後に連携し直すと、前の許可は使えない）
+      props: { ownerUid: check.ownerUid, gen: check.gen },
     })
-    setPairingState('paired')
     resumed.headers.set('Location', redirectTo)
     resumed.headers.set('Cache-Control', 'no-store')
     resumed.headers.set('Referrer-Policy', 'no-referrer')

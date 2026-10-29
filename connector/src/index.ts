@@ -5,12 +5,12 @@
 // - Vault（Durable Object）: コネクタ自身の匿名の Firebase のアカウント・持ち主の記録の写し・数の記録
 // - 毎日 4:17（日本時間）: 期限切れの OAuth の記録の片付けと、写しの数の確かめ
 import OAuthProvider, { GrantType, OAuthError, getOAuthApi, type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider'
-import { checkRegistration } from './auth/clientPolicy'
-import { cachedPairingState } from './auth/pairingCache'
+import { allowedCimdId, checkRegistration } from './auth/clientPolicy'
 import { SCOPES_SUPPORTED, appFetch } from './auth/routes'
 import { workerConfig, type Env } from './env'
 import { log, logError } from './log'
 import { createMcpFetch } from './mcp/handler'
+import type { GrantProps } from './vault/core'
 import { vault } from './vault/Vault'
 
 export { Vault } from './vault/Vault'
@@ -47,9 +47,19 @@ export function oauthOptions(env: Env, requestUrl?: string): OAuthProviderOption
     accessTokenTTL: 3600,
     refreshTokenTTL: 180 * 86_400,
     refreshTokenIdleTTL: 180 * 86_400,
-    tokenExchangeCallback: async ({ grantType, env: e }) => {
-      // 連携が解除されていれば、更新用トークンを断る（この許可は取り消され、claude.ai は接続し直しを求める）
-      if (grantType === GrantType.REFRESH_TOKEN && (await cachedPairingState(e)) === 'unpaired') {
+    tokenExchangeCallback: async ({ grantType, env: e, props }) => {
+      // 連携が解除された・前の連携の許可（解除した後に連携し直した・持ち主が変わった）なら、更新用トークンを断る
+      // （この許可はライブラリが取り消し、claude.ai は接続し直しを求める）。毎回 Vault に確かめる（キャッシュしない）
+      if (grantType !== GrantType.REFRESH_TOKEN) return
+      let current: boolean
+      try {
+        current = await vault(e).grantCurrent(props as GrantProps)
+      } catch (err) {
+        // Vault に届かない一時的な失敗では接続を切らない
+        logError('grant_check_failed', err)
+        return
+      }
+      if (!current) {
         log('refresh_refused')
         throw new OAuthError('invalid_grant', { description: 'Novel Studio connector is unpaired' })
       }
@@ -70,8 +80,38 @@ function provider(env: Env, url: string): OAuthProvider<Env> {
   return cached.provider
 }
 
+/** トークンの要求の client_id（本文か Basic 認証。読めなければ空） */
+async function tokenClientId(request: Request): Promise<string> {
+  const basic = /^Basic\s+(.+)$/i.exec(request.headers.get('Authorization') ?? '')
+  if (basic) {
+    try {
+      return decodeURIComponent(atob(basic[1]).split(':')[0] ?? '')
+    } catch {
+      return ''
+    }
+  }
+  try {
+    const form = await request.clone().formData()
+    const id = form.get('client_id')
+    return typeof id === 'string' ? id : ''
+  } catch {
+    return ''
+  }
+}
+
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // トークンの要求でも、受け付けない公開の識別子（URL の client_id）はライブラリが取りに行く前に断る
+    if (request.method === 'POST' && new URL(request.url).pathname === '/oauth/token') {
+      const clientId = await tokenClientId(request)
+      if (!allowedCimdId(clientId, workerConfig(env, request.url))) {
+        log('token_client_refused')
+        return Response.json(
+          { error: 'invalid_client', error_description: 'client is not accepted by this connector' },
+          { status: 401, headers: { 'Cache-Control': 'no-store' } },
+        )
+      }
+    }
     return provider(env, request.url).fetch(request, env, ctx)
   },
 
