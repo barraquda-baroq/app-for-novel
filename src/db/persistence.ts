@@ -742,12 +742,12 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           noteActs(ep, disk ? 'mineDropped' : 'theirsDropped')
       }
     }
-    /** この端末で分けた話の、分ける前の採用稿が別の端末で書き換えられた */
+    /** この端末で分けた話の、分ける前の採用稿の、別の端末での書き換え（反映した後も分けたままなら 8 で知らせる） */
+    const sourceEdits: VersionRec[] = []
     const checkSource = async (v: VersionRec, old: VersionRec) => {
       if (v.body === old.body || typeof v.pieceId !== 'string') return
       const piece = await prePiece(v.pieceId)
-      if (piece && isEpisodeRecord(piece) && actIdsOf(piece).length > 0 && piece.activeVersionId === v.id)
-        noteActs(piece.id, 'source')
+      if (piece && isEpisodeRecord(piece) && actIdsOf(piece).length > 0 && piece.activeVersionId === v.id) sourceEdits.push(v)
     }
 
     // ---------- 2. 1件ずつ反映する ----------
@@ -1102,11 +1102,22 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     if (keeps.length) await flushKeeps(keeps, { opts, w, units, pre, noteActs, getPiece, getVersion, rowOf, pieceOfVersion })
 
     // ---------- 8. 書き換えられる前の稿から分けた・つないだ稿 ----------
+    // この端末で分けた話の分ける前の採用稿が書き換えられた: 反映した後もその話を分けていて、その稿を採用している時だけ
+    // （同じ反映でセパレートを解除した話なら、解除した稿が採用原稿になっている）
+    for (const v of sourceEdits) {
+      const piece = await getPiece(String(v.pieceId))
+      if (piece && isEpisodeRecord(piece) && actIdsOf(piece).length > 0 && piece.activeVersionId === v.id)
+        noteActs(piece.id, 'source')
+    }
     for (const u of units.values()) {
       if (u.kind !== 'theirs') continue
       for (const vid of newVersions) {
         const v = await getVersion(vid)
         if (!v || typeof v.sourceHash !== 'string' || typeof v.sourceVersionId !== 'string') continue
+        // 同じ反映で別の端末から届いた元の稿の書き換えは見ない（分けた・つないだ後の書き換えのことがある。オフラインだった
+        // 端末が両方をまとめて受け取った時・送った端末がオフラインの間に両方をした時）
+        const srcChange = incoming.get(outboxKey('versions', v.sourceVersionId))
+        if (srcChange && !srcChange.own) continue
         const piece = await getPiece(String(v.pieceId))
         if (!piece || (piece.id !== u.episodeId && parentIdOf(piece) !== u.episodeId)) continue
         const src = await getVersion(v.sourceVersionId)

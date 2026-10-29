@@ -591,3 +591,106 @@ describe('分けてから解除した話と、元の稿の書き換え', () => {
     expect(y.notes.filter((n) => n.kind === 'acts')).toEqual([])
   })
 })
+
+describe('1台だけが操作した時（同時の編集が無い）', () => {
+  // 幕の操作の後で、元の稿（採用しなくなった稿）を書き換えた。受け取った端末が両方を1回の反映で受け取っても、
+  // 幕の知らせ（書き換える前の稿から分けた・つないだ、分ける前の採用稿が書き換えられた）を出さない
+  type How = '受け取る端末がオフラインだった' | '新しい端末' | '送る端末がオフラインだった'
+  async function receiveBoth(
+    splitAt: number[],
+    op: (d: AppData, ep: ID) => AppData,
+    source: (d: AppData, ep: ID) => ID,
+    how: How,
+  ): Promise<{ x: FakeDevice; y: FakeDevice; ep: ID }> {
+    const start = scenarioStart({ body: 'ABCDEFGHI', splitAt })
+    const ep = start.ep
+    const cloud = new FakeCloud()
+    const x = new FakeDevice('X', cloud)
+    let y = new FakeDevice('Y', cloud)
+    await x.edit(() => start.data)
+    if (how === '新しい端末') await x.sync()
+    else await settle(x, y)
+    const src = source(await x.load(), ep)
+    if (how === '受け取る端末がオフラインだった') y.offline()
+    await x.edit((d) => op(d, ep))
+    if (how !== '送る端末がオフラインだった') await x.sync()
+    await x.edit((d) => S.updateVersion(d, src, { body: `${d.versions[src].body}+後で` }))
+    await x.sync()
+    if (how === '新しい端末') {
+      y = new FakeDevice('Y', cloud)
+      y.offline()
+    }
+    y.notes = []
+    await settle(x, y)
+    expect(await sameData(x, y)).toBe(true)
+    return { x, y, ep }
+  }
+  const actsNotes = (d: FakeDevice) => d.notes.filter((n) => n.kind === 'acts')
+  const firstAct = (d: AppData, ep: ID) => d.pieces[actsIds(d, ep)[0]].activeVersionId!
+
+  for (const how of ['受け取る端末がオフラインだった', '新しい端末', '送る端末がオフラインだった'] as const) {
+    it(`第1幕と第2幕をつないでから、第1幕の元の採用稿を書き換えた（${how}）`, async () => {
+      const { y } = await receiveBoth([3, 6], (d, ep) => A.joinActWithNext(d, actsIds(d, ep)[0]).data, firstAct, how)
+      expect(actsNotes(y)).toEqual([])
+    })
+  }
+  it('第1幕をさらに分けてから、元の採用稿を書き換えた（新しい端末）', async () => {
+    const { y } = await receiveBoth([3, 6], (d, ep) => A.separatePiece(d, actsIds(d, ep)[0], [1]).data, firstAct, '新しい端末')
+    expect(actsNotes(y)).toEqual([])
+  })
+  it('セパレートを解除してから、話の分ける前の採用稿を書き換えた（分けた話を受け取っていた端末がオフラインだった）', async () => {
+    const { y } = await receiveBoth(
+      [3, 6],
+      (d, ep) => A.unseparatePiece(d, ep).data,
+      (d, ep) => d.pieces[ep].activeVersionId!,
+      '受け取る端末がオフラインだった',
+    )
+    expect(actsNotes(y)).toEqual([])
+  })
+
+  for (const how of ['受け取る端末がオフラインだった', '新しい端末', '送る端末がオフラインだった'] as const) {
+    it(`決まった種の操作を続けても、受け取った端末に幕の知らせが出ない（${how}）`, async () => {
+      const failures: string[] = []
+      for (let seed = 1; seed <= 40; seed++) {
+        const r = seeded(seed * 7 + 3)
+        const start = scenarioStart({
+          body: 'ABCDEFGHI',
+          splitAt: r() < 0.7 ? [3, 6] : null,
+          prepare: (d, ep) => (d.pieces[ep].actIds?.length ? S.addVersion(d, actsIds(d, ep)[1], { body: 'DEF別稿' }).data : d),
+        })
+        const ep = start.ep
+        const cloud = new FakeCloud()
+        const x = new FakeDevice('X', cloud)
+        let y = new FakeDevice('Y', cloud)
+        await x.edit(() => start.data)
+        await settle(x, y)
+        x.notes = []
+        y.notes = []
+        if (how === '受け取る端末がオフラインだった') y.offline()
+        const names: string[] = []
+        for (let k = 0; k < 6; k++) {
+          const list = possibleOps(r, await x.load(), ep).filter((o) => o.name !== '話を削除する')
+          const op = list[Math.floor(r() * list.length)]
+          try {
+            await x.edit((d) => op.run(d, ep))
+            names.push(op.name)
+          } catch {
+            continue
+          }
+          if (how !== '送る端末がオフラインだった') await x.sync()
+        }
+        if (how === '新しい端末') {
+          await x.sync()
+          y = new FakeDevice('Z', cloud)
+          y.offline()
+        }
+        await settle(x, y)
+        const problems: string[] = []
+        if (!(await sameData(x, y))) problems.push('I2 両方の端末の内容が違う')
+        for (const d of [x, y]) if (d.notes.length) problems.push(`${d.name} の知らせ ${JSON.stringify(d.notes)}`)
+        if (problems.length) failures.push(`種 ${seed}（${names.join('、')}）: ${problems.join(' / ')}`)
+      }
+      expect(failures).toEqual([])
+    }, 120_000)
+  }
+})
