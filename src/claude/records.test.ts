@@ -136,6 +136,7 @@ describe('推敲案（novel_add_proofreading）', () => {
     const denied = buildProofreading(ro, { title_id: n.titleId, items: [] }, claude)
     expect(denied.ok).toBe(false)
     expect(denied.error).toContain('書き込み不可')
+    expect(denied.error).toContain('タイトル画面の「Claude に見せる」')
     expect(buildProofreading(ro, { title_id: n.titleId, items: [] }, { ...claude, source: 'paste' }).ok).toBe(true)
   })
   it('確かめた話だけでも実行の記録を残す。多すぎる入力は受け付けない', () => {

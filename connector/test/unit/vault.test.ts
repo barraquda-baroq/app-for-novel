@@ -223,6 +223,7 @@ describe('見せる範囲（Title.claudeAccess）', () => {
     const r = await core.callTool('novel_add_revision_ideas', { title_id: n.titleId, items: [{ heading: '案', body: '本文' }] })
     expect(r.isError).toBe(true)
     expect(r.text).toContain('書き込み不可')
+    expect(r.text).toContain('タイトル画面の「Claude に見せる」')
   })
 
   it('ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアは見せない', async () => {
