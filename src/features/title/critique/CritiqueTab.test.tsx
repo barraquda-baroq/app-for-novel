@@ -191,4 +191,42 @@ describe('Claude に頼む（手動）', () => {
     expect(content).toContain('い'.repeat(100))
     expect(content).not.toContain('あ'.repeat(100))
   })
+
+  it('選び直した批評プロンプトのまま「結果を貼り付け」を開く', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    const first = actions.addCritiquePrompt(titleId, { name: '構成', body: '構成を批評して' })
+    const second = actions.addCritiquePrompt(titleId, { name: '人物', body: '人物を批評して' })
+    renderTab(titleId)
+    await user.click(screen.getByTestId('critique-manual'))
+    const dialog = await screen.findByTestId('manual-dialog')
+    expect((within(dialog).getByTestId('manual-prompt') as HTMLSelectElement).value).toBe(first)
+    await user.selectOptions(within(dialog).getByTestId('manual-prompt'), second)
+    await user.click(screen.getByTestId('manual-open-paste'))
+    const paste = await screen.findByTestId('paste-dialog')
+    expect((within(paste).getByTestId('paste-prompt') as HTMLSelectElement).value).toBe(second)
+    await user.click(within(paste).getByTestId('paste-input'))
+    await user.paste('## 総評\n人物が良い。')
+    await waitFor(() => expect(within(paste).getAllByTestId('paste-item')[0].getAttribute('data-status')).toBe('created'))
+    await user.click(screen.getByTestId('paste-add'))
+    await waitFor(() => expect(Object.values(getData().critiqueResults)).toHaveLength(1))
+    expect(Object.values(getData().critiqueResults)[0]).toMatchObject({
+      promptId: second,
+      promptName: '人物',
+      promptText: '人物を批評して',
+    })
+  })
+
+  it('「プロンプトなし」を選んだ時は、貼り付けもプロンプトなし', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    actions.addCritiquePrompt(titleId, { name: '構成', body: '構成を批評して' })
+    renderTab(titleId)
+    await user.click(screen.getByTestId('critique-manual'))
+    const dialog = await screen.findByTestId('manual-dialog')
+    await user.selectOptions(within(dialog).getByTestId('manual-prompt'), '')
+    await user.click(screen.getByTestId('manual-open-paste'))
+    const paste = await screen.findByTestId('paste-dialog')
+    expect((within(paste).getByTestId('paste-prompt') as HTMLSelectElement).value).toBe('')
+  })
 })

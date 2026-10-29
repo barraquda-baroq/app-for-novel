@@ -157,7 +157,7 @@ export function CritiqueTab({ titleId }: { titleId: ID }) {
           tasks={['critique']}
           promptId={manual.promptId}
           onClose={() => setManual(null)}
-          onPaste={() => setPaste({ promptId: manual.promptId })}
+          onPaste={(_task, promptId) => setPaste({ promptId })}
         />
       ) : null}
       {paste ? <PasteResultDialog titleId={titleId} critique promptId={paste.promptId} onClose={() => setPaste(null)} /> : null}

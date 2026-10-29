@@ -38,8 +38,8 @@ export interface ManualDialogProps {
   /** 作品批評で最初に選んでおくプロンプト */
   promptId?: ID | null
   onClose: () => void
-  /** 「結果を貼り付け」を開く（閉じてから開く） */
-  onPaste?: (task: ManualTask) => void
+  /** 「結果を貼り付け」を開く（閉じてから開く。作品批評なら、いま選んでいるプロンプト。「プロンプトなし」は null） */
+  onPaste?: (task: ManualTask, promptId: ID | null) => void
 }
 
 export function ManualDialog({ titleId, task: initialTask, tasks = ALL_TASKS, promptId, onClose, onPaste }: ManualDialogProps) {
@@ -123,7 +123,7 @@ export function ManualDialog({ titleId, task: initialTask, tasks = ALL_TASKS, pr
               className="btn"
               onClick={() => {
                 onClose()
-                onPaste(task)
+                onPaste(task, task === 'critique' ? prompt || null : null)
               }}
               data-testid="manual-open-paste"
             >
