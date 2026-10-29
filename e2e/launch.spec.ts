@@ -148,6 +148,29 @@ test.describe('起動アニメーション', () => {
     await expect(overlay(tab)).toBeVisible()
   })
 
+  test('見えていないタブ（裏で開いたタブ・先読み）で開くと出さず、見えた後の再読み込みでも出ない', async ({ page }) => {
+    // 最初の読み込みだけ、見えていないタブにする
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('e2e:hidden-once')) return
+      sessionStorage.setItem('e2e:hidden-once', '1')
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    })
+    await page.goto('/?launch=1#/', { waitUntil: 'domcontentloaded' })
+    await expect(overlay(page)).toHaveCount(0)
+    const flag = () => page.evaluate(() => sessionStorage.getItem('novel-studio:launched'))
+    expect(await flag()).toBeNull()
+    // タブに切り替えた（見えた）
+    await page.evaluate(() => {
+      delete (document as { visibilityState?: string }).visibilityState
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(await flag()).toBe('1')
+    // 再読み込み（F5・「新しい版にする」）では出さない
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    expect(await page.evaluate(() => document.visibilityState)).toBe('visible')
+    await expect(overlay(page)).toHaveCount(0)
+  })
+
   test('localStorage の novel-studio:launch = force でも出る（強制しないテストでは出ない）', async ({ page, context }) => {
     await page.goto('/#/', { waitUntil: 'domcontentloaded' })
     await expect(overlay(page)).toHaveCount(0)

@@ -159,7 +159,7 @@ describe('出すかどうか（decide）', () => {
     expect(decide({ ...base, shownInSession: true })).toBe('none')
   })
 
-  it('Web 版で見えていないタブ（裏で開いた・ブラウザの先読み）では出さない（印も付けないので、次に開いた時に出る）', () => {
+  it('Web 版で見えていないタブ（裏で開いた・ブラウザの先読み）では出さない（印はそのタブが見えた時に付ける。boot のテスト）', () => {
     const { decide } = load()
     expect(decide({ ...base, hidden: true })).toBe('none')
     expect(decide({ ...base, hidden: true, forced: true, webdriver: true })).toBe('none')
@@ -473,17 +473,72 @@ describe('起動アニメーション（boot）', () => {
     expect(overlay()).not.toBeNull()
   })
 
-  it('見えていないタブで開いた時は出さず、印も付けない', () => {
-    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-    try {
+  describe('見えていないタブ（裏で開いたタブ・ブラウザの先読み）で開いた時', () => {
+    const hide = () => Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    const show = () => delete (document as { visibilityState?: string }).visibilityState
+    const flag = () => sessionStorage.getItem('novel-studio:launched')
+    afterEach(show)
+
+    it('出さず、そのタブが見えた時に出したことにする（後の再読み込み・「新しい版にする」でも出さない）', () => {
+      hide()
       load().boot()
       expect(overlay()).toBeNull()
-      expect(sessionStorage.getItem('novel-studio:launched')).toBeNull()
-    } finally {
-      delete (document as { visibilityState?: string }).visibilityState
-    }
-    load().boot()
-    expect(overlay()).not.toBeNull()
+      expect(flag()).toBeNull()
+      // まだ見えていない間は印を付けない
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBeNull()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBe('1')
+      load().boot()
+      expect(overlay()).toBeNull()
+    })
+
+    it('先読みしたページを開いた時（prerenderingchange）も、出したことにする', () => {
+      hide()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('prerenderingchange'))
+      expect(flag()).toBe('1')
+    })
+
+    it('見えないうちに読み込み直したら、新しいページが見えた時に印を付ける（前のページを開いた時の分は残らない）', () => {
+      hide()
+      load().boot()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBe('1')
+      load().boot()
+      expect(overlay()).toBeNull()
+    })
+
+    it('設定でオフ・テスト（強制していない）で出さない時は、見えても印を付けない（オンに戻した後・強制した時に出る）', () => {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ launchAnimation: false }))
+      hide()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBeNull()
+
+      localStorage.clear()
+      setWebdriver(true)
+      hide()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBeNull()
+      localStorage.setItem('novel-studio:launch', 'force')
+      load().boot()
+      expect(overlay()).not.toBeNull()
+    })
+
+    it('アプリ（iPhone / Android）は見えていなくても出す', () => {
+      w.Capacitor = { isNativePlatform: () => true }
+      hide()
+      load().boot()
+      expect(overlay()).not.toBeNull()
+    })
   })
 
   it('設定でオフにすると出さない', () => {

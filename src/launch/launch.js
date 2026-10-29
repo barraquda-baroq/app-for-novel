@@ -111,6 +111,7 @@
    *   forced: localStorage の novel-studio:launch が 'force'、または URL に launch=1
    *   shownInSession: Web 版で、このウインドウ・タブではもう出した（再読み込み）
    *   hidden: Web 版で、見えていないタブ（裏で開いたタブ・ブラウザが先読みしているページ）。見えないまま終わるので出さない
+   *     （そのタブが見えた時に出したことにして、後の再読み込みでも出さない。markWhenVisible）
    *   reducedMotion: 端末の「視差効果を減らす」（prefers-reduced-motion）
    */
   function decide(env) {
@@ -1076,10 +1077,25 @@
     }
   }
 
+  /**
+   * 見えていないタブ（裏で開いたタブ・ブラウザの先読み）で開いた時: そのタブが見えた時に、出したことにする
+   * （出さずに開いたタブを、後で再読み込み・「新しい版にする」で読み込み直した時に出さない）
+   */
+  function markWhenVisible(session) {
+    function onChange() {
+      if (document.visibilityState === 'hidden') return
+      document.removeEventListener('visibilitychange', onChange)
+      document.removeEventListener('prerenderingchange', onChange)
+      setItem(session, SESSION_KEY, '1')
+    }
+    document.addEventListener('visibilitychange', onChange)
+    document.addEventListener('prerenderingchange', onChange)
+  }
+
   /** 起動アニメーションを出す（外観は決めてある） */
   function launch(prefs, appearance, local, session) {
     var native = isNativeApp()
-    var mode = decide({
+    var env = {
       enabled: prefs.launchAnimation !== false,
       native: native,
       webdriver: window.navigator.webdriver === true,
@@ -1087,8 +1103,17 @@
       shownInSession: getItem(session, SESSION_KEY) === '1',
       hidden: document.visibilityState === 'hidden',
       reducedMotion: mediaMatches('(prefers-reduced-motion: reduce)'),
-    })
-    if (mode === 'none' || !canvasAvailable()) return
+    }
+    var mode = decide(env)
+    if (mode === 'none') {
+      // 見えていないから出さなかった時だけ、見えた時に印を付ける（設定でオフ・テストで出さなかった時は付けない）
+      if (!native && env.hidden && !env.shownInSession) {
+        env.hidden = false
+        if (decide(env) !== 'none') markWhenVisible(session)
+      }
+      return
+    }
+    if (!canvasAvailable()) return
     if (!native) setItem(session, SESSION_KEY, '1')
 
     var theme = animationTheme(appearance)
