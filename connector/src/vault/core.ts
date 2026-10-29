@@ -148,7 +148,14 @@ export class VaultCore {
   /** アプリの連携の画面に渡すコネクタの身元（無ければ作る） */
   async connectIdentity(): Promise<{ uid: string; version: string; model: number }> {
     try {
-      const uid = await this.identity.ensure()
+      let uid = await this.identity.ensure()
+      // 身元がまだ使えるか確かめる（使えなければ新しい身元を作る。アプリが古い uid で許可しないように）
+      try {
+        await this.identity.idToken()
+      } catch (e) {
+        if (!(e instanceof ConnectorError && e.code === 'identity_lost')) throw e
+        uid = await this.identity.ensure()
+      }
       this.store.deleteMeta('lastIdentityError')
       return { uid, version: CONNECTOR_VERSION, model: CONNECTOR_MODEL }
     } catch (e) {

@@ -37,7 +37,7 @@ describe('コネクタの身元（匿名のアカウント）', () => {
   it('鍵が変わると、身元を失った扱いになる（identity_lost → 401）', async () => {
     const fake = new FakeFirebase()
     const n = novel(['本文'])
-    const { core, sql, clock } = await pairedCore(fake, n.data)
+    const { sql, clock } = await pairedCore(fake, n.data)
     const other = makeCore(fake, { sql, clock, secret: 'another-secret-0123456789abcdef' })
     // ID トークンの期限を過ぎさせて、更新を必要にする
     clock.now += 2 * 3_600_000

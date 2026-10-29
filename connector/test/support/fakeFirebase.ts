@@ -201,11 +201,12 @@ export class FakeFirebase {
   readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
     const body = typeof init?.body === 'string' ? init.body : ''
-    if (url.host === 'fake-auth') return this.#auth(url, body)
-    if (url.host === 'fake-fs') {
+    // ホストではなくパスで分ける（Workers のテストではエミュレーターと同じ形の URL で呼ばれる）
+    if (/\/(identitytoolkit|securetoken)\.googleapis\.com\/v1\//.test(url.pathname)) return this.#auth(url, body)
+    if (url.pathname.startsWith('/v1/projects/')) {
       const auth = new Headers(init?.headers).get('Authorization') ?? ''
       const uid = this.#tokens.get(auth.replace(/^Bearer /, '')) ?? null
-      const res = this.#firestore(url.pathname.replace(/^\/v1\//, ''), JSON.parse(body || '{}'), uid)
+      const res = this.#firestore(decodeURIComponent(url.pathname.replace(/^\/v1\//, '')), JSON.parse(body || '{}'), uid)
       this.calls.push({ op: url.pathname.split(':').pop() ?? '', status: res.status })
       return res
     }

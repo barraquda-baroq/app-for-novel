@@ -57,12 +57,9 @@ async function connectIdentity(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'method' }, { status: 405 }, cors)
   try {
     const id = await vault(env).connectIdentity()
-    return json({ uid: id.uid, version: id.version, model: id.model }, {}, cors)
+    if (id.ok) return json({ uid: id.uid, version: id.version, model: id.model }, {}, cors)
+    return json({ error: id.code, message: id.message }, { status: 503 }, cors)
   } catch (e) {
-    const code = (e as { code?: string }).code
-    const message = e instanceof Error ? e.message : 'コネクタの身元を用意できませんでした'
-    if (code === 'anonymous_disabled' || code === 'key_missing' || code === 'unavailable')
-      return json({ error: code, message }, { status: 503 }, cors)
     logError('identity_failed', e)
     return json({ error: 'unavailable', message: 'コネクタの身元を用意できませんでした' }, { status: 503 }, cors)
   }

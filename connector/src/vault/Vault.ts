@@ -4,6 +4,7 @@ import { DurableObject } from 'cloudflare:workers'
 import { vaultConfig, type Env } from '../env'
 import { logError } from '../log'
 import { VaultCore, type CallOptions, type HealthState, type PairingCheck } from './core'
+import { ConnectorError, MESSAGES } from './errors'
 import type { RateKind } from './ratelimit'
 import type { SqlRunner, SqlValue } from './store'
 import type { ToolResult } from './tools/common'
@@ -39,8 +40,17 @@ export class Vault extends DurableObject<Env> {
     })
   }
 
-  connectIdentity(): Promise<{ uid: string; version: string; model: number }> {
-    return this.#core.connectIdentity()
+  /** RPC では例外を投げず、結果で返す（workerd が「受け取られない例外」として記録しないように） */
+  async connectIdentity(): Promise<
+    { ok: true; uid: string; version: string; model: number } | { ok: false; code: string; message: string }
+  > {
+    try {
+      return { ok: true, ...(await this.#core.connectIdentity()) }
+    } catch (e) {
+      if (e instanceof ConnectorError) return { ok: false, code: e.code, message: e.message }
+      logError('identity_failed', e)
+      return { ok: false, code: 'unavailable', message: MESSAGES.unavailable }
+    }
   }
 
   health(): HealthState {
