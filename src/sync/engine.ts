@@ -86,6 +86,8 @@ export interface EngineOptions {
    * 渡さなければ確かめない（テスト用）
    */
   appModel?: AppModel
+  /** テスト用: データの形の版を確かめるまで、送るのを待つ長さの上限（ms） */
+  modelWait?: number
 }
 
 export interface SyncEngine {
@@ -125,6 +127,8 @@ const OFFLINE_MESSAGE = 'オフラインです。つながると自動で同期�
 const MODEL_PAUSED = new Error('データの形の版を確かめるまで送りません')
 /** この端末が送った版の指紋を、文書ごとにいくつまで覚えておくか */
 const SENT_MEMORY = 20
+
+const noop = () => undefined
 
 const later = (a: StoredCursor, b: StoredCursor | null) => !b || a.s > b.s || (a.s === b.s && a.n > b.n)
 
@@ -168,6 +172,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   const chunkSize = opts.chunkSize ?? CHUNK_CHARS
   const uploadDelay = opts.uploadDelay ?? 2000
   const uploadMaxWait = opts.uploadMaxWait ?? 10_000
+  const modelWait = opts.modelWait ?? MODEL_WAIT_MS
   const col = collection(fs, 'users', uid, RECORDS)
 
   let stopped = false
@@ -644,17 +649,25 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     // データの形の版をまだ確かめていない・新しい版のアプリで書かれたデータがある間は送らない
     // （送信待ちはそのまま残し、確かめられた・アプリを更新した時に送る）。
     // まだ確かめていなければ、確かめ終わるまで待ってから送る（いますぐ同期・ログアウトの前の送信が、送らずに終わらないように）。
-    // 長く確かめられない時は、送らずに終わる（送信待ちは残る。確かめられたら送る）
-    if (modelState === 'unknown')
+    // 長く確かめられない時は、送らずに終わる（送信待ちは残る。確かめられたら送る）。
+    // 送らずに終わる時は、送信待ちの件数を数え直す（ヘッダーの表示と、「いますぐ同期」が送っていないのに同期できたと
+    // 言わないように。端末内の読み取りだけ）
+    const recount = () => (stopped ? Promise.resolve() : refreshPending().then(noop, noop))
+    if (modelState === 'unknown') {
+      void recount()
       return new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, MODEL_WAIT_MS)
+        const giveUp = () => void recount().then(resolve)
+        const t = setTimeout(giveUp, modelWait)
         void modelReady.then(async () => {
           clearTimeout(t)
-          if (modelState === 'ok' && !stopped) await uploadAll()
-          resolve()
+          if (modelState === 'ok' && !stopped) {
+            await uploadAll()
+            resolve()
+          } else giveUp()
         })
       })
-    if (modelState !== 'ok') return Promise.resolve()
+    }
+    if (modelState !== 'ok') return recount()
     uploading = (async () => {
       try {
         await target.flush?.()

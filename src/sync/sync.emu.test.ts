@@ -124,7 +124,7 @@ afterEach(async () => {
 async function makeDevice(
   name: string,
   account: string,
-  opts: { chunkSize?: number; ownerLock?: boolean; appModel?: AppModel } = {},
+  opts: { chunkSize?: number; ownerLock?: boolean; appModel?: AppModel; modelWait?: number } = {},
 ): Promise<Device> {
   const app = initializeApp({ projectId: PROJECT, apiKey: 'fake-api-key', authDomain: 'localhost' }, `${name}-${++seq}`)
   const auth = getAuth(app)
@@ -184,6 +184,7 @@ async function makeDevice(
         chunkSize: opts.chunkSize,
         ownerLock: opts.ownerLock ?? false,
         appModel: opts.appModel,
+        modelWait: opts.modelWait,
       })
       await device.engine.start()
     },
@@ -657,23 +658,21 @@ describe('同期（エミュレーター）', () => {
     await a.restore(await a.load())
     await settle(a, b)
     // B は閉じている間に書き換えてから開き直した: 記録した位置から購読し直すと、その時刻の復元の書き込みが届き直す
-    // （復元の印は次に書かれるまで残る）。届き直した通知を反映するまで、B は送らない
+    // （復元の印は次に書かれるまで残る）。届き直した通知を反映するまで、B は送らない（送信待ちを空に見せる）
     b.offline()
     await b.edit((d) => S.updateVersion(d, versionId, { body: 'Bで後から書いた' }))
-    let applied: () => void = () => undefined
-    const firstApply = new Promise<void>((r) => (applied = r))
+    let redelivered = false
     const realApply = b.p.applyRemote.bind(b.p)
     b.p.applyRemote = async (changes, opts) => {
       const r = await realApply(changes, opts)
-      if (changes.some((c) => c.table === 'versions' && c.id === versionId)) applied()
+      if (changes.some((c) => c.table === 'versions' && c.id === versionId)) redelivered = true
       return r
     }
     const realRead = b.p.readOutbox.bind(b.p)
-    b.p.readOutbox = async (n) => {
-      await firstApply
-      return realRead(n)
-    }
+    b.p.readOutbox = async (n) => (redelivered ? realRead(n) : [])
     await b.online()
+    await waitFor(async () => redelivered, '復元の書き込みが届き直す')
+    b.engine?.requestUpload(true)
     await settle(a, b)
     for (const d of [a, b]) {
       const data = await d.load()
@@ -1014,6 +1013,84 @@ describe('データの形の版（エミュレーター）', () => {
     expect(await a.p.outboxCount()).toBeGreaterThanOrEqual(150)
   })
 
+  it('いますぐ同期は、データの形の版を確かめ終わるのを待ってから送る', async () => {
+    const who = account()
+    const a = await makeDevice('a', who, { appModel: APP })
+    let titleId = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '作品')
+      titleId = t.result
+      return t.data
+    })
+    await a.online()
+    // 同期を始めた直後（まだ確かめていない）に押した
+    await a.engine?.flush()
+    expect(await a.p.outboxCount()).toBe(0)
+    expect((await getDoc(doc(a.fs, 'users', a.uid, 'records', `titles:${titleId}`))).exists()).toBe(true)
+  })
+
+  // 「いますぐ同期」の知らせ（manualSyncNotice）は、送信待ちの件数を見て「送信待ちの変更が n 件あります」と出す
+  it('データの形の版を確かめられないまま「いますぐ同期」が終わっても、送信待ちの件数は数え直してある', async () => {
+    const who = account()
+    const a = await makeDevice('a', who, { appModel: APP, modelWait: 1000 })
+    // 形の版のサーバーからの通知が届かない（遅い回線）
+    listen.holdModel.set(a.fs, [])
+    await a.online()
+    await waitFor(async () => a.engine?.status.phase === 'synced', '受け取りが揃う')
+    expect(a.engine?.status.pending).toBe(0)
+    let ideaId = ''
+    await a.edit((d) => {
+      const r = E.addIdea(d, null, 'アイデア', '本文')
+      ideaId = r.result
+      return r.data
+    })
+    await a.engine?.flush()
+    expect(a.engine?.status.pending).toBe(1)
+    expect((await getDoc(doc(a.fs, 'users', a.uid, 'records', `ideas:${ideaId}`))).exists()).toBe(false)
+    // 確かめられたら送る
+    releaseModel(a.fs)
+    await settle(a)
+    expect(a.engine?.status.pending).toBe(0)
+  })
+
+  it('本番のアクセスルール: 持ち主だけが読み書きでき、形の違う記録・下げる書き込みは拒む', async () => {
+    await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
+      rules: { files: [{ name: 'firestore.rules', content: prodRules }] },
+    })
+    await emulatorRequest('DELETE', `/emulator/v1/projects/${PROJECT}/databases/(default)/documents`)
+    try {
+      const owner = await makeDevice('owner', account(), { ownerLock: true, appModel: APP })
+      await owner.online()
+      const ref = appModelRef(owner.fs, owner.uid)
+      await waitFor(async () => (await getDoc(ref)).data()?.model === 2, '持ち主が形の版を記録できる')
+      // 上げられる
+      await setDoc(ref, { model: 3, appVersion: '2.3', updatedAt: serverTimestamp() })
+      expect((await getDoc(ref)).data()?.model).toBe(3)
+      // 下げられない・形の違う記録は書けない
+      await expect(setDoc(ref, { model: 2, appVersion: '2.2', updatedAt: serverTimestamp() })).rejects.toThrow()
+      await expect(setDoc(ref, { model: 4, appVersion: '2.4', updatedAt: serverTimestamp(), extra: 1 })).rejects.toThrow()
+      await expect(setDoc(ref, { model: '4', appVersion: '2.4', updatedAt: serverTimestamp() })).rejects.toThrow()
+      await expect(setDoc(ref, { model: 4, appVersion: '2.4', updatedAt: 12345 })).rejects.toThrow()
+      expect((await getDoc(ref)).data()?.model).toBe(3)
+      // 持ち主でないアカウントは、持ち主の記録を読めず、自分の場所にも書けない
+      const stranger = await makeDevice('stranger', account())
+      await expect(getDoc(appModelRef(stranger.fs, owner.uid))).rejects.toThrow()
+      await expect(
+        setDoc(appModelRef(stranger.fs, stranger.uid), { model: 2, appVersion: '2.2', updatedAt: serverTimestamp() }),
+      ).rejects.toThrow()
+    } finally {
+      await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
+        rules: { files: [{ name: 'firestore.rules', content: emuRules }] },
+      })
+    }
+  })
+})
+
+// disableNetwork で切った購読の宛先を、エミュレーターがそのまま覚えていて、後で全件を消す（clearData）時に失敗する
+// （500）。全件を消すテスト（本番のアクセスルール）より後に動かすため、ファイルの最後に置く
+describe('データの形の版: オフラインから戻った時（エミュレーター）', () => {
+  const APP = { model: 2, appVersion: '2.2' }
+
   // 同じ端末（同期を続けたまま）がオフラインになり、その間に新しい版のアプリが記録を上げた
   async function offlineWhileRaised(raise: boolean) {
     const who = account()
@@ -1058,54 +1135,6 @@ describe('データの形の版（エミュレーター）', () => {
     await waitFor(async () => (await getDoc(ideaDoc)).exists(), 'オフラインの間の変更が送られる')
     await settle(a)
     expect(a.engine?.status.outdated ?? null).toBeNull()
-  })
-
-  it('いますぐ同期は、データの形の版を確かめ終わるのを待ってから送る', async () => {
-    const who = account()
-    const a = await makeDevice('a', who, { appModel: APP })
-    let titleId = ''
-    await a.edit((d) => {
-      const t = E.createTitle(d, '作品')
-      titleId = t.result
-      return t.data
-    })
-    await a.online()
-    // 同期を始めた直後（まだ確かめていない）に押した
-    await a.engine?.flush()
-    expect(await a.p.outboxCount()).toBe(0)
-    expect((await getDoc(doc(a.fs, 'users', a.uid, 'records', `titles:${titleId}`))).exists()).toBe(true)
-  })
-
-  it('本番のアクセスルール: 持ち主だけが読み書きでき、形の違う記録・下げる書き込みは拒む', async () => {
-    await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
-      rules: { files: [{ name: 'firestore.rules', content: prodRules }] },
-    })
-    await emulatorRequest('DELETE', `/emulator/v1/projects/${PROJECT}/databases/(default)/documents`)
-    try {
-      const owner = await makeDevice('owner', account(), { ownerLock: true, appModel: APP })
-      await owner.online()
-      const ref = appModelRef(owner.fs, owner.uid)
-      await waitFor(async () => (await getDoc(ref)).data()?.model === 2, '持ち主が形の版を記録できる')
-      // 上げられる
-      await setDoc(ref, { model: 3, appVersion: '2.3', updatedAt: serverTimestamp() })
-      expect((await getDoc(ref)).data()?.model).toBe(3)
-      // 下げられない・形の違う記録は書けない
-      await expect(setDoc(ref, { model: 2, appVersion: '2.2', updatedAt: serverTimestamp() })).rejects.toThrow()
-      await expect(setDoc(ref, { model: 4, appVersion: '2.4', updatedAt: serverTimestamp(), extra: 1 })).rejects.toThrow()
-      await expect(setDoc(ref, { model: '4', appVersion: '2.4', updatedAt: serverTimestamp() })).rejects.toThrow()
-      await expect(setDoc(ref, { model: 4, appVersion: '2.4', updatedAt: 12345 })).rejects.toThrow()
-      expect((await getDoc(ref)).data()?.model).toBe(3)
-      // 持ち主でないアカウントは、持ち主の記録を読めず、自分の場所にも書けない
-      const stranger = await makeDevice('stranger', account())
-      await expect(getDoc(appModelRef(stranger.fs, owner.uid))).rejects.toThrow()
-      await expect(
-        setDoc(appModelRef(stranger.fs, stranger.uid), { model: 2, appVersion: '2.2', updatedAt: serverTimestamp() }),
-      ).rejects.toThrow()
-    } finally {
-      await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
-        rules: { files: [{ name: 'firestore.rules', content: emuRules }] },
-      })
-    }
   })
 })
 
