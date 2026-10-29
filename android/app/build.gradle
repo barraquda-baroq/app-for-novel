@@ -1,5 +1,16 @@
 apply plugin: 'com.android.application'
 
+// 版は package.json の version から作る（2.4.0 → versionCode 20400 / versionName "2.4.0"。docs/MOBILE.md「版を上げる」）。
+// 上書きインストール（adb install -r）は versionCode が下がると断られる
+def pkg = new groovy.json.JsonSlurper().parse(file('../../package.json'))
+def (vMaj, vMin, vPat) = pkg.version.tokenize('.').collect { it as int }
+
+// 署名の鍵（npm run mobile:keystore が android/keystore.properties を書く。リポジトリには入れない）。
+// Android Studio の ▶ で入れる版（debug）も同じ鍵にする。鍵が違うと上書きインストールできず、入れ直すと端末内のデータが消える
+def ksFile = rootProject.file('keystore.properties')
+def ks = new Properties()
+if (ksFile.exists()) ksFile.withInputStream { ks.load(it) }
+
 android {
     namespace = "jp.barraquda.novelstudio"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +18,8 @@ android {
         applicationId "jp.barraquda.novelstudio"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode vMaj * 10000 + vMin * 100 + vPat
+        versionName pkg.version
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +27,24 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        novel {
+            if (ksFile.exists()) {
+                storeFile file(ks.storeFile)
+                storePassword ks.storePassword
+                keyAlias ks.keyAlias
+                keyPassword ks.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (ksFile.exists()) signingConfig signingConfigs.novel
+        }
+        debug {
+            if (ksFile.exists()) signingConfig signingConfigs.novel
         }
     }
 }
@@ -52,3 +77,5 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+if (!ksFile.exists()) logger.warn('keystore.properties がありません（npm run mobile:keystore。docs/MOBILE.md「Android」）')
