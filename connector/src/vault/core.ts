@@ -379,9 +379,14 @@ export class VaultCore {
       try {
         out = await this.#syncStep(8)
       } catch (e) {
-        // 読むだけなら、つながらない時は前に取り込んだ内容で答える（連携の解除・権限の問題はそのまま返す）
+        // 読むだけなら、つながらない時・Firebase の無料枠を使い切った時は前に取り込んだ内容で答える
+        // （連携の解除・権限の問題はそのまま返す。書き込みは最新を読めないので止める）
         if (!forWrite && e instanceof ConnectorError && e.code === 'unavailable')
           return { note: '（いまクラウドに接続できないため、前に取り込んだ内容です）' }
+        if (!forWrite && e instanceof ConnectorError && e.code === 'firestore_quota')
+          return {
+            note: `（Firebase の今日の無料枠を使い切ったため、前に取り込んだ内容です。${resetLabel(this.#now())}に回復します）`,
+          }
         throw e
       }
       if (out.done) return {}
@@ -634,6 +639,8 @@ export class VaultCore {
       return this.#now() + 1_000
     } catch (e) {
       if (e instanceof ConnectorError && (isAuthProblem(e.code) || e.code === 'permission')) return null
+      // Firebase の無料枠を使い切った: 枠が戻る時刻の少し後に続きをする（1分ごとに試し直さない）
+      if (e instanceof ConnectorError && e.code === 'firestore_quota') return nextPacificMidnight(this.#now()) + 5 * 60_000
       return this.#now() + 60_000
     }
   }

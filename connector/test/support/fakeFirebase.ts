@@ -37,6 +37,8 @@ export class FakeFirebase {
   anonymousDisabled: boolean
   /** 次の commit を、この状態で失敗させる（テスト用） */
   failNextCommit: { status: number; code: string } | null = null
+  /** Firebase の1日の無料枠を使い切った（Firestore の呼び出しはすべて 429 RESOURCE_EXHAUSTED） */
+  exhausted = false
   #clockUs = Date.UTC(2026, 9, 29, 0, 0, 0) * 1000
   #users = new Map<string, { refresh: string; disabled?: boolean }>()
   #tokens = new Map<string, string>()
@@ -204,6 +206,10 @@ export class FakeFirebase {
     // ホストではなくパスで分ける（Workers のテストではエミュレーターと同じ形の URL で呼ばれる）
     if (/\/(identitytoolkit|securetoken)\.googleapis\.com\/v1\//.test(url.pathname)) return this.#auth(url, body)
     if (url.pathname.startsWith('/v1/projects/')) {
+      if (this.exhausted) {
+        this.calls.push({ op: url.pathname.split(':').pop() ?? '', status: 429 })
+        return jsonRes({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded.' } }, 429)
+      }
       const auth = new Headers(init?.headers).get('Authorization') ?? ''
       const uid = this.#tokens.get(auth.replace(/^Bearer /, '')) ?? null
       const res = this.#firestore(decodeURIComponent(url.pathname.replace(/^\/v1\//, '')), JSON.parse(body || '{}'), uid)

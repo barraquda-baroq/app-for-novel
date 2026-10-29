@@ -514,6 +514,26 @@ describe('数の上限（太平洋時間の日ごと）', () => {
   })
 })
 
+describe('Firebase の無料枠を使い切った時', () => {
+  it('読むツールは前に取り込んだ内容で答え、書き込みは止める', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, clock } = await pairedCore(fake, n.data)
+    fake.exhausted = true
+    clock.now += 20_000
+    const r = await core.callTool('novel_list_titles', {})
+    expect(r.isError).toBeFalsy()
+    expect(r.text).toContain('前に取り込んだ内容')
+    expect(r.text).toContain('『星の庭』')
+    const w = await core.callTool('novel_add_revision_ideas', { title_id: n.titleId, items: [{ heading: '案', body: '本文' }] })
+    expect(w.isError).toBe(true)
+    expect(w.text).toContain('無料枠')
+    // 写しを新しくする続き（alarm）は、枠が戻るまで待つ
+    const next = await core.alarm()
+    expect(next === null || next - clock.now > 60 * 60_000).toBe(true)
+  })
+})
+
 describe('ログ', () => {
   it('原稿の本文・トークンをログに出さない', async () => {
     const lines: string[] = []
