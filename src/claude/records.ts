@@ -326,7 +326,10 @@ function writableTitle(data: AppData, ref: unknown, ctx: BuildContext): TitleChe
   const r = resolveTitle(data, ref)
   if (!r.ok) return { error: r.message, candidates: r.candidates }
   if (ctx.source === 'claude' && !canClaudeWrite(r.value))
-    return { error: 'このタイトルは書き込み不可です（アプリのタイトル画面の「Claude に見せる」を「読む＋書き込む」にすると書き込めます）' }
+    return {
+      error:
+        'このタイトルは書き込み不可です（アプリのタイトル画面の「Claude に見せる」を「読む＋書き込む」にすると書き込めます）',
+    }
   return { title: r.value }
 }
 
