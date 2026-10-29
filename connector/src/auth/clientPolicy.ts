@@ -2,7 +2,7 @@
 // - claude.ai の公開の識別子（CIMD: client_id が https://claude.ai/… の URL）だけ。Claude Code は ALLOW_CLAUDE_CODE の時だけ
 // - 戻り先は claude.ai / claude.com の決まった URL だけ（Claude Code はローカルの /callback）
 // - DCR（ENABLE_DCR）で登録したクライアントも、戻り先が同じ決まりに合う時だけ
-import type { WorkerConfig } from '../env'
+import type { WorkerConfig } from '../config'
 
 export const CLAUDE_REDIRECTS = ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback']
 export const CLAUDE_CODE_CIMD = 'https://claude.ai/oauth/claude-code-client-metadata'

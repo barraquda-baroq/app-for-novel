@@ -322,6 +322,23 @@ export class Mirror {
     if (changed) this.#version += 1
   }
 
+  /**
+   * 名前を指定して文書を読み、写しに入れる（書き込みが「もうある」で断られたのに、差分の読み取りでは見えない時の確かめ。
+   * 写しの位置より前にある文書を、写しが知らなかった場合）
+   */
+  async fetchNames(docIds: string[]): Promise<void> {
+    if (!this.#data) this.#load()
+    const owner = this.#ownerUid()
+    const found = await this.#fs.batchGet(docIds.map((id) => `users/${owner}/records/${id}`))
+    const parsed: Parsed[] = []
+    this.#store.transaction(() => {
+      for (const d of found.values()) if (d) parsed.push(this.#parse(d))
+    })
+    let changed = false
+    for (const p of parsed) if (p?.kind === 'rec' && this.#apply(p.row, false)) changed = true
+    if (changed) this.#version += 1
+  }
+
   /** 書き込んだ記録を、読み直さずに写しへ入れる（次の差分の読み取りでも同じ内容が届く） */
   putOwn(rows: RecRow[]): void {
     if (!this.#data) this.#load()

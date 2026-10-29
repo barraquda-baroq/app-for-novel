@@ -1,5 +1,5 @@
 {
-  // テスト（Node の vitest・workerd の vitest・エミュレーターの結合テスト）と設定ファイル
+  // テスト（Node の vitest・workerd の vitest）と設定ファイル。エミュレーターの結合テストは tsconfig.emu.json
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
     "target": "ES2022",
@@ -17,5 +17,6 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["@cloudflare/workers-types", "node", "@cloudflare/vitest-pool-workers/types"]
   },
-  "include": ["test", "vitest.config.ts", "vitest.workers.config.ts", "vitest.emu.config.ts", "src/**/*.d.ts"]
+  "include": ["test", "vitest.config.ts", "vitest.workers.config.ts", "vitest.emu.config.ts"],
+  "exclude": ["test/emu"]
 }

@@ -4,7 +4,7 @@ import { trashedIdsOf, buildToolCall, isWriteTool, type WriteTool } from '../../
 import { claudeView, canClaudeRead } from '../../../src/claude/visibility'
 import { repairData } from '../../../src/domain/repair'
 import type { AppData } from '../../../src/domain/types'
-import type { VaultConfig } from '../env'
+import type { VaultConfig } from '../config'
 import { log, logError } from '../log'
 import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../version'
 import { ConnectorError, isAuthProblem, MESSAGES, modelMismatchMessage } from './errors'
@@ -39,6 +39,8 @@ export interface VaultDeps {
   sleep?: (ms: number) => Promise<void>
   /** 取り込みの続きを予約する（Durable Object の alarm）。null で取り消す */
   schedule?: (at: number | null) => void
+  /** 読むツールの前に写しを新しくする間隔（ms。既定 15 秒。テストでは 0） */
+  freshMs?: number
 }
 
 export interface PairingMeta {
@@ -336,7 +338,7 @@ export class VaultCore {
       }
       return {}
     }
-    if (!forWrite && this.#now() - this.#lastSync < FRESH_MS) return {}
+    if (!forWrite && this.#now() - this.#lastSync < (this.#d.freshMs ?? FRESH_MS)) return {}
     for (let i = 0; i < (forWrite ? 5 : 1); i++) {
       const out = await this.#syncStep(8)
       if (out.done) return {}
@@ -524,6 +526,15 @@ export class VaultCore {
             await this.#sleep(100 + Math.floor(Math.random() * 200) * (attempt + 1))
             const out = await this.#syncStep(8)
             if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
+            // 差分の読み取りで見えない（写しが知らない）文書は、名前を指定して確かめる
+            const left = prepared.filter((p) => !created.has(`${p.table}:${p.id}`)).map((p) => `${p.table}:${p.id}`)
+            if (left.length && this.#takeReads(left.length + 2)) {
+              try {
+                await this.mirror.fetchNames(left)
+              } catch (err) {
+                return this.#firestoreFailure(err)
+              }
+            }
             continue
           }
           if (e instanceof FirestoreError && e.status === 403) {

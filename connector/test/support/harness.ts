@@ -1,7 +1,7 @@
 // テスト用: 小さな Firebase（fakeFirebase.ts）につないだ Vault の中身と、持ち主のデータの用意。
 import type { AppData, TableName } from '../../../src/domain/types'
 import type { Rec } from '../../../src/sync/merge'
-import type { VaultConfig } from '../../src/env'
+import type { VaultConfig } from '../../src/config'
 import { VaultCore } from '../../src/vault/core'
 import { pairingHash } from '../../src/vault/crypto'
 import { FakeFirebase } from './fakeFirebase'
