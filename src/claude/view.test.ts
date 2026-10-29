@@ -245,7 +245,7 @@ describe('検索（searchTextView）', () => {
     let c2: string | null = null
     let countLast = ''
     do {
-      const page = ok(
+      const page: { text: string; nextCursor: string | null } = ok(
         searchTextView(n.data, n.titleId, { query: '雨の音', countOnly: true, workBudget: 20, ...(c2 ? { cursor: c2 } : {}) }),
       )
       countLast = page.text.split('\n')[0]
