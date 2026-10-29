@@ -69,7 +69,8 @@ export const FRESH_MS = 15_000
 const RECHECK_MS = 60_000
 
 const PAIRING_MESSAGES: Record<Exclude<PairingCheck, { ok: true }>['reason'], string> = {
-  not_found: 'アプリで許可された記録（config/connector）が見つかりません。アプリの連携の画面で［許可する］を押してから戻ってください。',
+  not_found:
+    'アプリで許可された記録（config/connector）が見つからないか、別のコネクタのものです。アプリの連携の画面で［許可する］を押してから戻るか、claude.ai でもう一度「接続」からやり直してください。',
   uid: 'アプリで許可されたコネクタが、このコネクタではありません。claude.ai でもう一度「接続」からやり直してください。',
   hash: '連携の確かめが合いません（別の画面・別のブラウザで始めた接続の可能性）。claude.ai でもう一度「接続」からやり直してください。',
   expired: '連携の確かめの期限（15分）が過ぎました。claude.ai でもう一度「接続」からやり直してください。',
@@ -200,8 +201,8 @@ export class VaultCore {
       const d = (await this.fs.batchGet(['config/connector'])).get('config/connector')
       conn = d ? fromFields(d.fields) : null
     } catch (e) {
-      // 自分の uid でない記録はアクセスルールで読めない（403）
-      if (e instanceof FirestoreError && e.status === 403) return bad('uid')
+      // 無い記録・自分の uid でない記録は、アクセスルールで読めない（403。どちらかは分からない）
+      if (e instanceof FirestoreError && e.status === 403) return bad('not_found')
       logError('pairing_connector_failed', e)
       return bad('error')
     }
@@ -330,7 +331,7 @@ export class VaultCore {
     }
     if (!forWrite && this.#now() - this.#lastSync < FRESH_MS) return {}
     for (let i = 0; i < (forWrite ? 5 : 1); i++) {
-      const out = await this.#syncStep(4)
+      const out = await this.#syncStep(8)
       if (out.done) return {}
       if (out.outOfReads) {
         if (forWrite) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
