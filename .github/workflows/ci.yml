@@ -14,11 +14,21 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            connector/package-lock.json
       - run: npm ci
+      # Claude 用のコネクタ（アプリの src/domain・src/claude などをまとめて使うので、アプリと一緒に確かめる。
+      # 同期の E2E の e2e/pairing.sync.spec.ts も、これが無いと本物のコネクタを動かせない）
+      - run: npm --prefix connector ci
       - name: 型チェック
         run: npx tsc -b --noEmit
+      - name: コネクタの型チェック
+        run: npm --prefix connector run typecheck
       - name: 単体テスト
         run: npm test
+      - name: コネクタのテスト（単体・Workers の実行環境・公開する形の確かめ）
+        run: npm run test:connector
       - name: Firebase エミュレーターのキャッシュ
         uses: actions/cache@v4
         with:
@@ -26,6 +36,8 @@ jobs:
           key: firebase-emulators-${{ hashFiles('package-lock.json') }}
       - name: 同期のテスト（Firebase エミュレーター）
         run: npm run test:sync
+      - name: コネクタの結合テスト（Firebase エミュレーター）
+        run: npm run test:connector:emu
       - name: ビルド
         run: npm run build
       - name: E2E テスト用ブラウザ

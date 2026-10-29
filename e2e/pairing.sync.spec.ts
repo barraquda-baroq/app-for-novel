@@ -41,6 +41,8 @@ function wranglerEntry(): string | null {
 }
 
 const entry = fs.existsSync(path.join(connectorDir, 'package.json')) ? wranglerEntry() : null
+// CI ではコネクタの部品を必ず入れる（無ければ飛ばさずに失敗させる。.github/workflows/ci.yml）
+if (!entry && process.env.CI) throw new Error('コネクタの部品がありません（CI では npm --prefix connector ci が必要）')
 test.skip(!entry, 'コネクタの部品がありません（npm --prefix connector ci）')
 
 let harness: Harness | null = null

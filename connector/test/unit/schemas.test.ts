@@ -39,7 +39,8 @@ describe('ツールの JSON Schema', () => {
   it('schemas.gen.ts は schemas.ts から作ったものと同じ（違えば npm --prefix connector run gen-schemas）', () => {
     const text = renderSchemas()
     if (process.env.GEN_SCHEMAS === '1') fs.writeFileSync(target, text)
-    expect(fs.readFileSync(target, 'utf8')).toBe(text)
+    // Windows で改行が CRLF で取り出されていても同じとみなす（書き出すのはいつも LF）
+    expect(fs.readFileSync(target, 'utf8').replace(/\r\n/g, '\n')).toBe(text)
   })
 
   it('入力の形（io: input）: 既定値のある項目は必須にならない', () => {
