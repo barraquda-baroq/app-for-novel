@@ -101,7 +101,7 @@ test.describe('外観', () => {
   test('タイトル画面のタブは領域ごとに色分けし、ディープダークではほぼ黒にする', async ({ page }) => {
     await openApp(page)
     const { titleId } = await seedTitleWithEpisodes(page, '色分けの確認', ['本文'])
-    const tabs = ['story', 'settings', 'strategy', 'ideas'] as const
+    const tabs = ['story', 'settings', 'strategy', 'critique', 'ideas'] as const
 
     const selectedTabColors = async () => {
       const out: { background: string; underline: string }[] = []
@@ -110,7 +110,9 @@ test.describe('外観', () => {
         const el = page.getByTestId(`tab-${tab}`)
         await expect(el).toHaveAttribute('aria-selected', 'true')
         out.push(
-          await el.evaluate((e) => {
+          await el.evaluate(async (e) => {
+            // 色の切り替えの途中（transition）の色を読まないように、終わるのを待つ
+            await Promise.all(e.getAnimations().map((a) => a.finished.catch(() => undefined)))
             const s = getComputedStyle(e)
             return { background: s.backgroundColor, underline: s.borderBottomColor }
           }),

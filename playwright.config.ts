@@ -19,6 +19,8 @@ export default defineConfig({
   },
   webServer: {
     command: `npx vite --port ${port} --strictPort`,
+    // Claude 用のコネクタの場所（テストではページの通信を横取りして、仮のコネクタが答える。e2e/claude.spec.ts）
+    env: { VITE_CONNECTOR_ORIGIN: process.env.VITE_CONNECTOR_ORIGIN ?? 'https://connector.e2e.test' },
     url: `http://localhost:${port}`,
     reuseExistingServer: true,
     timeout: 60_000,

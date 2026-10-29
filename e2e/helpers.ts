@@ -10,6 +10,12 @@ interface DevHook {
   replaceAllData: (data: AppData) => Promise<void>
   /** エミュレーターにつないでいる時だけ: 仮のアカウントでログインする */
   signInForTest: (sub: string) => Promise<void>
+  /** ログインしているアカウント（同期のテスト用） */
+  syncUid: () => string | null
+  /** ビルドの時に決めた Claude 用のコネクタの origin */
+  connectorOrigin: string
+  /** 手動連携の貼り付けと同じ作り方で Claude の記録を足す（戻り値は足した数） */
+  pasteClaude: (titleId: string, text: string, now?: number) => Promise<number>
 }
 
 declare global {

@@ -57,7 +57,8 @@ src/store/
   actions.ts       actions.xxx(...) — UI から呼ぶ操作。仕様違反は DomainError を投げる
   uiStore.ts       usePrefs（比率・分割方向など端末ごとの設定）、notify/notifyError、attempt()
 src/ui/          共通部品（Layout/AppHeader/Breadcrumbs, Modal, dialogs, DraftField, SplitPane, icons, hooks, browser）
-src/features/    画面
+src/features/    画面（2.3 の Claude 連携の共通の部品・連携の画面・設定は features/claude、作品批評タブは features/title/critique）
+src/claude/      Claude 連携の純粋な部品（アプリとコネクタで共有。2.3。SPEC-2.md の 7.）
 src/routes.ts    パス生成（HashRouter）
 ```
 

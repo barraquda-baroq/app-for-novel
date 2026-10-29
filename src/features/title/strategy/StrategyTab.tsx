@@ -1,5 +1,8 @@
-// 戦略タブ: 書籍化に向けた全体方針、現在の採用原稿の規模、コンテストへの応募計画（応募順）と結果・改稿/再応募方針。
+// 戦略タブ: 書籍化に向けた全体方針、現在の採用原稿の規模、戦略メモ（Claude の提案）・改稿案・推敲案、
+// コンテストへの応募計画（応募順）と結果・改稿/再応募方針。
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { jstDate } from '../../../claude/dates'
+import type { ManualTask } from '../../../claude/prompts'
 import { missingActiveLabel, submissionsOf } from '../../../domain/entityOps'
 import { formatCount } from '../../../domain/text'
 import type { ID } from '../../../domain/types'
@@ -8,11 +11,30 @@ import { getData, useData } from '../../../store/appStore'
 import { attempt } from '../../../store/uiStore'
 import { promptDialog } from '../../../ui/dialogs'
 import { PlusIcon, TargetIcon } from '../../../ui/icons'
+import { AskIcon, PasteIcon } from '../../claude/claudeIcons'
+import { ManualDialog } from '../../claude/ManualDialog'
+import { PasteResultDialog } from '../../claude/PasteResultDialog'
 import { GrowTextarea } from '../settings/GrowTextarea'
+import { ProofSuggestions } from './ProofSuggestions'
+import { RevisionIdeas } from './RevisionIdeas'
+import { StrategyNotes } from './StrategyNotes'
 import { SubmissionCard } from './SubmissionCard'
 import { currentManuscript, manuscriptDeps, sortByDeadline, summarizeManuscript } from './strategyLogic'
 import { useToday } from './useToday'
 import './strategy.css'
+import './claudeSections.css'
+
+/** タブの中の見出しへ移る印（狭い画面で下の方の区切りへすぐ行けるように） */
+const JUMPS: { id: string; label: string }[] = [
+  { id: 'sx-notes', label: '戦略メモ' },
+  { id: 'sx-revision', label: '改稿案' },
+  { id: 'sx-proof', label: '推敲案' },
+  { id: 'sx-plans', label: '応募計画' },
+]
+
+function jumpTo(id: string) {
+  document.getElementById(id)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+}
 
 type SortMode = 'order' | 'deadline'
 
@@ -35,7 +57,17 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
   const current = useMemo(() => ({ chars: summary.chars, pages: summary.pages }), [summary])
   const [expanded, setExpanded] = useState<ReadonlySet<ID>>(() => new Set())
   const [reveal, setReveal] = useState<ID | null>(null)
+  const [manual, setManual] = useState<ManualTask | null>(null)
+  const [paste, setPaste] = useState(false)
   const titleName = title?.name ?? ''
+  const todayIso = jstDate(today.getTime())
+
+  // 戦略メモの［応募計画にする］で作った・作ってあった応募計画を開いて見せる
+  const revealSubmission = useCallback((id: ID) => {
+    setSort('order')
+    setExpanded((prev) => new Set(prev).add(id))
+    setReveal(id)
+  }, [])
 
   useEffect(() => {
     if (!reveal) return
@@ -75,8 +107,28 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
 
   const positions = new Map(submissions.map((s, i) => [s.id, i + 1]))
 
+  const claudeButtons = (task: ManualTask, testPrefix: string) => (
+    <div className="sx-claude-actions">
+      <button type="button" className="btn btn-sm" onClick={() => setManual(task)} data-testid={`${testPrefix}-manual`}>
+        <AskIcon />
+        Claude に頼む（手動）
+      </button>
+      <button type="button" className="btn btn-sm" onClick={() => setPaste(true)} data-testid={`${testPrefix}-paste`}>
+        <PasteIcon />
+        結果を貼り付け
+      </button>
+    </div>
+  )
+
   return (
     <div className="sg-tab" data-testid="strategy-tab">
+      <nav className="sx-jumps" aria-label="戦略タブの中の移動">
+        {JUMPS.map((j) => (
+          <button key={j.id} type="button" className="sx-jump" onClick={() => jumpTo(j.id)} data-testid={`jump-${j.id}`}>
+            {j.label}
+          </button>
+        ))}
+      </nav>
       <div className="sg-top">
         <section className="card sg-panel sg-note" aria-labelledby="sg-note-heading">
           <div className="sg-panel-head">
@@ -145,7 +197,27 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
         </section>
       </div>
 
-      <section className="sg-plans" aria-labelledby="sg-plans-heading">
+      <StrategyNotes
+        titleId={titleId}
+        headingId="sx-notes-heading"
+        today={todayIso}
+        onReveal={revealSubmission}
+        actionsSlot={claudeButtons('strategy', 'strategy-claude')}
+      />
+      <RevisionIdeas titleId={titleId} headingId="sx-revision-heading" />
+      <ProofSuggestions
+        titleId={titleId}
+        headingId="sx-proof-heading"
+        today={todayIso}
+        actionsSlot={claudeButtons('proofreading', 'proof-claude')}
+      />
+
+      {manual ? (
+        <ManualDialog titleId={titleId} task={manual} onClose={() => setManual(null)} onPaste={() => setPaste(true)} />
+      ) : null}
+      {paste ? <PasteResultDialog titleId={titleId} onClose={() => setPaste(false)} /> : null}
+
+      <section className="sg-plans" id="sx-plans" aria-labelledby="sg-plans-heading">
         <div className="sg-plans-head">
           <div className="sg-plans-title">
             <h2 id="sg-plans-heading">応募計画・結果</h2>

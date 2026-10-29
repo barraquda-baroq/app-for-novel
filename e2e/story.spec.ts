@@ -123,6 +123,9 @@ test.describe('タイトル画面・本編', () => {
     await expect(page.getByTestId('tab-ideas')).toHaveAttribute('aria-selected', 'true')
     // キーボードでも切り替えられる
     await page.getByTestId('tab-ideas').press('ArrowLeft')
+    await expect(page.getByTestId('tab-critique')).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('tab-critique')).toBeFocused()
+    await page.getByTestId('tab-critique').press('ArrowLeft')
     await expect(page.getByTestId('tab-strategy')).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('tab-strategy')).toBeFocused()
   })
