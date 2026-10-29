@@ -107,6 +107,17 @@ const commands = {
       console.log('✗ iPhone のビルドに失敗しました')
       process.exit(r.status || 1)
     }
+    // Swift Package の版の控え（Xcode が書く）。リポジトリのものと違えば知らせる（Mac でも CI と同じ版を使うよう、新しいものを入れる）
+    const resolved = 'ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+    if (fs.existsSync(path.join(repoDir, resolved))) {
+      const changed = run('git', ['status', '--porcelain', '--', resolved], { cwd: repoDir }).out.trim()
+      if (changed) {
+        console.log(`::warning::${resolved} がリポジトリのものと違います（下の内容でリポジトリのものを置き換えてください）`)
+        console.log(`::group::${resolved}`)
+        console.log(fs.readFileSync(path.join(repoDir, resolved), 'utf8'))
+        console.log('::endgroup::')
+      } else console.log(`  ✓ ${resolved} はリポジトリのものと同じ`)
+    }
   },
   'ios-app'(app) {
     const info = JSON.parse(must('plutil', ['-convert', 'json', '-o', '-', path.join(app, 'Info.plist')]))
