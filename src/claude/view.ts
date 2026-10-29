@@ -583,7 +583,7 @@ export function readTextPages(
 
 export interface SearchOptions {
   query: string
-  /** literal = そのまま、regex = 正規表現（JavaScript。u フラグ付き） */
+  /** literal = そのまま、regex = 正規表現（JavaScript。m・u フラグ付き。^ $ は段落ごと） */
   mode?: 'literal' | 'regex'
   /** adopted = 採用原稿（既定）、all_versions = すべての稿 */
   scope?: 'adopted' | 'all_versions'
@@ -663,7 +663,8 @@ export function searchTextView(data: AppData, titleId: ID, opts: SearchOptions):
   const mode = opts.mode === 'regex' ? 'regex' : 'literal'
   let re: RegExp
   try {
-    re = new RegExp(mode === 'regex' ? query : escapeRegExp(query), 'gu')
+    // m: ^ と $ は段落（行）の頭と終わりに一致する（1話をまとめて探すので、無いと話の頭と終わりだけになる）
+    re = new RegExp(mode === 'regex' ? query : escapeRegExp(query), 'gmu')
   } catch (e) {
     return fail(`正規表現として読めません: ${e instanceof Error ? e.message : String(e)}`)
   }

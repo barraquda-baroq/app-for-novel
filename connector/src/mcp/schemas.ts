@@ -77,7 +77,7 @@ export const SCHEMAS = {
   novel_search_text: z.object({
     title_id: titleId,
     query: z.string().min(1).max(200).describe('探す言葉（200字まで）。ルビの記法と読みを除いた本文で探す'),
-    mode: z.enum(['literal', 'regex']).default('literal').describe('literal = そのまま（既定）、regex = 正規表現（JavaScript）'),
+    mode: z.enum(['literal', 'regex']).default('literal').describe('literal = そのまま（既定）、regex = 正規表現（JavaScript。^ と $ は各段落の頭と終わりに一致。. は改行に一致しない）'),
     scope: z
       .enum(['adopted', 'all_versions'])
       .default('adopted')

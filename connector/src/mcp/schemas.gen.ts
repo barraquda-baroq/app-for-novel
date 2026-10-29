@@ -187,7 +187,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       },
       "mode": {
         "default": "literal",
-        "description": "literal = そのまま（既定）、regex = 正規表現（JavaScript）",
+        "description": "literal = そのまま（既定）、regex = 正規表現（JavaScript。^ と $ は各段落の頭と終わりに一致。. は改行に一致しない）",
         "type": "string",
         "enum": [
           "literal",

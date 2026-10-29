@@ -203,6 +203,15 @@ describe('検索（searchTextView）', () => {
     const r = ok(searchTextView(n.data, n.titleId, { query: '見れる', scope: 'all_versions' }))
     expect(r.text).toContain('#1 第1話 第1稿（採用中）')
   })
+  it('正規表現の ^ と $ は段落ごと（字下げ漏れ・台詞で始まる段落・。で終わる段落）', () => {
+    const n = novel(['　地の文。\n「台詞」\n字下げ漏れ。', '「また台詞」\n　もう一つ。'])
+    const count = (query: string) => ok(searchTextView(n.data, n.titleId, { query, mode: 'regex', countOnly: true })).text
+    expect(count('^「')).toMatch(/^「\^「」（正規表現） 2件（.*）: #1 ×1、#2 ×1$/)
+    expect(count('。$')).toMatch(/ 3件（.*）: #1 ×2、#2 ×1$/)
+    expect(count('^[^　「]')).toMatch(/ 1件（.*）: #1 ×1$/)
+    // そのままの言葉の ^ $ は文字のまま
+    expect(ok(searchTextView(n.data, n.titleId, { query: '^「', countOnly: true })).text).toMatch(/ 0件/)
+  })
   it('調べる量の上限で途中まで: 見出しは調べた範囲と「途中」を言い、続きで最後の話の一致まで届く', () => {
     const bodies = Array.from({ length: 6 }, (_, i) => `第${i + 1}話の本文です。雨の音がする。`)
     bodies[5] += '珍しい言葉。'
