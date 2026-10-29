@@ -498,6 +498,16 @@ export function parseXcodeVersion(text) {
   return { major: Number(m[1]), text: m.slice(1).filter(Boolean).join('.') }
 }
 
+/**
+ * xcodebuild -version の結果（{ code, out }）。Xcode の版、または使えない理由（clt = Xcode ではなく Command Line Tools が選ばれている。
+ * Git を入れた時に入る。missing = Xcode が無い）。mobile:doctor と ios:open で同じに見分ける
+ */
+export function xcodeStatus({ code, out }) {
+  const version = code === 0 ? parseXcodeVersion(out) : null
+  if (version) return { version }
+  return { problem: /command line tools/i.test(String(out ?? '')) ? 'clt' : 'missing' }
+}
+
 /** aapt2 dump badging の出力から、パッケージ名と版 */
 export function parseBadging(text) {
   const t = String(text ?? '')

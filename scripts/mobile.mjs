@@ -354,7 +354,8 @@ async function firebaseIos(opts) {
 
 // ---- 各コマンド ----
 
-async function doctor() {
+/** そろっているものを表示する。platform・xcodebuild はテストで Windows・Mac の形を選ぶため */
+export async function doctor({ platform = ctx.platform, xcodebuild = 'xcodebuild' } = {}) {
   say('Novel Studio のアプリの準備（パスワード・ファイルの中身は表示しません）\n')
   const node = lib.nodeMajor()
   ;(node >= 22 ? ok : ng)(
@@ -397,29 +398,35 @@ async function doctor() {
   }
 
   say('\niPhone')
-  if (ctx.platform !== 'darwin') say('  （iPhone のアプリは Mac でだけ作れます）')
+  // iPhone の設定ファイルは Mac ごとに作る（Windows で ✗ を出すと、Mac でだけ使うコマンドを Windows で実行してしまう）
+  if (platform !== 'darwin') say('  （iPhone のアプリは Mac で作ります。iPhone の項目は Mac で確かめます）')
   else {
-    const r = await exec('xcodebuild', ['-version'], { capture: true })
-    const v = r.code === 0 ? lib.parseXcodeVersion(r.out) : null
-    if (!v) ng('Xcode が見つかりません（App Store から入れて、一度起動する）')
+    const xcode = lib.xcodeStatus(await exec(xcodebuild, ['-version'], { capture: true }))
+    const v = xcode.version
+    if (!v)
+      ng(
+        xcode.problem === 'clt'
+          ? 'Xcode ではなく Command Line Tools が選ばれています（sudo xcode-select -s /Applications/Xcode.app）'
+          : 'Xcode が見つかりません（App Store から入れて、一度起動する）',
+      )
     else
       (v.major >= lib.MIN_XCODE ? ok : ng)(
         `Xcode ${v.text}${v.major >= lib.MIN_XCODE ? '' : `（${lib.MIN_XCODE} 以上が要ります）`}`,
       )
-  }
-  let reversed = ''
-  if (!exists(files.servicePlist)) ng(`${rel(files.servicePlist)} がありません（npm run mobile:firebase -- --ios）`)
-  else {
-    const check = lib.servicePlistCheck(fs.readFileSync(files.servicePlist, 'utf8'))
-    reversed = check.reversedClientId
-    if (check.problems.length) for (const p of check.problems) ng(`${rel(files.servicePlist)}: ${p}`)
-    else ok(rel(files.servicePlist))
-  }
-  if (!exists(files.localXcconfig)) ng(`${rel(files.localXcconfig)} がありません（npm run mobile:firebase -- --ios）`)
-  else {
-    const problems = lib.localXcconfigProblems(fs.readFileSync(files.localXcconfig, 'utf8'), reversed)
-    if (problems.length) for (const p of problems) ng(`${rel(files.localXcconfig)}: ${p}`)
-    else ok(`${rel(files.localXcconfig)}（Google ログインの戻り先・チーム ID）`)
+    let reversed = ''
+    if (!exists(files.servicePlist)) ng(`${rel(files.servicePlist)} がありません（npm run mobile:firebase -- --ios）`)
+    else {
+      const check = lib.servicePlistCheck(fs.readFileSync(files.servicePlist, 'utf8'))
+      reversed = check.reversedClientId
+      if (check.problems.length) for (const p of check.problems) ng(`${rel(files.servicePlist)}: ${p}`)
+      else ok(rel(files.servicePlist))
+    }
+    if (!exists(files.localXcconfig)) ng(`${rel(files.localXcconfig)} がありません（npm run mobile:firebase -- --ios）`)
+    else {
+      const problems = lib.localXcconfigProblems(fs.readFileSync(files.localXcconfig, 'utf8'), reversed)
+      if (problems.length) for (const p of problems) ng(`${rel(files.localXcconfig)}: ${p}`)
+      else ok(`${rel(files.localXcconfig)}（Google ログインの戻り先・チーム ID）`)
+    }
   }
 
   say('\n共通')
@@ -509,6 +516,11 @@ async function keystore(opts) {
 }
 
 async function firebaseCommand(opts) {
+  // iPhone の設定ファイル（GoogleService-Info.plist・local.xcconfig）は、Xcode を使う Mac で作る（リポジトリには入らない）
+  if (opts.ios && ctx.platform !== 'darwin')
+    throw new Stop(
+      'iPhone の設定（--ios）は Mac で行います（Mac で npm run mobile:firebase -- --ios --team <チームID>）。このパソコンでは --android だけです。',
+    )
   say(`Firebase のプロジェクト ${lib.FIREBASE_PROJECT} にアプリを登録して、ログインの設定ファイルを取ってきます。`)
   let allOk = true
   if (opts.android) {
@@ -656,10 +668,10 @@ async function androidOpen() {
 
 async function iosOpen() {
   if (ctx.platform !== 'darwin') throw new Stop('iPhone のアプリは Mac でだけ作れます（docs/MOBILE.md「iPhone」）。')
-  const r = await exec('xcodebuild', ['-version'], { capture: true })
-  const v = r.code === 0 ? lib.parseXcodeVersion(r.out) : null
+  const xcode = lib.xcodeStatus(await exec('xcodebuild', ['-version'], { capture: true }))
+  const v = xcode.version
   if (!v) {
-    if (/command line tools/i.test(r.out))
+    if (xcode.problem === 'clt')
       throw new Stop(
         'Xcode ではなく Command Line Tools が選ばれています。ターミナルで sudo xcode-select -s /Applications/Xcode.app を実行してから、もう一度試してください。',
       )
