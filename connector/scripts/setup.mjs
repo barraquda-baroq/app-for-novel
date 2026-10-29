@@ -15,6 +15,7 @@ import { deployConnector } from './deploy.mjs'
 import {
   MISSING_CONNECTOR_DEPS,
   ask,
+  dcrEnabledInConfig,
   newTokenKey,
   ng,
   nodeVersionOk,
@@ -37,7 +38,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 async function main() {
   say('Novel Studio の Claude 用コネクタを準備します。')
   say('')
-  say('先に手で済ませておくこと（docs/CONNECTOR.md の手順 1〜3）:')
+  say('先に手で済ませておくこと（docs/CONNECTOR.md の 1-A の手順 1〜4）:')
   say('  ・Cloudflare に登録し、2段階認証と workers.dev のサブドメインを設定する')
   say('  ・Firebase コンソールで「匿名」のログインを有効にする')
   say('  ・npm ci と npm --prefix connector ci を実行しておく')
@@ -118,14 +119,14 @@ async function main() {
   say('\n[5/7] コネクタを確かめます')
   let check = null
   for (let i = 0; i < 6; i++) {
-    check = await checkConnector(origin)
+    check = await checkConnector(origin, { expectDcr: dcrEnabledInConfig() })
     if (check.ok) break
     await sleep(5_000)
   }
   printResults(check)
   if (!check.ok) {
     const anon = check.results.some((r) => r.label.includes('匿名ログインが無効'))
-    if (anon) say('\n匿名ログインが無効です。docs/CONNECTOR.md の手順 2 をやり直して、もう一度 npm run connector:setup を実行してください。')
+    if (anon) say('\n匿名ログインが無効です。docs/CONNECTOR.md の 1-A の手順 3 をやり直して、もう一度 npm run connector:setup を実行してください。')
     else say('\n確かめで問題がありました（✗ の行）。しばらく待ってから npm run connector:check で確かめてください。')
     process.exitCode = 1
     return
@@ -147,7 +148,7 @@ async function main() {
   // 7. URL
   say('\n[7/7] 準備ができました。')
   say(`claude.ai に登録する URL: ${origin}/mcp`)
-  say('（この URL は秘密ではありません。アプリの 設定 → Claude 連携 からもコピーできます。続きは docs/CONNECTOR.md の手順 5〜）')
+  say('（この URL は秘密ではありません。アプリの 設定 → Claude 連携 からもコピーできます。続きは docs/CONNECTOR.md の 1-A の手順 6〜）')
 }
 
 await main()

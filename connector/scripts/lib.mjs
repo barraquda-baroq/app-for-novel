@@ -62,6 +62,15 @@ export function appBuildEnv(env = process.env, local = null) {
   }
 }
 
+/** wrangler.jsonc の ENABLE_DCR が "true" か（つながらない時の最後の手段にした時。公開した状態もこれに合うはず） */
+export function dcrEnabledInConfig(file = path.join(connectorDir, 'wrangler.jsonc')) {
+  try {
+    return /"ENABLE_DCR"\s*:\s*"true"/.test(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return false
+  }
+}
+
 /** 公開する時に渡す変数（wrangler.jsonc には書かない） */
 export function deployVarArgs(origin) {
   return ['--var', `MCP_RESOURCE:${origin}/mcp`, '--var', `PUBLIC_ORIGIN:${origin}`]

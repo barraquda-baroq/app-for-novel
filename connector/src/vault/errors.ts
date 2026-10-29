@@ -37,7 +37,7 @@ export const MESSAGES = {
   identityLost:
     'コネクタの身元（匿名のアカウント）が使えなくなりました。claude.ai の「カスタマイズ → コネクタ」で Novel Studio に接続し直し、アプリでもう一度許可してください。',
   anonymousDisabled:
-    'Firebase の匿名ログインが無効です。Firebase コンソール → Authentication →「ログイン方法」で「匿名」を有効にしてください（docs/CONNECTOR.md の手順 2）。',
+    'Firebase の匿名ログインが無効です。Firebase コンソール → Authentication →「ログイン方法」で「匿名」を有効にしてください（docs/CONNECTOR.md の 1-A の手順 3）。',
   keyMissing:
     'コネクタの鍵（TOKEN_ENC_KEY）が設定されていません。Mac か Windows で npm run connector:setup をもう一度実行してください。',
   writesOff:

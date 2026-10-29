@@ -7,6 +7,7 @@ import { vaultConfig, workerConfig } from '../../src/config'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import {
   appBuildEnv,
+  dcrEnabledInConfig,
   deployVarArgs,
   isConnectorOrigin,
   newTokenKey,
@@ -15,7 +16,7 @@ import {
   writeLocalConfig,
 } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import { checkConnector } from '../../scripts/check.mjs'
+import { checkConnector, parseCheckArgs } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { bundleCheck, bundleProblems } from '../../scripts/bundle-check.mjs'
 
@@ -52,6 +53,37 @@ describe('docs/CONNECTOR.md のコマンド', () => {
 })
 
 describe('スクリプトの部品', () => {
+  it('ENABLE_DCR を "true" にした時（最後の手段）は、確かめも DCR が有効なことを期待する。--dcr は URL として読まない', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-dcr-'))
+    const on = path.join(dir, 'on.jsonc')
+    const off = path.join(dir, 'off.jsonc')
+    fs.writeFileSync(on, '{\n  // "true" にすると…\n  "vars": { "ENABLE_DCR": "true" }\n}\n')
+    fs.writeFileSync(off, '{\n  // つながらない時の最後の手段: "true" にすると DCR を受け付ける\n  "vars": { "ENABLE_DCR": "false" }\n}\n')
+    expect(dcrEnabledInConfig(on)).toBe(true)
+    expect(dcrEnabledInConfig(off)).toBe(false)
+    expect(dcrEnabledInConfig(path.join(dir, 'none.jsonc'))).toBe(false)
+    expect(dcrEnabledInConfig()).toBe(false)
+    expect(parseCheckArgs(['--dcr'])).toEqual({ origin: '', dcr: true })
+    expect(parseCheckArgs(['https://c.example.workers.dev', '--dcr'])).toEqual({ origin: 'https://c.example.workers.dev', dcr: true })
+  })
+
+  it('準備のスクリプト・コネクタの案内が指す docs/CONNECTOR.md の手順の番号が合っている', () => {
+    const dir = path.resolve(import.meta.dirname, '../..')
+    const doc = fs.readFileSync(path.join(dir, '../docs/CONNECTOR.md'), 'utf8')
+    const handSteps = doc.slice(doc.indexOf('### 1-A.'), doc.indexOf('### 1-B.'))
+    const stepOf = (re: RegExp) => Number(new RegExp(`^(\\d+)\\. \\*\\*${re.source}`, 'm').exec(handSteps)?.[1])
+    const anon = stepOf(/Firebase で匿名ログインを有効にする/)
+    const script = stepOf(/準備のスクリプトを動かす/)
+    expect(anon).toBeGreaterThan(0)
+    expect(script).toBeGreaterThan(anon)
+    const setup = fs.readFileSync(path.join(dir, 'scripts/setup.mjs'), 'utf8')
+    const errors = fs.readFileSync(path.join(dir, 'src/vault/errors.ts'), 'utf8')
+    expect(setup).toContain(`1-A の手順 1〜${script - 1}`)
+    expect(setup).toContain(`匿名ログインが無効です。docs/CONNECTOR.md の 1-A の手順 ${anon} をやり直して`)
+    expect(setup).toContain(`1-A の手順 ${script + 1}〜`)
+    expect(errors).toContain(`docs/CONNECTOR.md の 1-A の手順 ${anon}）`)
+  })
+
   it('公開するアプリのビルドには、開発用の値（エミュレーター・手元のコネクタ）を入れない', () => {
     const dev = { VITE_FIREBASE_EMULATOR: '127.0.0.1', VITE_CONNECTOR_ORIGIN: 'http://localhost:8787' }
     expect(appBuildEnv(dev, null)).toEqual({ VITE_FIREBASE_EMULATOR: undefined, VITE_CONNECTOR_ORIGIN: undefined })

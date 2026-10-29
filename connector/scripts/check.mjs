@@ -4,7 +4,7 @@
 // claude.ai が接続する時に読む2つのメタデータ（resource・issuer・S256・CIMD・"none"・offline_access・DCR が無いこと）、
 // トークンの無い /mcp が 401 になること、コネクタの身元を作れる（Firebase の匿名ログインが有効）ことを確かめる。原稿は読まない。
 import { pathToFileURL } from 'node:url'
-import { readLocalConfig } from './lib.mjs'
+import { dcrEnabledInConfig, readLocalConfig } from './lib.mjs'
 
 /** 確かめた結果の一覧（{ ok, label, hint? }） */
 export async function checkConnector(origin, { fetch: f = fetch, expectDcr = false } = {}) {
@@ -35,8 +35,10 @@ export async function checkConnector(origin, { fetch: f = fetch, expectDcr = fal
   add(asj.client_id_metadata_document_supported === true, 'Claude の公開の識別子（CIMD）を受け付ける')
   add(Array.isArray(asj.token_endpoint_auth_methods_supported) && asj.token_endpoint_auth_methods_supported.includes('none'), '秘密の無いクライアント（none）')
   add(Array.isArray(asj.scopes_supported) && asj.scopes_supported.includes('offline_access'), '更新用トークン（offline_access）')
-  if (expectDcr) add(typeof asj.registration_endpoint === 'string', '自動的に登録（DCR）が有効')
-  else add(asj.registration_endpoint === undefined, '自動的に登録（DCR）は無効', 'wrangler.jsonc の ENABLE_DCR が "true" になっていないか確かめてください')
+  // wrangler.jsonc の ENABLE_DCR と、公開した状態が合っているか（合わなければ公開し直す）
+  const redeploy = '公開した状態が connector/wrangler.jsonc の ENABLE_DCR と合いません。npm run deploy をもう一度実行してください'
+  if (expectDcr) add(typeof asj.registration_endpoint === 'string', '自動的に登録（DCR）が有効', redeploy)
+  else add(asj.registration_endpoint === undefined, '自動的に登録（DCR）は無効', redeploy)
 
   const mcp = await get('/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
   const www = mcp.headers.get('WWW-Authenticate') ?? ''
@@ -61,16 +63,22 @@ export function printResults({ results }) {
   }
 }
 
+/** コマンドの引数（-- で始まらない最初のものが URL。--dcr は DCR を有効にした時） */
+export function parseCheckArgs(argv) {
+  const args = argv.filter((a) => typeof a === 'string')
+  return { origin: args.find((a) => !a.startsWith('--')) ?? '', dcr: args.includes('--dcr') }
+}
+
 async function main() {
-  const arg = process.argv[2]
-  const origin = (arg || readLocalConfig()?.origin || '').replace(/\/+$/, '')
+  const args = parseCheckArgs(process.argv.slice(2))
+  const origin = (args.origin || readLocalConfig()?.origin || '').replace(/\/+$/, '')
   if (!origin) {
     console.log('コネクタの URL が分かりません。先に npm run connector:setup を実行するか、URL を付けて実行してください。')
     process.exitCode = 1
     return
   }
   console.log(`Novel Studio コネクタを確かめます: ${origin}`)
-  const r = await checkConnector(origin, { expectDcr: process.argv.includes('--dcr') })
+  const r = await checkConnector(origin, { expectDcr: args.dcr || dcrEnabledInConfig() })
   printResults(r)
   console.log(r.ok ? '問題ありません。' : '問題があります（✗ の行）。')
   if (!r.ok) process.exitCode = 1

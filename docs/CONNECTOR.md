@@ -162,7 +162,7 @@ npm run deploy
 | 「コネクタの部品が入っていません」 | `npm --prefix connector ci` |
 | `npm` で「スクリプトの実行が無効になっているため…npm.ps1 を読み込むことができません」（Windows） | PowerShell で `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行して `Y`、PowerShell を開き直す（`npm.cmd`・`npx.cmd` と打っても動く） |
 | claude.ai で「Authorization with the MCP server failed」など | `npm run connector:check` を実行して ✗ の行を直す。エラーの画面の `ofid_…` を控えておく |
-| それでもつながらない | 最後の手段: `connector/wrangler.jsonc` の `ENABLE_DCR` を `"true"` にして `npm run deploy`。claude.ai でコネクタを削除し、OAuth クライアントを「自動的に登録」にして追加し直す（認証の設定は後から変えられないため） |
+| それでもつながらない | 最後の手段: `connector/wrangler.jsonc` の `ENABLE_DCR` を `"true"` にして `npm run deploy`。claude.ai でコネクタを削除し、OAuth クライアントを「自動的に登録」にして追加し直す（認証の設定は後から変えられないため）。その後の `npm run connector:check`・`npm run connector:setup` は、wrangler.jsonc に合わせて DCR が有効なことを確かめる |
 | Novel Studio の画面で「このアカウントは Novel Studio の持ち主ではありません」 | 最初に同期を始めた Google アカウントでログインし直す |
 | 「連携の確かめの期限が切れたか、別のブラウザで開かれました」 | claude.ai で接続を始めたのと同じブラウザで、もう一度「接続」から（iPhone では、パソコンで接続するのがおすすめ） |
 | Claude が「初回の取り込み中（1,200/4,800件）」と言う | 連携した直後に、コネクタが原稿の写しを作っています。1〜数分待ってからもう一度 |
