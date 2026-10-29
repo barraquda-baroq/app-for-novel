@@ -21,7 +21,7 @@ export default defineConfig({
     command: `npx vite --port ${port} --strictPort`,
     env: {
       VITE_FIREBASE_EMULATOR: '127.0.0.1',
-      // Claude 用のコネクタの場所（ページの通信を横取りして、仮のコネクタが答える。e2e/claude.sync.spec.ts）
+      // Claude 用のコネクタの場所（ページの通信を横取りして答える。e2e/claude.sync.spec.ts は仮のコネクタ、e2e/pairing.sync.spec.ts は本物の Worker）
       VITE_CONNECTOR_ORIGIN: process.env.VITE_CONNECTOR_ORIGIN ?? 'https://connector.e2e.test',
     },
     url: `http://localhost:${port}`,
