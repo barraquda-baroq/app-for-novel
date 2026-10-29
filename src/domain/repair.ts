@@ -644,7 +644,7 @@ function repairClaudeRecords(d: AppData, fix: (m: string) => void): void {
     }),
     true,
   )
-  each('critiqueResults', '批評結果', (r) => ({
+  each('critiqueResults', '批評の結果', (r) => ({
     ...r,
     ...claudeBase(r),
     promptId: strOrNull(r.promptId),

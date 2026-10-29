@@ -429,7 +429,7 @@ export function updateCritiqueResult(
 ): AppData {
   return transact(data, (tx) => {
     const r = tx.get('critiqueResults', id)
-    if (!r) throw new DomainError('批評結果が見つかりません')
+    if (!r) throw new DomainError('批評の結果が見つかりません')
     const url = checkUrl(patch.artifactUrl)
     tx.put('critiqueResults', { ...r, ...patch, ...(url !== undefined ? { artifactUrl: url } : {}), updatedAt: now() })
   }).data

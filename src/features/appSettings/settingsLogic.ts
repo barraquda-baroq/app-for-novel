@@ -27,7 +27,7 @@ export const TABLE_LABELS: Record<TableName, string> = {
   revisionIdeas: '改稿案',
   strategyNotes: '戦略メモ',
   critiquePrompts: '批評プロンプト',
-  critiqueResults: '批評結果',
+  critiqueResults: '批評の結果',
   trashEntries: 'ゴミ箱',
   trashRecords: 'ゴミ箱の中身',
 }

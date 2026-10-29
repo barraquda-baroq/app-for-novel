@@ -53,7 +53,7 @@ describe('ゴミ箱の一覧の表記', () => {
       ),
     ).toBe('共通の批評プロンプト')
     expect(trashPlace(entry({ kind: 'proofSuggestion', parentLabel: '第12話　題　第2幕' }))).toBe('作品A › 第12話　題　第2幕')
-    expect(trashKindLabel({ kind: 'critiqueResult', recordIds: [], id: 'e' }, {})).toBe('批評結果')
+    expect(trashKindLabel({ kind: 'critiqueResult', recordIds: [], id: 'e' }, {})).toBe('批評の結果')
     expect(trashKindLabel({ kind: 'revisionIdea', recordIds: [], id: 'e' }, {})).toBe('改稿案')
   })
 

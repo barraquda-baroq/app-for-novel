@@ -17,6 +17,7 @@ import {
   LAST_BACKUP_KEY,
   localKeysToClear,
   readExportedAt,
+  TABLE_LABELS,
 } from './settingsLogic'
 
 describe('バックアップのファイル名', () => {
@@ -50,6 +51,9 @@ describe('件数', () => {
     expect(countsSummary(counts)).toMatch(/^タイトル 1件、話 0件、推敲バージョン 0件、章 0件、アイデア 1件、/)
   })
 
+  it('表の名前は画面の言い方にそろえる（批評の結果）', () => {
+    expect(TABLE_LABELS.critiqueResults).toBe('批評の結果')
+  })
   it('応募時の原稿の控え（snapshotTexts）は内部の表なので、件数・確認文に出さない', () => {
     const data = createTitle(emptyData(), '星の海').data
     data.snapshotTexts = { k1: { id: 'k1', body: '応募した本文' } }

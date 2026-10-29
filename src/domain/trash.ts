@@ -115,7 +115,7 @@ export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
   revisionIdea: '改稿案',
   strategyNote: '戦略メモ',
   critiquePrompt: '批評プロンプト',
-  critiqueResult: '批評結果',
+  critiqueResult: '批評の結果',
 }
 
 /** 長い文章の最初の行（見出しが無い時の名前。長ければ切る） */
