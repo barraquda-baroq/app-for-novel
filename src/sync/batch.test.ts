@@ -1,7 +1,7 @@
 // 1回のトランザクションで送るものの選び方と、書くものの決め方（幕のまとまりは全部か、1つも書かない）
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OutboxItem } from '../db/persistence'
-import { decideBatch, selectBatch, type CloudState } from './batch'
+import { decideBatch, nothingToSend, sameAsBase, selectBatch, type CloudState } from './batch'
 import { hashRecord } from './codec'
 
 const item = (k: string, local: unknown, base: unknown = null, more: Partial<OutboxItem> = {}): OutboxItem => {
@@ -35,6 +35,18 @@ describe('送るものを選ぶ', () => {
     expect(selectBatch(items, limits).map((b) => b.it.k)).toEqual(['memos/a', 'versions/v', 'pieces/E', 'titles/t'])
     // 文書の数の上限: まとまりが入らなければ、その前で止める（次の回に送る）
     expect(selectBatch(items, { ...limits, maxDocs: 2 }).map((b) => b.it.k)).toEqual(['memos/a'])
+  })
+
+  it('送ったトランザクションの返事を受け取っていないものは、端末内が base と同じでも飛ばさない（クラウドを確かめる）', () => {
+    const items = [
+      item('memos/idle', { id: 'idle' }, { id: 'idle' }, { unconfirmed: true }),
+      item('pieces/gone', null, null, { unconfirmed: true }),
+      item('pieces/new', null, null, { noHistory: true, unconfirmed: true }),
+      item('pieces/other', null, null),
+    ]
+    expect(items.map(nothingToSend)).toEqual([false, false, false, true])
+    expect(items.map(sameAsBase)).toEqual([true, true, true, true])
+    expect(selectBatch(items, limits).map((b) => b.it.k)).toEqual(['memos/idle', 'pieces/gone', 'pieces/new'])
   })
 
   it('まとまりだけで上限を超える時は、ゴミ箱の件を先に送り、それでも超えれば1件ずつ送る', () => {

@@ -22,9 +22,16 @@ export interface BatchLimits {
   maxDocs: number
 }
 
-/** 送る必要が無い送信待ち（この端末にもクラウドにも無いもの・クラウドと全く同じもの） */
-export const nothingToSend = (it: OutboxItem): boolean =>
+/** 端末内の内容が、最後に知ったクラウドの内容と同じ（この端末にもクラウドにも無いもの・クラウドと全く同じもの） */
+export const sameAsBase = (it: OutboxItem): boolean =>
   !it.force && (it.noHistory ? it.local === null : deepEqual(it.local, it.base))
+
+/**
+ * 送る必要が無い送信待ち。送ったトランザクションの返事を受け取っていない行（unconfirmed）は、書き込みがクラウドに
+ * 届いているかもしれないので、端末内が base と同じでも外さない（送る時にクラウドを読んで確かめ、同じなら書かずに終える。
+ * 返事の無い書き込みで作ったものをその後に消した時、クラウドに残った版が受信で戻ってこないように）
+ */
+export const nothingToSend = (it: OutboxItem): boolean => !it.unconfirmed && sameAsBase(it)
 
 const docsOf = (e: BatchEntry) => 1 + e.enc.parts.length
 

@@ -11,7 +11,7 @@ import { repairData } from '../domain/repair'
 import { conflictMessage } from '../store/appStore'
 import type { AppData } from '../domain/types'
 import { newId } from '../domain/util'
-import { decideBatch, nothingToSend, selectBatch } from '../sync/batch'
+import { decideBatch, nothingToSend, sameAsBase, selectBatch } from '../sync/batch'
 import { hashRecord } from '../sync/codec'
 import { createConflictHooks } from '../sync/conflicts'
 import { stableStringify, type Rec } from '../sync/merge'
@@ -90,14 +90,21 @@ export class FakeDevice {
     this.catchingUp = true
   }
 
-  /** エンジンの uploadBatch と同じ: 1回分を送る */
-  async uploadBatch(): Promise<{ done: boolean; progressed: number; conflicts: OutboxItem[] }> {
+  /**
+   * エンジンの uploadBatch と同じ: 1回分を送る。
+   * replyLost = 書き込みはクラウドに届いたが、返事を受け取れなかった（オフラインになった・アプリを閉じた）:
+   * 送った記録（completeUpload・送った版の指紋）を残さない
+   */
+  async uploadBatch(opts: { replyLost?: boolean } = {}): Promise<{ done: boolean; progressed: number; conflicts: OutboxItem[] }> {
     const items = await this.p.readOutbox(100)
     if (!items.length) return { done: true, progressed: 0, conflicts: [] }
     const idle = items.filter(nothingToSend)
     if (idle.length) await this.p.completeUpload(idle.map((it) => ({ table: it.table, id: it.id, record: it.local })))
     const batch = selectBatch(items, { chunkSize: 250_000, maxChars: 1_500_000, maxDocs: 400 })
     if (!batch.length) return { done: false, progressed: idle.length, conflicts: [] }
+    // 返事を受け取るまでの印（エンジンと同じ）
+    const unmarked = batch.filter((b) => !b.it.force && !b.it.unconfirmed).map((b) => b.it.k)
+    if (unmarked.length) await this.p.markUnconfirmed(unmarked)
     const clouds = batch.map((b) => this.cloud.docs.get(`${b.it.table}:${b.it.id}`))
     const decision = decideBatch(
       batch,
@@ -105,8 +112,14 @@ export class FakeDevice {
     )
     const ts = ++this.cloud.ts
     const written: Change[] = []
+    /** 書かずに送り終えるもの（返事の無かった送信待ちで、クラウドも端末内も base のまま） */
+    const settled: Change[] = []
     batch.forEach((b, i) => {
       if (!decision.write[i]) return
+      if (sameAsBase(b.it)) {
+        settled.push({ table: b.it.table, id: b.it.id, record: b.it.local })
+        return
+      }
       const key = `${b.it.table}:${b.it.id}`
       const hash = hashRecord(b.it.local)
       this.cloud.docs.set(key, {
@@ -118,18 +131,22 @@ export class FakeDevice {
         device: this.name,
         ...(b.it.force ? { reset: true } : {}),
       })
-      const list = this.sent.get(key) ?? []
-      list.push(hash)
-      this.sent.set(key, list.slice(-20))
+      if (!opts.replyLost) {
+        const list = this.sent.get(key) ?? []
+        list.push(hash)
+        this.sent.set(key, list.slice(-20))
+      }
       written.push({ table: b.it.table, id: b.it.id, record: b.it.local })
     })
     const short = (k: string) => k.slice(0, k.indexOf('/') + 5)
     this.cloud.log.push(
       `${this.name}@${ts}: 書いた ${written.map((w) => `${w.table}:${w.id.slice(0, 4)}${w.record ? '' : '(削除)'}`).join(' ')}` +
-        (decision.conflicts.length ? ` | 書けなかった ${decision.conflicts.map((c) => short(c.k)).join(' ')}` : ''),
+        (decision.conflicts.length ? ` | 書けなかった ${decision.conflicts.map((c) => short(c.k)).join(' ')}` : '') +
+        (opts.replyLost ? '（返事を受け取れなかった）' : ''),
     )
-    await this.p.completeUpload(written)
-    return { done: false, progressed: idle.length + written.length, conflicts: decision.conflicts }
+    if (opts.replyLost) return { done: false, progressed: 0, conflicts: [] }
+    await this.p.completeUpload([...written, ...settled])
+    return { done: false, progressed: idle.length + written.length + settled.length, conflicts: decision.conflicts }
   }
 
   private staleEcho(key: string, d: CloudDoc): boolean {

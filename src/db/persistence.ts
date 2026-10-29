@@ -50,6 +50,12 @@ export interface OutboxRow {
   noHistory?: boolean
   /** この端末の内容で必ず上書きする（バックアップからの復元・すべて削除） */
   force?: boolean
+  /**
+   * この行を送るトランザクションを始めたが、返事を受け取っていない（書き込みがクラウドに届いたかもしれないので、
+   * base がまだクラウドの内容か分からない）。端末内が base と同じになっても、クラウドを確かめるまで送り終わりにしない。
+   * クラウドの内容から base を書き直す時（送った返事・受け取った反映）は、この印の無い行に置き換わる
+   */
+  unconfirmed?: boolean
   at: number
 }
 
@@ -71,6 +77,8 @@ export interface OutboxItem {
   base: AnyRecord | null
   noHistory: boolean
   force: boolean
+  /** 送ったトランザクションの返事を受け取っていない（OutboxRow.unconfirmed） */
+  unconfirmed?: boolean
   /** いまの端末内の内容（null = 削除した） */
   local: AnyRecord | null
   /**
@@ -313,6 +321,8 @@ export interface Persistence {
   readOutbox(limit: number): Promise<OutboxItem[]>
   /** 送った内容を記録する。送った後に端末内で変わっていなければ送信待ちから外す */
   completeUpload(sent: Change[]): Promise<void>
+  /** 送るトランザクションを始める前に、その送信待ちに「返事を受け取るまで、クラウドが base のままか分からない」と印を付ける */
+  markUnconfirmed(keys: string[]): Promise<void>
   outboxCount(): Promise<number>
   /** 端末内のすべてのレコードを「クラウドとの共通の履歴が無い」前提で送信待ちにする（初めてのログイン・アカウントの切り替え） */
   markAllDirty(): Promise<void>
@@ -555,6 +565,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
           base: r.base,
           noHistory: Boolean(r.noHistory),
           force: Boolean(r.force),
+          ...(r.unconfirmed ? { unconfirmed: true } : {}),
           local: locals[i] ?? null,
         }),
       )
@@ -1642,6 +1653,15 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       })
     },
 
+    async markUnconfirmed(keys) {
+      if (!keys.length) return
+      await db.transaction('rw', db.outbox, async () => {
+        const rows = await db.outbox.bulkGet(keys)
+        const marked = rows.filter((r): r is OutboxRow => Boolean(r) && !r!.unconfirmed).map((r) => ({ ...r, unconfirmed: true }))
+        if (marked.length) await db.outbox.bulkPut(marked)
+      })
+    },
+
     outboxCount() {
       return db.outbox.count()
     },
@@ -1651,7 +1671,13 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       await db.transaction('rw', [...allTables(), db.outbox, db.meta], async () => {
         // 共通の履歴が無いので、以前の「クラウドもこの内容に揃える」はやめて、突き合わせるだけにする
         await db.meta.delete('authoritative')
-        await db.outbox.toCollection().modify({ base: null, noHistory: true, force: false })
+        // （別のアカウントのクラウドに送った、返事の無い書き込みの印も外す）
+        await db.outbox.toCollection().modify((r) => {
+          r.base = null
+          r.noHistory = true
+          r.force = false
+          delete r.unconfirmed
+        })
         for (const t of TABLE_NAMES) {
           const ids = await db.tableOf(t).toCollection().primaryKeys()
           if (ids.length)

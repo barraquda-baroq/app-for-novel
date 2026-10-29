@@ -53,6 +53,11 @@ const listen = vi.hoisted(() => ({
    * （つながった直後、形の版の通知より先に送ろうとした時の再現。releaseModel で渡す）
    */
   holdModel: new Map<unknown, (() => void)[]>(),
+  /**
+   * 次の送信のトランザクションの返事を受け取れない Firestore（書き込みはクラウドに届くが、端末には「通信できない」で
+   * 失敗したように見える。つながりが切れた・アプリを閉じた時の再現）
+   */
+  loseReply: new Set<unknown>(),
 }))
 vi.mock('firebase/firestore', async (importOriginal) => {
   const m = await importOriginal<typeof import('firebase/firestore')>()
@@ -76,7 +81,13 @@ vi.mock('firebase/firestore', async (importOriginal) => {
     }
     return (m.onSnapshot as unknown as (...a: unknown[]) => () => void)(ref, ...rest)
   }
-  return { ...m, onSnapshot }
+  const runTransaction = (async (fs: unknown, ...rest: unknown[]) => {
+    const r = await (m.runTransaction as unknown as (...a: unknown[]) => Promise<unknown>)(fs, ...rest)
+    if (listen.loseReply.delete(fs))
+      throw Object.assign(new Error('返事を受け取れませんでした（テスト）'), { name: 'FirebaseError', code: 'unavailable' })
+    return r
+  }) as unknown as typeof m.runTransaction
+  return { ...m, onSnapshot, runTransaction }
 })
 
 const PROJECT = 'demo-novel-studio'
@@ -111,6 +122,7 @@ function releaseModel(fs: Firestore): void {
 afterEach(async () => {
   listen.dropOwn.clear()
   listen.holdModel.clear()
+  listen.loseReply.clear()
   for (const d of devices.splice(0)) {
     d.offline()
     d.p.close()
@@ -141,6 +153,7 @@ async function makeDevice(
   const target: SyncTarget = {
     readOutbox: (n) => p.readOutbox(n),
     completeUpload: (s) => p.completeUpload(s),
+    markUnconfirmed: (keys) => p.markUnconfirmed(keys),
     applyRemote: async (changes, cursor, opts) => {
       // 控えの表記は、反映する前の表示用の内容で作る（ストアと同じ）
       const before = repairData(await p.load()).data
@@ -521,6 +534,45 @@ describe('同期（エミュレーター）', () => {
     expect(await a.p.outboxCount()).toBe(0)
     listen.dropOwn.clear()
     await settle(a, b)
+  })
+
+  it('送った書き込みの返事を受け取れず、自分の書き込みの通知より先にその稿を消して送っても、稿はクラウドに残らない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let pieceId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      pieceId = r.pieceId
+      return r.data
+    })
+    await settle(a, b)
+    // A の書き込みはクラウドに届いたが、返事を受け取れなかった。自分の書き込みの通知もまだ受け取っていない
+    listen.dropOwn.set(a.fs, 'a')
+    listen.loseReply.add(a.fs)
+    let versionId = ''
+    await a.edit((d) => {
+      const r = S.addVersion(d, pieceId, { body: '足した稿' })
+      versionId = r.result
+      return r.data
+    })
+    const ref = doc(b.fs, 'users', b.uid, 'records', `versions:${versionId}`)
+    await waitFor(async () => (await getDoc(ref)).exists() && !listen.loseReply.has(a.fs), 'A の稿がクラウドに届く')
+    await waitFor(async () => (await b.load()).versions[versionId], 'B に稿が届く')
+    expect(await a.p.outboxCount()).toBeGreaterThan(0)
+    // A は（その書き込みの通知を受け取る前に）稿を消した
+    await a.edit((d) => S.deleteVersion(d, versionId))
+    await waitFor(async () => (await getDoc(ref)).data()?.deleted === true, 'A の削除が送られる', 30_000)
+    await waitFor(async () => !(await b.load()).versions[versionId], 'B でも稿が消える')
+    listen.dropOwn.clear()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.versions[versionId]).toBeUndefined()
+      expect(data.pieces[pieceId].versionIds).not.toContain(versionId)
+    }
   })
 
   it('送った後に自分の書き込みの通知を受け取れなくても、ほかの端末が同じ内容で戻したものは戻る', async () => {

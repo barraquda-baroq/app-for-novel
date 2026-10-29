@@ -12,6 +12,7 @@ export function fakePersistence(over: Partial<Persistence> = {}): Persistence {
     applyRemote: async () => [],
     readOutbox: async () => [],
     completeUpload: async () => {},
+    markUnconfirmed: async () => {},
     outboxCount: async () => 0,
     markAllDirty: async () => {},
     localKeys: async () => new Set(),

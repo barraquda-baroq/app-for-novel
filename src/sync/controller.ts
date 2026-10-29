@@ -57,6 +57,7 @@ function storeTarget(): SyncTarget {
   return {
     readOutbox: (n) => p.readOutbox(n),
     completeUpload: (sent) => p.completeUpload(sent),
+    markUnconfirmed: (keys) => p.markUnconfirmed(keys),
     applyRemote: (changes, cursor, opts) => applyRemoteChanges(changes, cursor, opts),
     outboxCount: () => p.outboxCount(),
     markAllDirty: () => p.markAllDirty(),

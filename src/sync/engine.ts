@@ -26,13 +26,18 @@ import {
 import { tableSendRank, type Change, type OutboxItem } from '../db/persistence'
 import type { TableName } from '../domain/types'
 import { watchAppModel, type AppModel } from './appModel'
-import { decideBatch, nothingToSend, selectBatch } from './batch'
+import { decideBatch, nothingToSend, sameAsBase, selectBatch } from './batch'
 import { CHUNK_CHARS, RECORDS, chunkIdOf, decodeRecord, docIdOf, type ChunkDoc, type RecordDoc } from './codec'
 
 /** エンジンが端末内のデータを読み書きする口（アプリではストア、テストでは保存先を直接使う） */
 export interface SyncTarget {
   readOutbox(limit: number): Promise<OutboxItem[]>
   completeUpload(sent: Change[]): Promise<void>
+  /**
+   * 送るトランザクションを始める前に、その送信待ちに「返事を受け取るまで、クラウドが base のままか分からない」と印を付ける
+   * （書き込みが届いたのに返事を受け取れないことがある。OutboxRow.unconfirmed）
+   */
+  markUnconfirmed(keys: string[]): Promise<void>
   /**
    * クラウドの変更を反映する。cursor は同じトランザクションで記録する。
    * バックアップからの復元・すべて削除をクラウドに当てる前は反映せずに null を返す（後で受け取り直す）。
@@ -491,6 +496,11 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (!batch.length) return { done: false, progressed: idle.length, conflicts: [] }
     // 送っている途中で、新しい版のアプリで書かれたデータに気付いた（順番を待っている間も含む）: 書かずに戻る（送信待ちは残す）
     if (modelState !== 'ok') return { done: false, progressed: idle.length, conflicts: [] }
+    // 書き込みがクラウドに届いたのに、返事を受け取れない（オフラインになった・アプリを閉じた）ことがある。その後に端末内で
+    // 消した・元に戻しても「送るものが無い」として外さないように、返事を受け取るまでの印を付けておく（クラウドに残った版が
+    // この端末の書き込みの通知として戻り、消したものが生き返らないように）。必ず上書きするもの・印の付いたものは書き直さない
+    const unmarked = batch.filter((b) => !b.it.force && !b.it.unconfirmed).map((b) => b.it.k)
+    if (unmarked.length) await target.markUnconfirmed(unmarked)
 
     const result = await runTransaction(fs, async (tx) => {
       const snaps = await Promise.all(batch.map((b) => tx.get(doc(col, docIdOf(b.it.table, b.it.id)))))
@@ -505,8 +515,14 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         clouds.map((c) => ({ exists: c !== null, hash: c && !c.deleted ? c.hash : '' })),
       )
       const written: { change: Change; hash: string; replaced: StoredCursor | null }[] = []
+      /** 書かずに送り終えるもの（返事の無かった送信待ちで、クラウドも端末内も base のまま） */
+      const settled: Change[] = []
       batch.forEach((b, i) => {
         if (!decision.write[i]) return
+        if (sameAsBase(b.it)) {
+          settled.push({ table: b.it.table, id: b.it.id, record: b.it.local })
+          return
+        }
         const cloud = clouds[i]
         const id = docIdOf(b.it.table, b.it.id)
         const payload: RecordDoc = {
@@ -542,7 +558,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           replaced: cloud ? timeOf(cloud) : null,
         })
       })
-      return { written, conflicts: decision.conflicts }
+      return { written, settled, conflicts: decision.conflicts }
     }).catch((e: unknown) => {
       if (e === MODEL_PAUSED) return null
       throw e
@@ -554,8 +570,12 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       if (w.replaced) replaced.set(id, w.replaced)
       else replaced.delete(id)
     }
-    await target.completeUpload(result.written.map((w) => w.change))
-    return { done: false, progressed: idle.length + result.written.length, conflicts: result.conflicts }
+    await target.completeUpload([...result.written.map((w) => w.change), ...result.settled])
+    return {
+      done: false,
+      progressed: idle.length + result.written.length + result.settled.length,
+      conflicts: result.conflicts,
+    }
   }
 
   /** 受信を待っても base が新しくならない時は、クラウドの内容を直接読んで反映する */
