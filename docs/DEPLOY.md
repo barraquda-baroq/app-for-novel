@@ -5,7 +5,8 @@ Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）を�
 2.3 の Claude 用のコネクタ（Cloudflare Worker）の準備は [CONNECTOR.md](CONNECTOR.md) にまとめています。
 
 公開の作業は **Windows（PowerShell）でも Mac（ターミナル）でも同じ手順・同じコマンド**でできます（コマンドは1行ずつ入力して Enter）。
-Mac が要るのは 2.4 の iPhone / Android のアプリを作る時だけです。
+Mac が要るのは 2.4 の iPhone のアプリを作る時だけです（Android のアプリは Windows でも作れます）。
+iPhone・Android のアプリの作り方と入れ方は [MOBILE.md](MOBILE.md) にまとめています。
 
 ## 1. 一度だけ行うこと（Windows か Mac で）
 
@@ -67,10 +68,13 @@ Mac が要るのは 2.4 の iPhone / Android のアプリを作る時だけで�
    スタートメニューから専用のウィンドウで開けるようになります。
 3. 右上の歯車（アプリの設定）→「同期」→「Google でログイン」。
 
-### iPhone・Android（アプリ版ができるまで）
+### iPhone・Android（アプリ）
 
-同じアドレスを Safari（iPhone）・Chrome（Android）で開き、「ホーム画面に追加」してからログインします。
-2.4 で iPhone・Android のアプリ版を用意したら、そちらに移ります（データはクラウドから受け取るので、移すものはありません）。
+2.4 からは専用のアプリを使います。iPhone は Mac で作って TestFlight から、Android は Windows か Mac で作って USB で入れます
+（[MOBILE.md](MOBILE.md)）。アプリでログインすれば、クラウドの内容がすべて入ります。
+
+アプリを用意するまでは、同じアドレスを Safari（iPhone）・Chrome（Android）で開き、「ホーム画面に追加」してからログインして使えます。
+その Web 版をやめる時は、先に「同期済み」になっていることを確かめてください（MOBILE.md の 5）。
 
 ### 初めてログインした時
 
@@ -108,6 +112,10 @@ Claude 用のコネクタを使っている時は、`npm ci` の後に `npm --pr
 コピーしてください。無いまま公開すると、アプリは「コネクタ未設定」になり、コネクタも更新されません（docs/CONNECTOR.md の 3）。
 
 開いているアプリには「新しいバージョンのアプリがあります」と出るので、「更新する」を押すと切り替わります（書いている途中の内容は保存してから切り替わります）。
+
+`npm run deploy` で変わるのは Web 版（Windows の Edge のアプリ）とアクセスルールだけです。iPhone・Android のアプリは、アプリそのものを入れ直して更新します
+（iPhone は Mac から TestFlight に上げる、Android は `npm run android:install`。[MOBILE.md](MOBILE.md) の「更新」）。
+データの形の版（次の段落）を上げる版の時は、先にアプリを TestFlight に上げて `npm run android:install` もしてから、続けて `npm run deploy` します（MOBILE.md の 7）。
 
 2.2 からは、アプリがクラウドに「データの形の版」（Firestore の `users/<uid>/meta/app`）を自動で記録します（上げるだけで、下げることはありません）。これより古い版のアプリは、この記録が自分より新しいと受け取りだけを続け、送るのを止めて「要更新」と出します（その端末で書いた内容は端末内に残り、アプリを更新すると送ります）。新しい版のアプリをやめて前の版に戻したい時は、Firebase コンソールの Firestore でこの文書を削除してください（開いている端末が自分の版を記録し直し、送るのを再開します。新しい版のアプリを開いている端末があると、また上がります）。この記録のためのアクセスルールも一緒に公開するので、更新はいつもどおり `npm run deploy` で行ってください。
 

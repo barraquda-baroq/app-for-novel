@@ -432,6 +432,49 @@ describe('コマンド', () => {
   })
 })
 
+describe('docs/MOBILE.md', () => {
+  const doc = read('docs/MOBILE.md')
+  const headings = doc.split('\n').filter((l) => /^#{2,3} /.test(l))
+
+  it('アプリ・スクリプトが案内する「…」の節がある', () => {
+    const sources = [
+      'scripts/mobile.mjs',
+      'scripts/mobile/lib.mjs',
+      'src/platform/update.ts',
+      'src/platform/nativeAuth.ts',
+      'android/app/build.gradle',
+      'ios/App/novelstudio.xcconfig',
+    ]
+    const refs = new Set(sources.flatMap((f) => [...read(f).matchAll(/MOBILE\.md「([^」]+)」/g)].map((m) => m[1])))
+    expect(refs.size).toBeGreaterThan(5)
+    for (const ref of refs)
+      expect(
+        headings.some((h) => h.includes(ref)),
+        ref,
+      ).toBe(true)
+  })
+
+  it('npm run のコマンドをすべて説明する', () => {
+    for (const name of ['mobile:doctor', 'mobile:keystore', 'mobile:firebase', 'android:install', 'android:open', 'ios:open'])
+      expect(doc, name).toContain(`npm run ${name}`)
+  })
+
+  it('ページの中のリンクの行き先がある（GitHub の見出しの id の作り方）', () => {
+    const ids = new Set(
+      headings.map((h) =>
+        h
+          .replace(/^#+ /, '')
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}\s-]/gu, '')
+          .replace(/\s/g, '-'),
+      ),
+    )
+    const links = [...doc.matchAll(/\]\(#([^)]+)\)/g)].map((m) => m[1])
+    expect(links.length).toBeGreaterThan(3)
+    for (const link of links) expect(ids.has(link), link).toBe(true)
+  })
+})
+
 describe('公開リポジトリに入れないもの', () => {
   it('鍵・パスワード・Firebase の設定ファイル・手元の設定は .gitignore にある', () => {
     const ignore = read('.gitignore').split('\n')

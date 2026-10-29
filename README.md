@@ -1,7 +1,7 @@
 # Novel Studio — 小説執筆アプリ
 
 アイデア・設定・話数単位の原稿と推敲バージョン・コンテスト応募戦略を、タイトルごとにまとめて管理する小説執筆アプリです。
-ブラウザで動く PWA なので、デスクトップ（Windows / macOS / Linux）でも iPhone / Android でも同じアプリを使えます。
+Windows ではブラウザで動く PWA（Edge の「アプリとしてインストール」）、iPhone・Android では同じ画面を載せた専用のアプリ（2.4。Capacitor）で使います。
 データは端末内（IndexedDB）に保存され、Google アカウントでログインすると、Firebase（Cloud Firestore）を通して Windows・iPhone・Android の間でリアルタイムに同期します（2.x）。
 
 ## できること
@@ -37,7 +37,7 @@
 - アプリの更新は「更新する」を押した時だけ（執筆中に勝手に再読み込みしない）
 
 詳しい仕様と設計上の決定は [docs/SPEC.md](docs/SPEC.md)（1.x）と [docs/SPEC-2.md](docs/SPEC-2.md)（2.x）を参照してください。
-公開（Firebase Hosting）と同期の準備は [docs/DEPLOY.md](docs/DEPLOY.md) に、Claude 用のコネクタ（2.3。claude.ai から原稿を読み、推敲案・作品批評などを足してもらう）の準備は [docs/CONNECTOR.md](docs/CONNECTOR.md) にまとめています（Windows でも Mac でも同じ手順）。
+公開（Firebase Hosting）と同期の準備は [docs/DEPLOY.md](docs/DEPLOY.md) に、Claude 用のコネクタ（2.3。claude.ai から原稿を読み、推敲案・作品批評などを足してもらう）の準備は [docs/CONNECTOR.md](docs/CONNECTOR.md) に、iPhone・Android のアプリ（2.4）の作り方と入れ方は [docs/MOBILE.md](docs/MOBILE.md) にまとめています（Windows でも Mac でも同じ手順。iPhone のアプリだけは Mac が要ります）。
 
 ## 使い方（開発）
 
@@ -47,6 +47,7 @@ npm run dev        # http://localhost:5173 で起動
 npm test           # 単体テスト（Vitest）
 npm run test:e2e   # E2E テスト（Playwright: デスクトップ幅とスマホ幅）
 npm run build      # dist/ に本番ビルド（PWA）
+npm run build:native  # dist-native/ に iPhone・Android のアプリに載せる画面（サービスワーカーなし）
 npm run format     # Prettier で整形
 
 npm run test:sync      # 同期の結合テスト（Firebase エミュレーター。Java が必要）
@@ -56,6 +57,12 @@ npm run deploy         # Firebase Hosting とアクセスルール（とコネ�
 npm run connector:setup     # Claude 用のコネクタの準備（初めての時に1回。docs/CONNECTOR.md）
 npm run test:connector      # コネクタのテスト（単体・Workers の実行環境・公開する形）
 npm run test:connector:emu  # コネクタの結合テスト（Firebase エミュレーター）
+
+npm run mobile:doctor    # iPhone・Android のアプリの準備の確かめ（docs/MOBILE.md）
+npm run mobile:keystore  # Android の署名の鍵を作る（最初に一度）
+npm run mobile:firebase  # Firebase にアプリを登録し、ログインの設定ファイルを取ってくる
+npm run android:install  # Android のアプリを作って、USB でつないだスマホに入れる
+npm run ios:open         # （Mac）iPhone のアプリを作って Xcode で開く（アーカイブして TestFlight へ）
 ```
 
 `dist/` は相対パスで出力されるので、任意の静的ホスティング（GitHub Pages など）にそのまま置けます。
@@ -65,15 +72,14 @@ npm run test:connector:emu  # コネクタの結合テスト（Firebase エミ�
 
 公開先は <https://novel-studio-3352e.web.app>（Firebase Hosting。公開の手順は [docs/DEPLOY.md](docs/DEPLOY.md)）。
 
-- **iPhone / iPad**: Safari で開き、共有ボタン →「ホーム画面に追加」
-- **Android**: Chrome で開き、メニュー →「アプリをインストール」
-- **デスクトップ**: Chrome / Edge のアドレスバーのインストールボタン
+- **Windows（デスクトップ）**: Edge / Chrome のアドレスバーのインストールボタン。一度開けばオフラインでも動きます
+- **iPhone**: 専用のアプリ（Mac で作って TestFlight から入れる。[docs/MOBILE.md](docs/MOBILE.md)）
+- **Android**: 専用のアプリ（Windows か Mac で作って USB で入れる。[docs/MOBILE.md](docs/MOBILE.md)）
 
-一度開けばオフラインでも動きます。
+アプリを用意するまでは、iPhone は Safari の「ホーム画面に追加」、Android は Chrome の「アプリをインストール」でも使えます。
 
-### ネイティブアプリにしたい場合
-
-Web アプリのまま [Capacitor](https://capacitorjs.com/)（iOS / Android）や [Tauri](https://tauri.app/)（デスクトップ・モバイル）で包めます。`vite.config.ts` は `base: './'`、ルーティングは HashRouter なので、`dist/` をそのまま読み込ませれば動きます。
+アプリは [Capacitor](https://capacitorjs.com/) 8 で Web 版の画面を包んだものです（`capacitor.config.ts`・`ios/`・`android/`）。
+`vite.config.ts` は `base: './'`、ルーティングは HashRouter なので、`npm run build:native` の `dist-native/` をそのまま載せています。
 
 ## 構成
 
@@ -85,6 +91,9 @@ src/sync/      クラウドとの同期（Firebase。マージ・送受信・ロ
 src/store/     状態管理（Zustand）と UI から呼ぶ actions
 src/ui/        共通部品（ダイアログ・分割ペイン・自動保存入力など）
 src/features/  各画面
+src/platform/  iPhone・Android のアプリだけの動き（ログイン・キーボード・ファイルの保存・更新のしかたなど。Web 版では何もしない）
+ios/ android/  iPhone・Android のアプリのプロジェクト（Capacitor。アイコンの元は assets/）
+scripts/       公開（deploy.mjs）・アプリの準備とインストール（mobile.mjs）のスクリプト
 e2e/           Playwright の E2E テスト
 connector/     Claude 用のコネクタ（Cloudflare Worker。リモート MCP サーバー。src/domain・src/claude の純粋な部品を共有）
 ```

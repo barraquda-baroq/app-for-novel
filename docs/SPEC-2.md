@@ -8,8 +8,8 @@
 - 完全に個人使用。公開・配布・収益化はしない。
 - 端末と形:
   - **Windows**: Web 版（Firebase Hosting に置き、Edge の「アプリとしてインストール」で使う）
-  - **iPhone / Android**: Capacitor でアプリ化（アプリ ID `jp.barraquda.novelstudio`）。iPhone は Apple Developer Program + TestFlight、Android は Mac から USB で入れる
-  - Mac 版は作らない（Mac はビルドにだけ使う）
+  - **iPhone / Android**: Capacitor でアプリ化（アプリ ID `jp.barraquda.novelstudio`。2.4、§8）。iPhone は Mac で作って Apple Developer Program の TestFlight（内部テスト）で入れ、Android は Windows か Mac で作って USB で入れる（docs/MOBILE.md）
+  - Mac 版は作らない（Mac は iPhone のアプリのビルドにだけ使う）
 - クラウド: Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）
   - Authentication: Google ログイン
   - Cloud Firestore: スタンダード、リージョン `asia-northeast1`（東京）
@@ -135,7 +135,7 @@
 | 2.1 | 保存ボタン・未保存の警告・端末内の控え、巻き戻し／進む、記号ボタン（ダッシュ・三点リーダー・全角空白・ルビ・傍点）、見出し付きコピー、ルビを除いた文字数、進捗、各話テキスト書き出し |
 | 2.2 | セパレート（幕）                                                                                                                                                                     |
 | 2.3 | 戦略の改稿案・推敲案、作品批評領域、Claude 用コネクタ                                                                                                                                |
-| 2.4 | iOS / Android アプリ（Capacitor、端末側の Google ログイン、キーボード上の記号バー、長押しメニュー）                                                                                  |
+| 2.4 | iPhone / Android アプリ（Capacitor 8。端末の Google アカウントでのログイン、キーボードのすぐ上の記号バー、保存先を選ぶファイルの保存、長押しの振動、TestFlight・USB での配布。§8・docs/MOBILE.md） |
 
 ## 5. 保存ボタン・巻き戻し・記号バー（2.1）
 
@@ -144,7 +144,7 @@
 - **離れる時の確認**: アプリ内の移動（リンク・パンくず・前後の話・ブラウザの戻る）は `useBlocker` で「保存して移動／保存せずに移動／キャンセル」を聞く（そのためルーターは `createHashRouter` のデータルーター）。同じ話の中で比較する稿を選び直す（`?v=` だけ変わる）時は聞かない。タブ・アプリを閉じる・再読み込みは `beforeunload`。採用・追加・複製・削除などの前と、アプリの更新（「更新する」）の前は「保存してから続けますか？」と聞く。確かめている間に「戻る」をもう一度押しても、確認は1つだけ出す。
 - **端末内の控え**（`crashDraft.ts`）: 保存していない編集を `localStorage` の `novel-studio:edit:<話のID>` に、編集から1秒後（打ち続けていても3秒ごと）と、裏に回る・閉じる時に控える（同期しない）。次にその話を開いた時に「前回保存されなかった編集があります（日時）。復元しますか？」と聞き、保存・破棄したら消す。容量が足りない時は長い base を指紋だけにする。控えには書いた画面の印（owner）を入れ、その画面が開いている間は Web Locks のロック `novel-studio:edit-owner:<owner>` を持つ。同じ話を別のタブ・ウィンドウで開いた時、まだ開いているタブの控えは聞かず、消しもしない（保存・破棄で消すのも自分が書いた控えだけ）。
 - **巻き戻し／進む**（`history.ts`）: 入力欄ごとに30手。1手は「位置・消した文字・入れた文字」の差分で持つ。続けて打った文字（・続けた削除）は1手にまとめ、1秒以上の間・改行・記号の挿入・カーソルの移動で区切る。日本語入力は確定した時に1手。記号バーのボタンと Ctrl/⌘+Z・Ctrl/⌘+Shift+Z・Ctrl+Y。戻したカーソル位置が見えるようにスクロールする。保存しても履歴は残る（破棄・競合した本文は消す）。
-- **記号バー**（`SymbolBar.tsx`）: 巻き戻し・進む・ダッシュ（――）・三点リーダー（……）・全角空白・ルビ（選択あり: ｜選択《》、なし: ｜《》）・傍点（《《》》）。最後にフォーカスした本文・推敲メモに働き、押してもフォーカスを奪わない。原稿画面のいちばん下に常に置き、iOS ではキーボードに隠れる高さ（visualViewport で測る `--kb-inset`）だけ画面を詰めてキーボードのすぐ上に出す（Android は画面そのものが縮む）。
+- **記号バー**（`SymbolBar.tsx`）: 巻き戻し・進む・ダッシュ（――）・三点リーダー（……）・全角空白・ルビ（選択あり: ｜選択《》、なし: ｜《》）・傍点（《《》》）。最後にフォーカスした本文・推敲メモに働き、押してもフォーカスを奪わない。原稿画面のいちばん下に常に置き、キーボードの変換候補のすぐ上に出す。iPhone の Safari・ホーム画面版は、キーボードに隠れる高さ（visualViewport で測る `--kb-inset`）だけ画面を詰める。iPhone のアプリ（2.4）は画面を縮めず（キーボードのプラグインの `resize: none`）、プラグインが知らせるキーボードの高さ `--kb-native` と visualViewport の大きい方だけ詰める（`src/platform/keyboard.ts`・`keyboardInset.ts`。二重に数えない）。iPhone のアプリの原稿画面では、キーボードの上の「完了」の帯を隠し、記号バーに「キーボードを閉じる」を出す。Android（ブラウザ・アプリ）は画面そのものが縮む。
 - **コピー**: 各ペインのコピーは「第3話　題」（題がなければ「第3話」。特殊ブロックは見出し）＋空行＋本文。保存していない編集も含めて表示している内容をコピーする。
 
 ## 6. セパレート（幕）（2.2）
@@ -208,3 +208,17 @@
   - **設定 → Claude 連携**（`src/features/claude/ClaudeSettings.tsx`）: コネクタの URL（`…/mcp`。コピー）か「コネクタ未設定」と手順（docs/CONNECTOR.md）、ログインしていれば連携の状態（連携日時・連携した端末・書き込み）と「書き込みを許可」・［連携を解除］（確かめてから `config/connector` を消す）。状態はサーバーが受け取った内容だけを出す。Claude ができること・できないこと。
   - **連携の画面**（`#/claude/connect?s=<state>`。`src/features/claude/ConnectPage.tsx`・`connectLogic.ts`）: コネクタの origin はビルドの時に決める（`connector.local.json` の `origin`、無ければ `VITE_CONNECTOR_ORIGIN`。URL の origin・uid は使わない）。ログイン（このブラウザも同期する端末になると説明）→ 持ち主か（`config/owner`。違えば「このアカウントは Novel Studio の持ち主ではありません」）→ 同期が揃うのを待つ（90秒で「もう一度」）→ コネクタの `/connect/identity`（Cookie を送らない）→ できること・できないこと、タイトルごとの「Claude に見せる」、「推敲案などの書き込みも許可」（既定オン）、「心当たりがなければやめる」→［許可する］でタイトルの設定を変え、送信待ちを送ってサーバーが受け取ったのを確かめ（10秒で届かなければエラーのまま何も書かない。選んだ内容は残るので、もう一度押せる）、k（32バイトの乱数）を作り、`config/connector` に `sha256hex(s + '.' + k)` と uid・サーバー時刻・端末の呼び名・writes・v:1 を書いて（サーバーが受け取るまで待つ）から `${コネクタ}/pair/callback?state=<s>&k=<k>` へ移る。k は Firestore にも記録にも残さない。［やめる］は何も書かない。
   - **ゴミ箱**: 推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果の種類の名前。共通の批評プロンプトの場所は「共通の批評プロンプト」。バックアップからの復元の確認に、バックアップの後に作られたもの（Claude の記録も）が消えることを足した。
+
+## 8. iPhone・Android のアプリ（2.4）
+
+- **形**（`capacitor.config.ts`）: Capacitor 8.5.3。画面は Web 版と同じコードで、`npm run build:native`（`vite build --mode native`）がサービスワーカーを入れずに `dist-native` に出したものをアプリに載せる。`ios/`・`android/` はリポジトリに入れ、署名の鍵・Firebase の設定ファイル・`ios/App/local.xcconfig` は手元だけに置く（`.gitignore`。リポジトリは公開）。画面の origin は iPhone `capacitor://localhost`・Android `https://localhost`（端末内のデータの置き場所が決まるので、一度入れたら変えない）。
+- **アプリかどうか**（`src/platform/platform.ts`）: `Capacitor.getPlatform()` が `ios`・`android` の時だけアプリの動きにする（Web 版は今までどおり）。アプリだけの部品は `src/platform/` に置き、重いもの（ログインのプラグイン・Filesystem）は使う時に読み込む。
+- **ログイン**（`src/sync/firebase.ts`・`src/platform/nativeAuth.ts`）: `@capacitor-firebase/authentication`（`skipNativeAuth: true`）で端末の Google アカウントの選択から ID トークンだけ受け取り、Firebase JS SDK の `signInWithCredential(GoogleAuthProvider.credential(idToken))` でログインする（同期・アクセスルール・持ち主の確かめは Web 版と同じ）。ポップアップ・リダイレクトの部品は使わない。ログアウトは Firebase → 端末の順（次は別のアカウントも選べる）。120 秒で応答しなければ止める。やめた・署名の不一致（28444）・端末にアカウントが無い、は日本語で知らせる。
+- **更新**（`src/platform/update.ts`・`src/ui/Layout.tsx`）: サービスワーカーが無いので「新しいバージョン」は出ない。新しい版のアプリのデータがある時の「要更新」は「更新のしかた」を出す（iPhone は TestFlight、Android は `npm run android:install`。どちらも「アプリは削除しない」）。iPhone は TestFlight の版の期限（ビルドから 90 日）の目安を出し、75 日目からお知らせを出す。設定の「このアプリについて」（`src/features/appSettings/AboutApp.tsx`）に版・ビルドの日・期限。
+- **キーボードと記号バー**: §5。
+- **ファイルの保存**（`src/platform/saveFile.ts`）: WebView のダウンロードは何もしないので、端末の一時置き場（Cache）に書いてから、アプリに入れた `SaveAs` プラグインで保存先を選んでもらう（iPhone `ios/App/App/SaveAsPlugin.swift` =「ファイル」の書き出しの画面、Android `android/app/src/main/java/jp/barraquda/novelstudio/SaveAsPlugin.java` =「保存」の画面）。やめたら何もしない（バックアップの書き出しの日付は保存した時だけ変える）。各話の書き出しはアプリでは ZIP（フォルダを選ぶ書き出しは Web 版だけ）。
+- **そのほか**: コピーは `@capacitor/clipboard`、長押しの振動は `@capacitor/haptics`、ステータスバーの文字の色は外観に合わせる（SystemBars）。Android の戻るボタンは、開いているダイアログ・メニューを閉じる → 前の画面 → 保存してアプリを裏へ。アプリが裏に回る・戻るのは `visibilitychange` と同じ処理。データの説明は「アプリ」の言葉にし、保存の永続化は表示だけ。Claude 連携の許可はブラウザで行う（アプリの中で連携の画面を開いたら「ブラウザで開く」）。
+- **Android のバックアップ**: `allowBackup="false"` と `data_extraction_rules.xml` で、Google のバックアップ・機種変更の引き継ぎに端末内のデータを写さない（写すと端末の ID が同じになり、同期が自分の書き込みを見分けられなくなる）。新しい端末ではログインしてクラウドから受け取る。
+- **版**: `package.json` の `version` が元。Android は `android/app/build.gradle` が versionCode（2.4.0 → 20400）・versionName を作り、iPhone は `ios/App/novelstudio.xcconfig`（`MARKETING_VERSION`・`CURRENT_PROJECT_VERSION`・最低の iOS 16.0）。`src/platform/version.test.ts` がそろっているか確かめる。
+- **配布**（docs/MOBILE.md）: iPhone は Xcode でアーカイブして TestFlight の内部テスト（審査なし）。Android は1つの鍵（`npm run mobile:keystore`）で署名した APK を `adb install -r`（`npm run android:install`）。Firebase へのアプリの登録・鍵の指紋・設定ファイルは `npm run mobile:firebase`（`scripts/mobile.mjs`）。
+- **CI**（`.github/workflows/ci.yml`）: `android`（鍵なしの assembleDebug・assembleRelease、APK の版、使い捨ての鍵での keystore.properties の署名）と `ios`（シミュレーター用のビルド、できたアプリの Info.plist、xcconfig の読み込み、Google ログインの設定が無い時にビルドが止まること）。
