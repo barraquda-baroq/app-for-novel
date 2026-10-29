@@ -83,7 +83,8 @@ export default defineConfig(({ command, mode }) => {
     test: {
       environment: 'jsdom',
       setupFiles: ['./src/test/setup.ts'],
-      include: ['src/**/*.test.{ts,tsx}'],
+      // scripts/ はスクリプトの部品のテスト（Node の環境。各ファイルの先頭の @vitest-environment node）
+      include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
       // 同期のテストは Firebase エミュレーターの中で動かす（npm run test:sync）
       exclude: ['src/**/*.emu.test.ts', 'node_modules/**'],
     },

@@ -16,7 +16,8 @@ const BACKGROUND = '#2f3a4f'
 const svg = await readFile(new URL('../public/icon.svg', import.meta.url), 'utf8')
 // 背景の角丸の四角と、絵（<g> から最後まで）に分ける
 const art = svg.slice(svg.indexOf('<g'), svg.lastIndexOf('</svg>'))
-if (!svg.includes('rx="112"') || !art.startsWith('<g')) throw new Error('public/icon.svg の形が変わりました（このスクリプトを直してください）')
+if (!svg.includes('rx="112"') || !art.startsWith('<g'))
+  throw new Error('public/icon.svg の形が変わりました（このスクリプトを直してください）')
 
 /** 512 の絵を、size の正方形の中央に scale の大きさで描く SVG */
 function compose(size, { background, scale }) {

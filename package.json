@@ -20,7 +20,13 @@
     "test:connector:emu": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-novel-studio \"npm --prefix connector run test:emu\"",
     "connector:setup": "node connector/scripts/setup.mjs",
     "connector:check": "node connector/scripts/check.mjs",
-    "deploy": "node scripts/deploy.mjs"
+    "deploy": "node scripts/deploy.mjs",
+    "mobile:doctor": "node scripts/mobile.mjs doctor",
+    "mobile:keystore": "node scripts/mobile.mjs keystore",
+    "mobile:firebase": "node scripts/mobile.mjs firebase",
+    "android:install": "node scripts/mobile.mjs android-install",
+    "android:open": "node scripts/mobile.mjs android-open",
+    "ios:open": "node scripts/mobile.mjs ios-open"
   },
   "dependencies": {
     "@capacitor-firebase/authentication": "8.5.2",

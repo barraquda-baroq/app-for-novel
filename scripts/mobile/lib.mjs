@@ -62,9 +62,11 @@ export function parseKeytoolFingerprints(text) {
 /** keytool の失敗の理由（wrong_password = パスワードが違う、no_alias = 別名が無い、no_file = ファイルが無い） */
 export function keytoolProblem(text) {
   const t = String(text ?? '')
-  if (/password was incorrect|パスワードが(?:不正|正しくありません)|Given final block not properly padded/i.test(t)) return 'wrong_password'
+  if (/password was incorrect|パスワードが(?:不正|正しくありません)|Given final block not properly padded/i.test(t))
+    return 'wrong_password'
   if (/Alias <[^>]*> does not exist|別名<[^>]*>は存在しません/i.test(t)) return 'no_alias'
-  if (/FileNotFoundException|NoSuchFileException|Keystore file does not exist|キーストア・ファイルは存在しません/i.test(t)) return 'no_file'
+  if (/FileNotFoundException|NoSuchFileException|Keystore file does not exist|キーストア・ファイルは存在しません/i.test(t))
+    return 'no_file'
   return null
 }
 
@@ -204,12 +206,12 @@ export function defaultKeystorePath(ctx) {
 
 /**
  * Android Studio に入っている Java（JBR）の候補（先にあるものほど優先）。
- * JAVA_HOME があればそれを最初に。CAPACITOR_ANDROID_STUDIO_PATH（cap open android が使う）からも探す
+ * Capacitor 8 は Java 21 が要るので、Android Studio のものを先に使い、JAVA_HOME（古い Java のことがある）は最後にする。
+ * CAPACITOR_ANDROID_STUDIO_PATH（cap open android が使う）からも探す
  */
 export function jbrCandidates({ platform, env, home }) {
   const p = pathFor(platform)
   const out = []
-  if (env.JAVA_HOME) out.push(env.JAVA_HOME)
   const studio = env.CAPACITOR_ANDROID_STUDIO_PATH
   if (platform === 'win32') {
     if (studio) out.push(p.join(p.dirname(p.dirname(studio)), 'jbr'))
@@ -218,13 +220,17 @@ export function jbrCandidates({ platform, env, home }) {
     }
   } else if (platform === 'darwin') {
     if (studio) out.push(p.join(studio.replace(/\/Contents\/MacOS\/studio$/, ''), 'Contents', 'jbr', 'Contents', 'Home'))
-    for (const app of ['/Applications/Android Studio.app', p.join(homeDir({ platform, env, home }), 'Applications', 'Android Studio.app')])
+    for (const app of [
+      '/Applications/Android Studio.app',
+      p.join(homeDir({ platform, env, home }), 'Applications', 'Android Studio.app'),
+    ])
       out.push(p.join(app, 'Contents', 'jbr', 'Contents', 'Home'))
   } else {
     const h = homeDir({ platform, env, home })
     if (studio) out.push(p.join(p.dirname(p.dirname(studio)), 'jbr'))
     out.push(p.join(h, 'android-studio', 'jbr'), '/opt/android-studio/jbr', '/usr/local/android-studio/jbr')
   }
+  if (env.JAVA_HOME) out.push(env.JAVA_HOME)
   return [...new Set(out)]
 }
 
@@ -274,7 +280,10 @@ export function parseAdbDevices(text) {
   const out = []
   for (const line of String(text ?? '').split(/\r?\n/)) {
     if (!line.trim() || /^List of devices|^\*/.test(line)) continue
-    const m = /^(\S+)\s+(device|unauthorized|offline|recovery|sideload|bootloader|no permissions|authorizing|connecting)\b(.*)$/.exec(line.trim())
+    const m =
+      /^(\S+)\s+(device|unauthorized|offline|recovery|sideload|bootloader|no permissions|authorizing|connecting)\b(.*)$/.exec(
+        line.trim(),
+      )
     if (!m) continue
     const model = /\bmodel:(\S+)/.exec(m[3])?.[1]?.replace(/_/g, ' ')
     out.push({ serial: m[1], state: m[2], model: model ?? '' })
@@ -300,7 +309,8 @@ export function explainInstallFailure(text) {
       keep,
       'git pull で最新にしてから、もう一度 npm run android:install を実行してください。',
     ].join('\n')
-  if (/INSTALL_FAILED_INSUFFICIENT_STORAGE/i.test(t)) return 'スマホの空き容量が足りません。写真などを整理してから、もう一度試してください。'
+  if (/INSTALL_FAILED_INSUFFICIENT_STORAGE/i.test(t))
+    return 'スマホの空き容量が足りません。写真などを整理してから、もう一度試してください。'
   if (/INSTALL_FAILED_USER_RESTRICTED|INSTALL_FAILED_ABORTED/i.test(t))
     return 'スマホの画面でインストールが止められました。スマホに出た確認で「インストール」を選び、もう一度試してください。'
   if (/Failure|failed/i.test(t)) return `インストールできませんでした。上の表示を見てください。\n${keep}`
@@ -420,7 +430,8 @@ export function addClientIdToPlist(text, clientId) {
     .filter(([k]) => !plistString(t, k))
     .map(([k, v]) => `\t<key>${k}</key>\n\t<string>${v}</string>\n`)
     .join('')
-  return t.replace(/<dict>\s*\n?/, (m) => `${m.endsWith('\n') ? m : m + '\n'}${entries}`)
+  if (!entries) return t
+  return t.replace(/<dict>[^\S\n]*\n?/, (m) => `${m.trimEnd()}\n${entries}`)
 }
 
 /** Apple のチーム ID（英大文字と数字の 10 文字） */
