@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline/promises'
+import { StringDecoder } from 'node:string_decoder'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { binOf, ng, ok, runNode, say } from '../connector/scripts/lib.mjs'
 import * as lib from './mobile/lib.mjs'
@@ -65,10 +66,13 @@ export function exec(command, args, { cwd = repoDir, env = process.env, capture 
       child.stdout.on('data', (d) => (out += d))
       child.stderr.on('data', (d) => (out += d))
     } else if (teeStderr) {
+      // 画面にはそのままのバイト列を出す（Windows の文字コードのままでも化けない）。控えは UTF-8 の文字の途中で切らない
+      const decoder = new StringDecoder('utf8')
       child.stderr.on('data', (d) => {
         process.stderr.write(d)
-        out = (out + d).slice(-TEE_MAX)
+        out = (out + decoder.write(d)).slice(-TEE_MAX)
       })
+      child.stderr.on('end', () => (out += decoder.end()))
     }
     child.on('error', (e) => resolve({ code: -1, out: `${out}${e.message}` }))
     child.on('close', (code) => resolve({ code: code ?? 1, out }))

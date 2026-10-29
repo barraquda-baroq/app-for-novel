@@ -266,7 +266,8 @@ export function gradleCommand(platform, tasks) {
 }
 
 // ---- Gradle を動かす Java ----
-// Capacitor 8 の Gradle（8.14）は Java 25 では動かない（ビルドの設定を読むところで「Unsupported class file major version 69」）。
+// Capacitor 8 の Gradle（8.14）とプラグインは Java 25 ではビルドできない（ビルドの設定を読むところの「Unsupported class file major version 69」や、
+// プラグインが Java 21 を探して「Cannot find a Java installation on your machine」）。
 // いまの Android Studio に入っている Java（JBR）は 25 なので、android/gradle/gradle-daemon-jvm.properties で Gradle 自身を Java 21 で動かす。
 // パソコンに Java 21 が無ければ、Gradle が初めてのビルドの時にその URL からダウンロードする（~/.gradle/jdks。200 MB ほど）
 
