@@ -3,7 +3,7 @@
 // 360px の画面・ディープダーク。連携の記録を書くところまでは、エミュレーターを使う e2e/claude.sync.spec.ts で確かめる。
 import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
-import { openApp, seed, seedTitleWithEpisodes } from './helpers'
+import { darkSurfaces, noHorizontalScroll, openApp, seed, seedTitleWithEpisodes, tapSize } from './helpers'
 
 const fence = (v: unknown) => '```novel-studio-v1\n' + JSON.stringify(v) + '\n```'
 
@@ -36,20 +36,6 @@ async function pasteAnswer(page: Page, opener: string, text: string, expectCreat
   await expect(page.getByTestId('paste-add')).toHaveText(`追加（${expectCreated}件）`)
   await page.getByTestId('paste-add').click()
   await expect(dialog).toHaveCount(0)
-}
-
-async function noHorizontalScroll(page: Page) {
-  const [scroll, width] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth])
-  expect(scroll).toBeLessThanOrEqual(width)
-}
-
-/** 'rgb(r, g, b)' の相対輝度 */
-function luminance(rgb: string): number {
-  const [r, g, b] = (rgb.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map((v) => {
-    const c = Number(v) / 255
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
-  })
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
 test.describe('Claude 連携（2.3）', () => {
@@ -285,19 +271,23 @@ test.describe('Claude 連携（2.3）', () => {
   test('360px の画面: 戦略・作品批評・連携の画面が横にはみ出さず、押す所は 34px 以上', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 760 })
     await openApp(page)
-    const { titleId } = await seedNovel(page)
+    const { titleId, pieceIds } = await seedNovel(page)
     await page.evaluate(([t, a]) => window.__ns.pasteClaude(t, a), [titleId, proofAnswer] as const)
     await seed(
       page,
-      ({ actions }, t) => {
-        actions.addRevisionIdea(t, {
+      ({ actions }, a) => {
+        actions.addRevisionIdea(a.t, {
           heading: '改稿案の見出しがとても長い場合にも折り返して表示されることを確かめる',
           body: '本文',
+          pieceIds: [a.p],
         })
-        actions.addCritiquePrompt(t, { name: '全体', body: '批評してください' })
+        actions.addCritiquePrompt(a.t, { name: '全体', body: '批評してください' })
       },
-      titleId,
+      { t: titleId, p: pieceIds[0] },
     )
+    // タイトル画面の「Claude に見せる」
+    await openApp(page, `/t/${titleId}`)
+    await tapSize(page.getByTestId('claude-access-chip'), 'claude-access-chip', false)
     await openApp(page, `/t/${titleId}?tab=strategy`)
     await expect(page.getByTestId('proof-item')).toHaveCount(3)
     await noHorizontalScroll(page)
@@ -307,6 +297,12 @@ test.describe('Claude 連携（2.3）', () => {
       expect(box?.height, id).toBeGreaterThanOrEqual(34)
       expect(box?.width, id).toBeGreaterThanOrEqual(34)
     }
+    // 改稿案の関係する話のチップと「外す」
+    await tapSize(page.getByTestId('revision-piece-chip').first(), 'revision-piece-chip', false)
+    await page.getByTestId('revision-toggle').first().click()
+    await tapSize(page.getByTestId('revision-piece-chip').first(), 'revision-piece-chip（編集中）', false)
+    await tapSize(page.getByTestId('revision-piece-remove').first(), 'revision-piece-remove')
+    await noHorizontalScroll(page)
     await page.getByTestId('proof-claude-manual').click()
     await noHorizontalScroll(page)
     await page.getByTestId('manual-close').click()
@@ -352,17 +348,7 @@ test.describe('Claude 連携（2.3）', () => {
     await seed(page, ({ actions }, t) => void actions.addRevisionIdea(t, { heading: '改稿案', body: '本文' }), titleId)
     const project = testInfo.project.name
     const dir = 'e2e/artifacts/screens'
-    const surfaces = async (selectors: string[]) => {
-      for (const sel of selectors) {
-        const els = page.locator(sel)
-        const n = await els.count()
-        for (let i = 0; i < n; i++) {
-          const bg = await els.nth(i).evaluate((e) => getComputedStyle(e).backgroundColor)
-          if (bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') continue
-          expect(luminance(bg), `${sel} ${bg}`).toBeLessThan(0.05)
-        }
-      }
-    }
+    const surfaces = (selectors: string[]) => darkSurfaces(page, selectors)
     await openApp(page, `/t/${titleId}?tab=strategy`)
     await expect(page.getByTestId('proof-item')).toHaveCount(3)
     await surfaces([
@@ -390,6 +376,7 @@ test.describe('Claude 連携（2.3）', () => {
     await surfaces(['.pw-proof-panel', '.pw-proof-btn'])
     await page.screenshot({ path: `${dir}/claude-${project}-deep-dark-editor.png` })
     await openApp(page, '/claude/connect?s=abc')
+    await surfaces(['.cn-block', '.btn'])
     await page.screenshot({ path: `${dir}/claude-${project}-deep-dark-connect.png` })
   })
 })

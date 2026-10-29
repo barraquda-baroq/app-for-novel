@@ -680,3 +680,17 @@
     min-height: 38px;
   }
 }
+
+/* 指で操作する端末ではタップしやすい大きさを確保する（34px 以上） */
+@media (max-width: 720px), (pointer: coarse) {
+  .sx-chip,
+  .sn-contest-link,
+  .ps-runs-more {
+    min-height: 34px;
+  }
+
+  .sx-chip-edit .icon-btn.sm {
+    width: 34px;
+    height: 34px;
+  }
+}

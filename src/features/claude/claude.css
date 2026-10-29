@@ -666,3 +666,10 @@
     flex: 1;
   }
 }
+
+/* タイトル画面の「Claude に見せる」: 指で操作する端末ではタップしやすい大きさに */
+@media (max-width: 720px), (pointer: coarse) {
+  .tpage-chip.cl-access-chip {
+    min-height: 34px;
+  }
+}

@@ -1,5 +1,5 @@
 // E2E テスト用のヘルパー。開発サーバーでは window.__ns から actions を呼んでデータを用意できる。
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import type { Actions } from '../src/store/actions'
 import type { AppData } from '../src/domain/types'
 
@@ -69,4 +69,40 @@ export async function seedTitleWithEpisodes(
     },
     { name, bodies },
   )
+}
+
+/** 横にはみ出していない（横スクロールが出ない） */
+export async function noHorizontalScroll(page: Page): Promise<void> {
+  const [scroll, width] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth])
+  expect(scroll).toBeLessThanOrEqual(width)
+}
+
+/** 'rgb(r, g, b)' の相対輝度 */
+export function luminance(rgb: string): number {
+  const [r, g, b] = (rgb.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map((v) => {
+    const c = Number(v) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/** ディープダーク: 選んだ要素の背景がほぼ黒（白い面が出ない。透明は飛ばす） */
+export async function darkSurfaces(page: Page, selectors: string[]): Promise<void> {
+  for (const sel of selectors) {
+    const els = page.locator(sel)
+    const n = await els.count()
+    for (let i = 0; i < n; i++) {
+      const bg = await els.nth(i).evaluate((e) => getComputedStyle(e).backgroundColor)
+      if (bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') continue
+      expect(luminance(bg), `${sel} ${bg}`).toBeLessThan(0.05)
+    }
+  }
+}
+
+/** 押す所の大きさ（34px 以上。width も見る時は both） */
+export async function tapSize(target: Locator, label: string, both = true): Promise<void> {
+  await expect(target).toBeVisible()
+  const box = await target.boundingBox()
+  expect(box?.height, label).toBeGreaterThanOrEqual(34)
+  if (both) expect(box?.width, label).toBeGreaterThanOrEqual(34)
 }

@@ -140,7 +140,12 @@ export function ProofSuggestions({ titleId, headingId, today, actionsSlot }: Pro
                 </span>
               ))}
               {runs.length > RUNS_SHOWN ? (
-                <button type="button" className="ps-runs-more" onClick={() => setShowAllRuns((v) => !v)}>
+                <button
+                  type="button"
+                  className="ps-runs-more"
+                  onClick={() => setShowAllRuns((v) => !v)}
+                  data-testid="proof-runs-more"
+                >
                   {showAllRuns ? '閉じる' : `ほか ${runs.length - RUNS_SHOWN}回`}
                 </button>
               ) : null}
