@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { decodeCursor } from '../../../src/claude/view'
 import type { VaultCore } from '../../src/vault/core'
 import { RESULT_LIMIT } from '../../src/vault/tools/common'
+import { novel } from '../../../src/test/claudeFixture'
 import { novel300, type Novel300 } from '../fixtures/novel300'
 import { FakeFirebase } from '../support/fakeFirebase'
 import { pairedCore } from '../support/harness'
@@ -95,5 +96,36 @@ describe('300話の長編で、結果は10万字まで', () => {
     await run('novel_list_titles', {})
     // 記録: 一番大きな結果の文字数（目安）
     expect(Math.max(...Object.values(sizes))).toBeLessThanOrEqual(RESULT_LIMIT)
+  })
+})
+
+describe('長い会話の多い原稿の検索', () => {
+  it('一致の行が長くても、どのページにも続きの cursor が残り、全部の一致をたどれる', async () => {
+    // 1行が約400字の会話を、1話に60行・5話（一致は300件）
+    const line = (e: number, k: number) => `「${'ことば'.repeat(130)}${e}-${k}」`
+    const t = novel(Array.from({ length: 5 }, (_, e) => Array.from({ length: 60 }, (_, k) => line(e, k)).join('\n')))
+    const fake = new FakeFirebase()
+    const made = await pairedCore(fake, t.data, { config: { dailyReadBudget: 1_000_000 } })
+    const args = { title_id: t.titleId, mode: 'regex', query: '「[^」]*」', max_hits: 200, context_chars: 80 }
+    const count = await made.core.callTool('novel_search_text', { ...args, count_only: true })
+    expect(count.text).toContain('300件')
+    const save = core
+    core = made.core
+    try {
+      const pages = await all('novel_search_text', args)
+      expect(pages.length).toBeGreaterThan(1)
+      let hits = 0
+      for (const [i, page] of pages.entries()) {
+        expect(page).not.toContain('結果が長いため')
+        if (i < pages.length - 1) expect(page).toMatch(/\n続き: cursor="[^"]+"/)
+        hits += page.split('\n').filter((l) => l.startsWith('#')).length
+      }
+      expect(hits).toBe(300)
+      // 見出しの「x〜y件目」が出した一致と合う
+      const m = /: 1〜(\d+)件目/.exec(pages[0])
+      expect(Number(m?.[1])).toBe(pages[0].split('\n').filter((l) => l.startsWith('#')).length)
+    } finally {
+      core = save
+    }
   })
 })

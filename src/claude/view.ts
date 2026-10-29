@@ -641,6 +641,13 @@ function searchUnits(data: AppData, titleId: ID, range: Range, scope: 'adopted' 
   return out
 }
 
+/** 検索の結果の文字数の目安（コネクタの上限 10 万字より小さく。見出しと続きの cursor の行の分を残す） */
+const SEARCH_OUTPUT_BUDGET = 90_000
+/** 一致そのものを出す長さ（長い一致は [...] で切る） */
+const SEARCH_MATCH_SHOW = 200
+/** 一致の行を1行にする（段落をまたぐ一致・前後の文字の改行は空白に） */
+const oneLine = (s: string) => s.replace(/\r?\n/g, ' ')
+
 /** 正規表現の特別な文字を、そのままの文字として扱う */
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -683,6 +690,7 @@ export function searchTextView(data: AppData, titleId: ID, opts: SearchOptions):
   const lines: string[] = []
   const counts = new Map<number, number>()
   let hits = 0
+  let used = 0
   let next: Pos | null = null
   outer: for (let u = at.u; u < units.length; u++) {
     const unit = units[u]
@@ -701,20 +709,30 @@ export function searchTextView(data: AppData, titleId: ID, opts: SearchOptions):
       }
       const s = r.index
       const e = s + r[0].length
-      if (!opts.countOnly && hits >= maxHits) {
+      if (opts.countOnly) {
+        hits += 1
+        counts.set(unit.index, (counts.get(unit.index) ?? 0) + 1)
+        continue
+      }
+      if (hits >= maxHits) {
+        next = { u, o: s }
+        break outer
+      }
+      const rawStart = m.start[s]
+      const before = oneLine(safeSlice(text, s - contextChars, s))
+      const after = oneLine(safeSlice(text, e, e + contextChars))
+      const shown = oneLine(r[0].length > SEARCH_MATCH_SHOW ? `${safeSlice(r[0], 0, SEARCH_MATCH_SHOW)}[...]` : r[0])
+      const para = paragraphAt(unit.version.body, rawStart)
+      const line = `${unit.label} ¶${para} o:${rawStart} ${unit.ids} ${s - contextChars > 0 ? '[...]' : ''}${before}【${shown}】${after}${e + contextChars < text.length ? '[...]' : ''}`
+      // 入りきらない一致は次のページへ（1件目は必ず出す。見出しと続きの cursor の行の分を残す）
+      if (lines.length > 0 && used + line.length + 1 > SEARCH_OUTPUT_BUDGET) {
         next = { u, o: s }
         break outer
       }
       hits += 1
       counts.set(unit.index, (counts.get(unit.index) ?? 0) + 1)
-      if (opts.countOnly) continue
-      const rawStart = m.start[s]
-      const before = safeSlice(text, s - contextChars, s)
-      const after = safeSlice(text, e, e + contextChars)
-      const para = paragraphAt(unit.version.body, rawStart)
-      lines.push(
-        `${unit.label} ¶${para} o:${rawStart} ${unit.ids} ${s - contextChars > 0 ? '[...]' : ''}${before}【${r[0]}】${after}${e + contextChars < text.length ? '[...]' : ''}`,
-      )
+      lines.push(line)
+      used += line.length + 1
     }
   }
   const what = `「${query}」${mode === 'regex' ? '（正規表現）' : ''}`
