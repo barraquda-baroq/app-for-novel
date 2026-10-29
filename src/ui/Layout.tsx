@@ -1,7 +1,10 @@
 // アプリの外枠: ヘッダー（パンくず・保存状態・設定）、トースト、ダイアログ
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigationType } from 'react-router-dom'
+import { buildTime, formatMonthDay, testFlightExpiry } from '../platform/appInfo'
+import { nativePlatform } from '../platform/platform'
+import { applySystemBars } from '../platform/systemBars'
 import { flushNow, reloadFromDisk, useApp } from '../store/appStore'
 import { flushAllDrafts } from '../store/draftRegistry'
 import { saveBeforeLeave } from '../store/lifecycle'
@@ -10,6 +13,7 @@ import { notify, notifyError, resolveAppearance, THEME_COLORS, useAppUpdate, use
 import { DialogHost, cancelAllDialogs } from './dialogs'
 import { GearIcon, XIcon } from './icons'
 import { useSync } from '../sync/controller'
+import { NativeUpdateDialog } from './NativeUpdateDialog'
 import { SyncIndicator, outdatedMessage } from './SyncIndicator'
 
 export interface Crumb {
@@ -190,25 +194,74 @@ function UpdateBanner() {
 
 /**
  * クラウドのデータが新しい版のアプリで書かれている（データの形の版）: この端末からは送らずに残しているので、更新を促す。
- * 「更新する」は、新しい版が届いていればそれに切り替え、まだなら保存してから読み込み直す
+ * 「更新する」は、新しい版が届いていればそれに切り替え、まだなら保存してから読み込み直す。
+ * アプリ（iPhone / Android）は読み込み直しても新しくならないので、「更新のしかた」でアプリを入れ直す手順を出す
  */
-function OutdatedBanner() {
+export function OutdatedBanner() {
   const outdated = useSync((s) => s.status?.outdated ?? null)
   const pending = useSync((s) => s.status?.pending ?? 0)
   const ready = useAppUpdate((s) => s.ready)
   const apply = useAppUpdate((s) => s.apply)
+  const [platform] = useState(nativePlatform)
+  const [help, setHelp] = useState(false)
   if (!outdated) return null
   return (
     <div className="banner" role="alert" data-testid="outdated-banner">
       <span className="grow">{outdatedMessage(outdated.appVersion, pending)}</span>
+      {platform ? (
+        <button type="button" className="btn btn-sm" onClick={() => setHelp(true)} data-testid="outdated-help">
+          更新のしかた
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => void updateApp(ready ? apply : null)}
+          data-testid="outdated-update"
+        >
+          更新する
+        </button>
+      )}
+      {platform && help ? <NativeUpdateDialog platform={platform} onClose={() => setHelp(false)} /> : null}
+    </div>
+  )
+}
+
+/** 閉じた期限の知らせは、次に起動するまで出さない */
+let expiryDismissed = false
+
+/**
+ * iPhone のアプリ（TestFlight のテスト版）は上げてから 90 日で使えなくなる。75 日を過ぎたら、新しい版を上げるよう知らせる
+ */
+export function TestFlightExpiryBanner({ now = Date.now() }: { now?: number }) {
+  const [platform] = useState(nativePlatform)
+  const [hidden, setHidden] = useState(expiryDismissed)
+  const [help, setHelp] = useState(false)
+  const built = buildTime()
+  if (platform !== 'ios' || built === null || hidden) return null
+  const expiry = testFlightExpiry(built, now)
+  if (!expiry.warn) return null
+  return (
+    <div className="banner" role="status" data-testid="testflight-expiry-banner">
+      <span className="grow">
+        このテスト版は {formatMonthDay(expiry.expiresAt)}ごろに使えなくなります（あと{expiry.daysLeft}日）。Mac で新しい版を
+        TestFlight に上げて、更新してください。アプリは削除しないでください。
+      </span>
+      <button type="button" className="btn btn-sm" onClick={() => setHelp(true)} data-testid="testflight-expiry-help">
+        更新のしかた
+      </button>
       <button
         type="button"
-        className="btn btn-sm"
-        onClick={() => void updateApp(ready ? apply : null)}
-        data-testid="outdated-update"
+        className="btn btn-sm btn-ghost"
+        onClick={() => {
+          expiryDismissed = true
+          setHidden(true)
+        }}
+        data-testid="testflight-expiry-dismiss"
       >
-        更新する
+        閉じる
       </button>
+      {help ? <NativeUpdateDialog platform="ios" onClose={() => setHelp(false)} /> : null}
     </div>
   )
 }
@@ -244,6 +297,8 @@ function PrefsEffect() {
         document.head.appendChild(meta)
       }
       meta.content = THEME_COLORS[appearance]
+      // アプリ（iPhone / Android）はステータスバーなどのアイコンの色も合わせる
+      applySystemBars(appearance)
     }
     apply()
     query?.addEventListener?.('change', apply)
@@ -358,6 +413,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
       <PrefsEffect />
       <RecoveryNotice />
       <OutdatedBanner />
+      <TestFlightExpiryBanner />
       <UpdateBanner />
       <SaveErrorBanner />
       <ExternalChangeBanner />

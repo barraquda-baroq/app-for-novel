@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { createHashRouter, Outlet, RouterProvider, useLocation, useRouteError, type RouteObject } from 'react-router-dom'
 import { HomePage } from './features/home/HomePage'
 import { actions } from './store/actions'
+import { isNative } from './platform/platform'
 import { useApp } from './store/appStore'
 import { ErrorBoundary, ErrorScreen } from './ui/ErrorBoundary'
 import { AppFrame, AppHeader } from './ui/Layout'
@@ -85,7 +86,9 @@ function Gate({ children }: { children: React.ReactNode }) {
           <div className="card card-pad stack" role="alert">
             <h1 style={{ fontSize: 18 }}>データを読み込めませんでした</h1>
             <p className="muted" style={{ margin: 0 }}>
-              ブラウザの設定でサイトデータ（IndexedDB）の保存が許可されているか確認してください。プライベートブラウズでは保存できない場合があります。
+              {isNative()
+                ? '端末の空き容量を確認して、アプリを開き直してください。続く時は端末を再起動してください（アプリは削除しないでください。端末の中のデータが消えます）。'
+                : 'ブラウザの設定でサイトデータ（IndexedDB）の保存が許可されているか確認してください。プライベートブラウズでは保存できない場合があります。'}
             </p>
             <pre className="small" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
               {error}

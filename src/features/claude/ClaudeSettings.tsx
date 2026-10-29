@@ -2,6 +2,7 @@
 // 「書き込みを許可」の切り替え・［連携を解除］、Claude ができること・できないこと。
 import { useEffect, useId, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { isNative } from '../../platform/platform'
 import { notify, notifyError } from '../../store/uiStore'
 import { useSync } from '../../sync/controller'
 import { copyText, formatDateTime } from '../../ui/browser'
@@ -22,6 +23,7 @@ export function ClaudeSettings() {
   const [conn, setConn] = useState<ConnectorState>({ state: 'loading' })
   const [busy, setBusy] = useState(false)
   const url = CONNECTOR_ORIGIN ? connectorMcpUrl(CONNECTOR_ORIGIN) : ''
+  const [native] = useState(isNative)
 
   // ログインしている時だけ連携の記録を見張る（Firebase はログインした時に読み込まれている）
   useEffect(() => {
@@ -83,6 +85,12 @@ export function ClaudeSettings() {
           に見せる」タイトルの採用原稿を読み、推敲案・改稿案・戦略メモ・作品批評を書き込めます。コネクタを使わない時は、戦略・作品批評の「Claude
           に頼む（手動）」でコピーと貼り付けでも使えます。
         </p>
+        {native ? (
+          <p className="aset-card-lead" data-testid="claude-native-note">
+            連携の許可は、claude.ai
+            でコネクタを接続した時にブラウザで開く画面で行います。このアプリでは、連携の状態の確認・書き込みの切り替え・解除ができます。
+          </p>
+        ) : null}
       </div>
 
       <div className="aset-row">

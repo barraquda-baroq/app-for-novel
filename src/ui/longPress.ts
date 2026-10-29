@@ -5,6 +5,7 @@
 // - キーボードのメニューキー（Shift+F10）の contextmenu は座標が 0 なので、押した要素の下に開く
 // 文字の選択や iOS の長押しのメニュー（リンクのプレビュー）は CSS（user-select / -webkit-touch-callout）で止める。
 import { useMemo, useRef, type MouseEvent, type PointerEvent } from 'react'
+import { lightTap } from '../platform/haptics'
 
 /** 長押しとみなす時間 */
 export const LONG_PRESS_MS = 500
@@ -56,11 +57,8 @@ export function useMenuTrigger(open: (point: { x: number; y: number }, element: 
             window.removeEventListener('scroll', cancel, true)
             suppressClick = true
             pressOpenedAt = Date.now()
-            try {
-              navigator.vibrate?.(10)
-            } catch {
-              /* 振動できなくてもよい */
-            }
+            // 軽く振動させる（アプリは端末の振動、ブラウザは navigator.vibrate。振動できなくてもよい）
+            lightTap()
             fire(x, y, el)
           }, LONG_PRESS_MS),
         }

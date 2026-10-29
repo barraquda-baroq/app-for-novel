@@ -1,5 +1,7 @@
 // データ: 端末内にだけ保存されていることの説明、バックアップの書き出し・復元、保存領域の情報。
+// iPhone / Android のアプリでは「ブラウザ」ではなく「アプリ」と書き、自動削除の防止は表示だけにする（アプリからは頼めない）。
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
+import { isNative } from '../../platform/platform'
 import { parseBackup } from '../../domain/backup'
 import { DomainError, type AppData } from '../../domain/types'
 import { replaceAllData, useData } from '../../store/appStore'
@@ -54,6 +56,7 @@ export function DataSettings() {
   const { exporting, run: exportBackup } = useBackupExport()
   const [busy, setBusy] = useState(false)
   const synced = useSync((s) => s.everSignedIn)
+  const [native] = useState(isNative)
 
   const restore = async () => {
     const text = await pickTextFile()
@@ -116,8 +119,16 @@ export function DataSettings() {
         <p className="aset-card-lead">
           {synced
             ? 'データはこの端末の中（IndexedDB）と、同期のためのクラウド（あなたの Google アカウントだけが読み書きできる場所）に保存されます。万一に備えて、ときどきバックアップを書き出しておきましょう。'
-            : 'データはこの端末のブラウザの中（IndexedDB）にだけ保存され、サーバーには送られません（上の「同期」でログインすると、ほかの端末と同じ内容にできます）。機種変更やブラウザのデータ削除に備えて、ときどきバックアップを書き出しておきましょう。'}
+            : native
+              ? 'データはこの端末のアプリの中（IndexedDB）にだけ保存され、サーバーには送られません（上の「同期」でログインすると、ほかの端末と同じ内容にできます）。機種変更やアプリの削除に備えて、ときどきバックアップを書き出しておきましょう。'
+              : 'データはこの端末のブラウザの中（IndexedDB）にだけ保存され、サーバーには送られません（上の「同期」でログインすると、ほかの端末と同じ内容にできます）。機種変更やブラウザのデータ削除に備えて、ときどきバックアップを書き出しておきましょう。'}
         </p>
+        {native ? (
+          <p className="aset-card-lead" data-testid="native-data-note">
+            <strong>アプリを削除すると、端末の中のデータは消えます。</strong>
+            同期とバックアップで守ります（更新はアプリを入れ直すだけで、削除はしません）。
+          </p>
+        ) : null}
       </div>
 
       <dl className="aset-counts" data-testid="data-counts">
@@ -175,14 +186,18 @@ export function DataSettings() {
               {storage.persisted === null ? (
                 '確認できません'
               ) : storage.persisted ? (
-                <span className="aset-ok">有効（ブラウザが自動でデータを削除しません）</span>
+                <span className="aset-ok">有効（{native ? '端末' : 'ブラウザ'}が自動でデータを削除しません）</span>
+              ) : native ? (
+                <span className="aset-warn">
+                  無効（空き容量が少なくなると、データが削除されることがあります。同期とバックアップで守ってください）
+                </span>
               ) : (
                 <span className="aset-warn">無効（空き容量が少なくなると、ブラウザにデータを削除されることがあります）</span>
               )}
             </dd>
           </div>
         </dl>
-        {storage.persisted === false && storage.canPersist ? (
+        {storage.persisted === false && storage.canPersist && !native ? (
           <button type="button" className="btn btn-sm" onClick={() => void requestPersist()} data-testid="request-persist">
             自動で削除されないようにする
           </button>

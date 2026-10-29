@@ -5,6 +5,7 @@
 // 4. ビルドの時に決めたコネクタの origin から、コネクタの匿名のアカウントを受け取る（URL の uid・origin は使わない）
 // 5. 見せるタイトル・書き込みを許可するかを選んで［許可する］→ 連携の記録（指紋だけ）を書き、送ってからコネクタへ移る
 // 手順は connectLogic.ts（prepareConnect・approvePairing）、URL・k・指紋の決まりはコネクタと同じ src/claude/pairing.ts。
+// iPhone / Android のアプリでは連携できない（コネクタは Web 版の画面からだけ受け付ける）ので、同じ印のままブラウザで開いてもらう。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { claudeAccessOf, CLAUDE_ACCESS_OPTIONS } from '../../claude/visibility'
@@ -14,6 +15,7 @@ import { paths } from '../../routes'
 import { actions } from '../../store/actions'
 import { flushNow, getPersistence, useData } from '../../store/appStore'
 import { attempt } from '../../store/uiStore'
+import { isNative } from '../../platform/platform'
 import { DATA_MODEL } from '../../sync/appModel'
 import { deviceLabel } from '../../sync/conflicts'
 import { signIn, signOut, syncNow, useSync } from '../../sync/controller'
@@ -33,6 +35,14 @@ import {
 } from './connectLogic'
 import { leaveTo } from './leave'
 import './claude.css'
+
+/** 公開している Web 版（Firebase Hosting）。アプリで連携の画面が開いた時に、ブラウザで開き直す先 */
+export const WEB_APP_ORIGIN = 'https://novel-studio-3352e.web.app'
+
+/** ブラウザで開き直す連携の画面の URL（同じ ?s=） */
+export function webConnectUrl(state: string): string {
+  return `${WEB_APP_ORIGIN}/#${paths.claudeConnect()}?s=${encodeURIComponent(state)}`
+}
 
 type Step =
   | { step: 'checking' }
@@ -108,9 +118,10 @@ export function ConnectPage() {
   // 選んだ内容は記録に失敗した後も残す（連携の記録の間はフォームを外すので、フォームの中には持たない）
   const [draft, setDraft] = useState<ApproveDraft>({ writes: true, access: {} })
   const host = CONNECTOR_ORIGIN ? new URL(CONNECTOR_ORIGIN).host : ''
+  const [native] = useState(isNative)
 
   useEffect(() => {
-    if (!CONNECTOR_ORIGIN || !state || !uid || mismatch) return
+    if (native || !CONNECTOR_ORIGIN || !state || !uid || mismatch) return
     let cancelled = false
     const set = (s: Step) => {
       if (!cancelled) setStep(s)
@@ -135,11 +146,30 @@ export function ConnectPage() {
     return () => {
       cancelled = true
     }
-  }, [state, uid, mismatch, attemptNo])
+  }, [native, state, uid, mismatch, attemptNo])
 
   const retry = () => setAttemptNo((n) => n + 1)
 
   const body = (() => {
+    if (native)
+      return (
+        <Notice tone="info" testId="connect-native">
+          <p>連携の許可は、ブラウザで開く画面（Web 版の Novel Studio）で行います。このアプリの中では許可できません。</p>
+          {state ? (
+            <a
+              className="btn btn-primary"
+              href={webConnectUrl(state)}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="connect-open-browser"
+            >
+              ブラウザで開く
+            </a>
+          ) : (
+            <p>claude.ai のコネクタの画面（「Novel Studio で確認する」）からやり直してください。</p>
+          )}
+        </Notice>
+      )
     if (!CONNECTOR_ORIGIN)
       return (
         <Notice tone="warn" testId="connect-unconfigured">
