@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { vaultConfig, workerConfig } from '../../src/config'
 // prettier-ignore
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import { appBuildEnv, dcrEnabledInConfig, deployVarArgs, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
+import { answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector, parseCheckArgs } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
@@ -128,6 +128,14 @@ describe('スクリプトの部品', () => {
     fs.writeFileSync(file, '{"origin":"javascript:alert(1)"}')
     expect(readLocalConfig(file)).toBeNull()
     expect(() => writeLocalConfig('http://insecure.example', file)).toThrow()
+  })
+
+  it('はい・いいえの答え: 日本語入力のままの全角の ｙ も「はい」', () => {
+    for (const a of ['y', 'Y', 'yes', 'はい', 'ｙ', 'Ｙ', 'ｙｅｓ', ' ｙ '])
+      expect(answerIsYes(a), a).toBe(true)
+    for (const a of ['n', 'ｎ', 'no', 'いいえ']) expect(answerIsYes(a), a).toBe(false)
+    expect(answerIsYes('')).toBe(true)
+    expect(answerIsYes('', false)).toBe(false)
   })
 
   it('鍵は32バイトの乱数（毎回違う）', () => {

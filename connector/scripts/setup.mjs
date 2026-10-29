@@ -44,7 +44,10 @@ async function main() {
   say('  ・npm ci と npm --prefix connector ci を実行しておく')
   say('')
   say('このあと自動で行うこと: Cloudflare へのログインの確認 → コネクタの公開 → 鍵の作成（画面には出ません）→ 確認 → アプリとアクセスルールの公開')
-  if (!yes && !(await ask('続けますか？'))) return
+  if (!yes && !(await ask('続けますか？'))) {
+    say('中止しました（何も変えていません）。')
+    return
+  }
 
   if (!nodeVersionOk()) {
     ng(`Node.js が古すぎます（いま ${process.versions.node}）。22 以上を入れてください（https://nodejs.org/ja）。`)

@@ -141,13 +141,21 @@ export const say = (msg = '') => console.log(msg)
 export const ok = (msg) => console.log(`  ✓ ${msg}`)
 export const ng = (msg) => console.log(`  ✗ ${msg}`)
 
+/** 答えが「はい」か（空なら def）。日本語入力のままの全角の ｙ・ＹＥＳ も「はい」 */
+export function answerIsYes(answer, def = true) {
+  const a = String(answer ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+  return a ? a === 'y' || a === 'yes' || a === 'はい' : def
+}
+
 /** はい・いいえを聞く（Enter だけなら def） */
 export async function ask(question, def = true) {
   if (!process.stdin.isTTY) return def
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
   try {
-    const a = (await rl.question(`${question} ${def ? '[Y/n]' : '[y/N]'} `)).trim().toLowerCase()
-    return a ? a === 'y' || a === 'yes' || a === 'はい' : def
+    return answerIsYes(await rl.question(`${question} ${def ? '[Y/n]' : '[y/N]'} `), def)
   } finally {
     rl.close()
   }
