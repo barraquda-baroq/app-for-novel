@@ -234,12 +234,32 @@ export interface IdeaSection {
   /** null = どのタイトルにも属さない */
   titleId: ID | null
   name: string
+  /** 並び（sortIdeas）: 済みでないもの → 済み */
   ideas: Idea[]
+}
+
+/** 済み（実装した・没にした）か。checked を持たない古いアイデアは済みでない */
+export function isIdeaChecked(idea: Pick<Idea, 'checked'>): boolean {
+  return idea.checked === true
+}
+
+/**
+ * アイデアの並び（仕切りの中・コネクタの一覧で同じ）。済みでないものは order の順、
+ * 済みのものはその後ろに、新しく済みにしたものから（斜線＋グレーで下へ沈む）
+ */
+export function sortIdeas(list: readonly Idea[]): Idea[] {
+  return [...list].sort((a, b) => {
+    const ac = isIdeaChecked(a)
+    const bc = isIdeaChecked(b)
+    if (ac !== bc) return ac ? 1 : -1
+    if (ac) return (b.checkedAt ?? 0) - (a.checkedAt ?? 0) || byOrder(a, b)
+    return byOrder(a, b)
+  })
 }
 
 /** アイデア領域の仕切り。タイトルの数だけ仕切りがあり、最後に「どのタイトルにも属さない」 */
 export function ideaSections(data: AppData): IdeaSection[] {
-  const ideas = Object.values(data.ideas).sort(byOrder)
+  const ideas = sortIdeas(Object.values(data.ideas))
   const sections: IdeaSection[] = sortedTitles(data).map((t) => ({
     titleId: t.id,
     name: t.name,
@@ -253,6 +273,19 @@ export function ideaSections(data: AppData): IdeaSection[] {
   return sections
 }
 
+/** 同じ仕切りの、済みでないアイデア（order の順） */
+function openIdeasIn(tx: Tx, titleId: ID | null, exceptId?: ID): Idea[] {
+  return tx
+    .all('ideas')
+    .filter((i) => i.titleId === titleId && i.id !== exceptId && !isIdeaChecked(i))
+    .sort(byOrder)
+}
+
+/** 仕切りの末尾の order（済みのものも含めた最大の次。済みでないアイデアの末尾になる） */
+const nextIdeaOrder = (tx: Tx, titleId: ID | null, exceptId?: ID) =>
+  nextOrder(tx.all('ideas').filter((i) => i.titleId === titleId && i.id !== exceptId))
+
+/** アイデアを足す（済みでないものの末尾）。今の版の画面からは見出しを渡さない（heading は古い形のデータを作るテスト用） */
 export function addIdea(data: AppData, titleId: ID | null, heading = '', body = ''): { data: AppData; result: ID } {
   return transact(data, (tx) => {
     if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
@@ -262,7 +295,9 @@ export function addIdea(data: AppData, titleId: ID | null, heading = '', body = 
       titleId,
       heading,
       body,
-      order: nextOrder(tx.all('ideas').filter((i) => i.titleId === titleId)),
+      checked: false,
+      checkedAt: null,
+      order: nextIdeaOrder(tx, titleId),
       createdAt: ts,
       updatedAt: ts,
     }
@@ -279,28 +314,51 @@ export function updateIdea(data: AppData, ideaId: ID, patch: Partial<Pick<Idea, 
   }).data
 }
 
-/** 別の仕切り（タイトル or どのタイトルにも属さない）へ移す。移動先の末尾に入る */
+/**
+ * 済みにする・外す。済みにすると斜線＋グレーで仕切りの下へ沈む（並びは sortIdeas）。
+ * 外すと、済みでないアイデアの末尾に戻る。削除（ゴミ箱）とは別
+ */
+export function setIdeaChecked(data: AppData, ideaId: ID, checked: boolean): AppData {
+  return transact(data, (tx) => {
+    const i = tx.get('ideas', ideaId)
+    if (!i) throw new DomainError('アイデアが見つかりません')
+    if (isIdeaChecked(i) === checked) return
+    const ts = now()
+    tx.put('ideas', {
+      ...i,
+      checked,
+      checkedAt: checked ? ts : null,
+      ...(checked ? {} : { order: nextIdeaOrder(tx, i.titleId, i.id) }),
+      updatedAt: ts,
+    })
+  }).data
+}
+
+/** 別の仕切り（タイトル or どのタイトルにも属さない）へ移す。移動先の末尾に入る（済みのものは済みのまま） */
 export function moveIdeaToSection(data: AppData, ideaId: ID, titleId: ID | null): AppData {
   return transact(data, (tx) => {
     const i = tx.get('ideas', ideaId)
     if (!i) throw new DomainError('アイデアが見つかりません')
     if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
     if (i.titleId === titleId) return
-    const order = nextOrder(tx.all('ideas').filter((x) => x.titleId === titleId))
-    tx.put('ideas', { ...i, titleId, order, updatedAt: now() })
+    tx.put('ideas', { ...i, titleId, order: nextIdeaOrder(tx, titleId), updatedAt: now() })
   }).data
 }
 
-/** アイデアを指定の仕切り（null = どのタイトルにも属さない）の index 番目（0始まり）へ移す */
+/**
+ * アイデアを指定の仕切り（null = どのタイトルにも属さない）の、済みでないアイデアの中の index 番目（0始まり）へ移す。
+ * 済みのアイデアは位置を選べない（移動先でも済みのまま下にまとまる）ので、index は使わず仕切りだけ移す
+ */
 export function moveIdeaTo(data: AppData, ideaId: ID, titleId: ID | null, index: number): AppData {
   return transact(data, (tx) => {
     const idea = tx.get('ideas', ideaId)
     if (!idea) throw new DomainError('アイデアが見つかりません')
     if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
-    const list = tx
-      .all('ideas')
-      .filter((i) => i.titleId === titleId && i.id !== ideaId)
-      .sort(byOrder)
+    if (isIdeaChecked(idea)) {
+      if (idea.titleId !== titleId) tx.put('ideas', { ...idea, titleId, order: nextIdeaOrder(tx, titleId), updatedAt: now() })
+      return
+    }
+    const list = openIdeasIn(tx, titleId, ideaId)
     list.splice(Math.max(0, Math.min(index, list.length)), 0, { ...idea, titleId })
     const ts = now()
     list.forEach((it, i) => {
@@ -311,23 +369,16 @@ export function moveIdeaTo(data: AppData, ideaId: ID, titleId: ID | null, index:
   }).data
 }
 
+/** 済みでないアイデアの中で1つ上（-1）・下（+1）へ。済みのアイデアは動かさない */
 export function moveIdeaStep(data: AppData, ideaId: ID, dir: -1 | 1): AppData {
   return transact(data, (tx) => {
     const i = tx.get('ideas', ideaId)
-    if (!i) return
-    putAll(
-      tx,
-      'ideas',
-      stepOrder(
-        tx.all('ideas').filter((x) => x.titleId === i.titleId),
-        ideaId,
-        dir,
-      ),
-    )
+    if (!i || isIdeaChecked(i)) return
+    putAll(tx, 'ideas', stepOrder(openIdeasIn(tx, i.titleId), ideaId, dir))
   }).data
 }
 
-/** アイデアをゴミ箱へ移す */
+/** アイデアをゴミ箱へ移す（済みかどうかもそのまま控え、戻すと同じ状態に戻る） */
 export function deleteIdea(data: AppData, ideaId: ID): AppData {
   return transact(data, (tx) => {
     const idea = tx.get('ideas', ideaId)
@@ -335,9 +386,12 @@ export function deleteIdea(data: AppData, ideaId: ID): AppData {
     // 存在しないタイトルを指すアイデアは「どのタイトルにも属さない」に表示されているので、そこにあったものとして控える
     const title = idea.titleId === null ? undefined : tx.get('titles', idea.titleId)
     const sectionId = title ? title.id : null
+    // 戻す位置は、同じ側（済みでないもの・済みのもの）の並びの中で控える（済みのものは並び順を使わないため）
+    const checked = isIdeaChecked(idea)
     const peers = tx
       .all('ideas')
       .filter((i) => (i.titleId !== null && tx.get('titles', i.titleId) ? i.titleId : null) === sectionId)
+      .filter((i) => isIdeaChecked(i) === checked)
     putInTrash(tx, {
       kind: 'idea',
       label: trashLabel.idea(idea),

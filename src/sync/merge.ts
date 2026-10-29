@@ -212,7 +212,11 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
       else if (TEXT_FIELDS[table]?.includes(k) && typeof mv === 'string' && typeof tv === 'string') {
         out[k] = joinConflictText(tv, mv, opts.device)
         joined.push(k)
-      } else out[k] = mv
+      }
+      // 古い版の端末で直した見出し: この端末で見出しを内容の1行目にまとめた（空にした）時は、相手の見出しを残す
+      // （次に編集した時に内容へまとまる。両方が見出しを書いていたら従来どおりこの端末を優先）
+      else if (table === 'ideas' && k === 'heading' && mv === '' && typeof tv === 'string' && tv.trim() !== '') out[k] = tv
+      else out[k] = mv
     }
     if (out[k] === undefined) delete out[k]
   }

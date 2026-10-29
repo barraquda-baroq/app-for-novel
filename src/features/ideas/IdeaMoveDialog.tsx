@@ -1,7 +1,7 @@
 // アイデアを別の仕切り（タイトル／どのタイトルにも属さない）へ、または同じ仕切りの中の別の位置へ移すダイアログ。
-// 位置は移動先の仕切りの中で選べる（既定は末尾）。
+// 位置は移動先の仕切りの、済みでないアイデアの中で選べる（既定は末尾）。済みのアイデアは位置を選ばない（移動先でも下にまとまる）。
 import { useId, useMemo, useState } from 'react'
-import { ideaSections } from '../../domain/entityOps'
+import { ideaSections, isIdeaChecked } from '../../domain/entityOps'
 import type { ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { useData } from '../../store/appStore'
@@ -30,15 +30,18 @@ export function IdeaMoveDialog({ ideaId, onClose }: { ideaId: ID; onClose: () =>
 
   const chosen = targets.find((t) => sectionKey(t.titleId) === target) ?? null
   const section = sections.find((s) => sectionKey(s.titleId) === target)
-  const others = useMemo(() => (section ? section.ideas.filter((i) => i.id !== ideaId) : []), [section, ideaId])
+  const checked = idea ? isIdeaChecked(idea) : false
+  // 位置は済みでないアイデアの中で数える（済みのものは済みにした順で下にまとまる）
+  const open = useMemo(() => (section ? section.ideas.filter((i) => !isIdeaChecked(i)) : []), [section])
+  const others = useMemo(() => open.filter((i) => i.id !== ideaId), [open, ideaId])
   const options = useMemo(() => positionOptions(others.map((i) => ideaShortLabel(i))), [others])
-  const currentIndex = chosen?.current && section ? section.ideas.findIndex((i) => i.id === ideaId) : -1
+  const currentIndex = chosen?.current ? open.findIndex((i) => i.id === ideaId) : -1
   const index = position === null ? others.length : Math.min(position, others.length)
   const option = options.find((o) => o.index === index)
 
   if (!idea || !chosen) return null
   const label = ideaShortLabel(idea)
-  const unchanged = chosen.current && index === currentIndex
+  const unchanged = chosen.current && (checked || index === currentIndex)
 
   const choose = (key: string) => {
     setTarget(key)
@@ -77,7 +80,9 @@ export function IdeaMoveDialog({ ideaId, onClose }: { ideaId: ID; onClose: () =>
           submit()
         }}
       >
-        <p className="idea-move-lead small muted">「{label}」の移動先と、その中の位置を選んでください。</p>
+        <p className="idea-move-lead small muted">
+          {checked ? `「${label}」の移動先を選んでください。` : `「${label}」の移動先と、その中の位置を選んでください。`}
+        </p>
         <fieldset className="idea-move-fieldset">
           <legend className="idea-move-legend">移動先</legend>
           <ul className="idea-move-list">
@@ -117,26 +122,32 @@ export function IdeaMoveDialog({ ideaId, onClose }: { ideaId: ID; onClose: () =>
             })}
           </ul>
         </fieldset>
-        <label className="field idea-move-position">
-          <span>位置</span>
-          <select
-            className="select"
-            value={index}
-            onChange={(e) => setPosition(Number(e.target.value))}
-            data-testid="idea-move-position"
-          >
-            {options.map((o) => (
-              <option key={o.index} value={o.index}>
-                {o.label}
-                {o.index === currentIndex ? '（現在の位置）' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
+        {checked ? null : (
+          <label className="field idea-move-position">
+            <span>位置</span>
+            <select
+              className="select"
+              value={index}
+              onChange={(e) => setPosition(Number(e.target.value))}
+              data-testid="idea-move-position"
+            >
+              {options.map((o) => (
+                <option key={o.index} value={o.index}>
+                  {o.label}
+                  {o.index === currentIndex ? '（現在の位置）' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <p className="idea-move-summary small muted" role="status" data-testid="idea-move-summary">
-          {unchanged
-            ? '現在の位置です。移動先か位置を選んでください。'
-            : `「${chosen.name}」の${option ? option.label.replace(/（\d+番目）$/u, '') : '末尾'}に入ります。`}
+          {checked
+            ? unchanged
+              ? '現在の場所です。移動先を選んでください。'
+              : `「${chosen.name}」に移ります。済みのまま、済みのアイデアと一緒に下にまとまります。`
+            : unchanged
+              ? '現在の位置です。移動先か位置を選んでください。'
+              : `「${chosen.name}」の${option ? option.label.replace(/（\d+番目）$/u, '') : '末尾'}に入ります。`}
         </p>
       </form>
     </Modal>

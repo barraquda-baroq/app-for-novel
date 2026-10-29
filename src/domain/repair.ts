@@ -430,6 +430,12 @@ export function repairData(input: AppData): RepairResult {
       createdAt: num(idea.createdAt),
       updatedAt: num(idea.updatedAt),
     }
+    // 済み: 持たない古いアイデアは済みでないものとして読み（isIdeaChecked）、項目は足さない（補ったことにも数えない）。
+    // 足すと、触った時に checked: false として書かれ、ほかの端末で済みにしたのを同期で打ち消してしまう。壊れた値だけ直す
+    if (idea.checked !== undefined || idea.checkedAt !== undefined) {
+      next.checked = idea.checked === true
+      next.checkedAt = next.checked ? numOrNull(idea.checkedAt) : null
+    }
     if (!same(next, idea)) {
       d.ideas[idea.id] = next
       fix(orphan ? 'タイトルのないアイデアを「どのタイトルにも属さない」へ移しました' : 'アイデアの項目を補いました')

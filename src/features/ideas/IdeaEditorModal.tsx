@@ -1,53 +1,52 @@
-// アイデアの追加・編集ダイアログ。見出し（任意）と内容。Ctrl/⌘+Enter で保存。
+// アイデアの追加・編集ダイアログ。入力欄は内容だけ（見出しはない）。Ctrl/⌘+Enter で保存。
+// 古い版で見出しを付けたアイデアは、見出しを内容の1行目にまとめた形で開く（保存するまで元のデータは変えない）。
 // 入力中の内容はこの端末に下書きとして残し、戻る操作やアプリを閉じても、次に同じダイアログを開いた時に戻せる。
 import { useId, useRef, useState } from 'react'
 import { confirmDialog } from '../../ui/dialogs'
 import { Modal } from '../../ui/Modal'
-import { canSaveIdea, isSubmitShortcut, parseIdeaModalDraft, submitShortcutLabel } from './ideaLogic'
+import { canSaveIdea, isSubmitShortcut, parseIdeaModalDraft, serializeIdeaModalDraft, submitShortcutLabel } from './ideaLogic'
 import { readLocal, writeLocal } from './storage'
 
 export interface IdeaEditorModalProps {
   mode: 'add' | 'edit'
   /** 追加先・現在の仕切りの名前 */
   sectionName: string
-  initialHeading?: string
+  /** 開いた時の内容（編集: ideaEditText。見出しのあるアイデアは見出しを1行目にまとめたもの） */
   initialBody?: string
+  /** 見出しを1行目にまとめて開いた（古い版で見出しを付けたアイデア）。その旨を添える */
+  mergedHeading?: boolean
   /** 書きかけを保存するキー（ideaModalDraftKey）。省略すると保存しない */
   draftKey?: string
-  onSave: (heading: string, body: string) => void
+  onSave: (body: string) => void
   onClose: () => void
 }
 
 export function IdeaEditorModal({
   mode,
   sectionName,
-  initialHeading = '',
   initialBody = '',
+  mergedHeading = false,
   draftKey,
   onSave,
   onClose,
 }: IdeaEditorModalProps) {
   const formId = useId()
+  const noteId = useId()
   // 前回閉じた時の書きかけがあれば、そこから続ける
   const [restored] = useState(() => {
     const draft = draftKey ? parseIdeaModalDraft(readLocal(draftKey)) : null
-    return draft && (draft.heading !== initialHeading || draft.body !== initialBody) ? draft : null
+    return draft && draft.body !== initialBody ? draft : null
   })
-  const [heading, setHeading] = useState(restored?.heading ?? initialHeading)
   const [body, setBody] = useState(restored?.body ?? initialBody)
   const [restoredNotice, setRestoredNotice] = useState(restored !== null)
-  // 見出しが空で内容がある時は内容から書き始める（開いた時に一度だけ決める）
-  const [focusBody] = useState(
-    () => mode === 'edit' && (restored?.heading ?? initialHeading) === '' && (restored?.body ?? initialBody) !== '',
-  )
   const confirming = useRef(false)
-  const canSave = canSaveIdea(heading, body)
-  const dirty = heading !== initialHeading || body !== initialBody
+  const canSave = canSaveIdea(body)
+  const dirty = body !== initialBody
 
   /** 入力のたびにすぐ控える（閉じる・戻る・アプリの終了で失わないように） */
-  const persist = (h: string, b: string) => {
+  const persist = (b: string) => {
     if (!draftKey) return
-    writeLocal(draftKey, h !== initialHeading || b !== initialBody ? JSON.stringify({ heading: h, body: b }) : null)
+    writeLocal(draftKey, b !== initialBody ? serializeIdeaModalDraft(b) : null)
   }
   const clearDraft = () => {
     if (draftKey) writeLocal(draftKey, null)
@@ -56,11 +55,10 @@ export function IdeaEditorModal({
   const save = () => {
     if (!canSave) return
     clearDraft()
-    onSave(heading.trim(), body.replace(/\s+$/u, ''))
+    onSave(body.replace(/\s+$/u, ''))
   }
 
   const discardRestored = () => {
-    setHeading(initialHeading)
     setBody(initialBody)
     setRestoredNotice(false)
     clearDraft()
@@ -92,7 +90,7 @@ export function IdeaEditorModal({
     <Modal
       title={mode === 'add' ? 'アイデアを追加' : 'アイデアを編集'}
       onClose={() => void requestClose()}
-      initialFocus={focusBody ? 'textarea' : undefined}
+      initialFocus="textarea"
       footer={
         <>
           <span className="idea-editor-hint hide-mobile hint-keyboard" data-testid="idea-editor-hint">
@@ -140,19 +138,6 @@ export function IdeaEditorModal({
           </p>
         ) : null}
         <label className="field">
-          <span>見出し（任意）</span>
-          <input
-            className="input"
-            value={heading}
-            onChange={(e) => {
-              setHeading(e.target.value)
-              persist(e.target.value, body)
-            }}
-            placeholder="例: 記憶を売る古書店"
-            data-testid="idea-heading-input"
-          />
-        </label>
-        <label className="field">
           <span>内容</span>
           <textarea
             className="textarea idea-editor-body"
@@ -160,12 +145,18 @@ export function IdeaEditorModal({
             value={body}
             onChange={(e) => {
               setBody(e.target.value)
-              persist(heading, e.target.value)
+              persist(e.target.value)
             }}
             placeholder="思いついたこと、場面、台詞、設定の種など"
+            aria-describedby={mergedHeading ? noteId : undefined}
             data-testid="idea-body-input"
           />
         </label>
+        {mergedHeading ? (
+          <p id={noteId} className="idea-editor-merged small muted" data-testid="idea-heading-merged">
+            見出しは内容の1行目に入れました。保存するとこの形になります。
+          </p>
+        ) : null}
       </form>
     </Modal>
   )

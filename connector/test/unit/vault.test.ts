@@ -411,6 +411,48 @@ describe('読むツール', () => {
     expect(p.isError).toBe(true)
   })
 
+  it('アイデア（novel_get_notes kind=ideas）: 済みは【済】を付けて後ろに並べ、古い版の見出しはそのまま出す', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文'])
+    const t = n.titleId
+    const idea = (id: string, o: Partial<(typeof n.data.ideas)[string]>) => ({
+      id,
+      titleId: t,
+      heading: '',
+      body: '',
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      ...o,
+    })
+    n.data.ideas = {
+      // 古い版のアイデア（見出しあり・済みの項目なし）
+      a: idea('a', { heading: '記憶を売る古書店', body: '客は記憶を売る。', order: 0 }),
+      b: idea('b', { body: '雨の駅\n来ない列車を待つ', order: 1, checked: true, checkedAt: 5 }),
+      c: idea('c', { body: '天窓の栞', order: 2, checked: false, checkedAt: null }),
+      d: idea('d', { body: '止まった時計', order: 3, checked: true, checkedAt: 9 }),
+    }
+    const { core } = await pairedCore(fake, n.data)
+    const list = await call(core, 'novel_get_notes', { title_id: t, kind: 'ideas' })
+    expect(list).toContain('アイデア（4件・うち済み 2件）')
+    expect(list).toContain('【済】は作者が済み（実装した・没にした）にしたアイデア')
+    const lines = list.split('\n').filter((l) => /^i:/.test(l))
+    // 済みでないもの（order の順）→ 済み（新しく済みにしたものから）
+    expect(lines.map((l) => l.replace(/^i:\S+ /, ''))).toEqual([
+      '記憶を売る古書店（8字）: 客は記憶を売る。',
+      '天窓の栞（4字）',
+      '【済】止まった時計（6字）',
+      '【済】雨の駅 来ない列車を待つ（12字）',
+    ])
+    expect(list).not.toContain('見出しなし')
+    const full = await call(core, 'novel_get_notes', { title_id: t, kind: 'ideas', full: true })
+    expect(full).toContain('=== アイデア: 記憶を売る古書店 [i:')
+    expect(full).toMatch(/=== アイデア【済】 \[i:\S+\] ===\n雨の駅\n来ない列車を待つ/)
+    // 名前（見出し、なければ1行目）でも選べる
+    const one = await call(core, 'novel_get_notes', { title_id: t, kind: 'ideas', ids: ['雨の駅'] })
+    expect(one).toContain('来ない列車を待つ')
+  })
+
   it('状態（novel_status）', async () => {
     const fake = new FakeFirebase()
     const { core } = await pairedCore(fake, novel(['本文']).data)
