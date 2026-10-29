@@ -30,9 +30,14 @@ const texts = () =>
   cards().map((c) => `${within(c).getByTestId('idea-body').textContent}${c.dataset.checked === 'true' ? '✓' : ''}`)
 const card = (text: string) => cards().find((c) => c.textContent?.includes(text))!
 
+/** jsdom には scrollIntoView が無いので、呼ばれたかだけ記録する */
+const scrollIntoView = vi.fn()
+
 beforeEach(async () => {
   localStorage.clear()
   useToasts.setState({ toasts: [] })
+  scrollIntoView.mockClear()
+  HTMLElement.prototype.scrollIntoView = scrollIntoView
   await initStore(createPersistence(`test-db-ideas-${++n}`))
 })
 
@@ -41,6 +46,7 @@ afterEach(() => {
   resetStoreForTests()
   localStorage.clear()
   vi.useRealTimers()
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView
 })
 
 describe('アイデアの済み（チェック）', () => {
@@ -64,8 +70,8 @@ describe('アイデアの済み（チェック）', () => {
     expect(done.className).toContain('is-checked')
     expect(within(done).getByTestId('idea-check')).toHaveProperty('checked', true)
     expect(within(done).getByTestId('idea-check').getAttribute('aria-label')).toBe('「案A」の済みを外す')
-    // 動いた後もチェックボックスにフォーカスが残る
-    expect(document.activeElement).toBe(within(done).getByTestId('idea-check'))
+    // フォーカスは空いた所に来たカード（同じ側の次）のチェックボックスへ移る（動いた先は画面の外のことがある）
+    expect(document.activeElement).toBe(within(card('案B')).getByTestId('idea-check'))
     // 済みのカードには並べ替えのボタンがない。済みでないものの末尾は↓を押せない
     expect(within(done).queryByTestId('idea-up')).toBeNull()
     expect(within(done).queryByTestId('idea-down')).toBeNull()
@@ -86,8 +92,76 @@ describe('アイデアの済み（チェック）', () => {
 
     await user.click(within(card('案A')).getByTestId('idea-check'))
     expect(texts()).toEqual(['案C', '案A', '案B✓'])
+    // 済みの側の末尾だったので、前（案B）へ
+    expect(document.activeElement).toBe(within(card('案B')).getByTestId('idea-check'))
     expect(getData().ideas[card('案A').dataset.ideaId!]).toMatchObject({ checked: false, checkedAt: null })
     expect(within(card('案A')).getByTestId('idea-up')).toHaveProperty('disabled', false)
+  })
+
+  it('キーボードで続けて消し込める: 済みにすると空いた所に来たカードへフォーカスが移り、末尾なら前のカードへ', async () => {
+    const user = userEvent.setup()
+    let titleId = ''
+    act(() => {
+      titleId = actions.createTitle('星の海')
+      for (const body of ['案A', '案B', '案C', '案D']) actions.addIdea(titleId, '', body)
+    })
+    renderTab(titleId)
+    const box = (text: string) => within(card(text)).getByTestId('idea-check')
+
+    box('案A').focus()
+    await user.keyboard(' ')
+    expect(texts()).toEqual(['案B', '案C', '案D', '案A✓'])
+    expect(document.activeElement).toBe(box('案B'))
+    await user.keyboard(' ')
+    expect(card('案B').dataset.checked).toBe('true')
+    expect(document.activeElement).toBe(box('案C'))
+
+    // 済みでないものの末尾（次は区切り）は前のカードへ
+    box('案D').focus()
+    await user.keyboard(' ')
+    expect(texts().slice(0, 1)).toEqual(['案C'])
+    expect(document.activeElement).toBe(box('案C'))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    // チェックボックスにフォーカスがない時（ほかの端末で済みにした時など）は、フォーカスを動かさない
+    const outside = screen.getByTestId('idea-add')
+    outside.focus()
+    act(() => actions.setIdeaChecked(card('案C').dataset.ideaId!, true))
+    expect(document.activeElement).toBe(outside)
+  })
+
+  it('同じ側にほかのカードがなければ、動いた先の自分のチェックボックスにフォーカスを残して見える所まで出す', async () => {
+    const user = userEvent.setup()
+    let titleId = ''
+    act(() => {
+      titleId = actions.createTitle('星の海')
+      for (const body of ['案A', '案B']) actions.addIdea(titleId, '', body)
+    })
+    renderTab(titleId)
+    const box = (text: string) => within(card(text)).getByTestId('idea-check')
+    await user.click(box('案B'))
+    expect(document.activeElement).toBe(box('案A'))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    // 済みでないものは案Aだけ
+    box('案A').focus()
+    await user.keyboard(' ')
+    expect(texts()).toEqual(['案A✓', '案B✓'])
+    expect(document.activeElement).toBe(box('案A'))
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    expect(scrollIntoView.mock.contexts[0]).toBe(box('案A'))
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+
+    // 済みを外す側も同じ: 案Aを外すと空いた所に来た案Bへ。済みが案Bだけの時に外すと、案Bに残して見える所まで出す
+    await user.keyboard(' ')
+    expect(texts()).toEqual(['案A', '案B✓'])
+    expect(document.activeElement).toBe(box('案B'))
+    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    await user.keyboard(' ')
+    expect(texts()).toEqual(['案A', '案B'])
+    expect(document.activeElement).toBe(box('案B'))
+    expect(scrollIntoView).toHaveBeenCalledTimes(2)
+    expect(scrollIntoView.mock.contexts[1]).toBe(box('案B'))
   })
 
   it('済みにした・外した時は、消えたように見えないよう通知で知らせ、移った先のカードを少しの間目立たせる', async () => {

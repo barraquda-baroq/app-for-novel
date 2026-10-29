@@ -84,20 +84,49 @@ function useRevealed(ideaId: string, ref: RefObject<HTMLLIElement | null>): bool
   return on
 }
 
-/** 済みにした・外した後も、チェックボックスにフォーカスを残す（カードが仕切りの下・済みでないものの末尾へ動いても） */
-function useKeepCheckFocus() {
+/**
+ * 済みにした・外した後のフォーカス。カードは仕切りの下・済みでないものの末尾へ動くので、
+ * 空いた所に来たカード（同じ側の次、なければ前）のチェックボックスへ移し、キーボードで続けて消し込めるようにする。
+ * 同じ側にほかのカードがなければ、動いた先の自分のチェックボックスに残して見える所まで出す（フォーカスを画面の外に置かない）
+ */
+function useKeepCheckFocus(checked: boolean) {
   const ref = useRef<HTMLInputElement>(null)
-  const pending = useRef(false)
+  // false = チェックボックスにフォーカスがなかった。null = 同じ側にほかのカードがない。要素 = 空いた所に来るカード
+  const pending = useRef<HTMLElement | null | false>(false)
   useLayoutEffect(() => {
-    if (!pending.current) return
+    const next = pending.current
+    if (next === false) return
     pending.current = false
     const el = ref.current
-    if (el && document.activeElement !== el) el.focus({ preventScroll: true })
-  })
+    // カードが動くとフォーカスは外れる（body）。ほかの所へ移っていたら奪わない
+    const active = document.activeElement
+    if (!el || (active !== el && active !== null && active !== document.body)) return
+    // 空いた所に来たカードなので、もう画面に出ている（カードの要素は並びが変わっても作り直されない）
+    const target = next?.isConnected ? next.querySelector<HTMLInputElement>('[data-testid="idea-check"]') : null
+    if (target) {
+      target.focus()
+      return
+    }
+    el.focus({ preventScroll: true })
+    el.scrollIntoView({ block: 'nearest' })
+  }, [checked])
+  /** 済みを切り替える直前に呼ぶ（今のカードの隣を覚える） */
   const mark = () => {
-    pending.current = document.activeElement === ref.current
+    const el = ref.current
+    const li = el?.closest('li')
+    if (!el || !li || document.activeElement !== el) {
+      pending.current = false
+      return
+    }
+    // 同じ側（済み・済みでない）のカードだけ。区切り「済み n件」は data-checked を持たないので選ばない
+    const same = (n: Element | null): n is HTMLElement => n instanceof HTMLElement && n.dataset.checked === li.dataset.checked
+    pending.current = [li.nextElementSibling, li.previousElementSibling].find(same) ?? null
   }
-  return { ref, mark }
+  /** 切り替えられなかった時（カードは動かない） */
+  const cancel = () => {
+    pending.current = false
+  }
+  return { ref, mark, cancel }
 }
 
 function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardProps) {
@@ -115,18 +144,21 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
   const editDraftKey = ideaModalDraftKey({ mode: 'edit', ideaId: idea.id })
   const { ref: cardRef, move } = useKeepInPlace<HTMLLIElement>()
   const revealed = useRevealed(idea.id, cardRef)
-  const check = useKeepCheckFocus()
+  const check = useKeepCheckFocus(checked)
 
   const toggleChecked = (next: boolean) => {
     check.mark()
-    if (!attempt(() => (actions.setIdeaChecked(idea.id, next), true))) return
+    if (!attempt(() => (actions.setIdeaChecked(idea.id, next), true))) {
+      check.cancel()
+      return
+    }
     // カードは仕切りの下・済みでないものの末尾へ動くので、消えたように見えないよう知らせる（削除とは別）
     notify(
       next
         ? `「${label}」を済みにしました（下の「済み」へ移しました）`
         : `「${label}」の済みを外しました（済みでないものの末尾へ戻しました）`,
     )
-    // 移った先で少しの間目立たせる（スクロールはしない。フォーカスはチェックボックスに残す）
+    // 移った先で少しの間目立たせる（スクロールはしない。フォーカスは空いた所に来たカードへ。useKeepCheckFocus）
     revealIdea(idea.id, false)
   }
 

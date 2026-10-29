@@ -243,6 +243,8 @@
   width: 20px;
   height: 20px;
   margin: 0;
+  /* 済みにした後に見える所まで出す時、上の固定した帯の下に隠れないように（カードの scroll-margin-top と同じ） */
+  scroll-margin: calc(var(--header-h) + var(--safe-top) + 64px) 0 16px;
   accent-color: var(--accent);
   cursor: pointer;
 }

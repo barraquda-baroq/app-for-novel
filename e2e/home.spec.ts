@@ -393,6 +393,37 @@ test.describe('ホーム', () => {
     await noHorizontalScroll(page)
   })
 
+  test('キーボードで続けて消し込める: 済みにするとフォーカスは空いた所に来たカードへ移り、画面の外へ行かない', async ({
+    page,
+  }, info) => {
+    if (info.project.name === 'mobile') await page.setViewportSize({ width: 360, height: 760 })
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      for (let i = 0; i < 30; i++) actions.addIdea(null, '', `案${i + 1}`)
+    })
+    await showIdeas(page)
+    const none = section(page, 'none')
+    await expect(cardsIn(none)).toHaveCount(30)
+    const box = (n: number) => cardsIn(none).nth(n).getByTestId('idea-check')
+
+    await box(2).focus()
+    await expect(cardsIn(none).nth(2).getByTestId('idea-body')).toHaveText('案3')
+    await page.keyboard.press('Space')
+    // 案3は済みの所（画面の外）へ。フォーカスは同じ位置に来た案4
+    await expect(cardsIn(none).last().getByTestId('idea-body')).toHaveText('案3')
+    await expect(box(2)).toBeFocused()
+    await expect(box(2)).toHaveAccessibleName('「案4」を済みにする')
+    await expect(box(2)).toBeInViewport()
+    await page.keyboard.press('Space')
+    await expect(box(2)).toBeFocused()
+    await expect(box(2)).toHaveAccessibleName('「案5」を済みにする')
+    await expect(none.getByTestId('idea-done-divider')).toHaveText('済み 2件')
+    // Shift+Tab は画面に出ている1つ前のカードの操作へ（ページの下へ飛ばない）
+    await page.keyboard.press('Shift+Tab')
+    await expect(page.locator(':focus')).toBeInViewport()
+    await expect(cardsIn(none).nth(1).locator(':focus')).toHaveCount(1)
+  })
+
   test('長いアイデアは折りたたまれ、「続きを表示」で全文を読める。仕切りは折りたためる', async ({ page }) => {
     await openApp(page)
     await seed(page, ({ actions }) => {
