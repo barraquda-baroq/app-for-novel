@@ -149,6 +149,37 @@ describe('複数タブ・保存失敗', () => {
     other.close()
   })
 
+  it('修復が表示から外した、知らない項目（新しい版が書いた応募時の記録の項目など）は、そのレコードを書き換えても端末内に残る', async () => {
+    // 古い版の端末が、新しい版の書いた項目を持つレコードを書き換えた時と同じ（修復は表示用の内容にだけ当てる）
+    const name = `test-db-${++n}`
+    await initStore(createPersistence(name))
+    const titleId = actions.createTitle('作品')
+    const subId = actions.addSubmission(titleId, 'A賞')
+    await flushNow()
+    resetStoreForTests()
+    // 新しい版の端末が書いた内容（応募時の記録の中と、応募計画そのものに、この版の知らない項目がある）
+    const writer = createPersistence(name)
+    const disk = await writer.load()
+    const snapshot = { at: 1, charCount: 0, activeVersions: {}, futureField: '新しい版の控え' }
+    const raw = { ...disk.submissions[subId], snapshot, futureTop: '新しい版の項目' }
+    await writer.save(disk, { ...disk, submissions: { [subId]: raw } })
+    writer.close()
+
+    await initStore(createPersistence(name))
+    // 表示用の内容では、修復が記録の知らない項目を外す（応募計画そのものの知らない項目は残る）
+    const view = useApp.getState().data.submissions[subId] as unknown as Record<string, unknown>
+    expect((view.snapshot as Record<string, unknown>).futureField).toBeUndefined()
+    expect(view.futureTop).toBe('新しい版の項目')
+    actions.updateSubmission(subId, { overview: '書き換えた概要' })
+    expect(await flushNow()).toBe(true)
+    const other = createPersistence(name)
+    const saved = (await other.load()).submissions[subId] as unknown as Record<string, unknown>
+    expect(saved.overview).toBe('書き換えた概要')
+    expect(saved.futureTop).toBe('新しい版の項目')
+    expect(saved.snapshot).toEqual(snapshot)
+    other.close()
+  })
+
   it('別タブで削除されたレコードは、このタブの古い内容で復活させない', async () => {
     const name = `test-db-${++n}`
     await initStore(createPersistence(name))

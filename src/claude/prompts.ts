@@ -4,6 +4,7 @@
 // 返ってきた答えは src/claude/paste.ts で読み、同じ作り方（src/claude/records.ts）で記録にする。
 import { PROOF_CATEGORIES, PROOF_CATEGORY_LABELS } from './categories'
 import { submissionsOf, submissionStatusLabel } from '../domain/entityOps'
+import { submissionExtraLines } from '../domain/submissionTexts'
 import { formatCount } from '../domain/text'
 import type { AppData, CritiquePrompt, ID, Title } from '../domain/types'
 import { PASTE_FENCE } from './paste'
@@ -195,6 +196,8 @@ function strategyMaterial(data: AppData, title: Title): string {
         : ''
     lines.push(
       `- ${s.contestName.trim() || '（コンテスト名未設定）'}（${submissionStatusLabel(s.status)}${s.deadline ? `・締切 ${s.deadline}` : ''}${limit}）${s.url ? ` ${s.url}` : ''}`,
+      // 規定の備考・提出する梗概／キャッチコピー（文字数と規定）・特記事項
+      ...submissionExtraLines(s).map((line) => `  ${line}`),
     )
   }
   return lines.join('\n')

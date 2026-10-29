@@ -1,6 +1,7 @@
 // 手動連携: 依頼文とパート分け（prompts.ts）・貼り付け（paste.ts）
 import { describe, expect, it } from 'vitest'
 import { addClaudeRecords, addCritiquePrompt } from '../domain/claudeOps'
+import { addSubmission, updateSubmission } from '../domain/entityOps'
 import { novel } from '../test/claudeFixture'
 import { extractBlock, parseCalls, PASTE_FENCE, previewPaste } from './paste'
 import { buildManualParts, critiqueConnectorPrompt, critiqueManualPrompt, MANUAL_PART_CHARS, strategyPrompt } from './prompts'
@@ -72,6 +73,33 @@ describe('依頼文とパート分け', () => {
     expect(strat.parts[0]).not.toContain('｜東京')
     expect(critiqueConnectorPrompt(n.data.titles[n.titleId], p.data.critiquePrompts[p.result])).toContain(
       'novel_add_critique_result',
+    )
+  })
+  it('戦略の応募計画には、規定の備考・提出する梗概／キャッチコピーの文字数と規定・特記事項も入る（書いていない項目は出さない）', () => {
+    const n = novel(['本文'])
+    const a = addSubmission(n.data, n.titleId, '海風小説大賞')
+    let data = updateSubmission(a.data, a.result, {
+      minChars: 1000,
+      limitNote: 'ルビ不可',
+      synopsis: 'あ'.repeat(330),
+      synopsisMax: 300,
+      catchphrase: 'その嘘は、世界を救うためについた。',
+      specialNotes: '担当さんに確認',
+    })
+    const b = addSubmission(data, n.titleId, '空の賞')
+    data = b.data
+    const r = buildManualParts(data, n.titleId, { task: 'strategy', today: '2026-10-28', includeText: false })
+    if (!r.ok) throw new Error(r.error)
+    const text = r.parts[0]
+    expect(text).toContain(
+      [
+        '- 海風小説大賞（検討中・規定 1,000〜字）',
+        '  規定の備考: ルビ不可',
+        '  梗概・あらすじ: 330字（規定 300字以内・30字超えています）',
+        '  キャッチコピー: 17字 「その嘘は、世界を救うためについた。」',
+        '  特記事項: 担当さんに確認',
+        '- 空の賞（検討中）',
+      ].join('\n'),
     )
   })
   it('範囲を指定できる', () => {

@@ -617,6 +617,14 @@ export function addSubmission(data: AppData, titleId: ID, contestName = ''): { d
       minChars: null,
       maxChars: null,
       limitUnit: 'chars',
+      limitNote: '',
+      synopsis: '',
+      synopsisMin: null,
+      synopsisMax: null,
+      catchphrase: '',
+      catchphraseMin: null,
+      catchphraseMax: null,
+      specialNotes: '',
       result: '',
       revisionPlan: '',
       resubmissionPlan: '',
@@ -860,10 +868,15 @@ export function snapshotText(data: AppData, snapshot: SubmissionSnapshot, titleN
   return parts.join('\n').trimEnd() + '\n'
 }
 
+/**
+ * 応募時の原稿を記録する。採用原稿のほか、その時の応募計画の梗概・あらすじとキャッチコピーも
+ * 提出したものとして控える（後から書き直しても、応募した時の内容を見返せる）
+ */
 export function recordSubmissionSnapshot(data: AppData, submissionId: ID): AppData {
   const s = data.submissions[submissionId]
   if (!s) throw new DomainError('応募計画が見つかりません')
-  const { texts, ...snapshot } = takeSnapshot(data, s.titleId)
+  const { texts, ...manuscript } = takeSnapshot(data, s.titleId)
+  const snapshot: SubmissionSnapshot = { ...manuscript, synopsis: s.synopsis ?? '', catchphrase: s.catchphrase ?? '' }
   return transact(data, (tx) => {
     for (const [id, body] of texts) if (!tx.get('snapshotTexts', id)) tx.put('snapshotTexts', { id, body })
     tx.put('submissions', { ...s, snapshot, updatedAt: now() })

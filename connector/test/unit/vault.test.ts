@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import { emptyData } from '../../../src/domain/types'
+import { addSubmission, updateSubmission } from '../../../src/domain/entityOps'
 import { addPrologue, novel, splitEpisode } from '../../../src/test/claudeFixture'
 import { pairingHash } from '../../src/vault/crypto'
 import { FakeFirebase } from '../support/fakeFirebase'
@@ -347,6 +348,56 @@ describe('読むツール', () => {
     expect(search).toMatch(/#3 第2話 ¶1 o:\d+ .*【見れる】/)
     const count = await call(core, 'novel_search_text', { title_id: n.titleId, query: '本文', count_only: true })
     expect(count).toContain('件')
+  })
+
+  it('戦略（novel_get_strategy）: 応募計画の規定の備考・提出する梗概／キャッチコピー（文字数と規定）・特記事項', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文'])
+    const a = addSubmission(n.data, n.titleId, '海風小説大賞')
+    let data = updateSubmission(a.data, a.result, {
+      status: 'planned',
+      limitNote: 'ルビ不可。\n章タイトル必須。',
+      synopsis: '｜海辺《うみべ》の町に住む少女が、\n嘘をつく。',
+      synopsisMin: 100,
+      synopsisMax: 800,
+      catchphrase: 'その嘘は、世界を救うためについた。',
+      catchphraseMax: 40,
+      specialNotes: '応募フォームのセールスポイント欄にも使う',
+    })
+    // 古い版で作った応募計画（項目が無い）
+    const b = addSubmission(data, n.titleId, '古い賞')
+    data = b.data
+    const old: Record<string, unknown> = { ...data.submissions[b.result] }
+    for (const k of ['limitNote', 'synopsis', 'synopsisMin', 'synopsisMax', 'catchphrase', 'catchphraseMin', 'catchphraseMax', 'specialNotes'])
+      delete old[k]
+    data = { ...data, submissions: { ...data.submissions, [b.result]: old as unknown as typeof data.submissions[string] } }
+    const { core } = await pairedCore(fake, data)
+    const list = await call(core, 'novel_get_strategy', { title_id: n.titleId })
+    expect(list).toContain(
+      [
+        '  規定の備考: ルビ不可。 章タイトル必須。',
+        '  梗概・あらすじ: 16字（規定 100〜800字・あと84字）',
+        '  キャッチコピー: 17字（規定 40字以内・規定内） 「その嘘は、世界を救うためについた。」',
+        '  特記事項: 応募フォームのセールスポイント欄にも使う',
+      ].join('\n'),
+    )
+    // 古い応募計画は今までどおり1行
+    expect(list).toMatch(/「古い賞」検討中 \/ 締切 未定 \/ 規定 未設定\n/)
+    const id = /(o:[0-9a-z]+)「海風小説大賞」/.exec(list)![1]
+    const full = await call(core, 'novel_get_strategy', { title_id: n.titleId, submission_id: id })
+    expect(full).toContain('--- 規定の備考 ---\nルビ不可。\n章タイトル必須。')
+    expect(full).toContain(
+      '--- 提出する梗概・あらすじ ---\n16字（空白・改行を除く）・規定 100〜800字 → あと84字\n｜海辺《うみべ》の町に住む少女が、\n嘘をつく。',
+    )
+    expect(full).toContain('--- 提出するキャッチコピー ---\n17字（空白・改行を除く）・規定 40字以内 → 規定内\nその嘘は、世界を救うためについた。')
+    expect(full).toContain('--- 特記事項 ---\n応募フォームのセールスポイント欄にも使う')
+    // 概要の後・結果の前
+    expect(full.indexOf('--- 概要 ---')).toBeLessThan(full.indexOf('--- 規定の備考 ---'))
+    expect(full.indexOf('--- 特記事項 ---')).toBeLessThan(full.indexOf('--- 結果・講評 ---'))
+    const oldId = /(o:[0-9a-z]+)「古い賞」/.exec(list)![1]
+    const oldFull = await call(core, 'novel_get_strategy', { title_id: n.titleId, submission_id: oldId })
+    expect(oldFull).not.toContain('提出する')
+    expect(oldFull).not.toContain('特記事項')
   })
 
   it('知らないタイトル・話は候補を返す', async () => {

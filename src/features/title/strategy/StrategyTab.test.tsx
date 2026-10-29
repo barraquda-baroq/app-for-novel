@@ -157,6 +157,106 @@ describe('戦略タブ', () => {
   })
 })
 
+describe('戦略タブ（規定の備考・提出する梗概／キャッチコピー・特記事項）', () => {
+  it('入力中の文字数（原稿と同じ数え方）と規定の判定を出し、畳むと規定を外れたものに札が出る', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    const subId = actions.addSubmission(titleId, '海風小説大賞')
+    actions.updateSubmission(subId, { status: 'planned' })
+    renderTab(titleId)
+    const card = screen.getByTestId('submission-card')
+    await user.click(within(card).getByTestId('submission-toggle'))
+    const count = (id: string) => within(card).getByTestId(`${id}-count`)
+
+    // 規定の備考は規定の欄の中（文字数の下）
+    const limits = within(card).getByRole('group', { name: '規定の単位' }).closest('fieldset')!
+    await user.type(within(limits).getByTestId('submission-limit-note'), 'ルビ不可')
+
+    // 梗概・あらすじ: 空白・改行、ルビの記号と読みは数えない。規定が無ければ数だけ
+    expect(count('submission-synopsis').textContent).toBe('0字（空白・改行を除く）')
+    await user.type(within(card).getByTestId('submission-synopsis'), '｜海辺《うみべ》の 町\n少女')
+    expect(count('submission-synopsis').textContent).toBe('6字（空白・改行を除く）')
+    await user.type(within(card).getByTestId('submission-synopsis-min'), '1万{Enter}')
+    expect(count('submission-synopsis').textContent).toBe('6字（空白・改行を除く） → あと9,994字')
+    expect(count('submission-synopsis').className).toContain('is-short')
+    await user.clear(within(card).getByTestId('submission-synopsis-min'))
+    await user.type(within(card).getByTestId('submission-synopsis-min'), '{Enter}')
+    await user.type(within(card).getByTestId('submission-synopsis-max'), '5{Enter}')
+    expect(count('submission-synopsis').textContent).toBe('6字（空白・改行を除く） → 1字超えています')
+    expect(count('submission-synopsis').className).toContain('is-over')
+    // 数字として読めない値は保存しない
+    await user.clear(within(card).getByTestId('submission-synopsis-max'))
+    await user.type(within(card).getByTestId('submission-synopsis-max'), 'たくさん{Enter}')
+    expect(await screen.findByText(/梗概・あらすじの文字数は数字で入力してください/)).toBeTruthy()
+    expect(within(card).getByTestId('submission-synopsis-max')).toHaveProperty('value', '5')
+
+    // キャッチコピー
+    await user.type(within(card).getByTestId('submission-catchphrase'), 'その嘘は、世界を救う')
+    await user.type(within(card).getByTestId('submission-catchphrase-min'), '20{Enter}')
+    expect(count('submission-catchphrase').textContent).toBe('10字（空白・改行を除く） → あと10字')
+    await user.type(within(card).getByTestId('submission-catchphrase-max'), '10{Enter}')
+    // 下限が上限より大きい
+    expect(within(card).getByTestId('submission-catchphrase-box').textContent).toContain('下限が上限より大きくなっています')
+    await user.clear(within(card).getByTestId('submission-catchphrase-max'))
+    await user.type(within(card).getByTestId('submission-catchphrase-max'), '40{Enter}')
+
+    await user.type(within(card).getByTestId('submission-special-notes'), '担当さんに確認')
+    await user.tab()
+    expect(getData().submissions[subId]).toMatchObject({
+      limitNote: 'ルビ不可',
+      synopsis: '｜海辺《うみべ》の 町\n少女',
+      synopsisMin: null,
+      synopsisMax: 5,
+      catchphrase: 'その嘘は、世界を救う',
+      catchphraseMin: 20,
+      catchphraseMax: 40,
+      specialNotes: '担当さんに確認',
+    })
+
+    // 畳むと、規定を外れたものに札が出る
+    await user.click(within(card).getByTestId('submission-close'))
+    expect(
+      within(card)
+        .getAllByTestId('submission-text-limit')
+        .map((c) => c.textContent),
+    ).toEqual(['梗概 +1字', 'キャッチコピー あと10字'])
+
+    // 応募時の原稿を記録すると、提出した梗概・キャッチコピーも控える（後から直しても変わらない）
+    await user.click(within(card).getByTestId('submission-toggle'))
+    await user.click(within(card).getByTestId('snapshot-record'))
+    expect(within(card).getByTestId('snapshot-synopsis-toggle').textContent).toBe('提出した梗概・あらすじ（6字）')
+    expect(within(card).getByTestId('snapshot-catchphrase-text').textContent).toBe('その嘘は、世界を救う')
+    act(() => {
+      actions.updateSubmission(subId, { catchphrase: '直したコピー', status: 'submitted' })
+    })
+    expect(within(card).getByTestId('snapshot-catchphrase-text').textContent).toBe('その嘘は、世界を救う')
+    // 応募した後は札を出さない
+    await user.click(within(card).getByTestId('submission-close'))
+    expect(within(card).queryAllByTestId('submission-text-limit')).toHaveLength(0)
+  })
+
+  it('長い梗概の控えは畳んでおき、開くと読める。古い記録・空の控えは出さない', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    const a = actions.addSubmission(titleId, 'A賞')
+    actions.updateSubmission(a, { synopsis: 'あ'.repeat(300), catchphrase: '' })
+    actions.recordSubmissionSnapshot(a)
+    const b = actions.addSubmission(titleId, 'B賞')
+    actions.recordSubmissionSnapshot(b)
+    renderTab(titleId)
+    const [cardA, cardB] = screen.getAllByTestId('submission-card')
+    await user.click(within(cardA).getByTestId('submission-toggle'))
+    expect(within(cardA).getByTestId('snapshot-synopsis-toggle').textContent).toBe('提出した梗概・あらすじ（300字）')
+    expect(within(cardA).queryByTestId('snapshot-synopsis-text')).toBeNull()
+    expect(within(cardA).queryByTestId('snapshot-catchphrase')).toBeNull()
+    await user.click(within(cardA).getByTestId('snapshot-synopsis-toggle'))
+    expect(within(cardA).getByTestId('snapshot-synopsis-text').textContent).toBe('あ'.repeat(300))
+    await user.click(within(cardB).getByTestId('submission-toggle'))
+    expect(within(cardB).getByTestId('snapshot-info')).toBeTruthy()
+    expect(within(cardB).queryByTestId('snapshot-texts')).toBeNull()
+  })
+})
+
 describe('戦略タブ（現在の原稿・応募時の原稿）', () => {
   it('採用原稿なしは話と特殊ブロックを分けて数える', () => {
     const { titleId, pieceIds } = seedTitle(['本文', '本文'])

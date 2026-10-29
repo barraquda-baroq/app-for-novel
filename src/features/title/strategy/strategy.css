@@ -591,6 +591,43 @@
   line-height: 1.7;
 }
 
+/* キャッチコピーのような1〜2行の文章 */
+.textarea.sg-textarea.is-short {
+  min-height: 42px;
+}
+
+/* 規定の備考（規定の文字数の下） */
+.sg-limit-note {
+  margin-top: 10px;
+}
+
+/* 提出する梗概・あらすじ／キャッチコピー: 本文の下に文字数の規定と今の文字数 */
+.sg-text-box {
+  min-width: 0;
+}
+
+.sg-text-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 6px;
+}
+
+.sg-text-foot .sg-limit-status {
+  margin: 0;
+}
+
+/* 梗概・キャッチコピーの規定は数千字までなので、原稿の規定の欄より狭くてよい */
+.input.sg-limit-input.is-text {
+  width: 6.5em;
+}
+
+.sg-text-count {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* 応募時の原稿 */
 .sg-snapshot {
   display: flex;
@@ -778,6 +815,26 @@
 .badge.sg-snap-badge.is-removed {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* 応募時に提出した梗概・あらすじ／キャッチコピー（読むだけ） */
+.sg-snap-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sg-snap-text-body {
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .sg-snapshot-actions {

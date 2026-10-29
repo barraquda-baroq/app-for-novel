@@ -1,6 +1,15 @@
 // 戦略タブの表示用の純粋な計算（締切・結果発表までの日数・規定の判定・応募時スナップショットとの比較など）。
 import { snapshotCounts, takeSnapshot, type SnapshotCounts, type SnapshotDiff } from '../../../domain/entityOps'
 import { flatten, missingActs } from '../../../domain/structure'
+import {
+  SUBMISSION_TEXT,
+  SUBMISSION_TEXT_FIELDS,
+  submissionTextOf,
+  submissionTextStatus,
+  textLimitRange,
+  type SubmissionTextField,
+  type SubmissionTextSource,
+} from '../../../domain/submissionTexts'
 import { formatCount } from '../../../domain/text'
 import type {
   AppData,
@@ -294,6 +303,40 @@ export function parseLimit(input: string): number | null | undefined {
   if (!/^\d+(\.\d+)?$/.test(s)) return undefined
   const n = Math.round(Number(s) * scale)
   return Number.isFinite(n) ? n : undefined
+}
+
+// ---------- 提出する文章（梗概・あらすじ、キャッチコピー）の文字数 ----------
+// 数え方・判定は domain/submissionTexts（コネクタ・手動連携の依頼文と同じ）
+
+export interface TextLimitChip {
+  field: SubmissionTextField
+  state: 'short' | 'over'
+  /** 「梗概 +12字」「キャッチコピー あと5字」 */
+  text: string
+  /** 「梗概・あらすじ 612字（規定 400〜600字）」 */
+  title: string
+}
+
+/** 畳んだカードに出す、提出する文章の規定の注意。応募前で、規定を外れているものだけ（規定が無い・規定内なら出さない） */
+export function textLimitChips(s: SubmissionTextSource & Pick<Submission, 'status'>): TextLimitChip[] {
+  if (!isBeforeSubmission(s.status)) return []
+  const chips: TextLimitChip[] = []
+  for (const field of SUBMISSION_TEXT_FIELDS) {
+    const { min, max } = submissionTextOf(s, field)
+    // 規定が無ければ数えない
+    if (min === null && max === null) continue
+    const st = submissionTextStatus(s, field)
+    if (!st.check || st.check.state === 'ok') continue
+    const def = SUBMISSION_TEXT[field]
+    const diff = formatCount(st.check.diff)
+    chips.push({
+      field,
+      state: st.check.state,
+      text: `${def.short} ${st.check.state === 'over' ? `+${diff}字` : `あと${diff}字`}`,
+      title: `${def.name} ${formatCount(st.count)}字（規定 ${textLimitRange(min, max)}）`,
+    })
+  }
+  return chips
 }
 
 // 応募時の原稿の文字数・枚数は、記録した数ではなく snapshotCounts（本文の控えを今の数え方で数え直したもの）を使う

@@ -30,11 +30,13 @@ import {
   titleLastEdited,
   titleSummary,
   updateCategory,
+  updateSubmission,
 } from './entityOps'
 import { addEpisode, deleteVersion, setActiveVersion, updateVersion } from './storyOps'
 import { countChars, textStats } from './text'
 import { repairData } from './repair'
-import { DomainError, emptyData, type AppData } from './types'
+import { listTrash, restoreTrashEntry } from './trash'
+import { DomainError, emptyData, type AppData, type Submission } from './types'
 
 describe('アイデア領域', () => {
   it('タイトルを増やすと仕切りが増え、どのタイトルにも属さない仕切りが常に最後にある', () => {
@@ -150,6 +152,73 @@ describe('戦略', () => {
     expect(submissionsOf(data, t.result).map((s) => s.contestName)).toEqual(['B賞', 'A賞'])
     data = recordSubmissionSnapshot(data, s1.result)
     expect(data.submissions[s1.result].snapshot).toMatchObject({ charCount: 4, activeVersions: { [e1.result]: v1 } })
+  })
+})
+
+describe('応募計画の規定の備考・提出する梗概／キャッチコピー・特記事項', () => {
+  const EXTRAS: Partial<Submission> = {
+    limitNote: 'ルビ不可。章タイトル必須。',
+    synopsis: '海辺の町に住む少女が、嘘をついて世界を救う話。',
+    synopsisMin: 100,
+    synopsisMax: 800,
+    catchphrase: 'その嘘は、世界を救うためについた。',
+    catchphraseMin: null,
+    catchphraseMax: 40,
+    specialNotes: '応募フォームの「作品のセールスポイント」欄にも同じ文を使う',
+  }
+
+  function setup() {
+    const t = createTitle(emptyData(), '作品A')
+    const e1 = addEpisode(t.data, t.result)
+    let data = updateVersion(e1.data, e1.data.pieces[e1.result].versionIds[0], { body: '本文本文' })
+    const s = addSubmission(data, t.result, 'A賞')
+    data = updateSubmission(s.data, s.result, EXTRAS)
+    return { data, titleId: t.result, id: s.result }
+  }
+
+  it('新しい応募計画は空・規定なしで作る', () => {
+    const t = createTitle(emptyData(), '作品A')
+    const s = addSubmission(t.data, t.result, 'A賞')
+    expect(s.data.submissions[s.result]).toMatchObject({
+      limitNote: '',
+      synopsis: '',
+      synopsisMin: null,
+      synopsisMax: null,
+      catchphrase: '',
+      catchphraseMin: null,
+      catchphraseMax: null,
+      specialNotes: '',
+    })
+  })
+
+  it('応募時の原稿を記録すると、その時の梗概・あらすじとキャッチコピーも控える（後から書き直しても変わらない）', () => {
+    const f = setup()
+    let data = recordSubmissionSnapshot(f.data, f.id)
+    const snap = data.submissions[f.id].snapshot!
+    expect(snap).toMatchObject({ charCount: 4, synopsis: EXTRAS.synopsis, catchphrase: EXTRAS.catchphrase })
+    data = updateSubmission(data, f.id, { synopsis: '書き直した梗概', catchphrase: '新しいコピー' })
+    expect(data.submissions[f.id].snapshot).toMatchObject({ synopsis: EXTRAS.synopsis, catchphrase: EXTRAS.catchphrase })
+    // 記録し直すと今の内容になる
+    data = recordSubmissionSnapshot(data, f.id)
+    expect(data.submissions[f.id].snapshot).toMatchObject({ synopsis: '書き直した梗概', catchphrase: '新しいコピー' })
+    // 書いていなければ空で控える（古いデータで項目が無くても）
+    const { synopsis: _s, catchphrase: _c, ...old } = data.submissions[f.id]
+    data = { ...data, submissions: { ...data.submissions, [f.id]: old as Submission } }
+    data = recordSubmissionSnapshot(data, f.id)
+    expect(data.submissions[f.id].snapshot).toMatchObject({ synopsis: '', catchphrase: '' })
+  })
+
+  it('バックアップ・ゴミ箱（応募計画の削除・タイトルの削除）から戻しても、項目と応募時の控えはそのまま', () => {
+    const f = setup()
+    const data = recordSubmissionSnapshot(f.data, f.id)
+    const before = data.submissions[f.id]
+    expect(parseBackup(JSON.stringify(toBackup(data))).submissions[f.id]).toEqual(before)
+    for (const del of [(d: AppData) => deleteSubmission(d, f.id), (d: AppData) => deleteTitle(d, f.titleId)]) {
+      const deleted = del(data)
+      expect(deleted.submissions[f.id]).toBeUndefined()
+      const restored = restoreTrashEntry(deleted, listTrash(deleted.trashEntries)[0].id).data
+      expect(restored.submissions[f.id]).toEqual(before)
+    }
   })
 })
 

@@ -664,6 +664,118 @@ test.describe('戦略タブ', () => {
     await expectNoHorizontalScroll(page)
   })
 
+  test('規定の備考・提出する梗概／キャッチコピー（文字数の規定と今の文字数）・特記事項を書け、畳むと規定外の札、応募時に控える。幅360pxでもはみ出さない', async ({
+    page,
+  }) => {
+    await openApp(page)
+    const { titleId } = await seedTitleWithEpisodes(page, '海の記憶', ['あ'.repeat(1200)])
+    const subId = await seed(
+      page,
+      ({ actions }, id: string) => {
+        const s = actions.addSubmission(id, '海風小説大賞')
+        actions.updateSubmission(s, { status: 'planned', overview: '長編ファンタジー部門。' })
+        return s
+      },
+      titleId,
+    )
+    await openApp(page, `/t/${titleId}?tab=strategy`)
+    const card = page.getByTestId('submission-card').nth(0)
+    await card.getByTestId('submission-toggle').click()
+    const editor = card.getByTestId('submission-editor')
+    await expect(editor).toBeVisible()
+
+    // 規定の備考は規定の欄の中、文字数の下
+    const limits = editor.locator('fieldset.sg-limits')
+    await limits.getByTestId('submission-limit-note').fill('ルビ不可。章タイトル必須。')
+    const y = (id: string) => editor.getByTestId(id).evaluate((el) => el.getBoundingClientRect().top)
+    expect(await y('submission-limit-note')).toBeGreaterThan(await y('submission-max'))
+    // 並び: 概要 → 梗概・あらすじ → キャッチコピー → 特記事項 → 結果・講評
+    const order = [
+      'submission-overview',
+      'submission-synopsis',
+      'submission-catchphrase',
+      'submission-special-notes',
+      'submission-result',
+    ]
+    const tops = []
+    for (const id of order) tops.push(await y(id))
+    expect([...tops].sort((a, b) => a - b)).toEqual(tops)
+
+    // 梗概・あらすじ: 入力中に数が変わる（空白・改行、ルビの記号と読みは数えない）
+    const synopsis = editor.getByTestId('submission-synopsis')
+    const synopsisCount = editor.getByTestId('submission-synopsis-count')
+    await expect(synopsisCount).toHaveText('0字（空白・改行を除く）')
+    await synopsis.fill('｜海辺《うみべ》の町に住む少女が、\n嘘をつく。')
+    await expect(synopsisCount).toHaveText('16字（空白・改行を除く）')
+    await editor.getByTestId('submission-synopsis-min').fill('20')
+    await editor.getByTestId('submission-synopsis-min').press('Enter')
+    await expect(synopsisCount).toHaveText('16字（空白・改行を除く） → あと4字')
+    await expect(synopsisCount).toHaveClass(/is-short/)
+    await editor.getByTestId('submission-synopsis-min').fill('')
+    await editor.getByTestId('submission-synopsis-min').press('Enter')
+    await editor.getByTestId('submission-synopsis-max').fill('１０')
+    await editor.getByTestId('submission-synopsis-max').press('Enter')
+    await expect(synopsisCount).toHaveText('16字（空白・改行を除く） → 6字超えています')
+    await expect(synopsisCount).toHaveClass(/is-over/)
+    await expect(editor.getByTestId('submission-synopsis-max')).toHaveValue('10')
+
+    // キャッチコピー
+    await editor.getByTestId('submission-catchphrase').fill('その嘘は、世界を救うためについた。')
+    await editor.getByTestId('submission-catchphrase-max').fill('40')
+    await editor.getByTestId('submission-catchphrase-max').press('Enter')
+    await expect(editor.getByTestId('submission-catchphrase-count')).toHaveText('17字（空白・改行を除く） → 規定内')
+    await expect(editor.getByTestId('submission-catchphrase-count')).toHaveClass(/is-ok/)
+
+    await editor.getByTestId('submission-special-notes').fill('応募フォームのセールスポイント欄にも使う')
+    await editor.getByTestId('submission-special-notes').blur()
+
+    // スマホの幅（360px）でもはみ出さない
+    await page.setViewportSize({ width: 360, height: 800 })
+    await expectNoHorizontalScroll(page)
+    for (const id of [
+      'submission-synopsis-max',
+      'submission-catchphrase-max',
+      'submission-limit-note',
+      'submission-special-notes',
+    ]) {
+      const right = await editor.getByTestId(id).evaluate((el) => el.getBoundingClientRect().right)
+      expect(right, id).toBeLessThanOrEqual(360)
+    }
+
+    // 畳むと、規定を外れたもの（梗概）だけに札が出る
+    await card.getByTestId('submission-close').click()
+    await expect(card.getByTestId('submission-text-limit')).toHaveText(['梗概 +6字'])
+    await expectNoHorizontalScroll(page)
+
+    // 再読み込みしても残る
+    await flushAndReload(page)
+    const saved = await page.evaluate((id) => window.__ns.getData().submissions[id], subId)
+    expect(saved).toMatchObject({
+      limitNote: 'ルビ不可。章タイトル必須。',
+      synopsis: '｜海辺《うみべ》の町に住む少女が、\n嘘をつく。',
+      synopsisMin: null,
+      synopsisMax: 10,
+      catchphrase: 'その嘘は、世界を救うためについた。',
+      catchphraseMin: null,
+      catchphraseMax: 40,
+      specialNotes: '応募フォームのセールスポイント欄にも使う',
+    })
+
+    // 応募済みにして応募時の原稿を記録すると、提出した梗概・キャッチコピーも控え、札は消える
+    const again = page.getByTestId('submission-card').nth(0)
+    if (!(await again.getByTestId('submission-editor').count())) await again.getByTestId('submission-toggle').click()
+    await again.getByTestId('submission-status-select').selectOption('submitted')
+    await dialog(page).getByRole('button', { name: '記録する' }).click()
+    await expect(again.getByTestId('snapshot-synopsis-toggle')).toHaveText('提出した梗概・あらすじ（16字）')
+    await expect(again.getByTestId('snapshot-catchphrase-text')).toHaveText('その嘘は、世界を救うためについた。')
+    await again.getByTestId('submission-catchphrase').fill('直したコピー')
+    await again.getByTestId('submission-catchphrase').blur()
+    await expect(again.getByTestId('snapshot-catchphrase-text')).toHaveText('その嘘は、世界を救うためについた。')
+    await again.getByTestId('submission-close').click()
+    await expect(again.getByTestId('submission-text-limit')).toHaveCount(0)
+    await expectNoHorizontalScroll(page)
+  })
+
   test('現在の原稿の数字は桁の途中で折り返さない', async ({ page }) => {
     await openApp(page)
     const { titleId } = await seedTitleWithEpisodes(page, '大長編', ['あ'.repeat(1_234_567)])

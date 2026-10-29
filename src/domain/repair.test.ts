@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { addIdea, createTitle, ideaSections, moveIdeaStep } from './entityOps'
+import { addIdea, addSubmission, createTitle, ideaSections, moveIdeaStep } from './entityOps'
 import { repairData } from './repair'
 import { addChapter, addEpisode, setChaptersEnabled } from './storyOps'
 import { flatten } from './structure'
-import { emptyData, type AppData } from './types'
+import { emptyData, type AppData, type Submission } from './types'
 
 function sample() {
   const t = createTitle(emptyData(), '作品')
@@ -130,6 +130,49 @@ describe('壊れたバックアップの修復（項目の欠け）', () => {
     const r = repairData(broken)
     expect(r.fixes.length).toBeGreaterThan(0)
     expect(r.data.titles[titleId].structure).toEqual(data.titles[titleId].structure)
+  })
+})
+
+describe('応募計画の後から足した項目（規定の備考・提出する梗概／キャッチコピー・特記事項）', () => {
+  function withSubmission(extra: Record<string, unknown>) {
+    const { data, titleId } = sample()
+    const s = addSubmission(data, titleId, 'A賞')
+    const { limitNote, synopsis, synopsisMin, synopsisMax, catchphrase, catchphraseMin, catchphraseMax, specialNotes, ...old } =
+      s.data.submissions[s.result]
+    void [limitNote, synopsis, synopsisMin, synopsisMax, catchphrase, catchphraseMin, catchphraseMax, specialNotes]
+    const record = { ...old, ...extra } as unknown as Submission
+    return { data: { ...s.data, submissions: { [s.result]: record } } as AppData, id: s.result, record }
+  }
+
+  it('古いデータ（項目が無い）は直したことにせず、無いまま使う（画面では空・規定なし）', () => {
+    const f = withSubmission({})
+    const r = repairData(f.data)
+    expect(r.fixes).toEqual([])
+    expect(r.data).toBe(f.data)
+    expect(r.data.submissions[f.id].synopsis).toBeUndefined()
+  })
+
+  it('形の壊れた値だけ直す（文章は文字列、文字数の規定は数か null）', () => {
+    const f = withSubmission({ limitNote: 3, synopsis: null, synopsisMin: '100', synopsisMax: 800, catchphrase: 'コピー' })
+    const r = repairData(f.data)
+    expect(r.fixes).toContain('応募計画の項目を補いました')
+    const s = r.data.submissions[f.id]
+    expect(s).toMatchObject({ limitNote: '', synopsis: '', synopsisMin: null, synopsisMax: 800, catchphrase: 'コピー' })
+    // 無かった項目は無いまま
+    expect('specialNotes' in s).toBe(false)
+    expect('catchphraseMax' in s).toBe(false)
+  })
+
+  it('応募時の記録の、提出した梗概・キャッチコピーの控えは残す（古い記録には無いまま）', () => {
+    const snapshot = { at: 1, charCount: 0, activeVersions: {}, synopsis: '提出した梗概', catchphrase: '提出したコピー' }
+    const f = withSubmission({ snapshot })
+    const r = repairData(f.data)
+    expect(r.fixes).toEqual([])
+    expect(r.data.submissions[f.id].snapshot).toEqual(snapshot)
+    const bad = withSubmission({ snapshot: { ...snapshot, synopsis: 5 } })
+    const fixed = repairData(bad.data).data.submissions[bad.id].snapshot!
+    expect(fixed.synopsis).toBeUndefined()
+    expect(fixed.catchphrase).toBe('提出したコピー')
   })
 })
 
