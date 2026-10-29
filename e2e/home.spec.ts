@@ -149,24 +149,28 @@ test.describe('ホーム', () => {
     await expect.poll(() => sectionNames(page)).toEqual(['風の街の物語', '星の海', UNASSIGNED])
   })
 
-  test('アイデアを追加・編集し、別のタイトルの仕切りへ移動し、並べ替えて削除できる', async ({ page }) => {
+  test('アイデアを追加・編集し、別のタイトルの仕切りへ移動し、並べ替えて削除できる（見出しの入力欄はない）', async ({ page }) => {
     await openApp(page)
     const titleId = await seed(page, ({ actions }) => actions.createTitle('星の海'))
     await showIdeas(page)
     const none = section(page, 'none')
     const target = section(page, titleId)
 
-    // 見出し＋内容で追加（どちらも空なら保存できない）
+    // 内容だけで追加（空なら保存できない）。見出しの入力欄はない
     await none.getByTestId('idea-add').click()
     await expect(dialog(page)).toContainText(UNASSIGNED)
+    await expect(page.getByTestId('idea-heading-input')).toHaveCount(0)
     await expect(page.getByTestId('idea-save')).toBeDisabled()
-    await page.getByTestId('idea-heading-input').fill('記憶を売る古書店')
+    await page
+      .getByTestId('idea-body-input')
+      .fill('記憶を売る古書店\n客は自分の記憶を一冊の本にして売る。\n店主はそれを決して読まない。')
     await expect(page.getByTestId('idea-save')).toBeEnabled()
-    await page.getByTestId('idea-body-input').fill('客は自分の記憶を一冊の本にして売る。\n店主はそれを決して読まない。')
     await page.getByTestId('idea-save').click()
     await expect(dialog(page)).toHaveCount(0)
     await expect(cardsIn(none)).toHaveCount(1)
-    await expect(none.getByTestId('idea-heading')).toHaveText('記憶を売る古書店')
+    await expect(none.getByTestId('idea-heading')).toHaveCount(0)
+    // 2行以上あるアイデアは1行目を少し目立たせる
+    await expect(none.getByTestId('idea-lead')).toHaveText('記憶を売る古書店')
     await expect(none.getByTestId('idea-body')).toContainText('店主はそれを決して読まない。')
 
     // 内容だけ・Ctrl+Enter で追加
@@ -191,9 +195,10 @@ test.describe('ホーム', () => {
     // 編集
     await cardsIn(none).nth(0).getByTestId('idea-edit').click()
     await expect(page.getByTestId('idea-body-input')).toHaveValue('雨の日にだけ開く駅')
-    await page.getByTestId('idea-heading-input').fill('雨の駅')
+    await expect(page.getByTestId('idea-heading-merged')).toHaveCount(0)
+    await page.getByTestId('idea-body-input').fill('雨の駅\n雨の日にだけ開く駅')
     await page.getByTestId('idea-save').click()
-    await expect(cardsIn(none).nth(0).getByTestId('idea-heading')).toHaveText('雨の駅')
+    await expect(cardsIn(none).nth(0).getByTestId('idea-lead')).toHaveText('雨の駅')
 
     // 編集中に閉じようとすると確認される
     await cardsIn(none).nth(0).getByTestId('idea-edit').click()
@@ -220,8 +225,9 @@ test.describe('ホーム', () => {
     await expect(none.getByTestId('idea-make-title')).toHaveCount(1)
 
     const stored = await ideasInData(page)
-    expect(stored.find((i) => i.heading === '記憶を売る古書店')?.titleId).toBe(titleId)
-    expect(stored.find((i) => i.heading === '雨の駅')?.titleId).toBeNull()
+    expect(stored.find((i) => i.body.startsWith('記憶を売る古書店\n'))?.titleId).toBe(titleId)
+    expect(stored.find((i) => i.body.startsWith('雨の駅\n'))?.titleId).toBeNull()
+    expect(stored.map((i) => i.heading)).toEqual(['', ''])
 
     // 削除
     await cardsIn(target).nth(0).getByTestId('idea-delete').click()
@@ -229,6 +235,130 @@ test.describe('ホーム', () => {
     await clickInDialog(page, '削除')
     await expect(cardsIn(target)).toHaveCount(0)
     await expect(target.getByTestId('idea-section-empty')).toBeVisible()
+  })
+
+  test('アイデアを済みにすると斜線＋グレーで仕切りの下へ沈み、外すと済みでないものの末尾に戻る（削除とは別）', async ({
+    page,
+  }, info) => {
+    if (info.project.name === 'mobile') await page.setViewportSize({ width: 360, height: 760 })
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      for (const body of ['案A', '案B', '案C']) actions.addIdea(null, '', body)
+    })
+    await showIdeas(page)
+    const none = section(page, 'none')
+    const texts = () => cardsIn(none).getByTestId('idea-body').allTextContents()
+    const card = (text: string) => cardsIn(none).filter({ hasText: text })
+
+    const boxA = card('案A').getByTestId('idea-check')
+    await expect(boxA).toHaveAccessibleName('「案A」を済みにする')
+    // 押せる大きさ（34px 以上）
+    const tap = (await card('案A').locator('.idea-check').boundingBox())!
+    expect(Math.min(tap.width, tap.height)).toBeGreaterThanOrEqual(34)
+    await boxA.check()
+    await expect.poll(texts).toEqual(['案B', '案C', '案A'])
+    const done = card('案A')
+    await expect(done).toHaveAttribute('data-checked', 'true')
+    await expect(done.getByTestId('idea-check')).toBeChecked()
+    await expect(done.getByTestId('idea-check')).toHaveAccessibleName('「案A」の済みを外す')
+    // 斜線＋グレー。並べ替えのボタンは済みでないものだけ
+    const look = await done.getByTestId('idea-body').evaluate((el) => {
+      const s = getComputedStyle(el)
+      return { line: s.textDecorationLine, color: s.color }
+    })
+    const openColor = await card('案B')
+      .getByTestId('idea-body')
+      .evaluate((el) => getComputedStyle(el).color)
+    expect(look.line).toContain('line-through')
+    expect(look.color).not.toBe(openColor)
+    await expect(done.getByTestId('idea-up')).toHaveCount(0)
+    await expect(done.getByTestId('idea-down')).toHaveCount(0)
+    await expect(card('案C').getByTestId('idea-down')).toBeDisabled()
+    await expect(none.getByTestId('idea-done-divider')).toHaveText('済み 1件')
+    // 件数は済みも含めた数
+    await expect(none.getByTestId('idea-section-count')).toHaveAttribute('data-count', '3')
+    await expect(page.getByTestId('idea-total')).toHaveText('3')
+
+    // 新しく済みにしたものから並ぶ。再読み込みしても同じ
+    await card('案B').getByTestId('idea-check').check()
+    await expect.poll(texts).toEqual(['案C', '案B', '案A'])
+    await expect(none.getByTestId('idea-done-divider')).toHaveText('済み 2件')
+    await page.reload()
+    await showIdeas(page)
+    await expect.poll(texts).toEqual(['案C', '案B', '案A'])
+
+    // 外すと済みでないものの末尾へ戻る
+    await card('案A').getByTestId('idea-check').uncheck()
+    await expect.poll(texts).toEqual(['案C', '案A', '案B'])
+    await expect(card('案A')).toHaveAttribute('data-checked', 'false')
+    await expect(card('案A').getByTestId('idea-up')).toBeEnabled()
+    const stored = await page.evaluate(() =>
+      Object.values(window.__ns.getData().ideas).map((i) => ({ body: i.body, checked: i.checked, checkedAt: i.checkedAt })),
+    )
+    expect(stored.find((i) => i.body === '案A')).toEqual({ body: '案A', checked: false, checkedAt: null })
+    expect(stored.find((i) => i.body === '案B')?.checked).toBe(true)
+
+    // 削除は済みとは別（ゴミ箱へ）
+    await card('案B').getByTestId('idea-delete').click()
+    await clickInDialog(page, '削除')
+    await expect.poll(texts).toEqual(['案C', '案A'])
+    await expect(none.getByTestId('idea-done-divider')).toHaveCount(0)
+    await noHorizontalScroll(page)
+  })
+
+  test('古い版で見出しを付けたアイデアは、見出しのまま表示し、編集して保存すると見出しを内容の1行目にまとめる', async ({
+    page,
+  }, info) => {
+    if (info.project.name === 'mobile') await page.setViewportSize({ width: 360, height: 760 })
+    await openApp(page)
+    const id = await seed(page, ({ actions }) => actions.addIdea(null, '記憶を売る古書店', '客は記憶を売る。\n店主は読まない。'))
+    await showIdeas(page)
+    const card = cardsIn(section(page, 'none')).first()
+    const stored = () => page.evaluate((i) => window.__ns.getData().ideas[i], id)
+    await expect(card.getByTestId('idea-heading')).toHaveText('記憶を売る古書店')
+    await expect(card.getByTestId('idea-lead')).toHaveCount(0)
+
+    // 開くと見出しを1行目にまとめた内容。閉じただけでは変えない
+    await card.getByTestId('idea-edit').click()
+    await expect(page.getByTestId('idea-heading-input')).toHaveCount(0)
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('記憶を売る古書店\n客は記憶を売る。\n店主は読まない。')
+    await expect(page.getByTestId('idea-heading-merged')).toContainText('見出しは内容の1行目に入れました')
+    await page.getByTestId('idea-cancel').click()
+    await expect(dialog(page)).toHaveCount(0)
+    expect(await stored()).toMatchObject({ heading: '記憶を売る古書店', body: '客は記憶を売る。\n店主は読まない。' })
+    await expect(card.getByTestId('idea-heading')).toHaveText('記憶を売る古書店')
+
+    // 保存すると見出しは空になり、内容の1行目になる
+    await card.getByTestId('idea-edit').click()
+    await page.getByTestId('idea-save').click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect(card.getByTestId('idea-heading')).toHaveCount(0)
+    await expect(card.getByTestId('idea-lead')).toHaveText('記憶を売る古書店')
+    expect(await stored()).toMatchObject({ heading: '', body: '記憶を売る古書店\n客は記憶を売る。\n店主は読まない。' })
+    await noHorizontalScroll(page)
+  })
+
+  test('300件のアイデアがある仕切りでも、済みにするとすぐ下へ沈む', async ({ page }) => {
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      for (let i = 0; i < 300; i++) actions.addIdea(null, '', `案${i + 1}\n${'思いついたことのメモ。'.repeat(3)}`)
+    })
+    await showIdeas(page)
+    const none = section(page, 'none')
+    await expect(cardsIn(none)).toHaveCount(300)
+    const target = cardsIn(none).nth(1)
+    await expect(target.getByTestId('idea-lead')).toHaveText('案2')
+    const ms = await target.getByTestId('idea-check').evaluate(async (el) => {
+      const t0 = performance.now()
+      ;(el as HTMLInputElement).click()
+      const list = el.closest('ul')!
+      while ((list.lastElementChild as HTMLElement | null)?.dataset.checked !== 'true')
+        await new Promise((r) => requestAnimationFrame(r))
+      return performance.now() - t0
+    })
+    await expect(cardsIn(none).last().getByTestId('idea-lead')).toHaveText('案2')
+    await expect(cardsIn(none).nth(1).getByTestId('idea-lead')).toHaveText('案3')
+    expect(ms).toBeLessThan(1500)
   })
 
   test('長いアイデアは折りたたまれ、「続きを表示」で全文を読める。仕切りは折りたためる', async ({ page }) => {
@@ -771,6 +901,24 @@ test.describe('ホーム', () => {
     await current.click()
     await expect(page.getByTestId('idea-move-submit')).toBeDisabled()
     await expect(page.getByTestId('idea-move-summary')).toContainText('現在の位置です')
+    await page.keyboard.press('Escape')
+    await expect(dialog(page)).toHaveCount(0)
+
+    // 済みのアイデアは位置を選ばずに移る（移動先でも済みのまま下にまとまる）。位置の候補には済みのアイデアを数えない
+    await cardsIn(section(page, a)).filter({ hasText: 'A2' }).getByTestId('idea-check').check()
+    await cardsIn(section(page, a)).filter({ hasText: 'A2' }).getByTestId('idea-move').click()
+    await expect(page.getByTestId('idea-move-position')).toHaveCount(0)
+    await page.locator(`[data-testid="idea-move-option"][data-section="${a}"]`).click()
+    await expect(page.getByTestId('idea-move-submit')).toBeDisabled()
+    await page.locator(`[data-testid="idea-move-option"][data-section="${b}"]`).click()
+    await expect(page.getByTestId('idea-move-summary')).toContainText('「風の街」に移ります。済みのまま')
+    await page.getByTestId('idea-move-submit').click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect.poll(() => section(page, b).getByTestId('idea-heading').allTextContents()).toEqual(['A3', 'B1', 'B2', 'A2'])
+    await expect(cardsIn(section(page, b)).last()).toHaveAttribute('data-checked', 'true')
+    await cardsIn(section(page, b)).filter({ hasText: 'B1' }).getByTestId('idea-move').click()
+    await page.locator(`[data-testid="idea-move-option"][data-section="${b}"]`).click()
+    await expect(position.locator('option')).toHaveText(['先頭（「A3」の前）', '「A3」の後（現在の位置）', '末尾（「B2」の後）'])
   })
 
   test('追加・編集ダイアログの書きかけは、戻る操作やアプリを閉じた後も同じダイアログを開くと復元される', async ({ page }) => {
@@ -784,7 +932,6 @@ test.describe('ホーム', () => {
     await goHome(page)
     const none = section(page, 'none')
     await none.getByTestId('idea-add').click()
-    await page.getByTestId('idea-heading-input').fill('書きかけの見出し')
     await page.getByTestId('idea-body-input').fill('大事な思いつき')
     await page.goBack()
     await expect(page.getByTestId('app-settings')).toBeVisible()
@@ -793,7 +940,6 @@ test.describe('ホーム', () => {
     await expect(dialog(page)).toHaveCount(0)
     await none.getByTestId('idea-add').click()
     await expect(page.getByTestId('idea-draft-restored')).toContainText('下書きを復元しました')
-    await expect(page.getByTestId('idea-heading-input')).toHaveValue('書きかけの見出し')
     await expect(page.getByTestId('idea-body-input')).toHaveValue('大事な思いつき')
 
     // アプリを閉じた（再読み込み）後も残っている。ほかの仕切りの追加には出ない
@@ -815,14 +961,16 @@ test.describe('ホーム', () => {
     await page.getByTestId('idea-cancel').click()
 
     // 編集: 再読み込みしても書きかけが戻る。「下書きを破棄して元に戻す」で元の内容に戻る
+    // （古い版で見出しを付けたアイデアなので、見出しを1行目にまとめた内容で開く）
     await cardsIn(section(page, titleId)).first().getByTestId('idea-edit').click()
-    await page.getByTestId('idea-body-input').fill('直しかけの本文')
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('既存の案\n元の本文')
+    await page.getByTestId('idea-body-input').fill('既存の案\n直しかけの本文')
     await page.reload()
     await cardsIn(section(page, titleId)).first().getByTestId('idea-edit').click()
     await expect(page.getByTestId('idea-draft-restored')).toBeVisible()
-    await expect(page.getByTestId('idea-body-input')).toHaveValue('直しかけの本文')
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('既存の案\n直しかけの本文')
     await page.getByTestId('idea-draft-discard').click()
-    await expect(page.getByTestId('idea-body-input')).toHaveValue('元の本文')
+    await expect(page.getByTestId('idea-body-input')).toHaveValue('既存の案\n元の本文')
     await expect(page.getByTestId('idea-draft-restored')).toHaveCount(0)
     await page.getByTestId('idea-cancel').click()
     await expect(dialog(page)).toHaveCount(0)
@@ -896,6 +1044,17 @@ test.describe('タイトル画面のアイデアタブ', () => {
     expect(stored.filter((i) => i.titleId === a).map((i) => i.body)).toEqual(['星の海の案3', '星の海の案4'])
     expect(stored.find((i) => i.heading === '案2')?.titleId).toBe(b)
     expect(stored.find((i) => i.heading === '案1')?.titleId).toBeNull()
+
+    // 済みにすると、タイトルのアイデアタブでも下へ沈む。外すと済みでないものの末尾へ
+    await cardsIn(tab).nth(0).getByTestId('idea-check').check()
+    await expect.poll(() => cardsIn(tab).getByTestId('idea-body').allTextContents()).toEqual(['星の海の案4', '星の海の案3'])
+    await expect(cardsIn(tab).nth(1)).toHaveAttribute('data-checked', 'true')
+    await expect(tab.getByTestId('idea-done-divider')).toHaveText('済み 1件')
+    await expect(cardsIn(tab).nth(0).getByTestId('idea-down')).toBeDisabled()
+    await cardsIn(tab).nth(1).getByTestId('idea-check').uncheck()
+    await expect.poll(() => cardsIn(tab).getByTestId('idea-body').allTextContents()).toEqual(['星の海の案4', '星の海の案3'])
+    await expect(tab.getByTestId('idea-done-divider')).toHaveCount(0)
+    await noHorizontalScroll(page)
 
     // すべてのアイデアを見る（スマホでもアイデア側が開く）
     await expect(page.getByTestId('all-ideas-link')).toHaveAttribute('href', new RegExp(`view=ideas&focus=${a}`))
@@ -1232,6 +1391,8 @@ test.describe('画面のスクリーンショット', () => {
           '\n',
         ),
       )
+      // 済み（没にした案）は斜線＋グレーで下へ
+      actions.setIdeaChecked(actions.addIdea(a, '', '青年の正体は最初の司書だった\n読者に早く気づかれすぎるので没'), true)
       actions.addIdea(b, 'パンの名前', '売れ残るパンには名前がない。最終話で名前が付く。')
       actions.addIdea(null, '記憶を売る古書店', '客は自分の記憶を一冊の本にして売る。店主はそれを決して読まない。')
       actions.addIdea(null, '', '雨の日にだけ開く駅')

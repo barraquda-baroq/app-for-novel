@@ -37,6 +37,7 @@ export const actions = {
   // アイデア
   addIdea: (titleId: ID | null, heading = '', body = '') => run((d) => E.addIdea(d, titleId, heading, body)),
   updateIdea: (ideaId: ID, patch: Parameters<typeof E.updateIdea>[2]) => apply((d) => E.updateIdea(d, ideaId, patch)),
+  setIdeaChecked: (ideaId: ID, checked: boolean) => apply((d) => E.setIdeaChecked(d, ideaId, checked)),
   moveIdeaToSection: (ideaId: ID, titleId: ID | null) => apply((d) => E.moveIdeaToSection(d, ideaId, titleId)),
   moveIdeaStep: (ideaId: ID, dir: -1 | 1) => apply((d) => E.moveIdeaStep(d, ideaId, dir)),
   moveIdeaTo: (ideaId: ID, titleId: ID | null, index: number) => apply((d) => E.moveIdeaTo(d, ideaId, titleId, index)),

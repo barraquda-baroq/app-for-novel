@@ -320,3 +320,27 @@ describe('2.3 の記録のマージ', () => {
     expect(r.record).toMatchObject({ contests: [c('k0', 's1'), c('k1', 's2')], appliedAt: 9 })
   })
 })
+
+describe('アイデアの済み（チェック）のマージ', () => {
+  // 古い版のアイデア（済みの項目を持たない）
+  const legacy = { id: 'i', titleId: null, heading: '見出し', body: '元の内容', order: 0, createdAt: 1, updatedAt: 1 }
+  it('済みは短い項目として項目ごとに合わせる: 片方で済みにし、もう片方で内容を直しても両方残る', () => {
+    // この端末では内容を直し（修復は済みの項目を足さないので、書くレコードにも無い）、別の端末では済みにした
+    const mine = { ...legacy, body: '直した内容', updatedAt: 3 }
+    const theirs = { ...legacy, checked: true, checkedAt: 2, updatedAt: 2 }
+    const r = mergeRemote('ideas', legacy, mine, theirs, D)
+    expect(r.record).toMatchObject({ body: '直した内容', checked: true, checkedAt: 2, updatedAt: 3 })
+  })
+  it('見出しを内容の1行目にまとめて保存しても、別の端末の済みは残る', () => {
+    const mine = { ...legacy, heading: '', body: '見出し\n元の内容', updatedAt: 3 }
+    const theirs = { ...legacy, checked: true, checkedAt: 2, updatedAt: 2 }
+    const r = mergeRemote('ideas', legacy, mine, theirs, D)
+    expect(r.record).toMatchObject({ heading: '', body: '見出し\n元の内容', checked: true, checkedAt: 2 })
+  })
+  it('両方で済みを変えていたら、後から合わせる端末（この端末）を優先する', () => {
+    const base = { ...legacy, checked: false, checkedAt: null }
+    const mine = { ...base, checked: true, checkedAt: 5, updatedAt: 5 }
+    const theirs = { ...base, checked: true, checkedAt: 4, updatedAt: 4 }
+    expect(mergeRemote('ideas', base, mine, theirs, D).record).toMatchObject({ checked: true, checkedAt: 5 })
+  })
+})

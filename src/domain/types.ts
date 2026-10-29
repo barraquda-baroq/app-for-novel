@@ -111,8 +111,17 @@ export interface Idea {
   id: ID
   /** null = どのタイトルにも属さないアイデア */
   titleId: ID | null
+  /**
+   * 見出し（古い版で書いたもの）。今の版では入力欄がなく、新しいアイデアは空。
+   * 空でないものは編集して保存した時に内容の1行目へまとめる（それまでは見出しとして表示する）
+   */
   heading: string
   body: string
+  /** 済み（実装した・没にした）。無い = 済みでない（古い版のアイデア）。済みにしたものは斜線＋グレーで仕切りの下へ沈む */
+  checked?: boolean
+  /** 済みにした日時（済みの並び: 新しく済みにしたものから）。済みでなければ null */
+  checkedAt?: number | null
+  /** 済みでないアイデアの並び順（済みのアイデアの並びには使わない） */
   order: number
   createdAt: number
   updatedAt: number

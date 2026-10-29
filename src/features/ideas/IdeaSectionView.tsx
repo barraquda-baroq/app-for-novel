@@ -1,8 +1,9 @@
 // アイデア領域の仕切り1つ分（タイトルごと、または「どのタイトルにも属さない」）。
 // ホームでは折りたたみでき、タイトル画面のアイデアタブでは常に開いた状態で使う。
+// 済み（実装した・没にした）のアイデアは、済みでないものの下に「済み n件」の区切りを挟んでまとまる。
 import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { IdeaSection } from '../../domain/entityOps'
+import { isIdeaChecked, type IdeaSection } from '../../domain/entityOps'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
 import { attempt, notify } from '../../store/uiStore'
@@ -37,12 +38,15 @@ export function IdeaSectionView({
   const [adding, setAdding] = useState(false)
   const name = sectionDisplayName(section)
   const unassigned = section.titleId === null
+  // 件数は済みのものも含めた数（仕切りに入っているアイデアの数）。済みの数は区切りと読み上げで伝える
   const count = section.ideas.length
+  const doneCount = section.ideas.reduce((n, i) => (isIdeaChecked(i) ? n + 1 : n), 0)
+  const openCount = count - doneCount
   const isCollapsed = collapsible && collapsed
   const key = sectionKey(section.titleId)
 
-  const add = (h: string, b: string) => {
-    const id = attempt(() => actions.addIdea(section.titleId, h, b))
+  const add = (b: string) => {
+    const id = attempt(() => actions.addIdea(section.titleId, '', b))
     if (id) notify(`「${name}」にアイデアを追加しました`)
     setAdding(false)
   }
@@ -55,9 +59,14 @@ export function IdeaSectionView({
       <span className="idea-section-name" data-testid="idea-section-name">
         {heading ?? name}
       </span>
-      <span className="idea-section-count" data-testid="idea-section-count" data-count={count}>
+      <span
+        className="idea-section-count"
+        data-testid="idea-section-count"
+        data-count={count}
+        title={doneCount ? `${count}件（うち済み ${doneCount}件）` : undefined}
+      >
         {count}
-        <span className="visually-hidden">件</span>
+        <span className="visually-hidden">{doneCount ? `件（うち済み ${doneCount}件）` : '件'}</span>
       </span>
     </>
   )
@@ -122,16 +131,27 @@ export function IdeaSectionView({
           </button>
         ) : (
           <ul className="idea-list">
-            {section.ideas.map((idea, i) => (
-              <IdeaCard
-                key={idea.id}
-                idea={idea}
-                sectionName={name}
-                unassigned={unassigned}
-                first={i === 0}
-                last={i === count - 1}
-              />
-            ))}
+            {/* 1つの平らな並びにする（済みにしたカードが動いても作り直さず、開いている編集ダイアログなどが残る） */}
+            {section.ideas.flatMap((idea, i) => {
+              const card = (
+                <IdeaCard
+                  key={idea.id}
+                  idea={idea}
+                  sectionName={name}
+                  unassigned={unassigned}
+                  first={i === 0}
+                  last={i === openCount - 1}
+                />
+              )
+              // 済みのアイデアの前に区切り（並びは sortIdeas: 済みでないもの → 済み）
+              if (i !== openCount) return [card]
+              return [
+                <li key="done-divider" className="idea-list-done" aria-hidden="true" data-testid="idea-done-divider">
+                  済み {doneCount}件
+                </li>,
+                card,
+              ]
+            })}
           </ul>
         )}
       </div>

@@ -218,11 +218,43 @@
   }
 }
 
+.idea-card-top {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+/* 済みのチェックボックス（押せる所は 40px 四方） */
+.idea-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin: 3px 0 0 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.idea-check:hover {
+  background: var(--surface-2);
+}
+
+.idea-check input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .idea-card-main {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: 2px;
-  padding: 10px 14px 6px;
+  padding: 10px 14px 6px 2px;
   min-width: 0;
 }
 
@@ -253,6 +285,51 @@
   -webkit-line-clamp: unset;
   line-clamp: none;
   overflow: visible;
+}
+
+/* 2行以上のアイデアの1行目（見出しの代わりに少し目立たせる） */
+.idea-card-lead {
+  font-weight: 700;
+}
+
+/* 済み（実装した・没にした）: 斜線＋グレーで、仕切りの下へ沈む。内容は2行まで（「続きを表示」で全部） */
+.idea-card.is-checked {
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+.idea-card.is-checked .idea-card-heading,
+.idea-card.is-checked .idea-card-body {
+  color: var(--text-faint);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-faint) 80%, transparent);
+}
+
+.idea-card.is-checked .idea-card-body:not(.is-expanded) {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.idea-card.is-checked .idea-check:hover {
+  background: var(--surface-3);
+}
+
+/* 済みでないアイデアと済みのアイデアの区切り */
+.idea-list-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 2px 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.idea-list-done::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--border);
 }
 
 .idea-card-more {
@@ -347,6 +424,10 @@
 
 .textarea.idea-editor-body {
   min-height: 180px;
+}
+
+.idea-editor-merged {
+  margin: 0;
 }
 
 .idea-editor-restored {
@@ -609,7 +690,11 @@
   }
 
   .idea-card-main {
-    padding: 10px 12px 4px;
+    padding: 10px 12px 4px 0;
+  }
+
+  .idea-check {
+    margin-left: 2px;
   }
 
   .idea-card-actions .icon-btn {

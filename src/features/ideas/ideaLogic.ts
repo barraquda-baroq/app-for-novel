@@ -21,9 +21,35 @@ export function sectionDisplayName(section: Pick<IdeaSection, 'titleId' | 'name'
   return section.name.trim() || '無題のタイトル'
 }
 
-/** 見出しと内容のどちらかがあれば保存できる */
-export function canSaveIdea(heading: string, body: string): boolean {
-  return heading.trim().length > 0 || body.trim().length > 0
+/** 内容があれば保存できる（見出しの入力欄はない） */
+export function canSaveIdea(text: string): boolean {
+  return text.trim().length > 0
+}
+
+/**
+ * 編集ダイアログに出す文章。古い版で付けた見出しがあれば、内容の1行目にまとめる（見出し＋改行＋内容）。
+ * 保存すると、この文章が内容になり見出しは空になる（保存するまでは元のまま）
+ */
+export function ideaEditText(idea: Pick<Idea, 'heading' | 'body'>): string {
+  return mergeHeading(idea.heading, idea.body)
+}
+
+function mergeHeading(heading: string, body: string): string {
+  const h = heading.trim()
+  if (!h) return body
+  return body ? `${h}\n${body}` : h
+}
+
+/**
+ * カードに出す内容を、1行目とそれ以降に分ける。2行目以降に何か書いてある時だけ lead（1行目。少し目立たせる）を返す。
+ * 1行だけのアイデアは全体をふつうの文字で出す
+ */
+export function splitLead(body: string): { lead: string; rest: string } {
+  const m = /^([^\r\n]*)((?:\r\n?|\n)[\s\S]*)?$/u.exec(body)
+  const first = m?.[1] ?? body
+  const rest = m?.[2] ?? ''
+  if (!first.trim() || !rest.trim()) return { lead: '', rest: body }
+  return { lead: first, rest }
 }
 
 /** 文字数で切り詰める（サロゲートペアを壊さない） */
@@ -32,7 +58,7 @@ export function truncate(text: string, max: number): string {
   return chars.length > max ? `${chars.slice(0, max).join('')}…` : text
 }
 
-/** 見出し、なければ内容の最初の空でない行 */
+/** 見出し（古い版で付けたもの）、なければ内容の最初の空でない行 */
 export function ideaFirstLine(idea: Pick<Idea, 'heading' | 'body'>): string {
   const heading = idea.heading.trim()
   if (heading) return heading
@@ -79,7 +105,7 @@ export function cutAtBoundary(text: string, max = 40): string {
   return finish(chars.slice(0, max))
 }
 
-/** 「この案でタイトルを作る」ときのタイトル名の候補。見出し、なければ内容の最初の行（省略記号なし） */
+/** 「この案でタイトルを作る」ときのタイトル名の候補。見出し（古い版）、なければ内容の最初の行（省略記号なし） */
 export function titleNameFromIdea(idea: Pick<Idea, 'heading' | 'body'>, max = 40): string {
   return cutAtBoundary(ideaFirstLine(idea), max)
 }
@@ -169,17 +195,23 @@ export function ideaModalDraftKey(target: { mode: 'add'; section: string } | { m
 }
 
 export interface IdeaModalDraft {
-  heading: string
+  /** 書きかけの内容（見出しの入力欄があった頃の下書きは、見出しを1行目にまとめたもの） */
   body: string
 }
 
-/** 保存した下書きを読む（壊れた値は null） */
+/** 下書きとして書く形。見出しは常に空（更新前の版の画面が開いていても読めるように heading も書く） */
+export function serializeIdeaModalDraft(body: string): string {
+  return JSON.stringify({ heading: '', body })
+}
+
+/** 保存した下書きを読む（壊れた値は null）。見出しのある古い下書きは、編集ダイアログと同じく見出しを1行目にまとめる */
 export function parseIdeaModalDraft(raw: string | null): IdeaModalDraft | null {
   if (!raw) return null
   try {
-    const v = JSON.parse(raw) as Partial<IdeaModalDraft> | null
-    if (!v || typeof v.heading !== 'string' || typeof v.body !== 'string') return null
-    return { heading: v.heading, body: v.body }
+    const v = JSON.parse(raw) as { heading?: unknown; body?: unknown } | null
+    if (!v || typeof v.body !== 'string') return null
+    if (v.heading !== undefined && typeof v.heading !== 'string') return null
+    return { body: mergeHeading(typeof v.heading === 'string' ? v.heading : '', v.body) }
   } catch {
     return null
   }

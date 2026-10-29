@@ -27,7 +27,9 @@ import { claudeAccessLabel, claudeAccessOf, isNewerRecord, NEWER_RECORD_LABEL } 
 import {
   categoriesOf,
   entriesOf,
+  isIdeaChecked,
   memosOf,
+  sortIdeas,
   sortedTitles,
   submissionStatusLabel,
   submissionsOf,
@@ -233,16 +235,23 @@ function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos' | 'id
       full: () => `=== メモ: ${m.name.trim() || '（無題のメモ）'} [${shortId('memo', m.id)}] ===\n${m.body}`,
     }))
   if (kind === 'ideas')
-    return Object.values(view.ideas)
-      .filter((i) => i.titleId === title.id)
-      .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt)
-      .map((i) => ({
+    // アプリと同じ並び（済みでないもの → 済み）。済み（実装した・没にした）には【済】を付ける。
+    // 見出しは古い版で付けたものだけ（今の版は内容だけ。1行目が見出しの代わり）
+    return sortIdeas(Object.values(view.ideas).filter((i) => i.titleId === title.id)).map((i) => {
+      const ref = shortId('idea', i.id)
+      const heading = i.heading.trim()
+      const done = isIdeaChecked(i) ? '【済】' : ''
+      const chars = `（${formatCount(length(i.body))}字）`
+      return {
         id: i.id,
-        ref: shortId('idea', i.id),
-        name: i.heading,
-        line: `${shortId('idea', i.id)} ${i.heading.trim() || '（見出しなし）'}（${formatCount(length(i.body))}字）${i.body.trim() ? `: ${head(i.body)}` : ''}`,
-        full: () => `=== アイデア: ${i.heading.trim() || '（見出しなし）'} [${shortId('idea', i.id)}] ===\n${i.body}`,
-      }))
+        ref,
+        name: heading || (i.body.split(/\r\n?|\n/).find((l) => l.trim()) ?? '').trim(),
+        line: heading
+          ? `${ref} ${done}${heading}${chars}${i.body.trim() ? `: ${head(i.body)}` : ''}`
+          : `${ref} ${done}${head(i.body) || '（空のアイデア）'}${chars}`,
+        full: () => `=== アイデア${done}${heading ? `: ${heading}` : ''} [${ref}] ===\n${i.body}`,
+      }
+    })
   const out: NoteItem[] = []
   for (const c of categoriesOf(view, title.id)) {
     for (const e of entriesOf(view, c.id)) {
@@ -288,7 +297,11 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
     full = c.full === true
   }
   if (!ids.length && !full) {
-    const lines = [`=== 『${t.title.name}』の${kindLabel}（${items.length}件）[${shortId('title', t.title.id)}] ===`]
+    const done = kind === 'ideas' ? items.filter((it) => isIdeaChecked(ctx.view.ideas[it.id] ?? {})).length : 0
+    const lines = [
+      `=== 『${t.title.name}』の${kindLabel}（${items.length}件${done ? `・うち済み ${done}件` : ''}）[${shortId('title', t.title.id)}] ===`,
+    ]
+    if (done) lines.push('【済】は作者が済み（実装した・没にした）にしたアイデア。済みでないものの後ろに、新しく済みにしたものから並ぶ。')
     if (!items.length) lines.push('（ありません）')
     for (const it of items) lines.push(it.line)
     if (items.length) lines.push('本文は ids に短い id を入れるか full=true で読めます。')

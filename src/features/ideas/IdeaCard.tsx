@@ -1,6 +1,9 @@
-// アイデア1件のカード。見出し（任意）＋内容（長い場合は6行で折りたたみ）と、編集・移動・並べ替え・削除。
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+// アイデア1件のカード。済みのチェックボックス、内容（長い場合は6行で折りたたみ。2行以上なら1行目を少し目立たせる）と、
+// 編集・移動・並べ替え（済みでないものだけ）・削除。済み（実装した・没にした）にすると斜線＋グレーで仕切りの下へ沈む。
+// 古い版で付けた見出しがあれば、編集して保存するまでは見出しとして出す。
+import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { isIdeaChecked } from '../../domain/entityOps'
 import { trashNotice } from '../../domain/trash'
 import type { Idea } from '../../domain/types'
 import { paths } from '../../routes'
@@ -13,7 +16,7 @@ import { DownIcon, EditIcon, MoveIcon, TrashIcon, UpIcon } from '../../ui/icons'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { IdeaMoveDialog } from './IdeaMoveDialog'
 import { SparkIcon } from './ideaIcons'
-import { ideaModalDraftKey, ideaShortLabel, titleNameFromIdea } from './ideaLogic'
+import { ideaEditText, ideaModalDraftKey, ideaShortLabel, splitLead, titleNameFromIdea } from './ideaLogic'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { REVEAL_MS, useReveal } from './reveal'
 import { writeLocal } from './storage'
@@ -24,12 +27,13 @@ export interface IdeaCardProps {
   sectionName: string
   /** 「どのタイトルにも属さない」仕切りにあるか（「この案でタイトルを作る」を出す） */
   unassigned: boolean
+  /** 済みでないアイデアの中で先頭・末尾か（並べ替えのボタン。済みのカードでは使わない） */
   first: boolean
   last: boolean
 }
 
-/** 内容が折りたたみ表示（6行）からはみ出しているか */
-function useOverflow(text: string, expanded: boolean) {
+/** 内容が折りたたみ表示（6行。済みは2行）からはみ出しているか */
+function useOverflow(text: string, expanded: boolean, checked: boolean) {
   const ref = useRef<HTMLParagraphElement>(null)
   const [overflow, setOverflow] = useState(false)
   useLayoutEffect(() => {
@@ -44,7 +48,7 @@ function useOverflow(text: string, expanded: boolean) {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [text, expanded])
+  }, [text, expanded, checked])
   return [ref, overflow] as const
 }
 
@@ -79,18 +83,43 @@ function useRevealed(ideaId: string, ref: RefObject<HTMLLIElement | null>): bool
   return on
 }
 
-export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCardProps) {
+/** 済みにした・外した後も、チェックボックスにフォーカスを残す（カードが仕切りの下・済みでないものの末尾へ動いても） */
+function useKeepCheckFocus() {
+  const ref = useRef<HTMLInputElement>(null)
+  const pending = useRef(false)
+  useLayoutEffect(() => {
+    if (!pending.current) return
+    pending.current = false
+    const el = ref.current
+    if (el && document.activeElement !== el) el.focus({ preventScroll: true })
+  })
+  const mark = () => {
+    pending.current = document.activeElement === ref.current
+  }
+  return { ref, mark }
+}
+
+function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardProps) {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
   const [moving, setMoving] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const checked = isIdeaChecked(idea)
   const heading = idea.heading.trim()
   const body = idea.body
-  const [bodyRef, overflow] = useOverflow(body, expanded)
+  // 見出しのない（今の版の）アイデアは、2行以上なら1行目を少し目立たせる
+  const { lead, rest } = heading ? { lead: '', rest: body } : splitLead(body)
+  const [bodyRef, overflow] = useOverflow(body, expanded, checked)
   const label = ideaShortLabel(idea)
   const editDraftKey = ideaModalDraftKey({ mode: 'edit', ideaId: idea.id })
   const { ref: cardRef, move } = useKeepInPlace<HTMLLIElement>()
   const revealed = useRevealed(idea.id, cardRef)
+  const check = useKeepCheckFocus()
+
+  const toggleChecked = (next: boolean) => {
+    check.mark()
+    attempt(() => actions.setIdeaChecked(idea.id, next))
+  }
 
   // 動かしたカードが押した指の下に残るように（続けて押すとそのまま動かし続けられる）
   const step = (dir: -1 | 1) => {
@@ -135,58 +164,84 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
   return (
     <li
       ref={cardRef}
-      className={`idea-card${revealed ? ' is-revealed' : ''}`}
+      className={`idea-card${checked ? ' is-checked' : ''}${revealed ? ' is-revealed' : ''}`}
       tabIndex={-1}
       data-testid="idea-card"
       data-idea-id={idea.id}
+      data-checked={checked}
     >
-      <div className="idea-card-main">
-        {heading ? (
-          <h4 className="idea-card-heading" data-testid="idea-heading">
-            {heading}
-          </h4>
-        ) : null}
-        {body.trim() ? (
-          <p ref={bodyRef} className={`idea-card-body${expanded ? ' is-expanded' : ''}`} data-testid="idea-body">
-            {body}
-          </p>
-        ) : null}
-        {overflow || expanded ? (
-          <button
-            type="button"
-            className="idea-card-more"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((v) => !v)}
-            data-testid="idea-more"
-          >
-            {expanded ? '折りたたむ' : '続きを表示'}
-          </button>
-        ) : null}
+      <div className="idea-card-top">
+        <label
+          className="idea-check"
+          title={checked ? '済みを外す（済みでないアイデアの末尾に戻す）' : '済みにする（実装した・没にした）'}
+        >
+          <input
+            ref={check.ref}
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => toggleChecked(e.target.checked)}
+            aria-label={checked ? `「${label}」の済みを外す` : `「${label}」を済みにする`}
+            data-testid="idea-check"
+          />
+        </label>
+        <div className="idea-card-main">
+          {heading ? (
+            <h4 className="idea-card-heading" data-testid="idea-heading">
+              {heading}
+            </h4>
+          ) : null}
+          {body.trim() ? (
+            <p ref={bodyRef} className={`idea-card-body${expanded ? ' is-expanded' : ''}`} data-testid="idea-body">
+              {lead ? (
+                <span className="idea-card-lead" data-testid="idea-lead">
+                  {lead}
+                </span>
+              ) : null}
+              {rest}
+            </p>
+          ) : null}
+          {overflow || expanded ? (
+            <button
+              type="button"
+              className="idea-card-more"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((v) => !v)}
+              data-testid="idea-more"
+            >
+              {expanded ? '折りたたむ' : '続きを表示'}
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="idea-card-actions" role="group" aria-label={`「${label}」の操作`}>
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={() => step(-1)}
-          disabled={first}
-          aria-label="上へ"
-          title="1つ上へ"
-          data-testid="idea-up"
-        >
-          <UpIcon />
-        </button>
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={() => step(1)}
-          disabled={last}
-          aria-label="下へ"
-          title="1つ下へ"
-          data-testid="idea-down"
-        >
-          <DownIcon />
-        </button>
+        {/* 並べ替えは済みでないアイデアの中だけ（済みのものは済みにした順で下にまとまる） */}
+        {checked ? null : (
+          <>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => step(-1)}
+              disabled={first}
+              aria-label="上へ"
+              title="1つ上へ"
+              data-testid="idea-up"
+            >
+              <UpIcon />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => step(1)}
+              disabled={last}
+              aria-label="下へ"
+              title="1つ下へ"
+              data-testid="idea-down"
+            >
+              <DownIcon />
+            </button>
+          </>
+        )}
         <time
           className="idea-card-time"
           dateTime={new Date(idea.updatedAt).toISOString()}
@@ -232,12 +287,13 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
         <IdeaEditorModal
           mode="edit"
           sectionName={sectionName}
-          initialHeading={idea.heading}
-          initialBody={idea.body}
+          initialBody={ideaEditText(idea)}
+          mergedHeading={heading !== ''}
           draftKey={editDraftKey}
           onClose={() => setEditing(false)}
-          onSave={(h, b) => {
-            attempt(() => actions.updateIdea(idea.id, { heading: h, body: b }))
+          onSave={(b) => {
+            // 見出しは内容の1行目にまとめたので空にする（見出しのないアイデアは変わらない）
+            attempt(() => actions.updateIdea(idea.id, idea.heading ? { heading: '', body: b } : { body: b }))
             setEditing(false)
           }}
         />
@@ -246,3 +302,6 @@ export function IdeaCard({ idea, sectionName, unassigned, first, last }: IdeaCar
     </li>
   )
 }
+
+/** 一覧の行（レコード単位の props。ほかのアイデアが変わっても描き直さない） */
+export const IdeaCard = memo(IdeaCardView)

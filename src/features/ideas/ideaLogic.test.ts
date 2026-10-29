@@ -1,11 +1,24 @@
-import { describe, expect, it } from 'vitest'
-import { ideaSections, addIdea, createTitle } from '../../domain/entityOps'
-import { emptyData } from '../../domain/types'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  addIdea,
+  createTitle,
+  deleteIdea,
+  ideaSections,
+  moveIdeaStep,
+  moveIdeaTo,
+  setIdeaChecked,
+  sortIdeas,
+} from '../../domain/entityOps'
+import { parseBackup, toBackup } from '../../domain/backup'
+import { repairData } from '../../domain/repair'
+import { restoreTrashEntry } from '../../domain/trash'
+import { emptyData, type AppData, type ID } from '../../domain/types'
 import {
   UNASSIGNED_KEY,
   UNASSIGNED_NAME,
   canSaveIdea,
   cutAtBoundary,
+  ideaEditText,
   ideaModalDraftKey,
   ideaShortLabel,
   isSubmitShortcut,
@@ -15,6 +28,8 @@ import {
   positionOptions,
   sectionDisplayName,
   sectionKey,
+  serializeIdeaModalDraft,
+  splitLead,
   submitShortcutLabel,
   titleIdFromKey,
   titleNameFromIdea,
@@ -38,11 +53,184 @@ describe('仕切りのキー', () => {
 })
 
 describe('保存できるか', () => {
-  it('見出しか内容のどちらかがあればよい', () => {
-    expect(canSaveIdea('', '')).toBe(false)
-    expect(canSaveIdea('  ', '\n ')).toBe(false)
-    expect(canSaveIdea('見出し', '')).toBe(true)
-    expect(canSaveIdea('', '内容')).toBe(true)
+  it('内容があればよい（見出しの入力欄はない）', () => {
+    expect(canSaveIdea('')).toBe(false)
+    expect(canSaveIdea('  \n ')).toBe(false)
+    expect(canSaveIdea('内容')).toBe(true)
+  })
+})
+
+describe('古い版の見出し', () => {
+  it('編集ダイアログでは見出しを内容の1行目にまとめる。見出しが無ければ内容のまま', () => {
+    expect(ideaEditText({ heading: '記憶を売る古書店', body: '客は記憶を売る。\n店主は読まない。' })).toBe(
+      '記憶を売る古書店\n客は記憶を売る。\n店主は読まない。',
+    )
+    expect(ideaEditText({ heading: ' 見出しだけ ', body: '' })).toBe('見出しだけ')
+    expect(ideaEditText({ heading: '', body: '内容だけ' })).toBe('内容だけ')
+    expect(ideaEditText({ heading: '  ', body: '内容だけ' })).toBe('内容だけ')
+  })
+
+  it('カードでは、2行以上ある時だけ1行目を分けて目立たせる', () => {
+    expect(splitLead('雨の駅\n来ない列車を待つ')).toEqual({ lead: '雨の駅', rest: '\n来ない列車を待つ' })
+    expect(splitLead('一行だけ')).toEqual({ lead: '', rest: '一行だけ' })
+    expect(splitLead('一行だけ\n  ')).toEqual({ lead: '', rest: '一行だけ\n  ' })
+    expect(splitLead('\n2行目から')).toEqual({ lead: '', rest: '\n2行目から' })
+    expect(splitLead('A\r\nB')).toEqual({ lead: 'A', rest: '\r\nB' })
+  })
+})
+
+describe('済み（チェック）と並び', () => {
+  let clock = 1_000
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    clock = 1_000
+    vi.setSystemTime(clock)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  /** 1ミリ秒ずつ進める（済みにした順を分ける） */
+  const tick = () => vi.setSystemTime((clock += 1))
+
+  function fixture(): { data: AppData; ids: ID[] } {
+    let data = emptyData()
+    const ids: ID[] = []
+    for (const body of ['A', 'B', 'C', 'D']) {
+      const r = addIdea(data, null, '', body)
+      data = r.data
+      ids.push(r.result)
+    }
+    return { data, ids }
+  }
+  const bodies = (data: AppData) =>
+    ideaSections(data)
+      .at(-1)!
+      .ideas.map((i) => `${i.body}${i.checked ? '✓' : ''}`)
+
+  it('新しいアイデアは済みでない（checked: false・checkedAt: null）', () => {
+    const { data, ids } = fixture()
+    expect(data.ideas[ids[0]]).toMatchObject({ heading: '', checked: false, checkedAt: null })
+  })
+
+  it('済みにしたアイデアは下へ沈み、新しく済みにしたものから並ぶ。済みでないものは手で並べた順のまま', () => {
+    let { data, ids } = fixture()
+    tick()
+    data = setIdeaChecked(data, ids[1], true)
+    expect(bodies(data)).toEqual(['A', 'C', 'D', 'B✓'])
+    tick()
+    data = setIdeaChecked(data, ids[0], true)
+    expect(bodies(data)).toEqual(['C', 'D', 'A✓', 'B✓'])
+    expect(data.ideas[ids[0]].checkedAt).toBe(clock)
+    // 同じ値にしても何も変わらない（済みにした日時も変えない）
+    const before = data
+    tick()
+    data = setIdeaChecked(data, ids[0], true)
+    expect(data).toEqual(before)
+  })
+
+  it('済みを外すと、済みでないアイデアの末尾に戻る（checkedAt は null）', () => {
+    let { data, ids } = fixture()
+    tick()
+    data = setIdeaChecked(data, ids[0], true)
+    tick()
+    data = setIdeaChecked(data, ids[2], true)
+    data = setIdeaChecked(data, ids[0], false)
+    expect(bodies(data)).toEqual(['B', 'D', 'A', 'C✓'])
+    expect(data.ideas[ids[0]]).toMatchObject({ checked: false, checkedAt: null })
+  })
+
+  it('checked を持たない古いアイデアは済みでない。checkedAt の無い済みは古い済みとして最後', () => {
+    const { data, ids } = fixture()
+    const legacy = { ...data.ideas[ids[0]] }
+    delete legacy.checked
+    delete legacy.checkedAt
+    const list = sortIdeas([
+      { ...data.ideas[ids[1]], checked: true, checkedAt: null },
+      legacy,
+      { ...data.ideas[ids[2]], checked: true, checkedAt: 5 },
+    ])
+    expect(list.map((i) => i.body)).toEqual(['A', 'C', 'B'])
+  })
+
+  it('↑↓と位置を選んで移動は、済みでないアイデアの中だけで動かす。済みのアイデアは動かさない', () => {
+    let { data, ids } = fixture()
+    tick()
+    data = setIdeaChecked(data, ids[1], true)
+    // C の1つ上は（済みの B を飛ばして）A
+    data = moveIdeaStep(data, ids[2], -1)
+    expect(bodies(data)).toEqual(['C', 'A', 'D', 'B✓'])
+    // 済みのアイデアは↑↓でも位置を選んでも動かない
+    expect(moveIdeaStep(data, ids[1], -1)).toEqual(data)
+    expect(moveIdeaTo(data, ids[1], null, 0)).toEqual(data)
+    // 位置は済みでないアイデアの中で数える（2 = D の前）
+    data = moveIdeaTo(data, ids[2], null, 2)
+    expect(bodies(data)).toEqual(['A', 'D', 'C', 'B✓'])
+  })
+
+  it('済みのアイデアをほかの仕切りへ移すと、済みのまま下にまとまる（位置は使わない）', () => {
+    let { data, ids } = fixture()
+    const t = createTitle(data, '星の海')
+    data = addIdea(t.data, t.result, '', 'X').data
+    tick()
+    data = setIdeaChecked(data, ids[3], true)
+    data = moveIdeaTo(data, ids[3], t.result, 0)
+    expect(ideaSections(data)[0].ideas.map((i) => `${i.body}${i.checked ? '✓' : ''}`)).toEqual(['X', 'D✓'])
+  })
+
+  it('削除して戻しても済みのまま。済みでないアイデアは済みでないものの中の元の位置に戻る', () => {
+    let { data, ids } = fixture()
+    tick()
+    data = setIdeaChecked(data, ids[0], true)
+    data = deleteIdea(data, ids[0])
+    data = deleteIdea(data, ids[2])
+    expect(bodies(data)).toEqual(['B', 'D'])
+    for (const id of Object.keys(data.trashEntries)) data = restoreTrashEntry(data, id).data
+    expect(bodies(data)).toEqual(['B', 'C', 'D', 'A✓'])
+    expect(data.ideas[ids[0]].checkedAt).toBe(clock)
+  })
+
+  it('古いバックアップ（見出しあり・済みの項目なし）も読み込め、済みでないアイデアとして並ぶ。済みは書き出して読み戻しても残る', () => {
+    const ts = 1
+    const old = {
+      app: 'novel-studio',
+      schemaVersion: 1,
+      exportedAt: '2025-01-01T00:00:00.000Z',
+      data: {
+        ideas: {
+          i1: { id: 'i1', titleId: null, heading: '古い見出し', body: '古い内容', order: 0, createdAt: ts, updatedAt: ts },
+          i2: { id: 'i2', titleId: null, heading: '', body: '二つ目', order: 1, createdAt: ts, updatedAt: ts },
+        },
+      },
+    }
+    let data = parseBackup(JSON.stringify(old))
+    expect(data.ideas.i1).toMatchObject({ heading: '古い見出し', body: '古い内容' })
+    expect(bodies(data)).toEqual(['古い内容', '二つ目'])
+    tick()
+    data = setIdeaChecked(data, 'i1', true)
+    const again = parseBackup(JSON.stringify(toBackup(data)))
+    expect(again.ideas.i1).toMatchObject({ heading: '古い見出し', checked: true, checkedAt: clock })
+    expect(bodies(again)).toEqual(['二つ目', '古い内容✓'])
+  })
+
+  it('修復: 古いアイデアに済みの項目を足さない（同期でほかの端末の「済み」を打ち消さない）。壊れた値は直す', () => {
+    const { data, ids } = fixture()
+    const legacy = { ...data.ideas[ids[0]] }
+    delete legacy.checked
+    delete legacy.checkedAt
+    const input: AppData = {
+      ...data,
+      ideas: {
+        ...data.ideas,
+        [ids[0]]: legacy,
+        [ids[1]]: { ...data.ideas[ids[1]], checked: 'yes' as unknown as boolean, checkedAt: 3 },
+        [ids[2]]: { ...data.ideas[ids[2]], checked: true, checkedAt: 'x' as unknown as number },
+      },
+    }
+    const r = repairData(input)
+    expect('checked' in r.data.ideas[ids[0]]).toBe(false)
+    expect(r.data.ideas[ids[1]]).toMatchObject({ checked: false, checkedAt: null })
+    expect(r.data.ideas[ids[2]]).toMatchObject({ checked: true, checkedAt: null })
+    expect(r.fixes).toHaveLength(2)
   })
 })
 
@@ -174,7 +362,20 @@ describe('追加・編集ダイアログの下書き', () => {
     expect(parseIdeaModalDraft(null)).toBeNull()
     expect(parseIdeaModalDraft('not json')).toBeNull()
     expect(parseIdeaModalDraft('{"heading":1,"body":"x"}')).toBeNull()
+    expect(parseIdeaModalDraft('{"heading":""}')).toBeNull()
     expect(parseIdeaModalDraft('null')).toBeNull()
-    expect(parseIdeaModalDraft('{"heading":"見出し","body":"内容"}')).toEqual({ heading: '見出し', body: '内容' })
+  })
+
+  it('見出しのある古い下書きは、見出しを内容の1行目にまとめて読む', () => {
+    expect(parseIdeaModalDraft('{"heading":"見出し","body":"内容"}')).toEqual({ body: '見出し\n内容' })
+    expect(parseIdeaModalDraft('{"heading":"見出しだけ","body":""}')).toEqual({ body: '見出しだけ' })
+    expect(parseIdeaModalDraft('{"heading":"","body":"内容"}')).toEqual({ body: '内容' })
+    expect(parseIdeaModalDraft('{"body":"内容"}')).toEqual({ body: '内容' })
+  })
+
+  it('書く形は見出しが空（更新前の版の画面でも読める）。読み戻すと同じ内容', () => {
+    const raw = serializeIdeaModalDraft('1行目\n2行目')
+    expect(JSON.parse(raw)).toEqual({ heading: '', body: '1行目\n2行目' })
+    expect(parseIdeaModalDraft(raw)).toEqual({ body: '1行目\n2行目' })
   })
 })
