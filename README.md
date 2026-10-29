@@ -34,7 +34,7 @@
 - アプリの更新は「更新する」を押した時だけ（執筆中に勝手に再読み込みしない）
 
 詳しい仕様と設計上の決定は [docs/SPEC.md](docs/SPEC.md)（1.x）と [docs/SPEC-2.md](docs/SPEC-2.md)（2.x）を参照してください。
-公開（Firebase Hosting）と同期の準備は [docs/DEPLOY.md](docs/DEPLOY.md) にまとめています。
+公開（Firebase Hosting）と同期の準備は [docs/DEPLOY.md](docs/DEPLOY.md) に、Claude 用のコネクタ（2.3。claude.ai から原稿を読み、推敲案・作品批評などを足してもらう）の準備は [docs/CONNECTOR.md](docs/CONNECTOR.md) にまとめています（Windows でも Mac でも同じ手順）。
 
 ## 使い方（開発）
 
@@ -48,7 +48,11 @@ npm run format     # Prettier で整形
 
 npm run test:sync      # 同期の結合テスト（Firebase エミュレーター。Java が必要）
 npm run test:e2e:sync  # ブラウザ2つで同期を確かめる E2E テスト（同上）
-npm run deploy         # Firebase Hosting とアクセスルールを公開（docs/DEPLOY.md）
+npm run deploy         # Firebase Hosting とアクセスルール（とコネクタ）を公開（docs/DEPLOY.md）
+
+npm run connector:setup     # Claude 用のコネクタの準備（初めての時に1回。docs/CONNECTOR.md）
+npm run test:connector      # コネクタのテスト（単体・Workers の実行環境・公開する形）
+npm run test:connector:emu  # コネクタの結合テスト（Firebase エミュレーター）
 ```
 
 `dist/` は相対パスで出力されるので、任意の静的ホスティング（GitHub Pages など）にそのまま置けます。
@@ -78,4 +82,5 @@ src/store/     状態管理（Zustand）と UI から呼ぶ actions
 src/ui/        共通部品（ダイアログ・分割ペイン・自動保存入力など）
 src/features/  各画面
 e2e/           Playwright の E2E テスト
+connector/     Claude 用のコネクタ（Cloudflare Worker。リモート MCP サーバー。src/domain・src/claude の純粋な部品を共有）
 ```

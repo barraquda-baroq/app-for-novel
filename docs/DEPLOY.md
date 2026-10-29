@@ -2,13 +2,20 @@
 
 Novel Studio 2.x は、アプリを Firebase Hosting に置き、原稿を Cloud Firestore に保存して端末間で同期します。
 Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）を使います。
+2.3 の Claude 用のコネクタ（Cloudflare Worker）の準備は [CONNECTOR.md](CONNECTOR.md) にまとめています。
 
-## 1. 一度だけ行うこと（Mac で）
+公開の作業は **Windows（PowerShell）でも Mac（ターミナル）でも同じ手順・同じコマンド**でできます（コマンドは1行ずつ入力して Enter）。
+Mac が要るのは 2.4 の iPhone / Android のアプリを作る時だけです。
 
-1. [Node.js](https://nodejs.org/) の LTS 版（22 以上）を入れる。
-2. ターミナルでリポジトリを取ってくる。
+## 1. 一度だけ行うこと（Windows か Mac で）
 
-   ```bash
+1. [Node.js](https://nodejs.org/ja) の LTS 版（22 以上）と [Git](https://git-scm.com/) を入れる。
+   - Windows: インストーラーで入れてから、スタートメニューで「PowerShell」を開く
+   - Mac: インストーラーで入れてから、「ターミナル」を開く（Git は `git --version` を実行すると入れ方が出る）
+   - どちらも `node -v` が `v22` 以上なら OK
+2. リポジトリを取ってくる（PowerShell・ターミナルで1行ずつ）。
+
+   ```
    git clone https://github.com/barraquda-baroq/app-for-novel.git
    cd app-for-novel
    git checkout claude/novel-writing-app
@@ -17,17 +24,18 @@ Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）を�
 
 3. Firebase にログインする（ブラウザが開くので、Firebase のプロジェクトを作った Google アカウントを選ぶ）。
 
-   ```bash
+   ```
    npx firebase login
    ```
 
-4. 公開する。ビルドして、アプリ（Hosting）とアクセスルール（Firestore のルール・索引の設定）をまとめて送ります。
+4. 公開する。ビルドして、アプリ（Hosting）とアクセスルール（Firestore のルール・索引の設定）をまとめて送ります
+   （`scripts/deploy.mjs`。Claude 用のコネクタを準備した後は、コネクタも一緒に公開します）。
 
-   ```bash
+   ```
    npm run deploy
    ```
 
-   最後に `Hosting URL: https://novel-studio-3352e.web.app` と表示されれば完了です。
+   最後に `Hosting URL: https://novel-studio-3352e.web.app` と表示され、`公開しました。` と出れば完了です。
 
 > アクセスルールを公開するまでは、ログインしても同期できません（「クラウドへのアクセスが拒否されました」と出ます）。
 > 先に必ず `npm run deploy` を行ってください。
@@ -84,11 +92,13 @@ Firebase プロジェクト `novel-studio-3352e`（Spark 無料プラン）を�
 
 ## 4. 更新する時
 
-```bash
+```
 git pull
 npm ci
 npm run deploy
 ```
+
+Claude 用のコネクタを使っている時は、`npm ci` の後に `npm --prefix connector ci` も実行してください（`npm run deploy` がコネクタも公開します）。
 
 開いているアプリには「新しいバージョンのアプリがあります」と出るので、「更新する」を押すと切り替わります（書いている途中の内容は保存してから切り替わります）。
 
@@ -109,13 +119,20 @@ npm run deploy
 
 Firebase のエミュレーター（Java が必要）で、本物のクラウドに触れずに同期を試せます。
 
-```bash
-npm run test:sync        # 同期の結合テスト（2台の端末を動かす）
-npm run test:e2e:sync    # ブラウザ2つで同期を確かめる E2E テスト
-
-# 手で試す時（テスト用のアクセスルール firestore.emu.rules を使う。持ち主の制限は外してある）
-npx firebase emulators:start --config firebase.emu.json --only auth,firestore --project demo-novel-studio
-VITE_FIREBASE_EMULATOR=127.0.0.1 npm run dev
 ```
+npm run test:sync           # 同期の結合テスト（2台の端末を動かす）
+npm run test:e2e:sync       # ブラウザ2つで同期を確かめる E2E テスト
+npm run test:connector:emu  # Claude 用のコネクタの結合テスト（docs/CONNECTOR.md）
+```
+
+手で試す時（テスト用のアクセスルール firestore.emu.rules を使う。持ち主の制限は外してある）は、1つ目の画面でエミュレーターを動かしたまま、
+2つ目の画面で開発サーバーを動かします。
+
+```
+npx firebase emulators:start --config firebase.emu.json --only auth,firestore --project demo-novel-studio
+```
+
+- Mac（ターミナル）: `VITE_FIREBASE_EMULATOR=127.0.0.1 npm run dev`
+- Windows（PowerShell）: `$env:VITE_FIREBASE_EMULATOR="127.0.0.1"; npm run dev`
 
 エミュレーターにつないだ開発サーバーでは、「Google でログイン」を押すとエミュレーターの仮のログイン画面が開きます。
