@@ -43,7 +43,7 @@ function mcpHandler(env: Env) {
         { userAgent: state.userAgent },
       )
     },
-    { legacy: 'stateless', maxRequestBodySize: MAX_BODY, responseMode: 'json', onerror: (e) => logError('mcp_error', e) },
+    { legacy: 'stateless', maxRequestBodySize: MAX_BODY, responseMode: 'json', onerror: (e) => log('mcp_error', { name: e.name }) },
   )
   return handler
 }

@@ -135,6 +135,23 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(calls).toBe(2)
   })
 
+  it('書き込みツールが何も作れなかった時は isError（structuredContent なしでも出力の形の確かめで落ちない）', async () => {
+    const r = await rpc(
+      'tools/call',
+      { name: 'novel_add_proofreading', arguments: { title_id: titleId, items: [{ piece: '#1', excerpt: '無い文', category: 'typo', reason: 'x' }] } },
+      6,
+    )
+    expect(r.status).toBe(200)
+    expect(r.json.error).toBeUndefined()
+    expect(r.json.result.isError).toBe(true)
+    expect(r.json.result.content[0].text).toContain('見つからない 1件')
+    // 重複だけの時は isError にせず、structuredContent を返す
+    const input = { title_id: titleId, items: [{ heading: '冒頭', body: '景色の描写を増やす' }] }
+    const dup = await rpc('tools/call', { name: 'novel_add_revision_ideas', arguments: input }, 7)
+    expect(dup.json.result.isError).toBeFalsy()
+    expect(dup.json.result.structuredContent).toMatchObject({ created: [], skipped: [{ index: 0, reason: 'duplicate' }] })
+  })
+
   it('入力の形が違えば、Vault を呼ばずに失敗を返す', async () => {
     const before = calls
     const r = await rpc('tools/call', { name: 'novel_read_text', arguments: { char_budget: 5 } }, 5)
