@@ -580,7 +580,7 @@ async function chooseDevice(adb, env, serial) {
         '  - スマホの 設定 > システム > 開発者向けオプション > USB デバッグ がオン',
         '  - スマホのロックを外している',
         ...(ctx.platform === 'win32'
-          ? ['  - Windows: Google USB Driver を入れた（Android Studio の SDK Manager > SDK Tools）']
+          ? ['  - Windows: Google USB Driver を入れた（Android Studio の最初の画面の More Actions > SDK Manager > SDK Tools）']
           : []),
       ].join('\n'),
     )

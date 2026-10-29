@@ -103,7 +103,7 @@ npm run mobile:firebase -- --android
 2. **設定 > システム > 開発者向けオプション > USB デバッグ** をオンにする。
 3. USB ケーブルでパソコンとつなぐ。スマホに「USB デバッグを許可しますか？」と出たら、**「このパソコンからの接続を常に許可」にチェック**して「許可」。
 4. Windows でスマホが見つからない時は、Google USB Driver を入れる:
-   Android Studio の **Tools > SDK Manager > SDK Tools** タブで「Google USB Driver」にチェック →「OK」。
+   Android Studio の最初の画面（Welcome to Android Studio）の **More Actions（または ⋮）> SDK Manager** →「**SDK Tools**」タブで「Google USB Driver」にチェック →「OK」（プロジェクトを開いている時は **Tools > SDK Manager**）。
    それでも見つからない時は、Windows の「デバイス マネージャー」でスマホを右クリック →「ドライバーの更新」→「コンピューターを参照」で
    `C:\Users\<名前>\AppData\Local\Android\Sdk\extras\google\usb_driver` を選ぶ。
    （Pixel 以外のスマホは、メーカーの USB ドライバーを入れます）
