@@ -332,6 +332,8 @@ Android の `versionCode`（`20400`）・`versionName` は `android/app/build.gr
 スクリプトを使わずに手で写す時は、`npm run build:native` の後に `npx cap sync android`・`npx cap sync ios` とプラットフォームを付けます
 （付けない `npx cap sync` は、Windows では iPhone の部分（Swift Package のシンボリックリンク）で失敗します）。
 `ios/` の Xcode のプロジェクトのファイル（`project.pbxproj`）を手で直した時は、CI の `ios` が通ることを確かめてください。
+iPhone の部品（Swift Package）の版は `ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` に控えてあり、
+Mac の Xcode も CI と同じ版を使います（プラグインを上げて版が変わると、CI の `ios` が警告と新しい中身を出すので、それで置き換えます）。
 
 データの形の版（`DATA_MODEL`）を上げる版を出す時は、先に TestFlight に上げて `npm run android:install` もし、
 両方の端末に新しい版を入れてから `npm run deploy` します（同じ日に続けて。古い版のアプリは送るのを止めて「要更新」になります）。
