@@ -1,6 +1,6 @@
 // 戦略タブの推敲案・改稿案の表示用の純粋な計算（絞り込み・場所の表記・実行の一覧）。データは変えない。
 import { reanchor, type ReanchorResult } from '../../../claude/anchor'
-import { proofCategoryLabel } from '../../../claude/categories'
+import { PROOF_CATEGORY_LABELS, isProofCategory, proofCategoryLabel } from '../../../claude/categories'
 import { shortDate } from '../../../claude/dates'
 import type { ProofRun } from '../../../claude/order'
 import { actLabel, actNumber, episodeNumbers, parentOf, pieceLabel } from '../../../domain/structure'
@@ -41,7 +41,11 @@ export interface CategoryCount {
 export function categoriesIn(list: readonly ProofSuggestion[]): CategoryCount[] {
   const map = new Map<string, CategoryCount>()
   for (const s of list) {
-    const c = map.get(s.category) ?? { value: s.category, label: proofCategoryLabel(s.category, s.categoryLabel), count: 0 }
+    // 知っている種類の絞り込みは決まった名前（最初の案に Claude が付けた名前で、種類全体の名前を変えない）
+    const label = isProofCategory(s.category)
+      ? PROOF_CATEGORY_LABELS[s.category]
+      : proofCategoryLabel(s.category, s.categoryLabel)
+    const c = map.get(s.category) ?? { value: s.category, label, count: 0 }
     c.count += 1
     map.set(s.category, c)
   }

@@ -173,7 +173,7 @@
 ## 7. 推敲案・改稿案・作品批評と Claude 連携（2.3）
 
 - **データ**（`src/domain/types.ts`）: 6つの表を足す（Dexie v4。どれもタイトルの配下の1レコード = 1文書で、並びはタイトルの側に持たず `order` か日時で並べる）。共通の項目は `v`（記録の形の版。いまは 1。これより新しい版は「新しいコネクタの記録」）・`source`（`claude` = コネクタ、`paste` = 手動連携の貼り付け、`manual` = アプリで手で書いた）・`titleId`・`createdAt`・`updatedAt`。
-  - `proofSuggestions`（推敲案）: 見つけた話・幕 `pieceId`（幕なら属する話 `parentId`）、その時の採用稿 `versionId`、表記の控え `pieceLabel`、場所 `anchor`（記法込みの本文の中の位置 `offset`・長さ `length`・段落 `paragraph`・前後20字 `before`/`after`・本文の指紋 `bodyHash`）、種類 `category`（11種類。知らない値も残し `categoryLabel` で出す）、`excerpt`・`suggestion`・`reason`、フラグ `flagged`、チェック `done`/`doneAt`、実行 `runId`・1回の追加 `batchId`。
+  - `proofSuggestions`（推敲案）: 見つけた話・幕 `pieceId`（幕なら属する話 `parentId`）、その時の採用稿 `versionId`、表記の控え `pieceLabel`、場所 `anchor`（記法込みの本文の中の位置 `offset`・長さ `length`・段落 `paragraph`・前後20字 `before`/`after`・本文の指紋 `bodyHash`）、種類 `category`（11種類。知らない値は other にして名前を残す）と表示名 `categoryLabel`（Claude の `category_label`、無ければ決まった名前。1件ずつはこの名前で出し、種類の絞り込みは決まった名前でまとめる）、`excerpt`・`suggestion`・`reason`、フラグ `flagged`、チェック `done`/`doneAt`、実行 `runId`・1回の追加 `batchId`。
   - `proofBatches`（推敲案の1回の追加）: `runId`・`runLabel`・`runDate`・`categories`・確かめた話 `covered`（話・採用稿・採用原稿の指紋・表記）・`itemIds`。「未確認 #41〜#300、本文が変わった話 #12」を出すのに使う。
   - `revisionIdeas`（改稿案）: `heading`・`body`（長さの制限なし）・チェック `checked`/`checkedAt`（実装済み・ボツ。斜線＋グレーで下へ沈む）・関係する話 `pieceIds`・`order`。
   - `strategyNotes`（戦略メモ）: `runDate`・`heading`・`body`（Markdown）・コンテストの候補 `contests`（`k0`… の印・名前・主催・URL・締切・規定・相性 `fit`・方針 `plan`・作った応募計画 `submissionId`）・［全体戦略に追記］した日時 `appliedAt`。

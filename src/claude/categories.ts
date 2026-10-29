@@ -39,12 +39,11 @@ export function isProofCategory(v: unknown): v is ProofCategory {
 }
 
 /**
- * 表示する種類の名前。知っている種類は決まった名前、知らない種類（新しいコネクタが書いたもの）は保存された名前
- * （それも無ければ「その他」）
+ * 表示する種類の名前。保存された名前（Claude が category_label で付けた名前・知らない種類の名前）があればそれ、無ければ
+ * 決まった名前（知らない種類は「その他」）。手で足した・種類を変えた推敲案は、決まった名前を保存している
  */
 export function proofCategoryLabel(category: string, stored?: string): string {
-  if (isProofCategory(category)) return PROOF_CATEGORY_LABELS[category]
-  return stored?.trim() || PROOF_CATEGORY_LABELS.other
+  return stored?.trim() || (isProofCategory(category) ? PROOF_CATEGORY_LABELS[category] : PROOF_CATEGORY_LABELS.other)
 }
 
 /** 「typo=誤字脱字・変換ミス, ra_nuki=ら抜き, …」（ツールの入力の説明・手動連携の依頼文に入れる） */

@@ -20,7 +20,7 @@ import { matchesId, readingOrder, resolvePiece, resolveTitle, shortId } from './
 import { canClaudeRead, canClaudeWrite, claudeAccessOf, claudeView, isNewerRecord } from './visibility'
 
 describe('推敲案の種類', () => {
-  it('11種類と日本語名。知らない種類は保存された名前（無ければ「その他」）', () => {
+  it('11種類と日本語名。保存された名前（Claude の category_label）があればそれ、無ければ決まった名前（知らない種類は「その他」）', () => {
     expect(PROOF_CATEGORIES).toHaveLength(11)
     for (const c of PROOF_CATEGORIES) expect(PROOF_CATEGORY_LABELS[c]).toBeTruthy()
     expect(isProofCategory('ra_nuki')).toBe(true)
@@ -28,6 +28,11 @@ describe('推敲案の種類', () => {
     expect(proofCategoryLabel('typo')).toBe('誤字脱字・変換ミス')
     expect(proofCategoryLabel('future_kind', '新しい種類')).toBe('新しい種類')
     expect(proofCategoryLabel('future_kind')).toBe('その他')
+    // Claude が付けた名前（category_label）は、知っている種類でも出す。空なら決まった名前
+    expect(proofCategoryLabel('other', '敬語の誤り')).toBe('敬語の誤り')
+    expect(proofCategoryLabel('tic', '「のだった」の多用')).toBe('「のだった」の多用')
+    expect(proofCategoryLabel('typo', '')).toBe('誤字脱字・変換ミス')
+    expect(proofCategoryLabel('typo', '  ')).toBe('誤字脱字・変換ミス')
   })
 })
 

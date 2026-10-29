@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { proofCategoryLabel } from '../../../claude/categories'
 import { proofRunsOf, proofSuggestionsOf } from '../../../claude/order'
 import { buildProofreading, type ProofItemInput } from '../../../claude/records'
 import { joinActWithNext } from '../../../domain/acts'
@@ -62,6 +63,29 @@ describe('推敲案の場所', () => {
     const s = byExcerpt(n.data, n.titleId, '見れる')
     const gone = deletePiece(n.data, n.ids[1])
     expect(proofPlace(gone, s)).toMatchObject({ state: 'missing', label: '第2話', pieceId: null })
+  })
+})
+
+describe('Claude が付けた種類の名前（category_label）', () => {
+  it('1件ずつは Claude の名前、種類の絞り込みは決まった名前（知らない種類は「その他」に入り、名前は残す）', () => {
+    const n = novel(['のだった。のだった。丁寧語です。尊敬語だ。'])
+    suggest(n, [
+      { piece: '#1', excerpt: 'のだった。の', category: 'tic', category_label: '「のだった」の多用', reason: 'a' },
+      { piece: '#1', excerpt: '丁寧語', category: 'other', category_label: '敬語の誤り', reason: 'b' },
+      { piece: '#1', excerpt: '尊敬語', category: 'honorifics', reason: 'c' },
+    ])
+    const all = proofSuggestionsOf(n.data, n.titleId)
+    const label = (excerpt: string) => {
+      const s = all.find((x) => x.excerpt === excerpt)!
+      return proofCategoryLabel(s.category, s.categoryLabel)
+    }
+    expect(label('のだった。の')).toBe('「のだった」の多用')
+    expect(label('丁寧語')).toBe('敬語の誤り')
+    expect(label('尊敬語')).toBe('honorifics')
+    expect(categoriesIn(all).map((c) => [c.value, c.label, c.count])).toEqual([
+      ['other', 'その他', 2],
+      ['tic', '作者の癖', 1],
+    ])
   })
 })
 
