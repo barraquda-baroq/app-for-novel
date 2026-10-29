@@ -151,6 +151,11 @@ export const actions = {
   appendStrategyNoteToTitle: (noteId: ID) => apply((d) => C.appendStrategyNoteToTitle(d, noteId)),
   /** ［応募計画にする］。戻り値は応募計画の id（もう作ってあればその id） */
   contestToSubmission: (noteId: ID, contestId: string) => run((d) => C.contestToSubmission(d, noteId, contestId)),
+  /** 手で書く・直す（見出し・本文・コンテストの候補）。addStrategyNote の戻り値は戦略メモの id */
+  addStrategyNote: (titleId: ID, init?: Parameters<typeof C.addStrategyNote>[2]) =>
+    run((d) => C.addStrategyNote(d, titleId, init)),
+  updateStrategyNote: (id: ID, patch: Parameters<typeof C.updateStrategyNote>[2]) =>
+    apply((d) => C.updateStrategyNote(d, id, patch)),
   deleteStrategyNote: (id: ID) => apply((d) => C.deleteStrategyNote(d, id)),
 
   // 2.3: 手動連携の貼り付けで作った記録を入れる（もうある・ゴミ箱にあるものは入れない）。戻り値は入れた記録の id

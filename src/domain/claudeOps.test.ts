@@ -20,6 +20,7 @@ import {
   addCritiqueResult,
   addProofSuggestion,
   addRevisionIdea,
+  addStrategyNote,
   appendStrategyNoteToTitle,
   contestToSubmission,
   deleteCheckedProofSuggestions,
@@ -38,6 +39,7 @@ import {
   updateCritiqueResult,
   updateProofSuggestion,
   updateRevisionIdea,
+  updateStrategyNote,
 } from './claudeOps'
 import { joinActWithNext } from './acts'
 import { deleteTitle, titleLastEdited } from './entityOps'
@@ -333,6 +335,57 @@ describe('戦略メモ', () => {
     expect(contestToSubmission(r.data, noteId, 'k0').result).toBe(r.result)
     expect(errorOf(() => contestToSubmission(r.data, noteId, 'k9'))).toContain('見つかりません')
     expect(strategyNotesOf(r.data, n.titleId)).toHaveLength(1)
+  })
+  it('書き直す: 見出し・本文・締切・URL を直し、応募計画にした印は残る。新しい候補は次の印', () => {
+    const { data: d0, noteId } = withNote()
+    const planned = contestToSubmission(d0, noteId, 'k0')
+    const data = updateStrategyNote(planned.data, noteId, {
+      heading: '公募の狙い（直した）',
+      body: '長編賞を狙う。締切を確かめた',
+      contests: [
+        { id: 'k0', deadline: '2027-04-30', url: 'https://example.com/award' },
+        { name: '△△新人賞', deadline: '2027-06-30', minChars: 80_000, maxChars: null, limitUnit: 'chars' },
+      ],
+    })
+    const note = data.strategyNotes[noteId]
+    expect(note).toMatchObject({ heading: '公募の狙い（直した）', body: '長編賞を狙う。締切を確かめた' })
+    expect(note.updatedAt).toBeGreaterThanOrEqual(planned.data.strategyNotes[noteId].updatedAt)
+    expect(note.contests[0]).toMatchObject({
+      id: 'k0',
+      name: '〇〇大賞',
+      organizer: '〇〇社',
+      deadline: '2027-04-30',
+      url: 'https://example.com/award',
+      minChars: 100,
+      submissionId: planned.result,
+    })
+    expect(note.contests[1]).toMatchObject({ id: 'k1', name: '△△新人賞', minChars: 80_000, maxChars: null, submissionId: null })
+    // 消した候補は消える（印は使い回さない）
+    const fewer = updateStrategyNote(data, noteId, { contests: [{ id: 'k1' }] })
+    expect(fewer.strategyNotes[noteId].contests.map((c) => c.id)).toEqual(['k1'])
+    const more = updateStrategyNote(fewer, noteId, { contests: [{ id: 'k1' }, { name: '新しい賞' }] })
+    expect(more.strategyNotes[noteId].contests.map((c) => c.id)).toEqual(['k1', 'k2'])
+    expect(errorOf(() => updateStrategyNote(data, noteId, { contests: [{ name: 'x', url: 'http://example.com' }] }))).toContain(
+      'https',
+    )
+    expect(errorOf(() => updateStrategyNote(data, noteId, { contests: [{ name: 'x', deadline: '2027/04/30' }] }))).toContain(
+      'YYYY-MM-DD',
+    )
+    expect(errorOf(() => updateStrategyNote(data, noteId, { contests: [{ name: '' }] }))).toContain('名前')
+    expect(errorOf(() => updateStrategyNote(data, 'nope', { heading: 'x' }))).toContain('戦略メモが見つかりません')
+  })
+  it('手で足す: 今日の日付で、手で書いた印（manual）', () => {
+    const n = novel(['本文'])
+    const r = addStrategyNote(n.data, n.titleId, { heading: '自分の戦略', body: '本文', contests: [{ name: '〇〇賞' }] })
+    expect(r.data.strategyNotes[r.result]).toMatchObject({
+      source: 'manual',
+      titleId: n.titleId,
+      heading: '自分の戦略',
+      contests: [{ id: 'k0', name: '〇〇賞', submissionId: null }],
+      appliedAt: null,
+    })
+    expect(r.data.strategyNotes[r.result].runDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(errorOf(() => addStrategyNote(n.data, 'nope'))).toContain('タイトル')
   })
   it('削除するとゴミ箱へ', () => {
     const { data: d0, noteId } = withNote()

@@ -3,7 +3,7 @@
 // （コネクタは作るだけで、書き換え・削除はしない）。削除はゴミ箱へ（「チェック済みを削除」は1件にまとめる）。
 import { locateExcerpt } from '../claude/anchor'
 import { isProofCategory, PROOF_CATEGORY_LABELS } from '../claude/categories'
-import { jstDate } from '../claude/dates'
+import { isIsoDate, jstDate } from '../claude/dates'
 import { isHttpsUrl, type NewRecord } from '../claude/records'
 import { manuscriptOf } from '../claude/snapshot'
 import { CLAUDE_RECORD_VERSION } from '../claude/visibility'
@@ -22,6 +22,7 @@ import {
   type ProofCategory,
   type ProofSuggestion,
   type RevisionIdea,
+  type StrategyContest,
   type StrategyNote,
   type Submission,
 } from './types'
@@ -524,6 +525,93 @@ export function contestToSubmission(data: AppData, noteId: ID, contestId: string
     })
     return s.id
   })
+}
+
+/** 手で書くコンテストの候補（id は前のもの。無ければ新しい候補） */
+export type StrategyContestInput = Partial<Omit<StrategyContest, 'id' | 'submissionId'>> & { id?: string }
+
+/** コンテストの候補を確かめて整える（前の候補は id と［応募計画にする］の印を残し、新しい候補は次の k<n>） */
+function normalizeContests(prev: readonly StrategyContest[], input: readonly StrategyContestInput[]): StrategyContest[] {
+  let next = [...prev, ...input].reduce((m, c) => {
+    const n = /^k(\d+)$/.exec(c.id ?? '')
+    return n ? Math.max(m, Number(n[1]) + 1) : m
+  }, 0)
+  const seen = new Set<string>()
+  return input.map((c) => {
+    const old = c.id ? prev.find((x) => x.id === c.id) : undefined
+    const name = (c.name ?? old?.name ?? '').trim()
+    if (!name) throw new DomainError('コンテストの名前を入れてください')
+    const url = (c.url ?? old?.url ?? '').trim()
+    if (url && !isHttpsUrl(url)) throw new DomainError(`「${name}」の URL は https:// で始まるものにしてください`)
+    const deadline = (c.deadline ?? old?.deadline ?? '').trim()
+    if (deadline && !isIsoDate(deadline)) throw new DomainError(`「${name}」の締切は YYYY-MM-DD で入れてください`)
+    const count = (v: number | null | undefined, fallback: number | null): number | null => {
+      if (v === undefined) return fallback
+      if (v === null) return null
+      if (!Number.isInteger(v) || v < 0) throw new DomainError(`「${name}」の規定の数は 0 以上の整数にしてください`)
+      return v
+    }
+    const id = old && !seen.has(old.id) ? old.id : `k${next++}`
+    seen.add(id)
+    return {
+      id,
+      name,
+      organizer: (c.organizer ?? old?.organizer ?? '').trim(),
+      url,
+      deadline,
+      minChars: count(c.minChars, old?.minChars ?? null),
+      maxChars: count(c.maxChars, old?.maxChars ?? null),
+      limitUnit: (c.limitUnit ?? old?.limitUnit) === 'pages' ? 'pages' : 'chars',
+      fit: c.fit ?? old?.fit ?? '',
+      plan: c.plan ?? old?.plan ?? '',
+      submissionId: old?.submissionId ?? null,
+    }
+  })
+}
+
+/** 戦略メモを手で足す（今日の日付。見出し・本文・コンテストの候補は init から） */
+export function addStrategyNote(
+  data: AppData,
+  titleId: ID,
+  init: { heading?: string; body?: string; contests?: StrategyContestInput[] } = {},
+): { data: AppData; result: ID } {
+  return transact(data, (tx) => {
+    requireTitle(tx, titleId)
+    const ts = now()
+    const note: StrategyNote = {
+      id: newId(),
+      ...manual(titleId, ts),
+      runDate: jstDate(ts),
+      heading: init.heading ?? '',
+      body: init.body ?? '',
+      contests: normalizeContests([], init.contests ?? []),
+      appliedAt: null,
+    }
+    tx.put('strategyNotes', note)
+    return note.id
+  })
+}
+
+/**
+ * 戦略メモを手で直す（見出し・本文・コンテストの候補。Claude が書いた締切や URL の間違いも直せる）。
+ * コンテストの候補は id で前のものと結び付け、［応募計画にする］で作った応募計画の印を残す
+ */
+export function updateStrategyNote(
+  data: AppData,
+  id: ID,
+  patch: { heading?: string; body?: string; contests?: StrategyContestInput[] },
+): AppData {
+  return transact(data, (tx) => {
+    const note = tx.get('strategyNotes', id)
+    if (!note) throw new DomainError('戦略メモが見つかりません')
+    tx.put('strategyNotes', {
+      ...note,
+      ...(patch.heading !== undefined ? { heading: patch.heading } : {}),
+      ...(patch.body !== undefined ? { body: patch.body } : {}),
+      ...(patch.contests !== undefined ? { contests: normalizeContests(note.contests, patch.contests) } : {}),
+      updatedAt: now(),
+    })
+  }).data
 }
 
 export function deleteStrategyNote(data: AppData, id: ID): AppData {
