@@ -110,7 +110,9 @@ test.describe('外観', () => {
         const el = page.getByTestId(`tab-${tab}`)
         await expect(el).toHaveAttribute('aria-selected', 'true')
         out.push(
-          await el.evaluate((e) => {
+          await el.evaluate(async (e) => {
+            // 色の切り替えの途中（transition）の色を読まないように、終わるのを待つ
+            await Promise.all(e.getAnimations().map((a) => a.finished.catch(() => undefined)))
             const s = getComputedStyle(e)
             return { background: s.backgroundColor, underline: s.borderBottomColor }
           }),
