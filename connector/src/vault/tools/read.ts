@@ -59,7 +59,7 @@ const isClaudeCode = (client?: string) => Boolean(client && /claude[-_ ]?code/i.
 export function listTitles(ctx: ReadContext, hiddenCount: number): ToolResult {
   const titles = sortedTitles(ctx.view)
   const lines: string[] = [`=== Claude に見せているタイトル（${titles.length}件） ===`]
-  if (!titles.length) lines.push('（ありません。アプリのタイトルの設定「Claude に見せる」で、見せるタイトルを選んでください）')
+  if (!titles.length) lines.push('（ありません。アプリのタイトル画面の「Claude に見せる」で、見せるタイトルを選んでください）')
   for (const t of titles) {
     lines.push(titleHeadline(ctx.view, t))
     const openProof = Object.values(ctx.view.proofSuggestions).filter((s) => s.titleId === t.id && !s.done).length

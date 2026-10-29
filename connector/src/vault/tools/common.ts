@@ -60,7 +60,7 @@ export function titleArg(view: AppData, ref: unknown): { title: Title } | { erro
   if (!t.ok)
     return {
       error: fail(
-        `${t.message}（Claude に見せていないタイトルは使えません。アプリのタイトルの設定「Claude に見せる」を確かめてください）`,
+        `${t.message}（Claude に見せていないタイトルは使えません。アプリのタイトル画面の「Claude に見せる」を確かめてください）`,
         t.candidates,
       ),
     }

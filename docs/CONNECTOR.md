@@ -143,7 +143,7 @@ npm run deploy
 | --- | --- |
 | すぐに止める | アプリの 設定 → Claude 連携 →［連携を解除］（その場でコネクタは何も読めなくなる。もう一度使う時は claude.ai で接続し直す） |
 | 書き込みだけ止める | 同じ画面の「書き込みを許可」をオフ（読むのは続く。アクセスルールで止まる） |
-| あるタイトルだけ見せない | タイトルの設定の「Claude に見せる」を「見せない」 |
+| あるタイトルだけ見せない | タイトル画面の「Claude に見せる」のチップで「見せない」を選ぶ |
 | claude.ai から外す | 「カスタマイズ → コネクタ → Novel Studio」でコネクタを削除 |
 | コネクタそのものを消す | `npx --prefix connector wrangler delete`（Cloudflare から消える。鍵を消すだけなら `npx --prefix connector wrangler secret delete TOKEN_ENC_KEY`） |
 
