@@ -24,7 +24,8 @@ import type { ID } from '../../domain/types'
 import { paths } from '../../routes'
 import { getData, useData } from '../../store/appStore'
 import { usePrefs } from '../../store/uiStore'
-import { copyText, downloadFile, safeFileName } from '../../ui/browser'
+import { saveTextFile } from '../../platform/saveFile'
+import { copyText, safeFileName } from '../../ui/browser'
 import { useDocumentTitle } from '../../ui/hooks'
 import { BookIcon, ChevronRightIcon, CopyIcon, DownloadIcon, EditIcon, ListIcon } from '../../ui/icons'
 import { AppHeader, type Crumb } from '../../ui/Layout'
@@ -593,7 +594,7 @@ export function ReadThroughPage() {
             <button
               type="button"
               className="btn btn-sm"
-              onClick={() => downloadFile(fileName, text())}
+              onClick={() => void saveTextFile(fileName, text())}
               disabled={isEmpty}
               aria-label="テキストで書き出し"
               title="採用原稿をテキストファイル（.txt）で保存"

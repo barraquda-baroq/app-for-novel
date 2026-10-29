@@ -10,7 +10,8 @@ import { readingOrder } from '../../claude/refs'
 import { chaptersOf } from '../../domain/structure'
 import type { ID } from '../../domain/types'
 import { useData } from '../../store/appStore'
-import { copyText, downloadFile } from '../../ui/browser'
+import { saveTextFile } from '../../platform/saveFile'
+import { copyText } from '../../ui/browser'
 import { CheckIcon, CopyIcon, DownloadIcon } from '../../ui/icons'
 import { Modal } from '../../ui/Modal'
 import { PasteIcon } from './claudeIcons'
@@ -107,7 +108,7 @@ export function ManualDialog({ titleId, task: initialTask, tasks = ALL_TASKS, pr
       partChars: Number.MAX_SAFE_INTEGER,
     })
     if (!whole.ok) return
-    downloadFile(manualFileName(title.name, task, today), whole.parts.join('\n\n'))
+    void saveTextFile(manualFileName(title.name, task, today), whole.parts.join('\n\n'))
   }
 
   return (

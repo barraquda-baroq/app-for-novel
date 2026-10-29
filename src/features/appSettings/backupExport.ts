@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { toBackup } from '../../domain/backup'
 import { getData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
-import { downloadFile } from '../../ui/browser'
+import { saveFile } from '../../platform/saveFile'
 import { readLocal, writeLocal } from '../ideas/storage'
 import { LOCAL_STATE_CLEARED } from './localState'
 import { COMPACT_BACKUP_CHARS, LAST_BACKUP_KEY, backupChunks, backupFileName, backupTextLength } from './settingsLogic'
@@ -79,6 +79,7 @@ let running: Promise<boolean> | null = null
 
 /**
  * いまのデータをバックアップとして書き出す。書き出せたら「最後に書き出した日時」を記録して true。
+ * アプリで保存の画面をやめた時は何も記録せずに false（書き出していないので、日時も知らせも出さない）。
  * 書き出し中にもう一度呼ばれた時は、同じ書き出しの結果を返す（二重に保存しない）。
  */
 export function exportBackup(): Promise<boolean> {
@@ -96,7 +97,7 @@ async function runExport(): Promise<boolean> {
     const data = getData()
     const pretty = backupTextLength(data) <= COMPACT_BACKUP_CHARS
     const blob = await buildBlob(backupChunks(toBackup(data, now), pretty))
-    downloadFile(backupFileName(now), blob)
+    if ((await saveFile(backupFileName(now), blob, 'application/json')) !== 'saved') return false
   } catch (e) {
     notifyError(`書き出せませんでした: ${e instanceof Error ? e.message : String(e)}`)
     return false

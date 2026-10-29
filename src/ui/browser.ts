@@ -1,9 +1,15 @@
-// ブラウザ機能のラッパー（クリップボード・ファイル保存・ファイル読み込み）
+// ブラウザ機能のラッパー（クリップボード・ファイル保存・ファイル読み込み）。
+// アプリ（iPhone / Android）だけ違うところは src/platform/（ファイルの保存はアプリでは src/platform/saveFile.ts）。
+import { Clipboard } from '@capacitor/clipboard'
+import { isNative } from '../platform/platform'
 import { notify, notifyError } from '../store/uiStore'
 
 export async function copyText(text: string, doneMessage = 'クリップボードにコピーしました'): Promise<boolean> {
   try {
-    if (navigator.clipboard?.writeText) {
+    if (isNative()) {
+      // アプリは端末のクリップボードに直接入れる（WebView の navigator.clipboard は許可や操作の直後かどうかで失敗することがある）
+      await Clipboard.write({ string: text })
+    } else if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
     } else {
       const ta = document.createElement('textarea')
@@ -42,7 +48,16 @@ export function safeFileName(name: string): string {
   return (name.trim() || 'untitled').replace(/[\\/:*?"<>|\n\r\t]/g, '_').slice(0, 80)
 }
 
-export function pickTextFile(accept = '.json,application/json'): Promise<string | null> {
+/**
+ * バックアップ（.json）を選ぶ時の種類。アプリのファイル選択は .json を application/json と見なさないことがある
+ * （Google ドライブ・ダウンロードに置いたバックアップが選べない）ので、テキスト・種類の分からないファイルも選べるようにする。
+ * 中身はバックアップの読み込み（parseBackup）で確かめる
+ */
+export function backupAccept(): string {
+  return isNative() ? '.json,application/json,text/plain,application/octet-stream' : '.json,application/json'
+}
+
+export function pickTextFile(accept = backupAccept()): Promise<string | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'

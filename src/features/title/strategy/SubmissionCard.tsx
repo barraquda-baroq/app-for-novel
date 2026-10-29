@@ -26,7 +26,8 @@ import type {
 import { actions } from '../../../store/actions'
 import { getData } from '../../../store/appStore'
 import { attempt, notify, notifyError } from '../../../store/uiStore'
-import { downloadFile, formatDateTime, safeFileName } from '../../../ui/browser'
+import { formatDateTime, safeFileName } from '../../../ui/browser'
+import { saveTextFile } from '../../../platform/saveFile'
 import { confirmDialog } from '../../../ui/dialogs'
 import { DraftInput } from '../../../ui/DraftField'
 import { BookIcon, CameraIcon, ChevronRightIcon, DownloadIcon, LinkIcon, TrashIcon } from '../../../ui/icons'
@@ -754,7 +755,7 @@ function SnapshotBox({
     const text = latest ? snapshotText(getData(), latest, getData().titles[s.titleId]?.name ?? titleName) : null
     if (!text) return
     const contest = s.contestName.trim() || '応募先'
-    downloadFile(`${safeFileName(titleName)}_${safeFileName(contest)}_応募時の原稿.txt`, text)
+    void saveTextFile(`${safeFileName(titleName)}_${safeFileName(contest)}_応募時の原稿.txt`, text)
   }
 
   return (

@@ -5,7 +5,8 @@ import { useMemo, useRef, useState } from 'react'
 import type { ID } from '../../domain/types'
 import { useData } from '../../store/appStore'
 import { notify, notifyError } from '../../store/uiStore'
-import { downloadFile } from '../../ui/browser'
+import { isNative } from '../../platform/platform'
+import { saveFile } from '../../platform/saveFile'
 import { Modal } from '../../ui/Modal'
 import { useStoryData } from '../title/story/useStoryData'
 import {
@@ -72,7 +73,14 @@ export function EpisodeExportDialog({
         notify(`${n}件のファイルを${dir.name ? `「${dir.name}」に` : ''}書き出しました`)
       } else {
         const chunks = await buildZip(outFiles(entries, withHeading), { onProgress: progress })
-        downloadFile(zipName, new Blob(chunks as Uint8Array<ArrayBuffer>[], { type: 'application/zip' }))
+        const blob = new Blob(chunks as Uint8Array<ArrayBuffer>[], { type: 'application/zip' })
+        if ((await saveFile(zipName, blob, 'application/zip')) === 'cancel') {
+          // アプリで保存の画面をやめた: 失敗ではないので、ふつうのお知らせにして画面は開いたままにする
+          notify('保存先を選ばなかったので、書き出していません')
+          running.current = false
+          setBusy(null)
+          return
+        }
         notify(`${zipName} を保存しました（${total}件のファイル）`)
       }
       onClose()
@@ -152,6 +160,7 @@ export function EpisodeExportDialog({
                 {zipName}
               </span>
               ）にまとめて保存します。ZIP を開くと、1話ずつの .txt ファイルが入っています。
+              {isNative() ? '「書き出す」を押すと、保存先を選ぶ画面が開きます。' : null}
             </>
           )}
         </p>

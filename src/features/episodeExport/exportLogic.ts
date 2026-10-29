@@ -1,12 +1,13 @@
 // 各話テキスト書き出しの手順（画面から切り離した部分）。
 // - 書き出す前の一覧: ファイル名・採用原稿がなく飛ばす話の数・ZIP の名前
 // - フォルダを選べる環境（Edge・Chrome のデスクトップ。window.showDirectoryPicker がある）: 選んだフォルダに1話1ファイルを書く
-// - それ以外（iPhone・Android・Safari・Firefox）: 1つの ZIP（yyyymmddタイトル名.zip）にまとめて保存する
+// - それ以外（iPhone・Android・Safari・Firefox、iPhone / Android のアプリ）: 1つの ZIP（yyyymmddタイトル名.zip）にまとめて保存する
 // 長編（数百話・数百万字）でも画面を長く止めないよう、本文のテキスト化・圧縮は1話ずつ行い、間で処理を譲る。
 import { strToU8, Zip, ZipDeflate } from 'fflate'
 import { episodeEntries, episodeFileText, fileSafe, yyyymmdd, type EpisodeEntry } from '../../domain/episodeExport'
 import { adoptedText, flatten, missingActs } from '../../domain/structure'
 import type { AppData, ID } from '../../domain/types'
+import { isNative } from '../../platform/platform'
 
 // ---------- 書き出す前の一覧 ----------
 
@@ -148,8 +149,12 @@ interface PickerWindow {
   showDirectoryPicker?: (options?: DirectoryPickerOptions) => Promise<DirectoryHandleLike>
 }
 
-/** フォルダを選んで直接書き込めるか（Edge・Chrome のデスクトップ版など） */
+/**
+ * フォルダを選んで直接書き込めるか（Edge・Chrome のデスクトップ版など）。
+ * アプリでは選べない（Android の WebView には showDirectoryPicker があるが、呼ぶと失敗する）
+ */
 export function canPickDirectory(win: object = window): boolean {
+  if (isNative()) return false
   return typeof (win as PickerWindow).showDirectoryPicker === 'function'
 }
 
