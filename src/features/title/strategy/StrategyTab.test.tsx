@@ -238,6 +238,19 @@ describe('戦略タブ（規定の備考・提出する梗概／キャッチコ�
     expect(within(card).queryAllByTestId('submission-text-limit')).toHaveLength(0)
   })
 
+  it('細かな規定の書き場所は「規定の備考」だけ（コンテストの概要の例には応募規定を挙げず、規定の備考へ案内する）', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    actions.addSubmission(titleId, '海風小説大賞')
+    renderTab(titleId)
+    const card = screen.getByTestId('submission-card')
+    await user.click(within(card).getByTestId('submission-toggle'))
+    const overview = within(card).getByTestId('submission-overview').getAttribute('placeholder') ?? ''
+    expect(overview).not.toContain('応募規定')
+    expect(overview).toContain('「規定の備考」')
+    expect(within(card).getByTestId('submission-limit-note').getAttribute('placeholder')).toContain('ルビ不可')
+  })
+
   it('梗概の文字数の規定は、日本語入力で「10万」と変換している途中では保存・判定せず、確定した時に保存する', async () => {
     const user = userEvent.setup()
     const { titleId } = seedTitle(['本文'])

@@ -693,7 +693,7 @@ function SubmissionEditor({
         {text(
           'overview',
           'コンテストの概要',
-          '対象ジャンル・賞金や賞典・選考の流れ・応募規定・求められている作風など',
+          '対象ジャンル・賞金や賞典・選考の流れ・求められている作風など（細かな規定は上の「規定の備考」へ）',
           'submission-overview',
         )}
         <SubmissionTextBox
