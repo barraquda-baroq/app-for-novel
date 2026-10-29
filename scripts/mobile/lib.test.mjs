@@ -503,3 +503,29 @@ describe('公開リポジトリに入れないもの', () => {
     expect(read('ios/App/App/Info.plist')).toContain('<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>')
   })
 })
+
+describe('ネイティブのプロジェクト（cap sync が書くもの）', () => {
+  // package.json のプラグイン（@capacitor/core・cli・android・ios は本体）
+  const deps = Object.keys(JSON.parse(read('package.json')).dependencies)
+  const plugins = deps.filter(
+    (d) =>
+      (d.startsWith('@capacitor/') || d.startsWith('@capacitor-firebase/')) && !/^@capacitor\/(core|android|ios|cli)$/.test(d),
+  )
+
+  it('Android のプロジェクトに、すべてのプラグインが入っている（プラグインを変えたら npx cap sync android）', () => {
+    expect(plugins.length).toBeGreaterThanOrEqual(7)
+    const settings = read('android/capacitor.settings.gradle')
+    for (const p of plugins) expect(settings, p).toContain(`node_modules/${p}/android`)
+  })
+
+  it('iPhone のプロジェクトに、すべてのプラグインが入っている（Google ログインだけの形・最低の iOS 16）', () => {
+    const pkg = read('ios/App/CapApp-SPM/Package.swift')
+    for (const p of plugins.filter((x) => x.startsWith('@capacitor/'))) expect(pkg, p).toContain(`node_modules/${p}"`)
+    expect(pkg).toContain(
+      '.package(name: "CapacitorFirebaseAuthentication", path: "symlinks/CapacitorFirebaseAuthentication", traits: ["Google"])',
+    )
+    expect(pkg).toContain('platforms: [.iOS(.v16)]')
+    const capVersion = JSON.parse(read('package.json')).dependencies['@capacitor/ios']
+    expect(pkg).toContain(`capacitor-swift-pm.git", exact: "${capVersion}"`)
+  })
+})
