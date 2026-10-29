@@ -30,6 +30,7 @@ const files = {
   localXcconfig: path.join(repoDir, 'ios', 'App', 'local.xcconfig'),
   connectorLocal: path.join(repoDir, 'connector.local.json'),
   releaseApk: path.join(repoDir, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
+  daemonJvm: path.join(repoDir, 'android', 'gradle', 'gradle-daemon-jvm.properties'),
 }
 const rel = (p) => path.relative(repoDir, p).replace(/\\/g, '/')
 
@@ -38,8 +39,14 @@ class Stop extends Error {}
 
 // ---- 道具 ----
 
-/** コマンドを動かす（シェルを通さない）。capture = 出力を控える（画面には出さない） */
-function exec(command, args, { cwd = repoDir, env = process.env, capture = false } = {}) {
+/** teeStderr で控えるエラーの表示の上限（文字数。後ろを残す） */
+const TEE_MAX = 512 * 1024
+
+/**
+ * コマンドを動かす（シェルを通さない）。capture = 出力を控える（画面には出さない）。
+ * teeStderr = エラーの表示（stderr）を画面に出しながら控える（Gradle の進み具合の表示は stdout のまま）
+ */
+export function exec(command, args, { cwd = repoDir, env = process.env, capture = false, teeStderr = false } = {}) {
   return new Promise((resolve) => {
     let out = ''
     let child
@@ -47,7 +54,7 @@ function exec(command, args, { cwd = repoDir, env = process.env, capture = false
       child = spawn(command, args, {
         cwd,
         env,
-        stdio: ['inherit', capture ? 'pipe' : 'inherit', capture ? 'pipe' : 'inherit'],
+        stdio: ['inherit', capture ? 'pipe' : 'inherit', capture || teeStderr ? 'pipe' : 'inherit'],
         windowsHide: true,
       })
     } catch (e) {
@@ -57,6 +64,11 @@ function exec(command, args, { cwd = repoDir, env = process.env, capture = false
     if (capture) {
       child.stdout.on('data', (d) => (out += d))
       child.stderr.on('data', (d) => (out += d))
+    } else if (teeStderr) {
+      child.stderr.on('data', (d) => {
+        process.stderr.write(d)
+        out = (out + d).slice(-TEE_MAX)
+      })
     }
     child.on('error', (e) => resolve({ code: -1, out: `${out}${e.message}` }))
     child.on('close', (code) => resolve({ code: code ?? 1, out }))
@@ -71,6 +83,14 @@ const exists = (p) => {
   }
 }
 const firstExisting = (paths, test = exists) => paths.find((p) => p && test(p)) ?? null
+/** ファイルの中身（無い・読めない時は null） */
+const readText = (p) => {
+  try {
+    return fs.readFileSync(p, 'utf8')
+  } catch {
+    return null
+  }
+}
 
 function findJbr() {
   return firstExisting(lib.jbrCandidates(ctx), (p) => exists(lib.keytoolIn(ctx.platform, p)))
@@ -354,8 +374,8 @@ async function firebaseIos(opts) {
 
 // ---- 各コマンド ----
 
-/** そろっているものを表示する。platform・xcodebuild はテストで Windows・Mac の形を選ぶため */
-export async function doctor({ platform = ctx.platform, xcodebuild = 'xcodebuild' } = {}) {
+/** そろっているものを表示する。platform・arch・xcodebuild はテストで Windows・Mac の形を選ぶため */
+export async function doctor({ platform = ctx.platform, arch = process.arch, xcodebuild = 'xcodebuild' } = {}) {
   say('Novel Studio のアプリの準備（パスワード・ファイルの中身は表示しません）\n')
   const node = lib.nodeMajor()
   ;(node >= 22 ? ok : ng)(
@@ -373,7 +393,18 @@ export async function doctor({ platform = ctx.platform, xcodebuild = 'xcodebuild
 
   say('\nAndroid')
   const jbr = findJbr()
-  ;(jbr ? ok : ng)(jbr ? `Android Studio の Java: ${jbr}` : 'Android Studio が見つかりません（docs/MOBILE.md「Android」の 1）')
+  if (!jbr) ng('Android Studio が見つかりません（docs/MOBILE.md「Android」の 1）')
+  else {
+    const java = lib.parseJavaRelease(readText(path.join(jbr, 'release')))
+    ok(`Android Studio の Java: ${jbr}${java ? `（Java ${java.text}）` : ''}`)
+  }
+  // Gradle 自身は Java 21 で動かす（Android Studio の Java が 25 でも。無ければ初めてのビルドの時にダウンロードする）
+  const daemonJvm = lib.daemonJvmProblems(readText(files.daemonJvm), platform, arch)
+  if (daemonJvm.length) for (const p of daemonJvm) ng(p)
+  else
+    ok(
+      `アプリのビルド（Gradle）は Java ${lib.GRADLE_JAVA} で動きます（パソコンに無ければ、初めてのビルドの時に自動でダウンロード。200 MB ほど）`,
+    )
   const sdk = findSdk()
   ;(sdk ? ok : ng)(
     sdk
@@ -561,6 +592,12 @@ async function androidPreflight() {
     for (const p of problems) ng(`${rel(files.googleServices)}: ${p}`)
     throw new Stop('このままではログインできません。npm run mobile:firebase -- --android をもう一度実行してください。')
   }
+  // Gradle 自身を Java 21 で動かす決まり（これが無いと、Android Studio の Java 25 で Gradle が動いて失敗する）
+  const daemonJvm = lib.daemonJvmProblems(readText(files.daemonJvm), ctx.platform, process.arch)
+  if (daemonJvm.length) {
+    for (const p of daemonJvm) ng(p)
+    throw new Stop('このままでは Android のアプリをビルドできません。')
+  }
   ok('署名の鍵・Firebase の設定・Android Studio・SDK がそろっています')
   if (!exists(files.localProperties)) fs.writeFileSync(files.localProperties, lib.localPropertiesText(sdk))
   // Windows の環境変数の名前は Path のことがある（同じ名前を2つ渡さない）
@@ -628,6 +665,12 @@ async function chooseDevice(adb, env, serial) {
   return ready[n - 1]
 }
 
+/** gradlew が失敗した時の知らせ（エラーの表示から分かる時は、何をすればよいかも） */
+export function androidBuildFailure(out, platform) {
+  const hints = lib.gradleFailureHints(out, platform)
+  return ['Android のアプリのビルドに失敗しました（上の表示を見てください）。', ...hints.map((h) => `  ${h}`)].join('\n')
+}
+
 async function androidInstall(opts) {
   const { sdk, env } = await androidPreflight()
   // 長いビルドの前にスマホを確かめる（初めての時の「USB デバッグを許可しますか？」もここで出る）。見つからなければビルドせずに止める
@@ -635,16 +678,12 @@ async function androidInstall(opts) {
   await waitForDevice(adb, env, opts.serial)
   const first = await chooseDevice(adb, env, opts.serial)
   await buildAndSync('android')
-  say('\n▶ Android のアプリのビルド（gradlew assembleRelease。初めての時は部品のダウンロードで 5〜15 分かかります）')
+  say(
+    `\n▶ Android のアプリのビルド（gradlew assembleRelease。初めての時は部品と Gradle が使う Java ${lib.GRADLE_JAVA} のダウンロードで 5〜15 分かかります）`,
+  )
   const g = lib.gradleCommand(ctx.platform, ['assembleRelease'])
-  const built = await exec(g.command, g.args, { cwd: path.join(repoDir, 'android'), env })
-  if (built.code !== 0 || !exists(files.releaseApk))
-    throw new Stop(
-      'Android のアプリのビルドに失敗しました（上の表示を見てください）。' +
-        (ctx.platform === 'win32'
-          ? '\n  「パスが長すぎる」「Filename longer than 260 characters」と出た時は、リポジトリを C:\\Users\\<名前>\\dev\\app-for-novel のような短い場所に置き直してください（docs/MOBILE.md）。'
-          : ''),
-    )
+  const built = await exec(g.command, g.args, { cwd: path.join(repoDir, 'android'), env, teeStderr: true })
+  if (built.code !== 0 || !exists(files.releaseApk)) throw new Stop(androidBuildFailure(built.out, ctx.platform))
   ok(`できました: ${rel(files.releaseApk)}`)
   // ビルドの間に外した時は、ここで知らせる（選んだスマホをもう一度聞かない）
   const device = await chooseDevice(adb, env, first.serial)

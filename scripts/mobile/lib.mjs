@@ -265,6 +265,79 @@ export function gradleCommand(platform, tasks) {
   return { command: './gradlew', args: tasks }
 }
 
+// ---- Gradle を動かす Java ----
+// Capacitor 8 の Gradle（8.14）は Java 25 では動かない（ビルドの設定を読むところで「Unsupported class file major version 69」）。
+// いまの Android Studio に入っている Java（JBR）は 25 なので、android/gradle/gradle-daemon-jvm.properties で Gradle 自身を Java 21 で動かす。
+// パソコンに Java 21 が無ければ、Gradle が初めてのビルドの時にその URL からダウンロードする（~/.gradle/jdks。200 MB ほど）
+
+/** Gradle が動く Java の版（android/gradle/gradle-daemon-jvm.properties の toolchainVersion） */
+export const GRADLE_JAVA = 21
+
+/** JDK の release ファイル（<jbr>/release）の JAVA_VERSION。{ text: '25.0.4', major: 25 }、読めなければ null */
+export function parseJavaRelease(text) {
+  const m = /^JAVA_VERSION="?([0-9][^"\r\n]*)"?\s*$/m.exec(String(text ?? ''))
+  if (!m) return null
+  const version = m[1].trim()
+  const parts = version.split(/[.+_-]/)
+  const major = Number(parts[0] === '1' ? parts[1] : parts[0])
+  return Number.isInteger(major) && major > 0 ? { text: version, major } : null
+}
+
+/** Gradle の決まり（gradle-daemon-jvm.properties の toolchainUrl.<OS>.<CPU>）での、このパソコンの名前 */
+export function gradlePlatformKey(platform, arch) {
+  const os = { win32: 'WINDOWS', darwin: 'MAC_OS', linux: 'LINUX', freebsd: 'FREE_BSD' }[platform] ?? 'UNIX'
+  const cpu = { x64: 'X86_64', arm64: 'AARCH64' }[arch] ?? String(arch).toUpperCase()
+  return `${os}.${cpu}`
+}
+
+/** android/gradle/gradle-daemon-jvm.properties のおかしなところ（text = null はファイルが無い） */
+export function daemonJvmProblems(text, platform, arch) {
+  const fix = 'git checkout -- android/gradle/gradle-daemon-jvm.properties で元に戻してください'
+  if (text == null) return [`android/gradle/gradle-daemon-jvm.properties がありません（${fix}）`]
+  const props = parseProperties(text)
+  const problems = []
+  if (props.toolchainVersion !== String(GRADLE_JAVA))
+    problems.push(`Gradle が使う Java が ${GRADLE_JAVA} になっていません（${fix}）`)
+  const key = `toolchainUrl.${gradlePlatformKey(platform, arch)}`
+  if (!/^https:\/\//.test(props[key] ?? ''))
+    problems.push(`このパソコン用の Java ${GRADLE_JAVA} のダウンロード先（${key}）がありません（${fix}）`)
+  return problems
+}
+
+/** gradlew が失敗した時のエラーの表示から、利用者に見せる案内（分からなければ空） */
+export function gradleFailureHints(text, platform) {
+  const t = String(text ?? '')
+  const hints = []
+  // Gradle が Java 21 以外で動いた（決まりのファイルが無い・書き換わった）: Java 25 では、ビルドの設定を読むところか、
+  // プラグイン（@capacitor/filesystem など）が Java 21 を探すところで止まる
+  if (
+    /Unsupported class file major version|Unsupported Java\b/i.test(t) ||
+    /Cannot find a Java installation on your machine[^\n]*languageVersion=21[^\n]*download repositories have not been configured/i.test(
+      t,
+    )
+  )
+    hints.push(
+      `Gradle を動かす Java が新しすぎます。Gradle は Java ${GRADLE_JAVA} で動かす決まり（android/gradle/gradle-daemon-jvm.properties）なので、` +
+        'git status でそのファイルが書き換わっていないか確かめ、書き換わっていたら git checkout -- android/gradle/gradle-daemon-jvm.properties で戻してください' +
+        '（Android Studio が Gradle の JDK の変更を勧めてきても、そのままにします）。',
+    )
+  // Gradle が Java 21 をダウンロードできなかった（インターネットにつながっていない時など）
+  if (/Unable to download toolchain|Could not (?:download|provision)\b.{0,60}toolchain/i.test(t))
+    hints.push(
+      `Gradle が使う Java ${GRADLE_JAVA} をダウンロードできませんでした。インターネットにつながっているか確かめて、もう一度試してください（初めての時だけ 200 MB ほどダウンロードします）。`,
+    )
+  if (
+    platform === 'win32' &&
+    /Filename longer than 260|filename or extension is too long|ファイル名または拡張子が長すぎ|パスが長すぎ|path (?:is )?too long|name too long/i.test(
+      t,
+    )
+  )
+    hints.push(
+      '「パスが長すぎる」で失敗しています。リポジトリを C:\\Users\\<名前>\\dev\\app-for-novel のような短い場所に置き直してください（docs/MOBILE.md）。',
+    )
+  return hints
+}
+
 /** Android Studio の実行ファイル（cap open android に CAPACITOR_ANDROID_STUDIO_PATH で教える）。jbr の場所から作る */
 export function studioFromJbr(platform, jbr) {
   const p = pathFor(platform)

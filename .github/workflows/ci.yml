@@ -66,9 +66,17 @@ jobs:
 
   # 2.4 Android アプリ（Capacitor）のビルド。google-services.json・署名の鍵が無くてもビルドできることと、
   # 版（package.json → versionCode）・署名の設定（keystore.properties）が効くことを確かめる（docs/MOBILE.md）
+  # Java 25: いまの Android Studio に入っている Java（JBR 25）で gradlew を動かした時と同じ。Gradle 8.14 も Capacitor のプラグインも
+  # Java 25 では動かないので、android/gradle/gradle-daemon-jvm.properties で Gradle 自身を Java 21 で動かす（パソコンに無ければ
+  # Gradle がダウンロードする）ことを確かめる
   android:
+    name: android (Java ${{ matrix.java }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [21, 25]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -76,12 +84,17 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # Capacitor 8 とプラグインは Java 21 でコンパイルする（Android Studio に入っている JBR と同じ）
+      # Capacitor 8 とプラグインは Java 21 でコンパイルする
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: ${{ matrix.java }}
       - uses: gradle/actions/setup-gradle@v4
+      # 利用者のパソコンには Android Studio の Java（25）しか無いことが多い。ランナーに入っている Java 21 を Gradle に探させず、
+      # gradle-daemon-jvm.properties の URL からダウンロードさせる
+      - name: Java 21 を探さない（Java 25 の時）
+        if: matrix.java == 25
+        run: echo "org.gradle.java.installations.auto-detect=false" >> ~/.gradle/gradle.properties
       - name: アプリの画面をビルド（サービスワーカーなし）
         run: npm run build:native
       - name: Android のプロジェクトに写す
@@ -89,6 +102,13 @@ jobs:
       - name: Android のビルド（鍵なし）
         working-directory: android
         run: ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace
+      - name: Gradle が動いた Java（Java 25 の時は、ダウンロードした Java 21）
+        if: matrix.java == 25
+        working-directory: android
+        run: |
+          ./gradlew --no-daemon -q javaToolchains | tee "$RUNNER_TEMP/toolchains.txt"
+          ls ~/.gradle/jdks
+          grep -A5 'Language Version: *21$' "$RUNNER_TEMP/toolchains.txt" | grep -q 'Detected by: *Current JVM'
       - name: 版の確かめ
         run: node scripts/mobile/ci.mjs android-version android/app/build/outputs/apk/debug/app-debug.apk
       - name: 署名の確かめ（使い捨ての鍵で keystore.properties を作ってビルドする）

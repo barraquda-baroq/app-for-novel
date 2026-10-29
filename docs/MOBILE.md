@@ -67,7 +67,9 @@ Novel Studio 2.4 から、iPhone と Android では「ホーム画面に追加�
 2. Android Studio を一度起動し、最初の画面（Setup Wizard）を **「Standard」** で最後まで進めて「Finish」を押す（ライセンスは「Accept」）。
    Android の開発の部品（SDK）が入ります。数 GB のダウンロードで、時間がかかります。終わったら Android Studio は閉じてかまいません。
 
-Java は Android Studio に入っているもの（JBR）をスクリプトが使うので、別に入れる必要はありません。
+Java は別に入れる必要はありません。スクリプトは Android Studio に入っているもの（JBR）を使います。
+アプリのビルド（Gradle）だけは Java 21 で動く決まり（`android/gradle/gradle-daemon-jvm.properties`）で、いまの Android Studio の Java は 25 なので、
+**初めてのビルドの時に Gradle が Java 21 を自動でダウンロードします**（200 MB ほど。ホームのフォルダの `.gradle\jdks`（Mac は `~/.gradle/jdks`）に入り、次からは使い回します）。
 
 ### 2. 署名の鍵を作る（最初に一度だけ）
 
@@ -117,10 +119,12 @@ npm run android:install
 ```
 
 初めての時は、始めてすぐスマホに「USB デバッグを許可しますか？」と出ます。**「このパソコンからの接続を常に許可」にチェック**して「許可」を押してください（1 分ほど待ちます）。
-続けて、アプリの画面のビルド → Android のアプリのビルド（初めての時は部品のダウンロードで 5〜15 分）→ スマホへのインストールまで自動で行います。
+続けて、アプリの画面のビルド → Android のアプリのビルド（初めての時は部品と Java 21 のダウンロードで 5〜15 分）→ スマホへのインストールまで自動で行います。
 「入れました。」と出たら、スマホで Novel Studio を開き、設定（右上の歯車）→「同期」→「Google でログイン」。
 
 Android Studio で開いて ▶ で入れることもできます（`npm run android:open`。同じ鍵で署名されます）。
+Android Studio が「Gradle の JDK」「Daemon JVM criteria」の変更や、Gradle・Android Gradle Plugin の更新（Upgrade Assistant）を勧めてきても、**そのままにしてください**
+（リポジトリのファイルが書き換わり、次の `git pull` でぶつかります。ビルドの Java 21 はリポジトリの設定で決まっています）。
 
 ### 6. 更新
 
@@ -146,6 +150,8 @@ npm run android:install
 | ログインで「署名（SHA-1）とアプリの署名が合っていません」 | [Android の署名](#android-の署名) |
 | `mobile:firebase` で「Firebase のログインが切れています」 | `npx firebase login --reauth`（ブラウザで Firebase のプロジェクトを作った Google アカウントを選ぶ）してから、もう一度 |
 | `mobile:firebase` で「Firebase のプロジェクト … を操作できません」 | 違う Google アカウントで入っています。`npx firebase logout` → `npx firebase login` で、プロジェクトを作ったアカウントを選ぶ |
+| 「Gradle を動かす Java が新しすぎます」・`Unsupported class file major version 69`・`Cannot find a Java installation on your machine … languageVersion=21` | Gradle が Android Studio の Java 25 で動きました。`git status` で `android/gradle/gradle-daemon-jvm.properties` が書き換わっていないか確かめ、書き換わっていたら `git checkout -- android/gradle/gradle-daemon-jvm.properties` で戻してから、もう一度 |
+| 「Gradle が使う Java 21 をダウンロードできませんでした」・`Unable to download toolchain` | インターネットにつながっているか確かめて、もう一度（初めての時だけ 200 MB ほどダウンロードします） |
 | 「パスが長すぎる」「Filename longer than 260 characters」（Windows） | リポジトリを `C:\Users\<名前>\dev\app-for-novel` のような自分のフォルダの中の短い場所に `git clone` し直す（`android/keystore.properties` は `npm run mobile:keystore -- --use <鍵>` で作り直す） |
 | Play プロテクトの警告 | 自分で作ったアプリなので「インストールする」（「詳細」の中にあることがあります） |
 | 鍵のパスワードを忘れた | 取り戻す方法はありません。新しい鍵で作るには、アプリを削除して入れ直す（データが消えるので、先に同期とバックアップ）。パスワード管理アプリを確かめてください |
