@@ -3,7 +3,7 @@ import type { ID } from './types'
 let fallbackCounter = 0
 
 export function newId(): ID {
-  const c = globalThis.crypto as Crypto | undefined
+  const c = (globalThis as { crypto?: Crypto }).crypto
   if (c && typeof c.randomUUID === 'function') return c.randomUUID()
   // 非セキュアコンテキスト（file:// 等）向けのフォールバック
   fallbackCounter += 1

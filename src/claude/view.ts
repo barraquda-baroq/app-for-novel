@@ -41,7 +41,7 @@ export function decodeCursor(cursor: string): Record<string, unknown> | null {
     const b64 = cursor.trim().replace(/-/g, '+').replace(/_/g, '/')
     const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4))
     const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0))
-    const v = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown
+    const v = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes)) as unknown
     return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
   } catch {
     return null
