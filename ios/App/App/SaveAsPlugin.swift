@@ -3,7 +3,7 @@ import UIKit
 
 /// ファイルの保存先を選んでもらう（src/platform/saveFile.ts の SaveAs）。
 /// アプリの一時置き場（Cache）に書いたファイルを、「ファイル」の書き出しの画面で好きな場所へコピーする。
-/// 保存される名前は一時置き場のファイルの名前（saveFile.ts がそのまま付けている）。
+/// 保存される名前は一時置き場のファイルの名前（saveFile.ts の cacheName。とても長い名前は拡張子の前を少し縮めてある）。
 /// やめた時は "Save canceled"（code CANCELED）で reject する（saveFile.ts の isSaveCancel が「やめた」と見る）
 @objc(SaveAsPlugin)
 public class SaveAsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {

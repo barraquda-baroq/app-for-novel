@@ -68,8 +68,35 @@ export function isSaveCancel(e: unknown): boolean {
   return code === 'CANCELED' || /cancel/i.test(message)
 }
 
-/** 一時置き場に置くファイルの名前（フォルダの区切りになる文字を入れない） */
-const cacheName = (name: string) => name.replace(/[\\/]/g, '_') || 'file'
+/**
+ * 一時置き場の名前の長さの上限（UTF-8 のバイト数）。Android（ext4・f2fs）は1つの名前が 255 バイトまでで、
+ * 日本語は1文字 3 バイトなので、長い題名と応募先の「応募時の原稿」の名前は超えることがある（超えると書けない）
+ */
+export const CACHE_NAME_MAX_BYTES = 240
+
+const utf8Bytes = (s: string) => new TextEncoder().encode(s).length
+
+/**
+ * 一時置き場に置くファイルの名前（フォルダの区切りになる文字を入れない）。
+ * 長すぎる名前は、拡張子を残して文字（コードポイント。絵文字を割らない）の切れ目で縮める。
+ * Android の保存先の名前は SaveAs に元の名前を渡すので変わらない（iPhone はこの名前で保存される）
+ */
+export function cacheName(name: string, maxBytes = CACHE_NAME_MAX_BYTES): string {
+  const clean = name.replace(/[\\/]/g, '_') || 'file'
+  if (utf8Bytes(clean) <= maxBytes) return clean
+  const dot = clean.lastIndexOf('.')
+  const ext = dot > 0 && clean.length - dot <= 10 ? clean.slice(dot) : ''
+  let budget = maxBytes - utf8Bytes(ext)
+  let out = ''
+  // for…of はコードポイントごと（サロゲートペアを割らない）
+  for (const ch of clean.slice(0, clean.length - ext.length)) {
+    const n = utf8Bytes(ch)
+    if (n > budget) break
+    out += ch
+    budget -= n
+  }
+  return (out || 'file') + ext
+}
 
 /** アプリで保存している途中か（一時置き場を作ってから、保存の画面が閉じるまで） */
 let nativeSaving = false

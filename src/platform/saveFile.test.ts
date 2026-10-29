@@ -49,7 +49,16 @@ vi.mock('@capacitor/filesystem', () => ({
   },
 }))
 
-import { BLOB_SLICE_BYTES, bytesToBase64, isSaveCancel, saveFile, TEXT_SLICE_CHARS, textSlices } from './saveFile'
+import {
+  BLOB_SLICE_BYTES,
+  bytesToBase64,
+  CACHE_NAME_MAX_BYTES,
+  cacheName,
+  isSaveCancel,
+  saveFile,
+  TEXT_SLICE_CHARS,
+  textSlices,
+} from './saveFile'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
@@ -188,6 +197,49 @@ describe('アプリの saveFile', () => {
     await saveFile('a/b.txt', 'x', 'text/plain')
     expect(h.appended[0].path).toBe('exports/a_b.txt')
     expect(h.saveAs).toHaveBeenCalledWith(expect.objectContaining({ fileName: 'a/b.txt' }))
+  })
+})
+
+describe('一時置き場の名前（cacheName）', () => {
+  /** 長い題名と応募先の「応募時の原稿」の名前（SubmissionCard。題名・応募先はそれぞれ 80 文字まで） */
+  const submission = `${'あ'.repeat(68)}_第12回ネット小説大賞_応募時の原稿.txt`
+
+  it('255 バイトを超える名前は、拡張子を残して 240 バイト以下に縮める（元の名前の頭の部分）', () => {
+    expect(utf8(submission).length).toBe(257)
+    const name = cacheName(submission)
+    expect(utf8(name).length).toBeLessThanOrEqual(CACHE_NAME_MAX_BYTES)
+    expect(name.endsWith('.txt')).toBe(true)
+    expect(submission.startsWith(name.slice(0, -'.txt'.length))).toBe(true)
+    // 縮めすぎない（あと1文字入れると上限を超える）
+    expect(utf8(name).length).toBeGreaterThan(CACHE_NAME_MAX_BYTES - 3)
+  })
+
+  it('絵文字（4 バイト・サロゲートペア）は割らない', () => {
+    const name = cacheName(`${'😀'.repeat(100)}.zip`)
+    expect(name).toBe(`${'😀'.repeat(59)}.zip`)
+    expect(utf8(name).length).toBeLessThanOrEqual(CACHE_NAME_MAX_BYTES)
+    expect(new TextDecoder().decode(utf8(name))).toBe(name)
+  })
+
+  it('短い名前はそのまま。/ は _ にする。空なら file', () => {
+    expect(cacheName('20261029雨の話.txt')).toBe('20261029雨の話.txt')
+    expect(cacheName('a/b.txt')).toBe('a_b.txt')
+    expect(cacheName('a\\b.txt')).toBe('a_b.txt')
+    expect(cacheName('')).toBe('file')
+    // 拡張子が無い（または長すぎる）名前は、名前全体を縮める
+    expect(cacheName('あ'.repeat(100))).toBe('あ'.repeat(80))
+  })
+
+  it('アプリの saveFile: 一時置き場には縮めた名前で書き、保存の画面には元の名前を渡す', async () => {
+    await expect(saveFile(submission, '原稿', 'text/plain;charset=utf-8')).resolves.toBe('saved')
+    const path = `exports/${cacheName(submission)}`
+    expect(h.calls).toEqual(['rmdir exports', `writeFile ${path} "" recursive=true`])
+    expect(h.appended.map((a) => a.path)).toEqual([path])
+    expect(h.saveAs).toHaveBeenCalledWith({
+      path: `file:///cache/${encodeURI(path)}`,
+      fileName: submission,
+      mimeType: 'text/plain',
+    })
   })
 })
 
