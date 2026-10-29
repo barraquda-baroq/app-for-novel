@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { updateVersion } from '../domain/storyOps'
+import { addChapter, movePiece, setChaptersEnabled, updateChapter, updateVersion } from '../domain/storyOps'
 import { addPrologue, novel, splitEpisode } from '../test/claudeFixture'
 import { shortId } from './refs'
 import { cutPoint, decodeCursor, encodeCursor, outlineView, readTextPages, readTextView, searchTextView } from './view'
@@ -13,6 +13,19 @@ function sample() {
   )
   const { acts } = splitEpisode(n, n.ids[2], [8])
   return { ...n, acts }
+}
+
+/** 章のあるタイトル: 第一章に第1話、第二章に第2話（長い）・第3話 */
+function chaptered() {
+  const long = Array.from({ length: 4 }, (_, k) => `二章の本文${k}。${'い'.repeat(900)}`).join('\n')
+  const n = novel(['一章の本文。', long, '二章の二話目。'])
+  n.data = setChaptersEnabled(n.data, n.titleId, true)
+  const first = n.data.titles[n.titleId].structure[0].id
+  n.data = updateChapter(n.data, first, { name: '第一章' })
+  const second = addChapter(n.data, n.titleId, '第二章')
+  n.data = movePiece(second.data, n.ids[1], { chapterId: second.result, index: 0 })
+  n.data = movePiece(n.data, n.ids[2], { chapterId: second.result, index: 1 })
+  return n
 }
 
 const ok = <T extends { ok: boolean }>(r: T) => {
@@ -51,9 +64,45 @@ describe('目次（outlineView）', () => {
     expect(second.text.split('\n')[0]).toMatch(/^#11 第11話/)
     expect(outlineView(n.data, n.titleId, { cursor: 'xxx' }).ok).toBe(false)
   })
+  it('続きは cursor だけで、最初に選んだ範囲の続きから出す（範囲・章を渡し直さなくても）', () => {
+    const n = novel(Array.from({ length: 30 }, (_, i) => `本文${i}`))
+    const first = ok(outlineView(n.data, n.titleId, { from: '#2', maxRows: 10 }))
+    const m = /→ #(\d+) /.exec(first.text)
+    expect(m?.[1]).toBe('12')
+    const second = ok(outlineView(n.data, n.titleId, { maxRows: 10, cursor: first.nextCursor! }))
+    expect(second.text.split('\n')[0]).toMatch(/^#12 第12話/)
+    // 章で絞った目次も、続きは同じ章の中
+    const c = chaptered()
+    const only = ok(outlineView(c.data, c.titleId, { chapter: '第二章', maxRows: 10 }))
+    expect(only.text).not.toContain('#1 第1話')
+    expect(only.text).toContain('#2 第2話')
+  })
 })
 
 describe('採用原稿（readTextView）', () => {
+  it('章を選ぶと、その章の話だけを読む（続きのページも同じ章の中）', () => {
+    const n = chaptered()
+    const r = ok(readTextView(n.data, n.titleId, { chapter: '第二章' }))
+    expect(r.text).toContain('二章の本文0')
+    expect(r.text).not.toContain('一章の本文')
+    let cursor: string | null = null
+    let all = ''
+    for (let i = 0; i < 20; i++) {
+      const page: { text: string; nextCursor: string | null } = ok(
+        readTextView(n.data, n.titleId, cursor ? { cursor } : { chapter: '第二章', charBudget: 2_000 }),
+      )
+      expect(page.text).not.toContain('一章の本文')
+      all += page.text
+      cursor = page.nextCursor
+      if (!cursor) break
+    }
+    expect(cursor).toBeNull()
+    expect(all).toContain('二章の本文3')
+    expect(all).toContain('二章の二話目。')
+    const unknown = readTextView(n.data, n.titleId, { chapter: '第九章' })
+    expect(unknown.ok).toBe(false)
+    if (!unknown.ok) expect(unknown.candidates?.join(' ')).toContain('第二章')
+  })
   it('話の見出しと本文。幕に分けた話は幕ごと', () => {
     const n = sample()
     const r = ok(readTextView(n.data, n.titleId))

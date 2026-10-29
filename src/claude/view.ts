@@ -167,28 +167,44 @@ function outlineRow(
   )
 }
 
+/** 目次の続きの cursor に入れる選び方 */
+interface OutlineSelection {
+  from?: string
+  to?: string
+  chapter?: string
+  includeActs?: boolean
+}
+
 /** タイトルの目次（話ごとの文字数・進捗・採用稿。幕に分けた話は幕の行も） */
 export function outlineView(data: AppData, titleId: ID, opts: OutlineOptions = {}): ViewResult {
   const title = data.titles[titleId]
   if (!title) return fail('タイトルが見つかりません')
   const order = readingOrder(data, titleId)
-  const range = rangeOf(data, titleId, order, opts.from, opts.to)
-  if (!isRange(range)) return range
-  let chapterId: ID | null | undefined
-  if (opts.chapter) {
-    const ch = resolveChapter(data, titleId, opts.chapter)
-    if (!ch.ok) return fail(ch.error, ch.candidates)
-    chapterId = ch.id
+  // 範囲・章・幕の行を出すかは cursor に入れる（続きの呼び出しで範囲を渡さなくても、同じ並びの続きから出す）
+  let sel: OutlineSelection = {
+    from: opts.from,
+    to: opts.to,
+    chapter: opts.chapter,
+    includeActs: opts.includeActs !== false,
   }
   let start = 0
   if (opts.cursor) {
     const c = decodeCursor(opts.cursor)
-    if (!c || c.k !== 'outline' || c.t !== titleId || typeof c.s !== 'number')
-      return fail('cursor が読めません（目次の続きの cursor を渡してください）')
+    if (!c || c.k !== 'outline' || c.t !== titleId || typeof c.s !== 'number' || !c.sel || typeof c.sel !== 'object')
+      return fail('cursor が読めません（novel_get_outline の続きの cursor をそのまま渡してください）')
+    sel = c.sel as OutlineSelection
     start = c.s
   }
+  const range = rangeOf(data, titleId, order, sel.from, sel.to)
+  if (!isRange(range)) return range
+  let chapterId: ID | null | undefined
+  if (sel.chapter) {
+    const ch = resolveChapter(data, titleId, sel.chapter)
+    if (!ch.ok) return fail(ch.error, ch.candidates)
+    chapterId = ch.id
+  }
   const maxRows = Math.max(10, opts.maxRows ?? 400)
-  const includeActs = opts.includeActs !== false
+  const includeActs = sel.includeActs !== false
   const detailed = opts.format === 'detailed'
   const progress = titleProgress(data, titleId)
   const items = order.filter(
@@ -227,7 +243,7 @@ export function outlineView(data: AppData, titleId: ID, opts: OutlineOptions = {
     }
   }
   if (!items.length) lines.push('（この範囲に話はありません）')
-  const next = i < items.length ? encodeCursor({ k: 'outline', t: titleId, s: i }) : null
+  const next = i < items.length ? encodeCursor({ k: 'outline', t: titleId, sel, s: i }) : null
   if (next) lines.push(`続き: cursor="${next}" → #${items[i].index} ${items[i].fullLabel}から（残り${items.length - i}話）`)
   return { ok: true, text: lines.join('\n'), nextCursor: next }
 }
@@ -492,6 +508,7 @@ export function readTextView(data: AppData, titleId: ID, opts: ReadTextOptions =
   if (!data.titles[titleId]) return fail('タイトルが見つかりません')
   const budget = Math.min(60_000, Math.max(2_000, opts.charBudget ?? 20_000))
   let sel: ReadSelection = {
+    chapter: opts.chapter,
     from: opts.from,
     to: opts.to,
     pieces: opts.pieces,
