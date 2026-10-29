@@ -1327,7 +1327,8 @@ h4 {
 /* 指で操作する端末（スマホ・タブレット・横持ち含む）ではタップしやすい大きさを確保する */
 @media (max-width: 720px), (pointer: coarse) {
   .btn-sm,
-  .segmented button {
+  .segmented button,
+  .switch {
     min-height: 34px;
   }
 }

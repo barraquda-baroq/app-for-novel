@@ -4,7 +4,7 @@
 // 「書き込みを許可」を変えても指紋・時刻が変わらないこと、［連携を解除］で記録が消えることを確かめる。
 import { expect, test, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
-import { openApp, seedTitleWithEpisodes } from './helpers'
+import { darkSurfaces, noHorizontalScroll, openApp, seedTitleWithEpisodes, tapSize } from './helpers'
 
 const DOCS = 'http://127.0.0.1:8080/v1/projects/demo-novel-studio/databases/(default)/documents'
 // エミュレーターでアクセスルールを通さずに読み書きする
@@ -79,6 +79,9 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
     await route.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: '<!doctype html><p>paired</p>' })
   })
 
+  // 連携の画面はディープダーク・360px の画面でも確かめる
+  await openApp(page, '/settings')
+  await page.getByTestId('theme-deep-dark').click()
   const state = 'e2e-state.1_2~3'
   await page.goto(`/#/claude/connect?s=${encodeURIComponent(state)}&uid=attacker`)
   const form = page.getByTestId('connect-form')
@@ -86,6 +89,13 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
   expect(identityRequests).toEqual([`${origin}/connect/identity`])
   const row = form.getByTestId('connect-title').filter({ hasText: '連携する作品' })
   await expect(row.getByTestId('connect-access-write')).toHaveAttribute('aria-pressed', 'true')
+  await page.setViewportSize({ width: 360, height: 760 })
+  await noHorizontalScroll(page)
+  for (const id of ['connect-access-none', 'connect-access-read', 'connect-access-write']) await tapSize(row.getByTestId(id), id)
+  await tapSize(form.getByTestId('connect-writes').locator('xpath=..'), 'connect-writes', false)
+  await tapSize(form.getByTestId('connect-cancel'), 'connect-cancel')
+  await tapSize(form.getByTestId('connect-approve'), 'connect-approve')
+  await darkSurfaces(page, ['.cn-form', '.cn-box', '.cn-title-row', '.segmented.cn-seg', '.cn-actions .btn', '.cn-warn'])
   await row.getByTestId('connect-access-read').click()
   await form.getByTestId('connect-approve').click()
 
@@ -116,6 +126,12 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
   await openApp(settings, '/settings')
   const info = settings.getByTestId('claude-pairing-info')
   await expect(info).toBeVisible({ timeout: 20_000 })
+  // 360px・ディープダーク（同じブラウザなので外観の設定も同じ）
+  await settings.setViewportSize({ width: 360, height: 760 })
+  await noHorizontalScroll(settings)
+  await tapSize(settings.locator('label:has([data-testid="claude-writes-toggle"])'), 'claude-writes-toggle', false)
+  await tapSize(settings.getByTestId('claude-unpair'), 'claude-unpair')
+  await darkSurfaces(settings, ['.cl-pairing', '.btn', '.segmented'])
   await expect(info.getByTestId('claude-writes-state')).toHaveText('許可')
   await settings.locator('label:has([data-testid="claude-writes-toggle"])').click()
   await expect(info.getByTestId('claude-writes-state')).toHaveText('停止中（読むだけ）', { timeout: 20_000 })
