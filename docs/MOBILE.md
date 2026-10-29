@@ -49,8 +49,9 @@ Novel Studio 2.4 から、iPhone と Android では「ホーム画面に追加�
    npm run mobile:doctor
    ```
 
-> Windows ではリポジトリを `C:\dev\app-for-novel` のような**短い場所**に置いてください。
+> Windows ではリポジトリを `C:\Users\<名前>\dev\app-for-novel` のような、自分のフォルダの中の**短い場所**に置いてください。
 > 深いフォルダ（デスクトップの奥など）だと、Android のビルドで「パスが長すぎる」と失敗することがあります。
+> `C:\dev` のような C ドライブの直下は、このパソコンのほかの利用者も読み書きできるので使わないでください（署名の鍵のパスワードを書いた `android/keystore.properties` が置かれます）。
 
 ## 2. Android（Windows・Mac）
 
@@ -140,7 +141,7 @@ npm run android:install
 | 「スマホが見つかりません」 | USB デバッグがオンか、データ通信のできるケーブルか、スマホのロックを外したか。Windows は Google USB Driver（[4](#4-スマホの準備最初に一度だけ)） |
 | 「USB デバッグを許可していません」 | スマホの画面の確認で「許可」を押す（出ていなければケーブルを挿し直す） |
 | ログインで「署名（SHA-1）とアプリの署名が合っていません」 | [Android の署名](#android-の署名) |
-| 「パスが長すぎる」「Filename longer than 260 characters」（Windows） | リポジトリを `C:\dev\app-for-novel` のような短い場所に `git clone` し直す（`android/keystore.properties` は `npm run mobile:keystore -- --use <鍵>` で作り直す） |
+| 「パスが長すぎる」「Filename longer than 260 characters」（Windows） | リポジトリを `C:\Users\<名前>\dev\app-for-novel` のような自分のフォルダの中の短い場所に `git clone` し直す（`android/keystore.properties` は `npm run mobile:keystore -- --use <鍵>` で作り直す） |
 | Play プロテクトの警告 | 自分で作ったアプリなので「インストールする」（「詳細」の中にあることがあります） |
 | 鍵のパスワードを忘れた | 取り戻す方法はありません。新しい鍵で作るには、アプリを削除して入れ直す（データが消えるので、先に同期とバックアップ）。パスワード管理アプリを確かめてください |
 

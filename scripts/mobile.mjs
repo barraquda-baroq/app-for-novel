@@ -18,6 +18,7 @@ import readline from 'node:readline/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { binOf, ng, ok, runNode, say } from '../connector/scripts/lib.mjs'
 import * as lib from './mobile/lib.mjs'
+import { copySecret, makeSecretDir, protectSecret, writeSecret } from './mobile/secret.mjs'
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ctx = { platform: process.platform, env: process.env, home: os.homedir() }
@@ -416,12 +417,12 @@ async function keystore(opts) {
         throw new Stop(
           `${target} に別の鍵があります。どちらが正しい鍵か確かめてください（消すと、その鍵で入れたアプリを上書きできなくなります）。`,
         )
-      fs.mkdirSync(path.dirname(target), { recursive: true })
-      fs.copyFileSync(src, target)
+      // 鍵のフォルダは自分だけが入れる形（0700）、鍵は自分だけが読める形（0600）で置く
+      copySecret(src, target)
       storeFile = target
       ok(`鍵を ${target} にコピーしました`)
-    }
-    fs.writeFileSync(files.keystoreProperties, lib.keystoreProperties({ storeFile, password }))
+    } else protectSecret(target)
+    writeSecret(files.keystoreProperties, lib.keystoreProperties({ storeFile, password }))
     ok(`${rel(files.keystoreProperties)} を書きました（秘密。リポジトリには入りません）`)
     showFingerprints(fp)
     say('\n次は npm run mobile:firebase -- --android（このパソコンでは初めての時だけ）→ npm run android:install')
@@ -453,13 +454,15 @@ async function keystore(opts) {
     }
     password = first
   }
-  fs.mkdirSync(path.dirname(target), { recursive: true })
+  makeSecretDir(path.dirname(target))
   const r = await exec(keytoolPath(), lib.keytoolGenerateArgs(target), {
     capture: true,
     env: { ...process.env, NS_KS_PASS: password },
   })
   if (r.code !== 0 || !exists(target)) throw new Stop(`鍵を作れませんでした:\n${r.out.trim().split('\n').slice(-5).join('\n')}`)
-  fs.writeFileSync(files.keystoreProperties, lib.keystoreProperties({ storeFile: target, password }))
+  // keytool は誰でも読める形（0644）で作る
+  protectSecret(target)
+  writeSecret(files.keystoreProperties, lib.keystoreProperties({ storeFile: target, password }))
   const fp = await fingerprints(target, password)
   ok(`鍵を作りました: ${target}`)
   ok(`${rel(files.keystoreProperties)} を書きました（秘密。リポジトリには入りません）`)
