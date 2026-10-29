@@ -10,6 +10,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  getDocsFromServer,
   onSnapshot,
   orderBy,
   query,
@@ -615,7 +616,9 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (!(await target.getMeta('authoritative'))) return
     deferred = true
     const local = await target.localKeys()
-    const snap = await getDocs(query(col, where('deleted', '==', false)))
+    // サーバーから読む（読んでいる途中でつながりが切れると、getDocs は端末の中の控えだけで答えるので、受け取っていない
+    // レコードを消し漏らしたまま終わってしまう。サーバーから読めなければ失敗し、つながってからやり直す）
+    const snap = await getDocsFromServer(query(col, where('deleted', '==', false)))
     const doomed: string[] = []
     const chunkDocs = new Map<string, string[]>()
     snap.forEach((d) => {

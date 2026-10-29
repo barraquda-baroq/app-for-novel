@@ -58,6 +58,10 @@ const listen = vi.hoisted(() => ({
    * 失敗したように見える。つながりが切れた・アプリを閉じた時の再現）
    */
   loseReply: new Set<unknown>(),
+  /**
+   * 次に全件を読み出す（getDocs・getDocsFromServer）直前に呼ぶ（一度だけ）。読み出しの途中でつながりが切れた時の再現
+   */
+  beforeList: new Map<unknown, () => Promise<void>>(),
 }))
 vi.mock('firebase/firestore', async (importOriginal) => {
   const m = await importOriginal<typeof import('firebase/firestore')>()
@@ -87,7 +91,19 @@ vi.mock('firebase/firestore', async (importOriginal) => {
       throw Object.assign(new Error('返事を受け取れませんでした（テスト）'), { name: 'FirebaseError', code: 'unavailable' })
     return r
   }) as unknown as typeof m.runTransaction
-  return { ...m, onSnapshot, runTransaction }
+  const listing =
+    <F extends (q: { firestore: unknown }) => Promise<unknown>>(real: F) =>
+    async (q: { firestore: unknown }) => {
+      const hook = listen.beforeList.get(q.firestore)
+      if (hook) {
+        listen.beforeList.delete(q.firestore)
+        await hook()
+      }
+      return real(q)
+    }
+  const getDocs = listing(m.getDocs as never) as unknown as typeof m.getDocs
+  const getDocsFromServer = listing(m.getDocsFromServer as never) as unknown as typeof m.getDocsFromServer
+  return { ...m, onSnapshot, runTransaction, getDocs, getDocsFromServer }
 })
 
 const PROJECT = 'demo-novel-studio'
@@ -123,6 +139,7 @@ afterEach(async () => {
   listen.dropOwn.clear()
   listen.holdModel.clear()
   listen.loseReply.clear()
+  listen.beforeList.clear()
   for (const d of devices.splice(0)) {
     d.offline()
     d.p.close()
@@ -1187,6 +1204,54 @@ describe('データの形の版: オフラインから戻った時（エミュ�
     await waitFor(async () => (await getDoc(ideaDoc)).exists(), 'オフラインの間の変更が送られる')
     await settle(a)
     expect(a.engine?.status.outdated ?? null).toBeNull()
+  })
+})
+
+// 読み出しの途中で disableNetwork する（上と同じ理由で、全件を消すテストより後に置く）
+describe('バックアップからの復元: つながりが切れた時（エミュレーター）', () => {
+  it('復元でクラウドのレコードを読み出している途中でつながりが切れても、端末の中の控えだけで消すものを決めない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '作品')
+      titleId = t.result
+      return E.addMemo(t.data, t.result, 'メモ1').data
+    })
+    await settle(a, b)
+    const backup = await a.load()
+    // A が閉じている間に、B がメモを作った（A は受け取っていないので、復元で消す）
+    a.offline()
+    let memoId = ''
+    await b.edit((d) => {
+      const m = E.addMemo(d, titleId, 'Bのメモ')
+      memoId = m.result
+      return m.data
+    })
+    await settle(b)
+    await a.restore(backup)
+    // A を開いて復元を送り始めたが、クラウドの全件を読み出している途中で、つながりが切れた
+    let cut = false
+    listen.beforeList.set(a.fs, async () => {
+      cut = true
+      await disableNetwork(a.fs)
+    })
+    await a.online()
+    // 送れないのでオフラインと出す（直す前は、控えから決めた削除だけで送り終えていた）
+    await waitFor(
+      async () => cut && (a.engine?.status.phase === 'offline' || (await a.p.outboxCount()) === 0),
+      'オフラインと表示する',
+    )
+    await new Promise((r) => setTimeout(r, 500))
+    // つながった
+    await enableNetwork(a.fs)
+    a.engine?.requestUpload(true)
+    await settle(a, b)
+    for (const d of [a, b]) expect((await d.load()).memos[memoId]).toBeUndefined()
+    expect((await getDoc(doc(b.fs, 'users', b.uid, 'records', `memos:${memoId}`))).data()?.deleted).toBe(true)
   })
 })
 
