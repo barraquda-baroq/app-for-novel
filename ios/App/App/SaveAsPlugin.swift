@@ -6,7 +6,7 @@ import UIKit
 /// 保存される名前は一時置き場のファイルの名前（saveFile.ts がそのまま付けている）。
 /// やめた時は "Save canceled"（code CANCELED）で reject する（saveFile.ts の isSaveCancel が「やめた」と見る）
 @objc(SaveAsPlugin)
-public class SaveAsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate {
+public class SaveAsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
     public let identifier = "SaveAsPlugin"
     public let jsName = "SaveAs"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -15,6 +15,8 @@ public class SaveAsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
 
     /// 保存の画面を開いている呼び出し（同時に開くのは1つだけ）
     private var pending: CAPPluginCall?
+    /// いま開いている保存の画面（遅れて届いた前の画面の知らせで、次の呼び出しをやめたことにしないため）
+    private weak var picker: UIDocumentPickerViewController?
 
     @objc func saveAs(_ call: CAPPluginCall) {
         guard let path = call.getString("path"), let src = SaveAsPlugin.fileURL(path) else {
@@ -35,6 +37,11 @@ public class SaveAsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
             self.pending = call
             let picker = UIDocumentPickerViewController(forExporting: [src], asCopy: true)
             picker.delegate = self
+            // 下へスワイプして閉じられないようにする（閉じるのは「キャンセル」か保存だけ。スワイプでは上の2つが呼ばれない版がある）
+            picker.isModalInPresentation = true
+            // それでも利用者の操作で閉じられた時（iPad で外側をタップした時など）は、やめたことにする
+            picker.presentationController?.delegate = self
+            self.picker = picker
             viewController.present(picker, animated: true)
         }
     }
@@ -45,6 +52,14 @@ public class SaveAsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate
     }
 
     public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        pending?.reject("Save canceled", "CANCELED")
+        pending = nil
+    }
+
+    /// 利用者の操作で画面が閉じられた（キャンセル・保存の時や、プログラムで閉じた時は呼ばれない）。
+    /// iOS 17 以降は documentPickerWasCancelled も呼ばれることがあるが、pending を空にしているので二重にはならない
+    public func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard presentationController.presentedViewController === picker else { return }
         pending?.reject("Save canceled", "CANCELED")
         pending = nil
     }
