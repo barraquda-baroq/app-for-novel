@@ -292,6 +292,19 @@ describe('Firebase', () => {
     expect(lib.firebaseProblem('Failed to authenticate, have you run firebase login?')).toBe('login')
     expect(lib.firebaseProblem('HTTP Error: 403, The caller does not have permission')).toBe('permission')
     expect(lib.firebaseProblem('Network error')).toBeNull()
+    // ログインが切れた時の firebase-debug.log（firebase-tools 15.34 の本物の行）
+    expect(
+      lib.firebaseProblem(
+        'Request to https://firebase.googleapis.com/v1beta1/projects/novel-studio-3352e/androidApps?pageSize=100 had HTTP Error: 401, Request had invalid authentication credentials',
+      ),
+    ).toBe('login')
+    expect(lib.firebaseProblem('{"error":{"code":401,"status":"UNAUTHENTICATED"}}')).toBe('login')
+    expect(lib.firebaseProblem('Authentication Error: Your credentials are no longer valid.')).toBe('login')
+    expect(lib.firebaseProblem('Request to https://x had HTTP Error: 403, The caller does not have permission')).toBe(
+      'permission',
+    )
+    // apps:list が包んだ一言だけでは分からない（記録も読む）
+    expect(lib.firebaseProblem('Failed to list Firebase ANDROID apps. See firebase-debug.log for more info.')).toBeNull()
   })
 
   it('登録済みのアプリをパッケージ名・バンドル ID で探す', () => {

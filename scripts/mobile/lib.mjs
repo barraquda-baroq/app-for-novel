@@ -339,10 +339,18 @@ export function parseFirebaseJson(stdout) {
   return null
 }
 
-/** firebase-tools の失敗の理由（login = ログインしていない・切れた） */
+/**
+ * firebase-tools の失敗の理由（出力と、その回の firebase-debug.log）。login = ログインしていない・切れた（401・invalid_grant）、
+ * permission = このプロジェクトを操作できない（別のアカウント。403）。ログインの切れは 403 より先に見る
+ */
 export function firebaseProblem(text) {
   const t = String(text ?? '')
-  if (/firebase login|Failed to authenticate|not logged in|invalid_grant|reauth/i.test(t)) return 'login'
+  if (
+    /firebase login|Failed to authenticate|not logged in|invalid_grant|reauth|no longer valid|HTTP Error: 401|UNAUTHENTICATED/i.test(
+      t,
+    )
+  )
+    return 'login'
   if (/PERMISSION_DENIED|does not have permission|HTTP Error: 403/i.test(t)) return 'permission'
   return null
 }

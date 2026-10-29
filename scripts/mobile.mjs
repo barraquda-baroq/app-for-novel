@@ -206,25 +206,54 @@ function firebaseCli() {
   return nodeBin('firebase-tools', 'firebase')
 }
 
-async function firebase(args) {
-  const r = await runNode(firebaseCli(), [...args, '--project', lib.FIREBASE_PROJECT, '--json', '--non-interactive'], {
-    cwd: repoDir,
-    capture: true,
-    quiet: true,
-  })
-  const json = lib.parseFirebaseJson(r.stdout)
-  if (json?.status === 'success') return json.result
-  const why = json?.error ?? `${r.stderr}\n${r.stdout}`.trim()
-  const problem = lib.firebaseProblem(why)
-  if (problem === 'login')
-    throw new Stop(
-      'Firebase にログインしていません（切れています）。npx firebase login を実行して（ブラウザで Google アカウントを選ぶ）、もう一度試してください。',
-    )
-  if (problem === 'permission')
-    throw new Stop(
-      `Firebase のプロジェクト ${lib.FIREBASE_PROJECT} を操作できません。Firebase のプロジェクトを作った Google アカウントでログインしてください（npx firebase login:add）。`,
-    )
-  throw new Stop(`firebase ${args[0]} に失敗しました: ${String(why).split('\n').slice(-4).join('\n')}`)
+/**
+ * firebase-tools を動かして --json の結果を返す。失敗の理由は、その回だけの記録（FIREBASE_DEBUG_PATH）も読んで見分ける。
+ * apps:list などは理由を「Failed to list Firebase … apps. See firebase-debug.log」の一言に包み、ログインの切れ（401・invalid_grant）や
+ * 別のアカウント（403）は記録にしか残らない。リポジトリの firebase-debug.log は前の失敗の分も残っているので読まない。
+ * cli = firebase-tools の場所（テストでは偽物）
+ */
+export async function firebase(args, cli = firebaseCli()) {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-fb-'))
+  const logFile = path.join(logDir, 'firebase-debug.log')
+  let keepLog = false
+  try {
+    const r = await runNode(cli, [...args, '--project', lib.FIREBASE_PROJECT, '--json', '--non-interactive'], {
+      cwd: repoDir,
+      capture: true,
+      quiet: true,
+      env: { FIREBASE_DEBUG_PATH: logFile },
+    })
+    const json = lib.parseFirebaseJson(r.stdout)
+    if (json?.status === 'success') return json.result
+    const why = json?.error ?? `${r.stderr}\n${r.stdout}`.trim()
+    let log = ''
+    try {
+      log = fs.readFileSync(logFile, 'utf8')
+    } catch {
+      /* 記録が無い時は、出力だけで見分ける */
+    }
+    const problem = lib.firebaseProblem(`${why}\n${log}`)
+    if (problem === 'login')
+      throw new Stop(
+        'Firebase のログインが切れています（またはしていません）。npx firebase login --reauth を実行して' +
+          '（ブラウザで Firebase のプロジェクトを作った Google アカウントを選ぶ）、もう一度試してください。',
+      )
+    if (problem === 'permission')
+      throw new Stop(
+        `Firebase のプロジェクト ${lib.FIREBASE_PROJECT} を操作できません。Firebase のプロジェクトを作った Google アカウントで入り直してください: ` +
+          'npx firebase logout → npx firebase login（または npx firebase login:add の後に npx firebase login:use <そのメールアドレス>）。',
+      )
+    keepLog = Boolean(log)
+    const detail = String(why)
+      .replace(/See firebase-debug\.log for more info\.?/, '')
+      .trim()
+      .split('\n')
+      .slice(-4)
+      .join('\n')
+    throw new Stop(`firebase ${args[0]} に失敗しました: ${detail}${keepLog ? `\n  詳しくは ${logFile}` : ''}`)
+  } finally {
+    if (!keepLog) fs.rmSync(logDir, { recursive: true, force: true })
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

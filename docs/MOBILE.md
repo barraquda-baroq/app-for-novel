@@ -43,6 +43,8 @@ Novel Studio 2.4 から、iPhone と Android では「ホーム画面に追加�
    npx firebase login
    ```
 
+   前にログインしていても、長く使っていないと切れていることがあります。`mobile:firebase` で「ログインが切れています」と出た時は `npx firebase login --reauth`。違うアカウントで入った時（「…を操作できません」）は `npx firebase logout` → `npx firebase login`。
+
 4. そろっているものを確かめる（パスワードやファイルの中身は表示しません。✗ のものは、この後の手順で用意します）。
 
    ```
@@ -141,6 +143,8 @@ npm run android:install
 | 「スマホが見つかりません」 | USB デバッグがオンか、データ通信のできるケーブルか、スマホのロックを外したか。Windows は Google USB Driver（[4](#4-スマホの準備最初に一度だけ)） |
 | 「USB デバッグを許可していません」 | スマホの画面の確認で「許可」を押す（出ていなければケーブルを挿し直す） |
 | ログインで「署名（SHA-1）とアプリの署名が合っていません」 | [Android の署名](#android-の署名) |
+| `mobile:firebase` で「Firebase のログインが切れています」 | `npx firebase login --reauth`（ブラウザで Firebase のプロジェクトを作った Google アカウントを選ぶ）してから、もう一度 |
+| `mobile:firebase` で「Firebase のプロジェクト … を操作できません」 | 違う Google アカウントで入っています。`npx firebase logout` → `npx firebase login` で、プロジェクトを作ったアカウントを選ぶ |
 | 「パスが長すぎる」「Filename longer than 260 characters」（Windows） | リポジトリを `C:\Users\<名前>\dev\app-for-novel` のような自分のフォルダの中の短い場所に `git clone` し直す（`android/keystore.properties` は `npm run mobile:keystore -- --use <鍵>` で作り直す） |
 | Play プロテクトの警告 | 自分で作ったアプリなので「インストールする」（「詳細」の中にあることがあります） |
 | 鍵のパスワードを忘れた | 取り戻す方法はありません。新しい鍵で作るには、アプリを削除して入れ直す（データが消えるので、先に同期とバックアップ）。パスワード管理アプリを確かめてください |
@@ -195,7 +199,7 @@ Xcode のメニュー **Xcode > Settings…（設定…）> Accounts** の左下
 
 ### 4. リポジトリと Firebase の設定
 
-1. Mac でも [1. 共通](#1-共通windowsmac-のどちらでも最初に一度) をする（Node.js・Git・`npm ci`・`npx firebase login`）。
+1. Mac でも [1. 共通](#1-共通windowsmac-のどちらでも最初に一度) をする（Node.js・Git・`npm ci`・`npx firebase login`）。ログインが切れている・違うアカウントの時の直し方も、そこの手順 3 にあります。
 2. Claude 用のコネクタを使っている時は、Windows のパソコンの `connector.local.json`（リポジトリの直下）を Mac のリポジトリの直下にコピーする（秘密ではありません。無いとアプリの「Claude 連携」が「コネクタ未設定」になります）。
 3. Firebase に iPhone のアプリを登録し、ログインの設定ファイルを取ってくる（`<チームID>` は手順 1 の 10 文字）:
 
