@@ -18,5 +18,7 @@
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <!-- Android 12 以降の起動画面（アイコンの後ろの色。capacitor.config.ts の SplashScreen.backgroundColor と同じ） -->
+        <item name="windowSplashScreenBackground">#2F3A4F</item>
     </style>
 </resources>
