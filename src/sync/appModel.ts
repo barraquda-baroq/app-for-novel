@@ -12,7 +12,7 @@ import { doc, onSnapshot, runTransaction, serverTimestamp, type Firestore, type 
  */
 export const DATA_MODEL = 3
 /** 記録に添えるアプリの版（古い版のアプリの画面で「どの版に更新すればよいか」を出すため） */
-export const APP_VERSION = '2.3'
+export const APP_VERSION = '2.4'
 
 export interface AppModel {
   model: number

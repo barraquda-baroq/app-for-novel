@@ -13,3 +13,13 @@ connector.local.json
 connector/dist
 connector/.wrangler
 connector/.dev.vars
+# 2.4 iPhone / Android アプリ（Capacitor）。dist-native は npm run build:native の出力。
+# 鍵・Firebase の設定ファイル・署名の設定は手元だけに置く（リポジトリは公開。docs/MOBILE.md）
+dist-native
+android/keystore.properties
+*.jks
+*.keystore
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist
+ios/App/local.xcconfig
+ios/App/CapApp-SPM/symlinks/

@@ -44,11 +44,11 @@ iOS / Android のアプリを作る 2.4 だけは Mac が要りますが、コ�
 
 ### 1-A. あなたが手で行うこと
 
-1. **Node.js 22 以上を入れる**
-   - Windows: <https://nodejs.org/ja> から LTS 版のインストーラーを入れる。スタートメニューで「PowerShell」を開き、`node -v` が `v22` 以上なら OK。
+1. **Node.js 24 LTS を入れる**（22 以上なら動きます）
+   - Windows: <https://nodejs.org/ja> から 24 LTS のインストーラーを入れる。スタートメニューで「PowerShell」を開き、`node -v` が `v22` 以上なら OK。
      初めての時だけ `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行し、確かめられたら `Y` を入力して Enter（npm のコマンドを動かせるようにする設定。
      管理者でなくてよい。docs/DEPLOY.md の手順 1 と同じ）。終わったら PowerShell を閉じて開き直す
-   - Mac: 同じページから LTS 版を入れる。「ターミナル」で `node -v` が `v22` 以上なら OK
+   - Mac: 同じページから 24 LTS を入れる。「ターミナル」で `node -v` が `v22` 以上なら OK
 2. **Cloudflare に登録する（無料・カード不要）**
    1. <https://dash.cloudflare.com/sign-up/workers-and-pages> で登録し、届いたメールの確認リンクを押す
    2. **アカウントを2段階認証で守る**（原稿を読む仕組みを置く場所なので必須）

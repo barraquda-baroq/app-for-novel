@@ -9,7 +9,7 @@ Mac が要るのは 2.4 の iPhone / Android のアプリを作る時だけで�
 
 ## 1. 一度だけ行うこと（Windows か Mac で）
 
-1. [Node.js](https://nodejs.org/ja) の LTS 版（22 以上）と [Git](https://git-scm.com/) を入れる。
+1. [Node.js](https://nodejs.org/ja) 24 LTS（22 以上なら動きます）と [Git](https://git-scm.com/) を入れる。
    - Windows: インストーラーで入れてから、スタートメニューで「PowerShell」を開く
      - 初めての時だけ: PowerShell で `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行し、確かめられたら `Y` を入力して Enter（npm のコマンドを動かせるようにする設定。管理者でなくてよい）。終わったら PowerShell を閉じて開き直す
    - Mac: インストーラーで入れてから、「ターミナル」を開く（Git は `git --version` を実行すると入れ方が出る）

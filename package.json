@@ -1,11 +1,12 @@
 {
   "name": "novel-studio",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:native": "tsc -b && vite build --mode native",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
@@ -22,6 +23,16 @@
     "deploy": "node scripts/deploy.mjs"
   },
   "dependencies": {
+    "@capacitor-firebase/authentication": "8.5.2",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/clipboard": "8.0.1",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/haptics": "8.0.2",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/keyboard": "8.0.6",
+    "@capacitor/splash-screen": "8.0.2",
     "dexie": "^4.4.7",
     "diff": "^8.0.4",
     "fflate": "^0.8.2",
@@ -33,6 +44,7 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.3",
     "@playwright/test": "^1.63.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
@@ -53,6 +65,9 @@
   "overrides": {
     "markdown-it": {
       "argparse": "3.0.2"
+    },
+    "@capacitor-firebase/authentication": {
+      "firebase": "$firebase"
     }
   }
 }
