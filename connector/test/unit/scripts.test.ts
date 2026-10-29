@@ -84,6 +84,9 @@ describe('スクリプトの部品', () => {
     expect(setup).toContain(`1-A の手順 1〜${script - 1}`)
     expect(setup).toContain(`匿名ログインが無効です。docs/CONNECTOR.md の 1-A の手順 ${anon} をやり直して`)
     expect(setup).toContain(`1-A の手順 ${script + 1}〜`)
+    // 確かめで止まった時は、アプリとアクセスルールを公開していないので、check ではなく setup をやり直す
+    expect(setup).toContain('アプリとアクセスルールはまだ公開していません')
+    expect(setup).not.toContain('npm run connector:check で確かめてください')
     expect(errors).toContain(`docs/CONNECTOR.md の 1-A の手順 ${anon}）`)
   })
 

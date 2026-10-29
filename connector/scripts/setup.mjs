@@ -131,7 +131,11 @@ async function main() {
   if (!check.ok) {
     const anon = check.results.some((r) => r.label.includes('匿名ログインが無効'))
     if (anon) say('\n匿名ログインが無効です。docs/CONNECTOR.md の 1-A の手順 3 をやり直して、もう一度 npm run connector:setup を実行してください。')
-    else say('\n確かめで問題がありました（✗ の行）。しばらく待ってから npm run connector:check で確かめてください。')
+    else
+      say(
+        '\n確かめで問題がありました（✗ の行）。アプリとアクセスルールはまだ公開していません。' +
+          '数分待ってから、もう一度 npm run connector:setup を実行してください（終わった手順は飛ばして、続きから終わらせます）。',
+      )
     process.exitCode = 1
     return
   }

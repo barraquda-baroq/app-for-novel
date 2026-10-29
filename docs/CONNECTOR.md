@@ -164,6 +164,7 @@ npm run deploy
 | --- | --- |
 | `npm run connector:setup` で「匿名ログインが無効です」 | 1-A の手順 3 をやり直して、もう一度 `npm run connector:setup` |
 | `npm run connector:setup` で「公開できなかったか、URL が分かりませんでした」 | Cloudflare の「Workers & Pages」で workers.dev のサブドメインを決めたか確かめる。`npx --prefix connector wrangler whoami` でログインを確かめる |
+| `npm run connector:setup` で「確かめで問題がありました」 | アプリとアクセスルールはまだ公開されていません。数分待ってから、もう一度 `npm run connector:setup`（終わった手順は飛ばします。最後に claude.ai に登録する URL が出るまで） |
 | 「コネクタの部品が入っていません」 | `npm --prefix connector ci` |
 | `npm` で「スクリプトの実行が無効になっているため…npm.ps1 を読み込むことができません」（Windows） | PowerShell で `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行して `Y`、PowerShell を開き直す（`npm.cmd`・`npx.cmd` と打っても動く） |
 | claude.ai で「Authorization with the MCP server failed」など | `npm run connector:check` を実行して ✗ の行を直す。エラーの画面の `ofid_…` を控えておく |
