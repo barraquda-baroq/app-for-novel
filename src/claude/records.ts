@@ -3,7 +3,10 @@
 // - id は内容から作る（src/claude/derivedId.ts）。同じ内容をもう一度足しても同じ id になり、もうあれば duplicate、
 //   以前に削除されたもの（ゴミ箱・クラウドの削除の印）は previously_deleted として作らない
 // - 推敲案の抜き出した箇所は、話（幕に分けた話は各幕）の採用原稿の中で探して場所を控える（src/claude/anchor.ts）
-// - どの記録も JSON にして 200,000 字まで（コネクタが分割文書を書かないため。アプリで手で書くものに上限はない）
+// - 長い文章（改稿案・戦略メモの本文、コンテストの相性・方針、批評プロンプトの本文、批評の結果）の長さに上限はない。
+//   上限があるのは短い項目（名前・見出し・推敲案の引用など）と件数だけ（RECORD_LIMITS）
+// - コネクタ（source = claude）が書く記録だけは、1件を JSON にして 200,000 字まで（コネクタは分割文書を書かないため）。
+//   超える時は、分け方を書いた理由を返す。貼り付け（source = paste）は端末が大きな記録を分割文書に分けて送るので上限なし
 // 作るだけで、データには入れない（アプリはストアの addClaudeRecords、コネクタは Firestore への作成で入れる）。
 import { hashJson } from '../domain/hash'
 import { adoptedText, isSplit, pieceFullLabel, pieceLabel } from '../domain/structure'
@@ -43,9 +46,12 @@ import { canClaudeWrite, CLAUDE_RECORD_VERSION } from './visibility'
 
 // ---------- 上限 ----------
 
-/** 入力の上限（コネクタのツールの JSON Schema と同じ値。文字数は Unicode の文字（コードポイント）で数える） */
+/**
+ * 入力の上限（コネクタのツールの JSON Schema と同じ値。文字数は Unicode の文字（コードポイント）で数える）。
+ * 短い項目と件数だけ。長い文章（改稿案・戦略メモの本文、コンテストの相性・方針、批評プロンプトの本文・控え、批評の結果）には無い
+ */
 export const RECORD_LIMITS = {
-  /** 1つの記録の JSON の長さ（UTF-16） */
+  /** コネクタが書く1つの記録の JSON の長さ（UTF-16。アクセスルールと同じ値。貼り付けには無い） */
   recordJson: 200_000,
   proofItems: 100,
   proofCovered: 200,
@@ -57,18 +63,12 @@ export const RECORD_LIMITS = {
   reason: 300,
   revisionItems: 20,
   revisionHeading: 80,
-  revisionBody: 50_000,
   revisionPieces: 50,
   noteHeading: 80,
-  noteBody: 30_000,
   contests: 10,
   contestName: 80,
   contestOrganizer: 80,
-  contestFit: 300,
-  contestPlan: 2_000,
   promptName: 60,
-  promptBody: 20_000,
-  resultMarkdown: 60_000,
   url: 2_000,
   model: 60,
 } as const
@@ -277,19 +277,58 @@ export function isHttpsUrl(v: unknown): v is string {
   }
 }
 
-/** 文字列の項目を確かめる（無い・空でよければ optional）。問題があれば日本語の理由 */
-function checkText(v: unknown, name: string, max: number, required: boolean): string | null {
+const fmt = (n: number) => n.toLocaleString('ja-JP')
+
+/**
+ * 文字列の項目を確かめる（無い・空でよければ optional）。max = null は長い文章（長さの上限なし）。
+ * 問題があれば日本語の理由
+ */
+function checkText(v: unknown, name: string, max: number | null, required: boolean): string | null {
   if (v === undefined || v === null) return required ? `${name} がありません` : null
   if (!isStr(v)) return `${name} は文字列にしてください`
   if (required && !v.trim()) return `${name} が空です`
-  if (charLength(v) > max)
-    return `${name} が長すぎます（${max.toLocaleString('ja-JP')}字まで。いま ${charLength(v).toLocaleString('ja-JP')}字）`
+  if (max !== null && charLength(v) > max) return `${name} が長すぎます（${fmt(max)}字まで。いま ${fmt(charLength(v))}字）`
   return null
 }
 
-/** 記録を JSON にした長さが上限に収まるか */
+/** 記録を JSON にした長さが、コネクタが書ける上限に収まるか */
 export function recordFits(record: ClaudeRecord): boolean {
   return stableStringify(record).length <= RECORD_LIMITS.recordJson
+}
+
+/** 分けた各部の見出し（「（1/2）」など）の分の余裕 */
+const SPLIT_MARGIN = 2_000
+
+/**
+ * 記録が大きすぎる時の理由（コネクタが書けない時。Claude が直せるように、いまの大きさと分け方を書く）。
+ * what は「批評の結果」など、split はどう分けるか
+ */
+export function recordTooLarge(
+  length: number,
+  what = '記録',
+  split = '内容を2つ以上に分けて、ツールを分けて呼んでください',
+): string {
+  return `${what}が大きすぎて1件の記録に入りません（コネクタが書ける記録は JSON にして ${fmt(RECORD_LIMITS.recordJson)}字まで。いま ${fmt(length)}字）。${split}`
+}
+
+/**
+ * コネクタ（source = claude）が書く記録の大きさを確かめる。収まらなければ、長い文章 text を何件に分ければよいかを入れた理由。
+ * 貼り付け（source = paste）は確かめない（端末が大きな記録を分割文書に分けて送るため）
+ */
+function sizeProblem(
+  record: ClaudeRecord,
+  ctx: BuildContext,
+  what: string,
+  text: string,
+  split: (parts: number) => string,
+  tooLong: string,
+): string | null {
+  if (ctx.source !== 'claude') return null
+  const length = stableStringify(record).length
+  if (length <= RECORD_LIMITS.recordJson) return null
+  const own = JSON.stringify(text).length
+  const room = RECORD_LIMITS.recordJson - (length - own) - SPLIT_MARGIN
+  return recordTooLarge(length, what, room > 0 ? split(Math.max(2, Math.ceil(own / room))) : tooLong)
 }
 
 /** ゴミ箱に入っている 2.3 の記録の id（表ごと）。アプリの貼り付けで previously_deleted を見分ける */
@@ -491,7 +530,8 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
       batchId: null,
       ...(model ? { model } : {}),
     }
-    if (!recordFits(rec)) return bad('推敲案が大きすぎます', label)
+    if (ctx.source === 'claude' && !recordFits(rec))
+      return bad(recordTooLarge(stableStringify(rec).length, '推敲案', '直し案・理由を短くしてください'), label)
     created.push(rec)
     items.push({ index, status: 'created', id, table: 'proofSuggestions', label })
   })
@@ -542,7 +582,7 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
         itemIds,
         ...(model ? { model } : {}),
       }
-      if (recordFits(batch)) records.push({ table: 'proofBatches', record: batch })
+      if (ctx.source !== 'claude' || recordFits(batch)) records.push({ table: 'proofBatches', record: batch })
       else notes.push('実行の記録が大きすぎるため残しませんでした')
     }
   }
@@ -583,8 +623,7 @@ export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx
     if (!isObj(raw)) return items.push({ index, status: 'invalid', label: '改稿案', hint: '改稿案の形が違います' })
     const item = raw as unknown as RevisionIdeasInput['items'][number]
     const err =
-      checkText(item.heading, 'heading', RECORD_LIMITS.revisionHeading, true) ??
-      checkText(item.body, 'body', RECORD_LIMITS.revisionBody, true)
+      checkText(item.heading, 'heading', RECORD_LIMITS.revisionHeading, true) ?? checkText(item.body, 'body', null, true)
     const label = isStr(item.heading) && item.heading.trim() ? `「${short(item.heading, 24)}」` : '改稿案'
     if (err) return items.push({ index, status: 'invalid', label, hint: err })
     const refs = item.pieces ?? []
@@ -616,7 +655,15 @@ export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx
       pieceIds,
       order: nextOrder,
     }
-    if (!recordFits(rec)) return items.push({ index, status: 'invalid', label, hint: '改稿案が大きすぎます' })
+    const tooBig = sizeProblem(
+      rec,
+      ctx,
+      '改稿案',
+      rec.body,
+      (k) => `body を${k}つ以上に分け、別々の改稿案にして送ってください（見出しに「（1/${k}）」などを付ける）`,
+      'heading を短くしてください',
+    )
+    if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
     nextOrder += 1
     seen.add(`revisionIdeas:${id}`)
     records.push({ table: 'revisionIdeas', record: rec })
@@ -640,8 +687,8 @@ function contestOf(raw: unknown, i: number, notes: string[]): StrategyContest | 
   const err =
     checkText(c.name, 'name', RECORD_LIMITS.contestName, true) ??
     checkText(c.organizer, 'organizer', RECORD_LIMITS.contestOrganizer, false) ??
-    checkText(c.fit, 'fit', RECORD_LIMITS.contestFit, false) ??
-    checkText(c.plan, 'plan', RECORD_LIMITS.contestPlan, false)
+    checkText(c.fit, 'fit', null, false) ??
+    checkText(c.plan, 'plan', null, false)
   if (err) return err
   let url = ''
   if (c.url !== undefined && c.url !== '') {
@@ -676,9 +723,7 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
   if (!t.title) return fail(t.error!, t.candidates)
   const title = t.title
   const label = isStr(input.heading) && input.heading.trim() ? `「${short(input.heading, 24)}」` : '戦略メモ'
-  const err =
-    checkText(input.heading, 'heading', RECORD_LIMITS.noteHeading, true) ??
-    checkText(input.body, 'body', RECORD_LIMITS.noteBody, true)
+  const err = checkText(input.heading, 'heading', RECORD_LIMITS.noteHeading, true) ?? checkText(input.body, 'body', null, true)
   if (err) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: err }], notes: [] }
   const rawContests = input.contests ?? []
   if (!Array.isArray(rawContests) || rawContests.length > RECORD_LIMITS.contests)
@@ -723,8 +768,16 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
     appliedAt: null,
     ...(model ? { model } : {}),
   }
-  if (!recordFits(rec))
-    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '戦略メモが大きすぎます' }], notes }
+  const tooBig = sizeProblem(
+    rec,
+    ctx,
+    '戦略メモ',
+    rec.body,
+    (k) =>
+      `body を${k}つ以上に分け、novel_add_strategy_note を分けて呼んでください（見出しに「（1/${k}）」などを付ける。contests は1つ目にだけ入れる）`,
+    'contests の相性（fit）・方針（plan）を短くするか、コンテストの候補を別の戦略メモに分けてください',
+  )
+  if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes }
   return {
     ok: true,
     records: [{ table: 'strategyNotes', record: rec }],
@@ -746,8 +799,7 @@ export function buildCritiquePrompt(data: AppData, input: CritiquePromptInput, c
     titleId = t.title.id
   }
   const label = isStr(input.name) && input.name.trim() ? `「${short(input.name, 24)}」` : '批評プロンプト'
-  const err =
-    checkText(input.name, 'name', RECORD_LIMITS.promptName, true) ?? checkText(input.body, 'body', RECORD_LIMITS.promptBody, true)
+  const err = checkText(input.name, 'name', RECORD_LIMITS.promptName, true) ?? checkText(input.body, 'body', null, true)
   if (err) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: err }], notes: [] }
   const id = critiquePromptId(titleId, input.name, input.body)
   const status = existing(data, ctx, 'critiquePrompts', id, new Set())
@@ -763,6 +815,15 @@ export function buildCritiquePrompt(data: AppData, input: CritiquePromptInput, c
       .filter((p) => p.titleId === titleId)
       .reduce((m, p) => Math.max(m, p.order), -1) + 1
   const rec: CritiquePrompt = { id, ...base(ctx, ''), titleId, name: input.name.trim(), body: input.body, order }
+  const tooBig = sizeProblem(
+    rec,
+    ctx,
+    '批評プロンプト',
+    rec.body,
+    (k) => `body を短くするか、${k}つ以上の批評プロンプトに分けて保存してください（名前に「（1/${k}）」などを付ける）`,
+    'name を短くしてください',
+  )
+  if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes: [] }
   return {
     ok: true,
     records: [{ table: 'critiquePrompts', record: rec }],
@@ -806,8 +867,7 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
   }
   const label = prompt ? `「${short(prompt.name, 24)}」の結果` : '作品批評の結果'
   const err =
-    checkText(input.prompt_text, 'prompt_text', RECORD_LIMITS.promptBody, false) ??
-    checkText(input.result_markdown, 'result_markdown', RECORD_LIMITS.resultMarkdown, false)
+    checkText(input.prompt_text, 'prompt_text', null, false) ?? checkText(input.result_markdown, 'result_markdown', null, false)
   if (err) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: err }], notes }
   const markdown = input.result_markdown ?? ''
   let url = ''
@@ -868,8 +928,16 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
     model: modelOf(input.model) ?? '',
     note: '',
   }
-  if (!recordFits(rec))
-    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: '批評の結果が大きすぎます' }], notes }
+  const tooBig = sizeProblem(
+    rec,
+    ctx,
+    '批評の結果',
+    markdown,
+    (k) =>
+      `result_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、novel_add_critique_result を分けて呼んでください（同じ prompt_id・scope で、各部の先頭に「（1/${k}）」などを書く）`,
+    'プロンプトの控え（prompt_text。省いた時は prompt_id の本文）が長すぎて、結果と一緒に入りません。prompt_text に依頼の要約（短いもの）を入れてください',
+  )
+  if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes }
   return {
     ok: true,
     records: [{ table: 'critiqueResults', record: rec }],

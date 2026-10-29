@@ -38,6 +38,7 @@ import {
   type ActsScenario,
   type Order,
 } from '../test/actsScenarios'
+import { previewPaste } from '../claude/paste'
 import { appModelRef, type AppModel } from './appModel'
 import { createConflictHooks } from './conflicts'
 import { encodeRecord } from './codec'
@@ -1245,6 +1246,43 @@ describe('2.3 の推敲案・改稿案などの同期（エミュレーター）
     const after = await b.load()
     expect(Object.keys(after.proofSuggestions)).toHaveLength(0)
     expect(Object.values(after.critiquePrompts).map((p) => p.name)).toEqual(['共通'])
+  })
+
+  it('「結果を貼り付け」で記録した25万字の批評の結果は、分割文書に分けて送られ、もう一方の端末にそのまま届く', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '長編')
+      titleId = r.titleId
+      return r.data
+    })
+    await settle(a, b)
+    const line = `批評の段落。${'あ'.repeat(93)}\n`
+    const markdown = line.repeat(2_500)
+    expect(markdown.length).toBe(250_000)
+    let resultId = ''
+    await a.edit((d) => {
+      // 作品批評の「結果を貼り付け」（コードブロックの無い Markdown をそのまま結果にする）と同じ
+      const p = previewPaste(d, markdown, { titleId, now: Date.now(), plainCritique: {} })
+      if (!p.ok) throw new Error(p.error)
+      expect(p.created).toBe(1)
+      resultId = p.records[0].record.id
+      return C.addClaudeRecords(d, p.records).data
+    })
+    const got = await waitFor(async () => (await b.load()).critiqueResults[resultId], 'もう一方の端末に届く', 30_000)
+    expect(got.resultMarkdown).toBe(markdown.trim())
+    expect(got.source).toBe('paste')
+    const docs = (await getDocs(collection(a.fs, 'users', a.uid, 'records'))).docs.map((x) => x.data())
+    const main = docs.find((x) => x.table === 'critiqueResults' && x.id === resultId)!
+    expect(main.json).toBeNull()
+    expect(main.chunks).toBeGreaterThan(1)
+    expect(docs.filter((x) => x.table === '_chunk' && x.parent === `critiqueResults:${resultId}`)).toHaveLength(main.chunks)
+    await settle(a, b)
+    expect(b.notes).toEqual([])
   })
 
   it('コネクタが作った記録（device: claude-connector）は、送信待ちのある端末にも競合なしで届く', async () => {

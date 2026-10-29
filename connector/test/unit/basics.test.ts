@@ -122,8 +122,17 @@ describe('書き込みの形（作るだけ）', () => {
     expect(rows[0]).toMatchObject({ name: 'revisionIdeas:ci-1', device: 'claude-connector', deleted: false, chunks: 0 })
   })
 
-  it('20万字を超える記録・原稿の表・長すぎる id は作らない', () => {
+  it('20万字を超える記録・原稿の表・長すぎる id は作らない（大きすぎる時は、いまの大きさと分けて呼ぶことを返す）', () => {
     expect(() => prepareWrite(fs, 'o', { table: 'revisionIdeas', record: { ...rec, body: 'あ'.repeat(200_001) } as never })).toThrow(EncodeError)
+    expect(() => prepareWrite(fs, 'o', { table: 'revisionIdeas', record: { ...rec, body: 'あ'.repeat(200_001) } as never })).toThrow(
+      /^記録が大きすぎて1件の記録に入りません（コネクタが書ける記録は JSON にして 200,000字まで。いま 200,\d{3}字）。内容を2つ以上に分けて、ツールを分けて呼んでください/,
+    )
+    // 分割文書が要る大きさ（25万字を超える JSON）も同じ
+    expect(() => prepareWrite(fs, 'o', { table: 'critiqueResults', record: { ...rec, body: 'あ'.repeat(300_000) } as never })).toThrow(/いま 300,\d{3}字/)
+    // 200,000字ちょうどまでは作れる
+    const fits = { ...rec, body: '' }
+    const room = 200_000 - JSON.stringify(fits).length
+    expect(prepareWrite(fs, 'o', { table: 'revisionIdeas', record: { ...fits, body: 'あ'.repeat(room) } as never }).json).toHaveLength(200_000)
     expect(() => prepareWrite(fs, 'o', { table: 'versions' as never, record: rec as never })).toThrow(EncodeError)
     expect(() => prepareWrite(fs, 'o', { table: 'revisionIdeas', record: { ...rec, id: 'x'.repeat(65) } as never })).toThrow(EncodeError)
   })

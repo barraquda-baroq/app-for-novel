@@ -64,6 +64,15 @@ describe('ツールの決まり', () => {
     expect('issues' in p && p.issues).toBeFalsy()
     const wrong = await proof['~standard'].validate({ title_id: 't:1', items: [{ piece: '#1', excerpt: 'x', category: 'typos', reason: 'r' }] })
     expect('issues' in wrong && wrong.issues?.length).toBeTruthy()
+    // 長い文章は入力の形の確かめで断らない（大きさは書き込みの時に確かめ、分け方を返す）。短い項目の上限はそのまま
+    const critique = fromJsonSchema(TOOL_SCHEMAS.novel_add_critique_result as never, v)
+    const long = await critique['~standard'].validate({ title_id: 't:1', prompt_text: 'あ'.repeat(30_000), result_markdown: 'あ'.repeat(250_000) })
+    expect('issues' in long && long.issues).toBeFalsy()
+    const longExcerpt = await proof['~standard'].validate({
+      title_id: 't:1',
+      items: [{ piece: '#1', excerpt: 'あ'.repeat(101), category: 'typo', reason: 'r' }],
+    })
+    expect('issues' in longExcerpt && longExcerpt.issues?.length).toBeTruthy()
   })
 })
 

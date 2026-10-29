@@ -53,6 +53,39 @@ describe('ツールの JSON Schema', () => {
     expect(proof.properties.items.items.required.sort()).toEqual(['category', 'excerpt', 'piece', 'reason'])
   })
 
+  it('長い文章の項目には maxLength が無い（短い項目・件数の上限はそのまま）。説明も前の上限を言わない', () => {
+    type Prop = { maxLength?: number; maxItems?: number; properties?: Record<string, Prop>; items?: Prop }
+    const props = (name: keyof typeof SCHEMAS) => (jsonSchema(SCHEMAS[name]) as Prop).properties!
+    const idea = props('novel_add_revision_ideas').items!.items!.properties!
+    expect(idea.body.maxLength).toBeUndefined()
+    expect(idea.heading.maxLength).toBe(80)
+    const note = props('novel_add_strategy_note')
+    expect(note.body.maxLength).toBeUndefined()
+    expect(note.heading.maxLength).toBe(80)
+    const contest = note.contests.items!.properties!
+    expect([contest.fit.maxLength, contest.plan.maxLength]).toEqual([undefined, undefined])
+    expect([contest.name.maxLength, contest.organizer.maxLength, contest.url.maxLength]).toEqual([80, 80, 2_000])
+    expect(note.contests.maxItems).toBe(10)
+    const prompt = props('novel_save_critique_prompt')
+    expect(prompt.body.maxLength).toBeUndefined()
+    expect(prompt.name.maxLength).toBe(60)
+    const result = props('novel_add_critique_result')
+    expect([result.prompt_text.maxLength, result.result_markdown.maxLength]).toEqual([undefined, undefined])
+    expect(result.artifact_url.maxLength).toBe(2_000)
+    const proof = props('novel_add_proofreading')
+    const item = proof.items.items!.properties!
+    expect([item.excerpt, item.context_before, item.category_label, item.suggestion, item.reason].map((p) => p.maxLength)).toEqual([
+      100, 30, 20, 500, 300,
+    ])
+    expect([proof.run_label.maxLength, proof.items.maxItems, proof.covered.maxItems]).toEqual([60, 100, 200])
+    // 書き出した JSON Schema にも、ツールの説明にも、前の上限（20,000・30,000・50,000・60,000字、相性 300字・方針 2,000字）は無い
+    const gen = fs.readFileSync(target, 'utf8')
+    for (const n of [20000, 30000, 50000, 60000]) expect(gen.match(new RegExp(`"maxLength": ${n}\\b`, 'g'))).toBeNull()
+    for (const def of TOOL_DEFS.filter((d) => d.kind === 'write'))
+      expect(def.description, def.name).not.toMatch(/(20,000|30,000|50,000|60,000)字まで|（300字以内）|（2,000字以内）/)
+    expect(gen).not.toMatch(/(20,000|30,000|50,000|60,000)字まで|相性（300字以内）|方針（2,000字以内）/)
+  })
+
   it('すべてのツールに入力の形がある', () => {
     for (const def of TOOL_DEFS) expect(SCHEMAS[def.name], def.name).toBeTruthy()
     expect(Object.keys(SCHEMAS).sort()).toEqual(TOOL_DEFS.map((d) => d.name).sort())

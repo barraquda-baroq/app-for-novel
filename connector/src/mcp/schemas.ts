@@ -1,6 +1,8 @@
 // ツールの入力の形（zod）。実行時は使わず、scripts/gen-schemas.mjs が JSON Schema（{ io: 'input' }）にして
 // schemas.gen.ts に書き出す（Workers で zod から作り直すと CPU を使うため）。test/unit/schemas.test.ts が一致を確かめる。
-// 上限の数は src/claude/records.ts の RECORD_LIMITS と同じ（アプリの貼り付けと同じ確かめ方）。
+// 上限の数は src/claude/records.ts の RECORD_LIMITS と同じ（アプリの貼り付けと同じ確かめ方）。上限があるのは短い項目と件数だけで、
+// 長い文章（改稿案・戦略メモの本文、コンテストの相性・方針、批評プロンプトの本文、批評の結果）には maxLength を付けない。
+// コネクタが書く1件の記録は JSON にして 200,000 字まで（RECORD_LIMITS.recordJson）。超えればツールが分け方を返す。
 import * as z from 'zod'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_GUIDE } from '../../../src/claude/categories'
 import { RECORD_LIMITS as L } from '../../../src/claude/records'
@@ -163,7 +165,7 @@ export const SCHEMAS = {
       .array(
         z.object({
           heading: z.string().min(1).max(L.revisionHeading).describe('改稿案の見出し（80字以内）'),
-          body: z.string().min(1).max(L.revisionBody).describe('改稿案の本文（ワンシーン丸ごとでもよい。50,000字まで）'),
+          body: z.string().min(1).describe('改稿案の本文（ワンシーン丸ごとでもよい。長さの上限なし）'),
           pieces: z.array(piece).max(L.revisionPieces).optional().describe('関係する話（#12・p:…）'),
         }),
       )
@@ -173,7 +175,7 @@ export const SCHEMAS = {
   novel_add_strategy_note: z.object({
     title_id: titleId,
     heading: z.string().min(1).max(L.noteHeading).describe('戦略メモの見出し（80字以内）'),
-    body: z.string().min(1).max(L.noteBody).describe('本文（Markdown。30,000字まで）'),
+    body: z.string().min(1).describe('本文（Markdown。長さの上限なし）'),
     run_date: runDate.optional(),
     contests: z
       .array(
@@ -190,8 +192,8 @@ export const SCHEMAS = {
             })
             .optional()
             .describe('規定の長さ'),
-          fit: z.string().max(L.contestFit).optional().describe('このタイトルとの相性（300字以内）'),
-          plan: z.string().max(L.contestPlan).optional().describe('応募までの改稿の方針（2,000字以内）'),
+          fit: z.string().optional().describe('このタイトルとの相性'),
+          plan: z.string().optional().describe('応募までの改稿の方針'),
         }),
       )
       .max(L.contests)
@@ -203,13 +205,16 @@ export const SCHEMAS = {
     title_id: titleId.optional().describe('scope が title の時のタイトル'),
     scope: z.enum(['title', 'shared']).describe('title = このタイトルの批評プロンプト、shared = どのタイトルでも使う共通のもの'),
     name: z.string().min(1).max(L.promptName).describe('プロンプトの名前（60字以内）'),
-    body: z.string().min(1).max(L.promptBody).describe('プロンプトの本文（20,000字まで）'),
+    body: z.string().min(1).describe('プロンプトの本文（長さの上限なし）'),
   }),
   novel_add_critique_result: z.object({
     title_id: titleId,
     prompt_id: z.string().min(1).max(200).optional().describe('使った批評プロンプト（q:… か名前）'),
-    prompt_text: z.string().max(L.promptBody).optional().describe('実際に使ったプロンプト（省略時は prompt_id の本文）'),
-    result_markdown: z.string().max(L.resultMarkdown).optional().describe('批評の結果（Markdown。60,000字まで）'),
+    prompt_text: z.string().optional().describe('実際に使ったプロンプト（省略時は prompt_id の本文）'),
+    result_markdown: z
+      .string()
+      .optional()
+      .describe('批評の結果（Markdown。長さの上限なし。1件の記録に入らない時は、ツールの答えのとおりに分けて記録する）'),
     artifact_url: z.string().max(L.url).optional().describe('結果のアーティファクトの URL（https）'),
     run_date: runDate.optional(),
     scope: z

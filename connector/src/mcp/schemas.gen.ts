@@ -597,8 +597,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
             "body": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 50000,
-              "description": "改稿案の本文（ワンシーン丸ごとでもよい。50,000字まで）"
+              "description": "改稿案の本文（ワンシーン丸ごとでもよい。長さの上限なし）"
             },
             "pieces": {
               "description": "関係する話（#12・p:…）",
@@ -643,8 +642,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       "body": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 30000,
-        "description": "本文（Markdown。30,000字まで）"
+        "description": "本文（Markdown。長さの上限なし）"
       },
       "run_date": {
         "type": "string",
@@ -706,14 +704,12 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
               }
             },
             "fit": {
-              "description": "このタイトルとの相性（300字以内）",
-              "type": "string",
-              "maxLength": 300
+              "description": "このタイトルとの相性",
+              "type": "string"
             },
             "plan": {
-              "description": "応募までの改稿の方針（2,000字以内）",
-              "type": "string",
-              "maxLength": 2000
+              "description": "応募までの改稿の方針",
+              "type": "string"
             }
           },
           "required": [
@@ -759,8 +755,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       "body": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 20000,
-        "description": "プロンプトの本文（20,000字まで）"
+        "description": "プロンプトの本文（長さの上限なし）"
       }
     },
     "required": [
@@ -786,13 +781,11 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       },
       "prompt_text": {
         "description": "実際に使ったプロンプト（省略時は prompt_id の本文）",
-        "type": "string",
-        "maxLength": 20000
+        "type": "string"
       },
       "result_markdown": {
-        "description": "批評の結果（Markdown。60,000字まで）",
-        "type": "string",
-        "maxLength": 60000
+        "description": "批評の結果（Markdown。長さの上限なし。1件の記録に入らない時は、ツールの答えのとおりに分けて記録する）",
+        "type": "string"
       },
       "artifact_url": {
         "description": "結果のアーティファクトの URL（https）",

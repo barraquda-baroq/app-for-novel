@@ -181,6 +181,47 @@ test.describe('Claude 連携（2.3）', () => {
     await expect(result).toContainText('https:// で始まる URL')
   })
 
+  test('作品批評: 長い批評プロンプト（約7万字）と25万字の結果も、貼り付けでそのまま記録できる（長さの上限なし）', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000)
+    await openApp(page)
+    const { titleId } = await seedNovel(page)
+    await openApp(page, `/t/${titleId}?tab=critique`)
+    const promptBody = '構成・人物・文章を見てください。\n'.repeat(4_000)
+    const markdown = `## 総評\n${'人物の弧がはっきりしています。\n'.repeat(16_000)}`
+    expect(markdown.length).toBeGreaterThan(250_000)
+    await page.getByTestId('critique-paste').click()
+    const dialog = page.getByTestId('paste-dialog')
+    // 貼り付けと同じく、一度に入れる（Playwright の fill は30万字ほどの文だと20秒ほどかかるため）
+    await dialog.getByTestId('paste-input').evaluate(
+      (el, text) => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+        setValue.call(el, text)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      },
+      fence([
+        { tool: 'novel_save_critique_prompt', input: { scope: 'title', name: '長い依頼', body: promptBody } },
+        { tool: 'novel_add_critique_result', input: { result_markdown: markdown } },
+      ]),
+    )
+    await expect(page.getByTestId('paste-item')).toHaveCount(2, { timeout: 30_000 })
+    await expect(page.getByTestId('paste-item').first()).toHaveAttribute('data-status', 'created')
+    await expect(page.getByTestId('paste-item').last()).toHaveAttribute('data-status', 'created')
+    await expect(page.getByTestId('paste-add')).toHaveText('追加（2件）')
+    await page.getByTestId('paste-add').click()
+    await expect(dialog).toHaveCount(0, { timeout: 30_000 })
+    await expect(page.getByTestId('critique-result')).toHaveCount(1, { timeout: 30_000 })
+    const saved = await page.evaluate(() => {
+      const d = window.__ns.getData()
+      return {
+        prompts: Object.values(d.critiquePrompts).map((p) => p.body.length),
+        results: Object.values(d.critiqueResults).map((r) => r.resultMarkdown.length),
+      }
+    })
+    expect(saved).toEqual({ prompts: [promptBody.length], results: [markdown.length] })
+  })
+
   test('Claude に頼む（手動）: 依頼文と本文を 50,000 字以内のパートに分けてコピーし、.txt で保存できる', async ({
     page,
     context,

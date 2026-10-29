@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { decodeRecord, encodeRecord } from '../sync/codec'
+import { stableStringify } from '../sync/merge'
 import { addClaudeRecords, deleteProofSuggestion } from '../domain/claudeOps'
 import type { AppData } from '../domain/types'
 import { novel, splitEpisode } from '../test/claudeFixture'
@@ -186,12 +187,13 @@ describe('改稿案・戦略メモ・批評プロンプト・批評結果', () =
         items: [
           { heading: '冒頭を短く', body: '第1話の冒頭を削る', pieces: ['#1', '#99'] },
           { heading: '', body: 'x' },
-          { heading: '長い案', body: 'あ'.repeat(RECORD_LIMITS.revisionBody + 1) },
+          { heading: 'あ'.repeat(RECORD_LIMITS.revisionHeading + 1), body: 'x' },
         ],
       },
       claude,
     )
     expect(r.items.map((x) => x.status)).toEqual(['created', 'invalid', 'invalid'])
+    expect(r.items[2].hint).toBe('heading が長すぎます（80字まで。いま 81字）')
     expect(r.items[0].hint).toContain('#99')
     expect(r.records[0].record).toMatchObject({
       heading: '冒頭を短く',
@@ -282,6 +284,200 @@ describe('改稿案・戦略メモ・批評プロンプト・批評結果', () =
       'invalid',
     )
     expect(buildCritiqueResult(data, { title_id: n.titleId, prompt_id: 'q:zzzz', result_markdown: 'x' }, claude).ok).toBe(false)
+  })
+})
+
+describe('長さ: 長い文章には上限が無い（短い項目と件数だけ）', () => {
+  const paste: BuildContext = { source: 'paste', now: NOW }
+  /** 段落に分けた長い文章（全部で chars 字） */
+  const long = (label: string, chars: number) => {
+    const line = `${label}の段落。${'あ'.repeat(93)}\n`
+    return line.repeat(Math.ceil(chars / line.length)).slice(0, chars)
+  }
+
+  it('貼り付け: 25万字の批評の結果・プロンプト・改稿案・戦略メモもそのまま記録にする（切り詰めない・分割文書で同期できる）', () => {
+    const n = sample()
+    const promptBody = long('依頼', 250_000)
+    const p = buildCritiquePrompt(n.data, { scope: 'title', title_id: n.titleId, name: '長い依頼', body: promptBody }, paste)
+    expect(p.items[0].status).toBe('created')
+    expect((p.records[0].record as AppData['critiquePrompts'][string]).body).toBe(promptBody)
+    const data = add(n.data, p.records)
+    const markdown = long('批評', 250_000)
+    const r = buildCritiqueResult(
+      data,
+      { title_id: n.titleId, prompt_id: shortId('critiquePrompt', p.records[0].record.id), result_markdown: markdown },
+      paste,
+    )
+    expect(r.items[0].status).toBe('created')
+    const result = r.records[0].record as AppData['critiqueResults'][string]
+    expect(result.resultMarkdown).toBe(markdown)
+    expect(result.promptText).toBe(promptBody)
+    // 端末の同期: 1つの文書に入らない大きさは分割文書に分けて送り、そのまま読み戻せる
+    const enc = encodeRecord(result as never)
+    expect(enc.json).toBeNull()
+    expect(enc.parts.length).toBeGreaterThan(1)
+    const back = decodeRecord(
+      {
+        table: 'critiqueResults',
+        id: result.id,
+        json: null,
+        hash: enc.hash,
+        chunks: enc.parts.length,
+        deleted: false,
+        updated: null,
+        device: 'd',
+      },
+      (i) => ({
+        table: '_chunk',
+        parent: `critiqueResults:${result.id}`,
+        index: i,
+        json: enc.parts[i],
+        hash: enc.hash,
+        updated: null,
+        device: 'd',
+        deleted: false,
+      }),
+    )
+    expect(back && stableStringify(back) === stableStringify(result)).toBe(true)
+
+    const idea = buildRevisionIdeas(data, { title_id: n.titleId, items: [{ heading: '書き直し', body: markdown }] }, paste)
+    expect(idea.items[0].status).toBe('created')
+    expect((idea.records[0].record as AppData['revisionIdeas'][string]).body).toBe(markdown)
+    const fit = 'あ'.repeat(5_000)
+    const plan = 'い'.repeat(20_000)
+    const note = buildStrategyNote(
+      data,
+      { title_id: n.titleId, heading: '戦略', body: markdown, contests: [{ name: '〇〇賞', fit, plan }] },
+      paste,
+    )
+    expect(note.items[0].status).toBe('created')
+    const rec = note.records[0].record as AppData['strategyNotes'][string]
+    expect(rec.body).toBe(markdown)
+    expect(rec.contests[0]).toMatchObject({ fit, plan })
+  })
+
+  it('コネクタ: 前の上限（結果 60,000・プロンプト 20,000・改稿案 50,000・戦略メモ 30,000・方針 2,000字）を超えても、1件が 200,000字に入れば作る', () => {
+    const n = sample()
+    const p = buildCritiquePrompt(n.data, { scope: 'shared', name: '依頼', body: long('依頼', 40_000) }, claude)
+    expect(p.items[0].status).toBe('created')
+    const data = add(n.data, p.records)
+    const r = buildCritiqueResult(
+      data,
+      {
+        title_id: n.titleId,
+        prompt_id: shortId('critiquePrompt', p.records[0].record.id),
+        result_markdown: long('批評', 120_000),
+      },
+      claude,
+    )
+    expect(r.items[0].status).toBe('created')
+    expect(recordFits(r.records[0].record)).toBe(true)
+    const idea = buildRevisionIdeas(data, { title_id: n.titleId, items: [{ heading: '案', body: long('案', 150_000) }] }, claude)
+    expect(idea.items[0].status).toBe('created')
+    const note = buildStrategyNote(
+      data,
+      {
+        title_id: n.titleId,
+        heading: '戦略',
+        body: long('戦略', 100_000),
+        contests: [{ name: '賞', fit: 'あ'.repeat(1_000), plan: 'い'.repeat(10_000) }],
+      },
+      claude,
+    )
+    expect(note.items[0].status).toBe('created')
+  })
+
+  it('コネクタ: 1件が 200,000字を超える時は作らず、いまの大きさと何件に分ければよいかを返す', () => {
+    const n = sample()
+    const markdown = long('批評', 250_000)
+    const r = buildCritiqueResult(n.data, { title_id: n.titleId, result_markdown: markdown }, claude)
+    expect(r.ok).toBe(true)
+    expect(r.records).toEqual([])
+    expect(r.items[0].status).toBe('invalid')
+    const hint = r.items[0].hint!
+    expect(hint).toContain('批評の結果が大きすぎて1件の記録に入りません')
+    expect(hint).toContain('JSON にして 200,000字まで')
+    expect(hint).toMatch(/いま 2\d\d,\d{3}字/)
+    expect(hint).toContain('result_markdown を2つ以上に分け')
+    expect(hint).toContain('novel_add_critique_result を分けて呼んでください')
+    // 分けた数のとおりに分ければ、どの部分も入る
+    const k = Number(/result_markdown を(\d+)つ以上/.exec(hint)![1])
+    const size = Math.ceil(markdown.length / k)
+    for (let i = 0; i < k; i++) {
+      const part = `（${i + 1}/${k}）\n${markdown.slice(i * size, (i + 1) * size)}`
+      expect(buildCritiqueResult(n.data, { title_id: n.titleId, result_markdown: part }, claude).items[0].status).toBe('created')
+    }
+    // 3倍なら少なくとも4つ
+    const huge = buildCritiqueResult(n.data, { title_id: n.titleId, result_markdown: long('批評', 600_000) }, claude)
+    expect(Number(/result_markdown を(\d+)つ以上/.exec(huge.items[0].hint!)![1])).toBeGreaterThanOrEqual(4)
+    // プロンプトの控えだけで入らない時は、控えを短くするように言う
+    const prompt = buildCritiqueResult(
+      n.data,
+      { title_id: n.titleId, prompt_text: long('依頼', 210_000), result_markdown: '短い' },
+      claude,
+    )
+    expect(prompt.items[0].hint).toContain('prompt_text に依頼の要約')
+    // 改稿案・戦略メモ・批評プロンプトも
+    const idea = buildRevisionIdeas(n.data, { title_id: n.titleId, items: [{ heading: '案', body: markdown }] }, claude)
+    expect(idea.items[0]).toMatchObject({ status: 'invalid' })
+    expect(idea.items[0].hint).toContain('別々の改稿案にして送ってください')
+    const note = buildStrategyNote(n.data, { title_id: n.titleId, heading: '戦略', body: markdown }, claude)
+    expect(note.items[0].hint).toContain('novel_add_strategy_note を分けて呼んでください')
+    const p = buildCritiquePrompt(n.data, { scope: 'shared', name: '依頼', body: markdown }, claude)
+    expect(p.records).toEqual([])
+    expect(p.items[0].hint).toContain('批評プロンプトに分けて保存してください')
+  })
+
+  it('短い項目の上限はそのまま（コネクタでも貼り付けでも）', () => {
+    const n = sample()
+    for (const ctx of [claude, paste]) {
+      const proof = buildProofreading(
+        n.data,
+        {
+          title_id: n.titleId,
+          items: [
+            { piece: '#1', excerpt: 'あ'.repeat(RECORD_LIMITS.excerpt + 1), category: 'typo', reason: 'x' },
+            { piece: '#1', excerpt: '見れる', context_before: 'あ'.repeat(31), category: 'typo', reason: 'x' },
+            { piece: '#1', excerpt: '見れる', category: 'other', category_label: 'あ'.repeat(21), reason: 'x' },
+            { piece: '#1', excerpt: '見れる', category: 'typo', suggestion: 'あ'.repeat(501), reason: 'x' },
+            { piece: '#1', excerpt: '見れる', category: 'typo', reason: 'あ'.repeat(301) },
+          ],
+        },
+        ctx,
+      )
+      expect(proof.items.map((x) => x.status)).toEqual(['invalid', 'invalid', 'invalid', 'invalid', 'invalid'])
+      expect(proof.items.map((x) => /(\w+) が長すぎます/.exec(x.hint!)?.[1])).toEqual([
+        'excerpt',
+        'context_before',
+        'category_label',
+        'suggestion',
+        'reason',
+      ])
+      expect(buildProofreading(n.data, { title_id: n.titleId, run_label: 'あ'.repeat(61), items: [] }, ctx).ok).toBe(false)
+      const note = buildStrategyNote(n.data, { title_id: n.titleId, heading: 'あ'.repeat(81), body: 'x' }, ctx)
+      expect(note.items[0].hint).toContain('heading が長すぎます（80字まで')
+      const contest = buildStrategyNote(
+        n.data,
+        {
+          title_id: n.titleId,
+          heading: '戦略',
+          body: 'x',
+          contests: [{ name: 'あ'.repeat(81) }, { name: '賞', organizer: 'あ'.repeat(81) }],
+        },
+        ctx,
+      )
+      expect((contest.records[0].record as AppData['strategyNotes'][string]).contests).toEqual([])
+      expect(contest.notes.join()).toContain('name が長すぎます')
+      expect(contest.notes.join()).toContain('organizer が長すぎます')
+      const prompt = buildCritiquePrompt(n.data, { scope: 'shared', name: 'あ'.repeat(61), body: 'x' }, ctx)
+      expect(prompt.items[0].hint).toContain('name が長すぎます（60字まで')
+      const url = buildCritiqueResult(
+        n.data,
+        { title_id: n.titleId, artifact_url: `https://claude.ai/${'a'.repeat(RECORD_LIMITS.url)}` },
+        ctx,
+      )
+      expect(url.items[0].status).toBe('invalid')
+    }
   })
 })
 
