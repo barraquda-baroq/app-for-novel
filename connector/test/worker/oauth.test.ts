@@ -15,6 +15,8 @@ const OWNER = 'owner-1'
 
 let fake: FakeFirebase
 let realFetch: typeof fetch
+/** 攻撃する側の CIMD に載せる公開鍵（private_key_jwt。テストごとに空に戻す） */
+let evilJwk: JsonWebKey | null = null
 
 const cimdDoc = {
   client_id: CLAUDE_CIMD,
@@ -30,11 +32,20 @@ beforeEach(async () => {
   await abortAllDurableObjects()
   await reset()
   fake = new FakeFirebase()
+  evilJwk = null
   realFetch = globalThis.fetch
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     if (url === CLAUDE_CIMD) return Response.json(cimdDoc)
-    if (url.startsWith('https://evil.example/')) return Response.json({ ...cimdDoc, client_id: url, redirect_uris: ['https://evil.example/cb'] })
+    if (url.startsWith('https://evil.example/'))
+      return Response.json({
+        ...cimdDoc,
+        client_id: url,
+        redirect_uris: ['https://evil.example/cb'],
+        ...(evilJwk
+          ? { token_endpoint_auth_method: 'private_key_jwt', token_endpoint_auth_signing_alg: 'ES256', jwks: { keys: [{ ...evilJwk, kid: 'k1', alg: 'ES256', use: 'sig' }] } }
+          : {}),
+      })
     if (url.startsWith('http://fake-firebase')) return fake.fetch(input as never, init)
     return realFetch(input as never, init)
   })
@@ -48,6 +59,17 @@ function b64url(bytes: ArrayBuffer | Uint8Array): string {
   let bin = ''
   for (const b of new Uint8Array(bytes)) bin += String.fromCharCode(b)
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/** 攻撃する側が自分の鍵で署名した client_assertion（iss = sub = CIMD の URL。毎回新しい jti） */
+async function evilAssertion(iss: string): Promise<string> {
+  const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair
+  evilJwk = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey
+  const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
+  const now = Math.floor(Date.now() / 1000)
+  const input = `${enc({ alg: 'ES256', typ: 'JWT', kid: 'k1' })}.${enc({ iss, sub: iss, aud: `${H}/oauth/token`, jti: crypto.randomUUID(), iat: now, exp: now + 60 })}`
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, new TextEncoder().encode(input))
+  return `${input}.${b64url(sig)}`
 }
 
 async function sha256hex(s: string): Promise<string> {
@@ -251,6 +273,42 @@ describe('GET /authorize（受け付けるクライアント）', () => {
     expect(fetched().filter((u) => u.includes('evil.example') || u.includes('/some/other/path'))).toEqual([])
   })
 
+  it('client_id を送らない client_assertion・空の client_id を重ねた要求も、取りに行かず KV に書かずに断る（トークンの要求）', async () => {
+    const spy = vi.mocked(globalThis.fetch)
+    const fetched = () => spy.mock.calls.map(([input]) => String(input instanceof Request ? input.url : input))
+    const before = await kvKeys()
+    const evil = 'https://evil.example/cimd.json'
+    for (let i = 0; i < 3; i++) {
+      const tok = await token({
+        grant_type: 'refresh_token',
+        refresh_token: 'x',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: await evilAssertion(evil),
+      })
+      expect(tok.status).toBe(401)
+      expect(((await tok.json()) as { error: string }).error).toBe('invalid_client')
+    }
+    // client_id= を空で先に送り、受け付けない URL を後ろに重ねる（ライブラリは空を捨てて後ろを使う）
+    const body = new URLSearchParams([
+      ['grant_type', 'authorization_code'],
+      ['code', 'x'],
+      ['code_verifier', 'v'],
+      ['client_id', ''],
+      ['client_id', evil],
+    ])
+    const dup = await SELF.fetch(`${H}/oauth/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body })
+    expect(dup.status).toBe(401)
+    expect(((await dup.json()) as { error: string }).error).toBe('invalid_client')
+    // Basic 認証の client_id も同じ
+    const basic = await SELF.fetch(`${H}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${btoa(`${encodeURIComponent(evil)}:`)}` },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code: 'x', code_verifier: 'v' }),
+    })
+    expect(basic.status).toBe(401)
+    expect(fetched().filter((u) => u.includes('evil.example'))).toEqual([])
+    expect(await kvKeys()).toBe(before)
+  })
 })
 
 describe('連携（アプリでの許可 → /pair/callback → トークン → /mcp）', () => {

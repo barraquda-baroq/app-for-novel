@@ -80,31 +80,38 @@ function provider(env: Env, url: string): OAuthProvider<Env> {
   return cached.provider
 }
 
-/** トークンの要求の client_id（本文か Basic 認証。読めなければ空） */
-async function tokenClientId(request: Request): Promise<string> {
+/**
+ * トークンの要求の client_id（ライブラリと同じ読み方: 本文の client_id はすべて・Basic 認証。クライアント認証の値の空はライブラリが
+ * 捨てるので数えない）と、client_assertion を送ったか（claude.ai の CIMD は token_endpoint_auth_method "none" で、送らない）
+ */
+async function tokenClient(request: Request): Promise<{ ids: string[]; assertion: boolean }> {
+  let form: FormData | null = null
+  try {
+    form = await request.clone().formData()
+  } catch {
+    form = null
+  }
+  const sent = (k: string) => (form?.getAll(k) ?? []).filter((v) => v !== '')
+  const ids = sent('client_id').filter((v): v is string => typeof v === 'string')
   const basic = /^Basic\s+(.+)$/i.exec(request.headers.get('Authorization') ?? '')
   if (basic) {
     try {
-      return decodeURIComponent(atob(basic[1]).split(':')[0] ?? '')
+      ids.push(decodeURIComponent((atob(basic[1].trim()).split(':')[0] ?? '').replace(/\+/g, ' ')))
     } catch {
-      return ''
+      // 読めない Basic 認証はライブラリが断る（取りに行かない）
     }
   }
-  try {
-    const form = await request.clone().formData()
-    const id = form.get('client_id')
-    return typeof id === 'string' ? id : ''
-  } catch {
-    return ''
-  }
+  return { ids, assertion: sent('client_assertion').length > 0 || sent('client_assertion_type').length > 0 }
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // トークンの要求でも、受け付けない公開の識別子（URL の client_id）はライブラリが取りに行く前に断る
+    // トークンの要求でも、受け付けない公開の識別子（URL の client_id）はライブラリが取りに行く前に断る。client_assertion
+    // （private_key_jwt）も断る: client_id が無いとライブラリは assertion の iss の URL を取りに行き、jti を KV に書く
     if (request.method === 'POST' && new URL(request.url).pathname === '/oauth/token') {
-      const clientId = await tokenClientId(request)
-      if (!allowedCimdId(clientId, workerConfig(env, request.url))) {
+      const client = await tokenClient(request)
+      const cfg = workerConfig(env, request.url)
+      if (client.assertion || !client.ids.every((id) => allowedCimdId(id, cfg))) {
         log('token_client_refused')
         return Response.json(
           { error: 'invalid_client', error_description: 'client is not accepted by this connector' },
