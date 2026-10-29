@@ -37,6 +37,12 @@ async function emulatorRequest(method: string, path: string, body?: unknown): Pr
   if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`)
 }
 
+/** エミュレーターの管理者として1つの文書を消す（無くてもよい） */
+async function adminDelete(path: string): Promise<void> {
+  const res = await fetch(`${FS}/${path}`, { method: 'DELETE', headers: { Authorization: 'Bearer owner' } })
+  if (!res.ok && res.status !== 404) throw new Error(`DELETE ${path}: ${res.status} ${await res.text()}`)
+}
+
 // ---------- 持ち主（SDK・Google のアカウント） ----------
 
 interface Owner {
@@ -184,7 +190,9 @@ beforeAll(async () => {
   await emulatorRequest('PUT', `/emulator/v1/projects/${PROJECT}:securityRules`, {
     rules: { files: [{ name: 'firestore.rules', content: prodRules }] },
   })
-  await emulatorRequest('DELETE', `/emulator/v1/projects/${PROJECT}/databases/(default)/documents`)
+  // 全件を消す口（DELETE …/documents）は、ほかのテストファイル（sync.emu.test.ts）が最後に通信を切った後だと 500 になるので、
+  // このテストが前提にする文書（持ち主・連携の記録）だけを管理者として消す（ほかのテストの文書は uid が違うので残っても構わない）
+  for (const path of ['config/owner', 'config/connector']) await adminDelete(path)
   anon = await anonymousUser()
   // 持ち主がまだいない時に、匿名のアカウントは持ち主になれない
   const asOwner = await fetch(`${FS}/config?documentId=owner`, {
