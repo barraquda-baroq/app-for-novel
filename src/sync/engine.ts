@@ -704,7 +704,11 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         }
         retryCount = 0
         const pending = await refreshPending()
-        if (pending === 0) setStatus({ phase: downloaded ? 'synced' : 'downloading', lastSyncedAt: Date.now(), error: null })
+        // 最後に揃った時刻は、初めての受け取りが終わってから付ける
+        if (pending === 0)
+          setStatus(
+            downloaded ? { phase: 'synced', lastSyncedAt: Date.now(), error: null } : { phase: 'downloading', error: null },
+          )
       } catch (e) {
         fail(e)
         scheduleRetry()

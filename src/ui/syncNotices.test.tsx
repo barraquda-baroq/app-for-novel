@@ -41,6 +41,14 @@ describe('今すぐ同期の後の知らせ', () => {
     })
     expect(manualSyncNotice(status({ outdated: { model: 3, appVersion: '2.3' } })).error).toBe(true)
   })
+
+  it('初めての受け取りが終わっていない（新しい端末の最初のログイン直後・同期を始めている途中）は、同期できたと言わない', () => {
+    for (const phase of ['starting', 'downloading'] as const)
+      expect(manualSyncNotice(status({ phase, pending: 0 }))).toEqual({
+        error: false,
+        message: 'クラウドの内容を受け取っています（受け取り終わると同期済みになります）',
+      })
+  })
 })
 
 describe('新しい版のアプリで書かれたデータがある時', () => {

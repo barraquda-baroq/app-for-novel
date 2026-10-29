@@ -26,6 +26,9 @@ export function manualSyncNotice(st: SyncStatus | null): { error: boolean; messa
   // データの形の版をまだ確かめられていない時など
   if (st && st.pending > 0)
     return { error: false, message: `送信待ちの変更が ${st.pending} 件あります（クラウドの確認が済むと送ります）` }
+  // 初めての受け取り（新しい端末の最初のログイン直後など）が終わっていない・同期を始めている途中: 同期できたとは言わない
+  if (st && (st.phase === 'starting' || st.phase === 'downloading'))
+    return { error: false, message: 'クラウドの内容を受け取っています（受け取り終わると同期済みになります）' }
   return { error: false, message: 'クラウドと同期しました' }
 }
 
