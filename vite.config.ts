@@ -35,6 +35,11 @@ function connectorOrigin(build: boolean): string {
   return origin
 }
 
+/** 埋め込むビルドの日時。Web 版の本番のビルド（npm run build）は null（毎回同じ中身にする）。アプリ・テスト・開発中は今の日時 */
+export function buildTimeDefine(command: 'build' | 'serve', native: boolean, now = Date.now()): number | null {
+  return command === 'build' && !native ? null : now
+}
+
 export default defineConfig(({ command, mode }) => {
   // iPhone / Android アプリ（Capacitor）に載せる画面（npm run build:native）。サービスワーカーを入れず、dist-native に出す
   // （capacitor.config.ts の webDir。Web 版の dist を取り違えてアプリに入れることがないように）
@@ -42,8 +47,10 @@ export default defineConfig(({ command, mode }) => {
   return {
     define: {
       __CONNECTOR_ORIGIN__: JSON.stringify(connectorOrigin(command === 'build')),
-      // ビルドした日時（アプリの「このアプリについて」と、iPhone のテスト版の期限の目安）
-      __BUILD_TIME__: JSON.stringify(Date.now()),
+      // ビルドした日時（アプリの「このアプリについて」と、iPhone のテスト版の期限の目安。使うのはアプリだけ）。
+      // Web 版のビルドには入れない: 入れると、アプリが何も変わっていなくてもビルドのたびに中身が変わり、
+      // npm run deploy のたびに「新しいバージョンのアプリがあります」が出て、全部を読み込み直すことになる
+      __BUILD_TIME__: JSON.stringify(buildTimeDefine(command, native)),
     },
     // 相対パスで出力しておくと、静的ホスティング・Capacitor/Tauri 等のラッパーにそのまま載せられる
     base: './',
