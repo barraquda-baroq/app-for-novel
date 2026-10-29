@@ -144,12 +144,17 @@
 
 .cq-result-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
 }
 
+.cq-result-head .badge,
+.cq-result-head .icon-btn {
+  flex: none;
+}
+
 .cq-result-title {
+  flex: 1 1 auto;
   min-width: 0;
   font-size: 15px;
   overflow-wrap: anywhere;

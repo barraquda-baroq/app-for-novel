@@ -8,7 +8,7 @@ import { actions } from './store/actions'
 import { flushNow, getData, initStore, replaceAllData } from './store/appStore'
 import { installLeaveHandlers, saveBeforeLeave } from './store/lifecycle'
 import { useAppUpdate } from './store/uiStore'
-import { initSync, signInForTest } from './sync/controller'
+import { initSync, signInForTest, useSync } from './sync/controller'
 
 // 端末内のデータが勝手に消されないよう、永続ストレージを要求する（対応ブラウザのみ）
 void navigator.storage?.persist?.().catch(() => undefined)
@@ -39,6 +39,8 @@ if (import.meta.env.DEV) {
     flushNow,
     replaceAllData,
     signInForTest,
+    /** ログインしているアカウント（同期のテスト用） */
+    syncUid: () => useSync.getState().user?.uid ?? null,
     /** ビルドの時に決めた Claude 用のコネクタの origin */
     connectorOrigin: __CONNECTOR_ORIGIN__,
     /** 手動連携の貼り付けと同じ作り方で Claude の記録を足す（戻り値は足した数） */

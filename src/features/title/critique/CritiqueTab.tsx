@@ -425,7 +425,6 @@ const ResultCard = memo(function ResultCard({
           {heading}
         </h4>
         {isNewerRecord(r) ? <span className="badge badge-missing">{NEWER_RECORD_LABEL}</span> : null}
-        <span className="grow" />
         <button
           type="button"
           className="icon-btn"

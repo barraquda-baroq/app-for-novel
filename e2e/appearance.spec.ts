@@ -101,7 +101,7 @@ test.describe('外観', () => {
   test('タイトル画面のタブは領域ごとに色分けし、ディープダークではほぼ黒にする', async ({ page }) => {
     await openApp(page)
     const { titleId } = await seedTitleWithEpisodes(page, '色分けの確認', ['本文'])
-    const tabs = ['story', 'settings', 'strategy', 'ideas'] as const
+    const tabs = ['story', 'settings', 'strategy', 'critique', 'ideas'] as const
 
     const selectedTabColors = async () => {
       const out: { background: string; underline: string }[] = []
