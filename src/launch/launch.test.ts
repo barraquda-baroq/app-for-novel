@@ -23,6 +23,7 @@ interface ControllerOptions {
 interface Controller {
   start(): void
   animationEnded(): void
+  stillShown(): void
   appReady(): void
   skip(): void
   state(): string
@@ -268,14 +269,47 @@ describe('消すまでの流れ（createController）', () => {
     expect(events).toEqual(['fade:skip@300', 'remove@550'])
   })
 
-  it('動かさない時は、最後の絵を0.5秒出してから（アプリの知らせも待って）消す', () => {
+  it('動かさない時は、最後の絵を描いてから0.5秒出して（アプリの知らせも待って）消す', () => {
     const { c, events } = setup(true)
     c.start()
     c.appReady()
+    // 描く準備・Worker の立ち上がりの間は数えない
+    vi.advanceTimersByTime(200)
+    expect(events).toEqual([])
+    c.stillShown()
     vi.advanceTimersByTime(499)
     expect(events).toEqual([])
+    // 2度目の知らせ（Worker で描けずにページの中で描き直した時など）は数え直さない
+    c.stillShown()
     vi.advanceTimersByTime(1)
-    expect(events).toEqual(['fade:done@500'])
+    expect(events).toEqual(['fade:done@700'])
+  })
+
+  it('動かさない時、最後の絵を描けないままなら5秒で消える。動かす時の stillShown は何もしない', () => {
+    const still = setup(true)
+    still.c.start()
+    still.c.appReady()
+    vi.advanceTimersByTime(5000)
+    expect(still.events).toEqual(['fade:cap@5000'])
+
+    const moving = setup()
+    moving.c.start()
+    moving.c.appReady()
+    moving.c.stillShown()
+    vi.advanceTimersByTime(4999)
+    expect(moving.events).toEqual([])
+    moving.c.animationEnded()
+    expect(moving.events).toEqual(['fade:done@4999'])
+  })
+
+  it('消し始めた後の stillShown は何もしない', () => {
+    const { c, events } = setup(true)
+    c.start()
+    c.skip()
+    c.stillShown()
+    c.appReady()
+    vi.advanceTimersByTime(10_000)
+    expect(events).toEqual(['fade:skip@0', 'remove@250'])
   })
 })
 
@@ -565,7 +599,7 @@ describe('起動アニメーション（boot）', () => {
     expect(overlay()).not.toBeNull()
   })
 
-  it('視差効果を減らす設定: 動かさずに最後の絵（ロゴ）を出し、0.5秒たってアプリの知らせもあれば消える', () => {
+  it('視差効果を減らす設定: 動かさずに最後の絵（ロゴ）を出し、描いてから0.5秒たってアプリの知らせもあれば消える', () => {
     media({ reduced: true })
     localStorage.setItem(PREFS_KEY, JSON.stringify({ theme: 'white' }))
     const api = load()
@@ -577,8 +611,10 @@ describe('起動アニメーション（boot）', () => {
     const before = draws
     expect(before).toBeGreaterThan(0)
     api.appReady()
-    t(483)
+    // ロゴを描いた（16）時から0.5秒（開いてから 516）
+    t(499)
     expect(el.style.opacity).toBe('1')
+    expect(el.getAttribute('data-launch-end')).toBeNull()
     // 動かさない（描き直さない）
     expect(draws).toBe(before)
     t(1)
@@ -706,6 +742,25 @@ describe('Worker（別のスレッド）で描く', () => {
     expect(overlay()).toBeNull()
     expect(worker.terminated).toBe(true)
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:launch')
+  })
+
+  it('視差効果を減らす設定: Worker がロゴを描いた（started）時から0.5秒出す（Worker の立ち上がりは数えない）', () => {
+    media({ reduced: true })
+    const api = load()
+    api.boot()
+    t(0)
+    const worker = FakeWorker.last!
+    expect(worker.posted[0]).toMatchObject({ type: 'start', still: true })
+    api.appReady()
+    // Worker の立ち上がりが遅い（遅い端末）
+    t(700)
+    expect(overlay()!.style.opacity).toBe('1')
+    worker.onmessage!({ data: { type: 'started' } })
+    t(499)
+    expect(overlay()!.style.opacity).toBe('1')
+    expect(overlay()!.getAttribute('data-launch-end')).toBeNull()
+    t(1)
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('done')
   })
 
   it('押すと Worker の絵を止めて消える', () => {

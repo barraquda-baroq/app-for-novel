@@ -203,27 +203,46 @@ test.describe('起動アニメーション', () => {
     await expect(overlay(on)).toBeVisible()
   })
 
-  test('視差効果を減らす設定では動かさずにロゴだけを出し、0.5秒ほどで消える', async ({ page }) => {
+  test('視差効果を減らす設定では動かさずにロゴだけを出し、描いてから0.5秒ほどで消える', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.addInitScript(() => {
-      const w = window as unknown as { __created?: number; __removed?: number }
+      const w = window as unknown as { __created?: number; __removed?: number; __drawn?: number; __fade?: number }
       new MutationObserver(() => {
         const el = document.getElementById('ns-launch')
         if (el && w.__created == null) w.__created = performance.now()
+        if (el && el.getAttribute('data-launch-end') && w.__fade == null) w.__fade = performance.now()
         if (!el && w.__created != null && w.__removed == null) w.__removed = performance.now()
-      }).observe(document, { childList: true, subtree: true })
+      }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-launch-end'] })
+      // Worker がロゴを描いた時（描いてすぐ 'started' を送ってくる）
+      const Base = window.Worker
+      window.Worker = class extends Base {
+        constructor(url: string | URL, options?: WorkerOptions) {
+          super(url, options)
+          this.addEventListener('message', (e) => {
+            if ((e.data as { type?: string })?.type === 'started' && w.__drawn == null) w.__drawn = performance.now()
+          })
+        }
+      }
     })
     await page.goto('/?launch=1#/', { waitUntil: 'commit' })
     const el = overlay(page)
     await expect(el).toHaveAttribute('data-launch-mode', 'still')
     await expect(el).toHaveCount(0, { timeout: 6000 })
-    const shown = await page.evaluate(() => {
-      const w = window as unknown as { __created: number; __removed: number }
-      return w.__removed - w.__created
+    const times = await page.evaluate(() => {
+      const w = window as unknown as { __created: number; __removed: number; __drawn?: number; __fade: number }
+      return {
+        shown: w.__removed - w.__created,
+        drawn: w.__drawn == null ? null : w.__drawn - w.__created,
+        fade: w.__fade - w.__created,
+      }
     })
     // 0.5秒（とアプリの最初の画面）を待ち、0.25秒で消える。アニメーション（約1.75秒）は待たない
-    expect(shown).toBeGreaterThanOrEqual(700)
-    expect(shown).toBeLessThan(1750 + 250)
+    expect(times.shown).toBeGreaterThanOrEqual(700)
+    expect(times.shown).toBeLessThan(1750 + 250)
+    // 0.5秒は、重なりを出した時からではなく、ロゴを描いた時から数える（Worker の立ち上がりが遅い端末でもロゴを0.5秒は出す）
+    // （Chromium は Worker で描く）
+    expect(times.drawn).not.toBeNull()
+    expect(times.fade - times.drawn!).toBeGreaterThanOrEqual(495)
   })
 
   test('ふだんは Worker（別のスレッド）で描き、絵が進む', async ({ page, browserName }) => {

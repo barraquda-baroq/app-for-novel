@@ -15,7 +15,7 @@
 // - 消える時: アニメーションが終わり（約1.75秒）、アプリが最初の画面を出せた（src/main.tsx が NovelStudioLaunch.appReady() を呼ぶ）
 //   の両方がそろったら、0.25秒で消える。押す・キーを押すとすぐ消える（押した時は、離すまで見えない重なりが残って押す操作の
 //   続きを受け止めるので、下のアプリは押されない）。アプリが知らせてこなくても5秒で消える。
-//   端末の「視差効果を減らす」では動かさず、最後の絵（ロゴ）を0.5秒ほど出してから消える
+//   端末の「視差効果を減らす」では動かさず、最後の絵（ロゴ）を描いてから0.5秒ほど出して消える
 // - アプリでは、重なり（起動の画面と同じ地の色）を置いたらすぐに起動の画面（スプラッシュ。ロゴの無い無地）を消す（docs/SPEC-2.md の 10.）
 //
 // 仕様は docs/SPEC.md の「起動アニメーション」。単体テストは src/launch/launch.test.ts
@@ -143,7 +143,7 @@
   // ================================================================ 消すまでの流れ
 
   var TIMING = {
-    /** 動かさない時（視差効果を減らす）に、最後の絵を出しておく時間 */
+    /** 動かさない時（視差効果を減らす）に、最後の絵を出しておく時間（最後の絵を描いてから stillMs） */
     stillMs: 500,
     /** アプリが知らせてこない時も、これより長くは出さない（出し始めてから） */
     capMs: 5000,
@@ -156,6 +156,8 @@
    * アニメーションの終わり（animationEnded）とアプリの知らせ（appReady）の両方がそろったら消し始める（onFadeOut）。
    * 押した・キーを押した（skip）時と、出し始めてから capMs たった時は、そろっていなくても消し始める。
    * 消し始めてから fadeMs たったら取り除く（onRemove）。
+   * 動かさない時（still）は、最後の絵を描いた（stillShown）時から stillMs たったら、アニメーションの終わりとする
+   * （描く準備・Worker の立ち上がりに時間がかかっても、ロゴを stillMs は出す）。
    *   o: { still, setTimeout, clearTimeout, onFadeOut(reason), onRemove(), timing }
    *   reason: 'done'（両方そろった）・'skip'・'cap'
    */
@@ -164,6 +166,7 @@
     var state = 'idle'
     var ended = false
     var ready = false
+    var shown = false
     var timers = []
 
     function later(fn, ms) {
@@ -190,16 +193,21 @@
       start: function () {
         if (state !== 'idle') return
         state = 'playing'
-        if (o.still) later(controller.animationEnded, timing.stillMs)
         later(function () {
           fadeOut('cap')
         }, timing.capMs)
         check()
       },
-      /** アニメーションが終わった（動かさない時は、最後の絵を stillMs 出した） */
+      /** アニメーションが終わった（動かさない時は、最後の絵を描いてから stillMs たった） */
       animationEnded: function () {
         ended = true
         if (state === 'playing') check()
+      },
+      /** 最後の絵を描いた（動かさない時は、ここから最後の絵を stillMs 出して、アニメーションの終わりとする） */
+      stillShown: function () {
+        if (!o.still || state !== 'playing' || shown) return
+        shown = true
+        later(controller.animationEnded, timing.stillMs)
       },
       /** アプリが最初の画面を出せた */
       appReady: function () {
@@ -971,7 +979,7 @@
   /**
    * Worker（別のスレッド）で描く。アプリの起動（JavaScript の読み込み・最初の描画）と取り合わず、アプリが重い処理をしている間も
    * 止まらない。OffscreenCanvas に描けない・Worker を作れない時は null（ページの中で描く）。
-   * opts.onEnd(): 最後まで描いた。opts.onError(): Worker で描けなかった（canvas は取り除いてある）
+   * opts.onStarted(): 最初の絵を描いた。opts.onEnd(): 最後まで描いた。opts.onError(): Worker で描けなかった（canvas は取り除いてある）
    */
   function playInWorker(stage, theme, opts) {
     if (typeof window.Worker !== 'function' || typeof window.OffscreenCanvas !== 'function' || typeof window.Blob !== 'function')
@@ -1007,7 +1015,9 @@
       if (cv.parentNode) cv.parentNode.removeChild(cv)
     }
     worker.onmessage = function (e) {
-      if (e.data && e.data.type === 'end' && opts.onEnd) opts.onEnd()
+      if (!e.data) return
+      if (e.data.type === 'started' && opts.onStarted) opts.onStarted()
+      if (e.data.type === 'end' && opts.onEnd) opts.onEnd()
     }
     worker.onerror = function () {
       release()
@@ -1203,6 +1213,10 @@
     var opts = {
       still: mode === 'still',
       safe: safeInsets(el),
+      // 最初の絵を描いた（動かさない時は、ここからロゴを0.5秒出す）
+      onStarted: function () {
+        controller.stillShown()
+      },
       onEnd: function () {
         controller.animationEnded()
       },
@@ -1220,6 +1234,7 @@
         if (controller.state() !== 'playing') return
         try {
           player = play(el, theme, opts)
+          controller.stillShown()
         } catch (e) {
           if (window.console) window.console.warn('起動アニメーションを描けませんでした', e)
           controller.skip()
