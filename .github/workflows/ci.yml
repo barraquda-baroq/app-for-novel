@@ -60,3 +60,74 @@ jobs:
           name: e2e-results
           path: e2e/artifacts
           retention-days: 7
+
+  # 2.4 Android アプリ（Capacitor）のビルド。google-services.json・署名の鍵が無くてもビルドできることと、
+  # 版（package.json → versionCode）・署名の設定（keystore.properties）が効くことを確かめる（docs/MOBILE.md）
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Capacitor 8 とプラグインは Java 21 でコンパイルする（Android Studio に入っている JBR と同じ）
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: アプリの画面をビルド（サービスワーカーなし）
+        run: npm run build:native
+      - name: Android のプロジェクトに写す
+        run: npx cap sync android
+      - name: Android のビルド（鍵なし）
+        working-directory: android
+        run: ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace
+      - name: 版の確かめ
+        run: node scripts/mobile/ci.mjs android-version android/app/build/outputs/apk/debug/app-debug.apk
+      - name: 署名の確かめ（使い捨ての鍵で keystore.properties を作ってビルドする）
+        run: |
+          node scripts/mobile/ci.mjs android-keystore "$RUNNER_TEMP/ci-release.jks"
+          (cd android && ./gradlew assembleRelease --no-daemon)
+          node scripts/mobile/ci.mjs android-signature android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/ci-release.jks"
+          rm -f android/keystore.properties "$RUNNER_TEMP/ci-release.jks"
+
+  # 2.4 iPhone アプリのビルド（シミュレーター用、署名なし）。Google ログインの設定の確かめ（Run Script）と、
+  # 版・最低の iOS（ios/App/novelstudio.xcconfig）・手元の設定（local.xcconfig）の読み込みを確かめる
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Xcode
+        run: xcodebuild -version
+      - name: アプリの画面をビルド（サービスワーカーなし）
+        run: npm run build:native
+      - name: iPhone のプロジェクトに写す
+        run: npx cap sync ios
+      # 本物の GoogleService-Info.plist はリポジトリに入れない（npm run mobile:firebase が作る）。CI は中身のないものを使う
+      - name: CI 用の GoogleService-Info.plist
+        run: cp ios/ci/GoogleService-Info.ci.plist ios/App/App/GoogleService-Info.plist
+      - name: Swift Package のキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: ~/spm-packages
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/App/CapApp-SPM/Package.swift', 'package-lock.json') }}
+          restore-keys: spm-${{ runner.os }}-
+      # xcodebuild の引数は scripts/mobile/ci.mjs（シミュレーター用・署名なし。GOOGLE_REVERSED_CLIENT_ID は CI 用の値）
+      - name: iPhone のビルド（シミュレーター）
+        run: node scripts/mobile/ci.mjs ios-build
+      - name: できたアプリの確かめ（版・URL スキーム・プライバシーの宣言・サービスワーカーなし）
+        run: node scripts/mobile/ci.mjs ios-app "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/App.app"
+      - name: xcconfig の読み込みの確かめ（Debug・Release、local.xcconfig のあり・なし）
+        run: node scripts/mobile/ci.mjs ios-settings
+      - name: Google ログインの設定が無い時に止まることの確かめ
+        run: node scripts/mobile/ci.mjs ios-missing-google
