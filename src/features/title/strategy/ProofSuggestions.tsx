@@ -57,7 +57,11 @@ export interface ProofSuggestionsProps {
 export function ProofSuggestions({ titleId, headingId, today, actionsSlot }: ProofSuggestionsProps) {
   const data = useData()
   const navigate = useNavigate()
-  const all = useMemo(() => proofSuggestionsOf(data, titleId), [data.proofSuggestions, titleId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 同じ時に作った案は読む順に並べるので、話の並び（タイトル・章・話）が変わった時も並べ直す
+  const all = useMemo(
+    () => proofSuggestionsOf(data, titleId),
+    [data.proofSuggestions, data.titles, data.chapters, data.pieces, titleId], // eslint-disable-line react-hooks/exhaustive-deps
+  )
   const runs = useMemo(
     () => proofRunsOf(data, titleId),
     [data.proofBatches, data.proofSuggestions, titleId], // eslint-disable-line react-hooks/exhaustive-deps

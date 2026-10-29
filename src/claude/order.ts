@@ -1,6 +1,7 @@
 // 推敲案・改稿案・戦略メモ・作品批評の並び（アプリの画面と、コネクタの一覧で同じ並びにする）。
 // - 改稿案: チェックしていない案は order の順（同じなら作った順）、チェックした案はその後ろにチェックした順（斜線＋グレーで下へ沈む）
-// - 推敲案: チェックしていない案が先。その中でフラグを立てた案が先、次に新しい順。チェックした案も同じ順で、その後ろ
+// - 推敲案: チェックしていない案が先。その中でフラグを立てた案が先、次に新しい順（同じ時に作った案は読む順・本文の位置の順）。
+//   チェックした案も同じ順で、その後ろ
 // - 戦略メモ・作品批評の結果・推敲案の実行: 新しい日付から（同じ日なら新しく作った順）
 // - 批評プロンプト: このタイトルのもの（order の順）と、共通のもの（order の順）
 import { adoptedText, isSplit } from '../domain/structure'
@@ -33,17 +34,45 @@ export function revisionIdeasOf(data: AppData, titleId: ID): RevisionIdea[] {
   return sortRevisionIdeas(Object.values(data.revisionIdeas).filter((r) => r.titleId === titleId))
 }
 
-/** 推敲案の並び（チェックしていない案 → チェックした案。それぞれフラグ → 新しい順） */
-export function sortProofSuggestions(list: readonly ProofSuggestion[]): ProofSuggestion[] {
+/** 推敲案の読む順の位置（話の順・幕の順、本文の位置） */
+export type ProofRank = (s: ProofSuggestion) => readonly [number, number]
+
+/** 読む順（話の順 → 幕の順）→ 本文の位置。見つからない話・場所の無い案は後ろ */
+export function proofStoryRank(data: AppData, titleId: ID): ProofRank {
+  const pos = new Map<ID, number>()
+  readingOrder(data, titleId).forEach((it, i) => {
+    pos.set(it.piece.id, i * 1000)
+    ;(it.piece.actIds ?? []).forEach((a, j) => pos.set(a, i * 1000 + j + 1))
+  })
+  const END = Number.MAX_SAFE_INTEGER
+  return (s) => [pos.get(s.pieceId) ?? (s.parentId ? (pos.get(s.parentId) ?? END) : END), s.anchor?.offset ?? END]
+}
+
+/**
+ * 推敲案の並び（チェックしていない案 → チェックした案。それぞれフラグ → 新しい順）。同じ時に作った案（1回の追加・貼り付け）は
+ * rank があれば読む順（話 → 幕 → 本文の位置）、無ければ id の順
+ */
+export function sortProofSuggestions(list: readonly ProofSuggestion[], rank?: ProofRank): ProofSuggestion[] {
+  const ranks = rank ? new Map(list.map((s) => [s.id, rank(s)])) : null
   return [...list].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1
     if (a.flagged !== b.flagged) return a.flagged ? -1 : 1
-    return b.createdAt - a.createdAt || byId(a, b)
+    if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt
+    if (ranks) {
+      const ra = ranks.get(a.id)!
+      const rb = ranks.get(b.id)!
+      if (ra[0] !== rb[0]) return ra[0] - rb[0]
+      if (ra[1] !== rb[1]) return ra[1] - rb[1]
+    }
+    return byId(a, b)
   })
 }
 
 export function proofSuggestionsOf(data: AppData, titleId: ID): ProofSuggestion[] {
-  return sortProofSuggestions(Object.values(data.proofSuggestions).filter((s) => s.titleId === titleId))
+  return sortProofSuggestions(
+    Object.values(data.proofSuggestions).filter((s) => s.titleId === titleId),
+    proofStoryRank(data, titleId),
+  )
 }
 
 /**
@@ -57,18 +86,17 @@ export function openProofSuggestionsFor(data: AppData, pieceId: ID): ProofSugges
   const ids = new Set<ID>([pieceId])
   if (piece && isSplit(piece)) for (const id of piece.actIds ?? []) ids.add(id)
   const parentId = piece?.kind === 'act' ? (piece.parentId ?? null) : null
-  return sortProofSuggestions(
-    Object.values(data.proofSuggestions).filter((s) => {
-      if (s.done) return false
-      if (!parentId) return ids.has(s.pieceId) || (s.parentId !== null && ids.has(s.parentId))
-      const mine = s.pieceId === pieceId
-      if (!mine && s.pieceId !== parentId && s.parentId !== parentId) return false
-      const r = reanchor(data, s)
-      // 見つからない案はその幕に残す（「本文が変わりました」を出す）
-      if (r.status === 'lost') return mine
-      return r.pieceId === pieceId
-    }),
-  )
+  const list = Object.values(data.proofSuggestions).filter((s) => {
+    if (s.done) return false
+    if (!parentId) return ids.has(s.pieceId) || (s.parentId !== null && ids.has(s.parentId))
+    const mine = s.pieceId === pieceId
+    if (!mine && s.pieceId !== parentId && s.parentId !== parentId) return false
+    const r = reanchor(data, s)
+    // 見つからない案はその幕に残す（「本文が変わりました」を出す）
+    if (r.status === 'lost') return mine
+    return r.pieceId === pieceId
+  })
+  return sortProofSuggestions(list, piece ? proofStoryRank(data, piece.titleId) : undefined)
 }
 
 const newestFirst = <T extends { runDate: string; createdAt: number; id: ID }>(a: T, b: T) =>

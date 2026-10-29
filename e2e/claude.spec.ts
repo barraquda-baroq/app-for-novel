@@ -82,12 +82,17 @@ test.describe('Claude 連携（2.3）', () => {
     await expect(page.getByTestId('proof-runs')).toContainText('ワードサーチ（第1〜2話） 3件')
     await expect(page.getByTestId('proof-coverage')).toContainText('すべて確認済み')
 
-    // 夕焼けにフラグ → 2つのフラグの中で新しい順（同じ追加なので並びは保つ）。外すと戻る
+    // 1回の追加の中は読む順（話の順 → 本文の位置）: フラグ付きの来れるが先、その後は #1 → #2
+    const excerpts = items.locator('.ps-excerpt')
+    await expect(excerpts).toHaveText(['「来れる」', '「見れる」', '「ありきたりな夕焼け」'])
+    // 夕焼けにフラグ → 2つのフラグは同じ追加なので本文の位置の順（第2話の頭の夕焼けが先）。外すと戻る
     const sunset = items.filter({ hasText: 'ありきたりな夕焼け' })
     await sunset.getByTestId('proof-flag').click()
     await expect(sunset).toHaveAttribute('data-flagged', 'true')
+    await expect(excerpts).toHaveText(['「ありきたりな夕焼け」', '「来れる」', '「見れる」'])
     await sunset.getByTestId('proof-flag').click()
     await expect(sunset).toHaveAttribute('data-flagged', 'false')
+    await expect(excerpts).toHaveText(['「来れる」', '「見れる」', '「ありきたりな夕焼け」'])
 
     // チェックすると下へ沈む
     await items.first().getByTestId('proof-check').check()

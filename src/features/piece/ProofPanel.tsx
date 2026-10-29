@@ -5,7 +5,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { reanchor, type ReanchorResult } from '../../claude/anchor'
-import { openProofSuggestionsFor, sortProofSuggestions } from '../../claude/order'
+import { openProofSuggestionsFor, proofStoryRank, sortProofSuggestions } from '../../claude/order'
 import { episodeNumbers } from '../../domain/structure'
 import type { AppData, ID, Piece, ProofSuggestion, Version } from '../../domain/types'
 import { paths } from '../../routes'
@@ -129,8 +129,9 @@ export function ProofPanel({ titleId, piece, active, hub, focusId, onClose, jump
     () =>
       sortProofSuggestions(
         [...seen.current].map((id) => data.proofSuggestions[id]).filter((s): s is ProofSuggestion => Boolean(s)),
+        proofStoryRank(data, titleId),
       ),
-    [open, data.proofSuggestions],
+    [open, data.proofSuggestions, titleId], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const numbers = useMemo(
     () => episodeNumbers(data, titleId),
