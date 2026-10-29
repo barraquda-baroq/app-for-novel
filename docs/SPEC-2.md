@@ -237,7 +237,7 @@
 
 - **起動アニメーション**: [SPEC.md](SPEC.md) の 2.（Web 版とアプリで同じコード。設定 → 表示 の「起動アニメーション」でオフにできる）。
 - **アイコン**（`scripts/icon-art.mjs`）: 黒地（`#050607`）に、緑（`#2bff73`）に光る点の「NS」と、消えている点の並び。字は起動アニメーションのロゴと同じ 5×7 の点の字。
-  - Web 版（`node scripts/render-icons.mjs` で作る）: `public/icon.svg`（角を丸めたもの。画面の左上のロゴ）、`public/favicon.svg`（タブ。32 四方の升目にそろえ、16px でもにじまない）、`apple-touch-icon.png`（180px、角を丸めない。角は iOS が丸める）、`pwa-192.png`・`pwa-512.png`（NS を小さめにして真ん中の 80% の円に収め、manifest の `any` と `maskable` の両方に使う）。manifest の `theme_color`・`background_color` は `#050607`（開いた後のウインドウの枠の色は、今までどおり外観に合わせる）。
+  - Web 版（`node scripts/render-icons.mjs` で作る）: `public/icon.svg`（角を丸めたもの。画面の左上のロゴ）、`public/favicon.svg`（タブ。32 四方の升目にそろえ、16px でもにじまない）、`apple-touch-icon.png`（180px、角を丸めない。角は iOS が丸める）、`pwa-192.png`・`pwa-512.png`（ふだんのアイコン。apple-touch-icon・アプリと同じ絵で、manifest の `any`。インストールした Web 版のスタートメニュー・タスクバー・ウインドウ）、`pwa-32.png`（favicon と同じ、小さくてもにじまない形。manifest の `any`。Windows のタスクバー・タイトルバーの大きさ）、`pwa-maskable-192.png`・`pwa-maskable-512.png`（NS を小さめにして真ん中の 80% の円に収めたもの。manifest の `maskable` だけ。Android などが丸などに切り抜く時）。manifest の `theme_color`・`background_color` は `#050607`（開いた後のウインドウの枠の色は、今までどおり外観に合わせる）。
   - アプリ: `node scripts/render-native-assets.mjs` で `assets/` に `icon-only.png`（iPhone と Android 7 まで）・`icon-foreground.png`（点だけ）・`icon-background.png`（黒地だけ）（Android 8 以降のアダプティブアイコンの前景と背景）を作り、`npx @capacitor/assets@3.0.5 generate --ios --android` で `ios/`・`android/` に入れる（入れた画像もリポジトリに入れる）。新しいアイコンは、アプリを作り直して入れ直すと変わる（docs/MOBILE.md）。
   - コネクタの画面（同意の画面など）にはアイコンを出していない（今までどおり）。
 - **アプリの起動の画面（スプラッシュ）**: ロゴの無い無地。色は端末のライト／ダークに合わせ、起動アニメーションの地の色と同じにする（ライト `#FBFCFE`、ダーク `#050607`）。起動の画面からアニメーションの最初の絵（地の色）へ、そのまま続いて見える。

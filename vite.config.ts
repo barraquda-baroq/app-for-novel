@@ -64,6 +64,20 @@ export async function inlineScripts(html: string, root: string, minify: boolean)
   return out + html.slice(last)
 }
 
+/**
+ * インストールした Web 版のアイコン（manifest の icons。画像は scripts/render-icons.mjs が public/ に書き出す）。
+ * any はふだんのアイコン（apple-touch-icon・アプリと同じ絵。インストールした Web 版のスタートメニュー・タスクバー・ウインドウ）。
+ * 32px は favicon と同じ、小さくてもにじまない形（Windows のタスクバー・タイトルバー）。
+ * maskable だけ、NS を小さめにして真ん中の 80% の円（丸などに切り抜かれる時の安全な範囲）に収めたもの
+ */
+export const PWA_ICONS = [
+  { src: 'pwa-32.png', sizes: '32x32', type: 'image/png', purpose: 'any' },
+  { src: 'pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+  { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+  { src: 'pwa-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+  { src: 'pwa-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+]
+
 function inlineLaunchScript(): Plugin {
   const root = fileURLToPath(new URL('.', import.meta.url))
   let minify = false
@@ -125,14 +139,8 @@ export default defineConfig(({ command, mode }) => {
           display: 'standalone',
           start_url: './',
           scope: './',
-          // 絵は真ん中の 80% の円（maskable の安全な範囲）に収めてあるので、同じ画像を丸などに切り抜かれる用（maskable）にも使う
-          // （scripts/render-icons.mjs）
-          icons: [
-            { src: 'pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-            { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-            { src: 'pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
-            { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-          ],
+          // any はふだんのアイコン、maskable だけ NS を小さめにしたもの（PWA_ICONS）
+          icons: PWA_ICONS,
         },
       }),
     ],

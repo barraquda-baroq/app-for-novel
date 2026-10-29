@@ -60,7 +60,8 @@ const DEFS = {
 
 /**
  * アプリのアイコン（1024 四方の SVG）。
- *   grid: 点の並びの数（奇数）。15 がふだんのアイコン。17 は NS が小さめで、丸などに切り抜かれても欠けない（PWA の maskable）
+ *   grid: 点の並びの数（奇数）。15 がふだんのアイコン（PWA の any も）。17 は NS が小さめで、丸などに切り抜かれても欠けない
+ *     （PWA の maskable だけ。public/pwa-maskable-*.png）
  *   layer: 'all' | 'background' | 'art'（Android のアダプティブアイコンは背景と絵を別の画像にする）
  *   radius: 角の丸み（0 は四角。public/icon.svg は 224 = 古いアイコンと同じ 21.9%）
  */
