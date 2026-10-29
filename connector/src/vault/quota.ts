@@ -1,6 +1,6 @@
 // Firestore の無料枠（Spark）の日付は太平洋時間で切り替わる。コネクタが1日に使う読み取り・書き込みの数を数え、
 // 上限（DAILY_READ_BUDGET・DAILY_WRITE_BUDGET）を超えたら止める（アプリの同期の分を残すため）。
-// 太平洋時間の0時は、夏時間の間は日本時間16時、冬時間（2026-11-01 から）は17時。
+// 太平洋時間の0時は、夏時間の間は日本時間16時、冬時間（11月上旬〜3月中旬）は17時。
 
 const pacificDate = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Los_Angeles',

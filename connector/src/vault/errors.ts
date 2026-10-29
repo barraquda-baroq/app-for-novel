@@ -43,8 +43,6 @@ export const MESSAGES = {
   writesOff:
     '書き込みは停止中です。アプリの 設定 → Claude 連携 で「書き込みを許可」をオンにすると、推敲案などを追加できます（読むのは続けられます）。',
   unavailable: '一時的に Novel Studio のクラウドに接続できません。少し待ってから、もう一度試してください。',
-  firestoreQuota:
-    'Firebase の今日の無料枠を使い切りました（アプリの同期も止まっている可能性があります）。日本時間16時（11/1以降は17時）に回復します。',
   permission:
     'Novel Studio のクラウドに拒まれました（アクセスルールが古い可能性）。Mac か Windows で npm run deploy を実行して、アクセスルールを公開し直してください。',
 } as const
