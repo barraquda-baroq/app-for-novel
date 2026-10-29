@@ -9,11 +9,14 @@ import {
   pairingHash,
   parseConnectorDoc,
   parseIdentity,
+  prepareConnect,
   randomPairingKey,
   validState,
   type ConnectorWrite,
   type PairingDeps,
+  type PrepareDeps,
 } from './connectLogic'
+import { PAIRING_FIXTURE as F } from '../../test/pairingFixture'
 
 const ORIGIN = 'https://novel-studio-connector.example.workers.dev'
 /** 実装とは別に crypto.subtle で数える（式が sha256hex(s + '.' + k) であることを確かめる） */
@@ -214,5 +217,80 @@ describe('連携の記録を読む', () => {
     ).toEqual({ uid: 'u', pairedAt: 123, approvedOn: 'Mac', writes: true })
     expect(parseConnectorDoc({ uid: 'u', writes: 'yes' })).toEqual({ uid: 'u', pairedAt: null, approvedOn: '', writes: false })
     expect(parseConnectorDoc({})).toBeNull()
+  })
+})
+
+describe('［許可する］の前の確かめ（持ち主・同期・コネクタの身元）', () => {
+  function prep(over: Partial<PrepareDeps> = {}) {
+    const steps: string[] = []
+    const asked: string[] = []
+    const d: PrepareDeps = {
+      origin: ORIGIN,
+      readOwnerUid: async () => 'owner',
+      waitSynced: async () => true,
+      fetchIdentity: async (origin) => {
+        asked.push(origin)
+        return { ok: true, identity }
+      },
+      cancelled: () => false,
+      onStep: (s) => steps.push(s),
+      ...over,
+    }
+    return { d, steps, asked }
+  }
+
+  it('持ち主なら同期を待ってから、ビルドの時に決めた origin にだけ問い合わせる', async () => {
+    const t = prep()
+    expect(await prepareConnect(t.d, 'owner')).toEqual({ step: 'ready', identity, ownerUid: 'owner' })
+    expect(t.steps).toEqual(['checking', 'sync', 'identity'])
+    expect(t.asked).toEqual([ORIGIN])
+  })
+
+  it('持ち主でない・持ち主が読めない・同期が終わらない時は、コネクタに問い合わせない', async () => {
+    for (const [over, step] of [
+      [{ readOwnerUid: async () => 'someone-else' }, 'notOwner'],
+      [{ readOwnerUid: async () => Promise.reject(new Error('offline')) }, 'ownerError'],
+      [{ waitSynced: async () => false }, 'syncTimeout'],
+      [{ readOwnerUid: async () => null }, 'noOwner'],
+      [{ cancelled: () => true }, 'cancelled'],
+    ] as const) {
+      const t = prep(over)
+      expect((await prepareConnect(t.d, 'owner')).step).toBe(step)
+      expect(t.asked).toEqual([])
+    }
+  })
+
+  it('初めての同期で持ち主が記録されたら、もう一度読んで確かめる', async () => {
+    let n = 0
+    const t = prep({ readOwnerUid: async () => (n++ === 0 ? null : 'owner') })
+    expect((await prepareConnect(t.d, 'owner')).step).toBe('ready')
+    let m = 0
+    const u = prep({ readOwnerUid: async () => (m++ === 0 ? null : 'someone-else') })
+    expect((await prepareConnect(u.d, 'owner')).step).toBe('notOwner')
+    expect(u.asked).toEqual([])
+  })
+
+  it('コネクタの身元が持ち主と同じアカウント・答えられない時は先へ進まない', async () => {
+    const same = prep({ fetchIdentity: async () => ({ ok: true, identity: { ...identity, uid: 'owner' } }) })
+    expect((await prepareConnect(same.d, 'owner')).step).toBe('identityError')
+    const down = prep({ fetchIdentity: async () => ({ ok: false, error: '匿名ログインが無効です' }) })
+    expect(await prepareConnect(down.d, 'owner')).toEqual({ step: 'identityError', error: '匿名ログインが無効です' })
+  })
+})
+
+describe('コネクタと同じ値（src/test/pairingFixture.ts）', () => {
+  it('印・k・指紋・戻る URL がコネクタの確かめと同じになる', async () => {
+    const t = deps({ origin: F.connectorOrigin, randomKey: () => F.k })
+    const r = await approvePairing(t.d, { state: F.state, identity: F.identity, ownerUid: 'owner', writes: true, access: [] })
+    expect(r).toEqual({ ok: true, url: F.callbackUrl })
+    expect(t.written[0].pairing).toBe(F.hash)
+    expect(t.written[0].uid).toBe(F.identity.uid)
+  })
+
+  it('作った k の形が違えば何も書かない', async () => {
+    const t = deps({ randomKey: () => 'short' })
+    const r = await approvePairing(t.d, { state: F.state, identity, ownerUid: 'owner', writes: true, access: [] })
+    expect(r.ok).toBe(false)
+    expect(t.calls).toEqual([])
   })
 })

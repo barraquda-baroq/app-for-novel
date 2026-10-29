@@ -4,7 +4,8 @@
 //   POST /authorize        ［Novel Studio で確認する］→ アプリの連携の画面（#/claude/connect?s=<state>）へ
 //   GET  /pair/callback    アプリから戻る（?state=…&k=…）。cookie と k の指紋を確かめて、claude.ai へ許可を返す
 //   GET  /connect/identity アプリの連携の画面が読むコネクタの身元 { uid, version, model }（CORS はアプリの origin だけ）
-// 連携の決まり（DECISIONS 9）: アプリは config/connector に pairing = sha256hex(s + '.' + k) を書き、k は URL でだけ渡す。
+// 連携の決まり（DECISIONS 9。URL の形・k・指紋はアプリと同じ src/claude/pairing.ts）: アプリは config/connector に
+// pairing = sha256hex(s + '.' + k) を書き、k は URL でだけ渡す。
 // state を持つ cookie は claude.ai から始めたブラウザに、k はアプリを開いた持ち主のブラウザにだけあるので、
 // 誰かが自分の state のリンクを持ち主に開かせても、連携は完成しない。
 import { AuthorizationError, CimdFetchError, type OAuthHelpers } from '@cloudflare/workers-oauth-provider'
@@ -12,7 +13,7 @@ import { workerConfig, type Env } from '../env'
 import { errorPage, escapeHtml, json, page } from '../http'
 import { log, logError } from '../log'
 import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../version'
-import { isPairingKey, pairingHash } from '../vault/crypto'
+import { CALLBACK_PATH, IDENTITY_PATH, connectPageUrl, isPairingKey, pairingHash, validState } from '../../../src/claude/pairing'
 import { vault } from '../vault/Vault'
 import { checkClient } from './clientPolicy'
 import { consentPage } from './consentPage'
@@ -141,7 +142,7 @@ async function authorizePost(request: Request, env: Env): Promise<Response> {
     // 同意の画面に範囲の選択は出さない: いつも novel と offline_access（更新用トークン）
     const approved = await oauth.approveConsent(request, handle, { scope: SCOPES_SUPPORTED })
     const { state, headers } = await oauth.beginUpstream(approved.request, { data: { t: Date.now() }, headers: approved.headers })
-    headers.set('Location', `${cfg.appOrigin}/#/claude/connect?s=${encodeURIComponent(state)}`)
+    headers.set('Location', connectPageUrl(cfg.appOrigin, state))
     headers.set('Cache-Control', 'no-store')
     headers.set('Referrer-Policy', 'no-referrer')
     log('authorize_approved')
@@ -154,7 +155,7 @@ async function authorizePost(request: Request, env: Env): Promise<Response> {
 async function pairCallback(request: Request, env: Env): Promise<Response> {
   const oauth = helpers(env)
   const url = new URL(request.url)
-  const state = url.searchParams.get('state') ?? ''
+  const state = validState(url.searchParams.get('state'))
   const k = url.searchParams.get('k')
   let resumed
   try {
@@ -216,9 +217,9 @@ export async function appFetch(request: Request, env: Env): Promise<Response> {
       if (request.method === 'GET') return authorizeGet(request, env)
       if (request.method === 'POST') return authorizePost(request, env)
       return new Response(null, { status: 405 })
-    case '/pair/callback':
+    case CALLBACK_PATH:
       return request.method === 'GET' ? pairCallback(request, env) : new Response(null, { status: 405 })
-    case '/connect/identity':
+    case IDENTITY_PATH:
       return connectIdentity(request, env)
     default:
       return new Response('Not found', { status: 404 })

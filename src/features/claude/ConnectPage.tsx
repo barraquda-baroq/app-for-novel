@@ -4,7 +4,7 @@
 // 3. 同期が揃うのを待つ（見せるタイトルを正しく出し、連携の記録を書く前に）
 // 4. ビルドの時に決めたコネクタの origin から、コネクタの匿名のアカウントを受け取る（URL の uid・origin は使わない）
 // 5. 見せるタイトル・書き込みを許可するかを選んで［許可する］→ 連携の記録（指紋だけ）を書き、送ってからコネクタへ移る
-// 手順の決まりは connectLogic.ts（コネクタの側と同じ）。
+// 手順は connectLogic.ts（prepareConnect・approvePairing）、URL・k・指紋の決まりはコネクタと同じ src/claude/pairing.ts。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { claudeAccessOf, CLAUDE_ACCESS_OPTIONS } from '../../claude/visibility'
@@ -26,15 +26,13 @@ import {
   approvePairing,
   CONNECTOR_ORIGIN,
   fetchIdentity,
+  prepareConnect,
   randomPairingKey,
   validState,
   type ConnectorIdentity,
 } from './connectLogic'
 import { leaveTo } from './leave'
 import './claude.css'
-
-/** 同期が揃うのを待つ長さ */
-const SYNC_WAIT_MS = 90_000
 
 type Step =
   | { step: 'checking' }
@@ -115,30 +113,18 @@ export function ConnectPage() {
       set({ step: 'checking' })
       const doc = await import('./connectorDoc')
       if (cancelled) return
-      let owner: string | null
-      try {
-        owner = await doc.readOwnerUid()
-      } catch {
-        return set({ step: 'ownerError' })
-      }
-      if (owner && owner !== uid) return set({ step: 'notOwner' })
-      set({ step: 'sync' })
-      if (!(await waitForSynced(SYNC_WAIT_MS))) return set({ step: 'syncTimeout' })
-      if (cancelled) return
-      if (!owner) {
-        // 初めての同期で持ち主が記録されたところ
-        owner = await doc.readOwnerUid().catch(() => null)
-        if (!owner) return set({ step: 'noOwner' })
-        if (owner !== uid) return set({ step: 'notOwner' })
-      }
-      // 画面を離れた・やり直した後は、コネクタに問い合わせない（問い合わせると、コネクタは匿名のアカウントを作る）
-      if (cancelled) return
-      set({ step: 'identity' })
-      const r = await fetchIdentity(CONNECTOR_ORIGIN)
-      if (!r.ok) return set({ step: 'identityError', error: r.error })
-      if (r.identity.uid === uid)
-        return set({ step: 'identityError', error: 'コネクタのアカウントが正しくありません。コネクタを更新してください。' })
-      set({ step: 'ready', identity: r.identity, ownerUid: owner })
+      const r = await prepareConnect(
+        {
+          origin: CONNECTOR_ORIGIN,
+          readOwnerUid: () => doc.readOwnerUid(),
+          waitSynced: (ms) => waitForSynced(ms),
+          fetchIdentity: (origin) => fetchIdentity(origin),
+          cancelled: () => cancelled,
+          onStep: (s) => set({ step: s }),
+        },
+        uid,
+      )
+      if (r.step !== 'cancelled') set(r)
     })()
     return () => {
       cancelled = true

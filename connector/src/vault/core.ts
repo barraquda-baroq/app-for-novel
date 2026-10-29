@@ -1,5 +1,6 @@
 // Vault の中身（Durable Object の外でも動く。テストでは node:sqlite と Firebase エミュレーターで動かす）。
 // 持ち主ごとに1つ（idFromName('owner')）。コネクタの身元・連携の状態・持ち主の記録の写し・数の記録・書き込みの順番を持つ。
+import { isPairingHash, PAIRING_TTL_MS } from '../../../src/claude/pairing'
 import { trashedIdsOf, buildToolCall, isWriteTool, type WriteTool } from '../../../src/claude/records'
 import { claudeView, canClaudeRead } from '../../../src/claude/visibility'
 import { repairData } from '../../../src/domain/repair'
@@ -63,8 +64,6 @@ export interface CallOptions {
   client?: string
 }
 
-/** 連携の確かめの指紋の有効時間（アプリが config/connector を書いてから） */
-export const PAIRING_TTL_MS = 15 * 60_000
 /** 読むツールの前に写しを新しくする間隔 */
 export const FRESH_MS = 15_000
 /** config/connector・meta/app を読み直す間隔（書き込みの前） */
@@ -186,7 +185,7 @@ export class VaultCore {
       log('pairing_refused', { reason })
       return { ok: false, reason, message: PAIRING_MESSAGES[reason] }
     }
-    if (!/^[0-9a-f]{64}$/.test(hash)) return bad('hash')
+    if (!isPairingHash(hash)) return bad('hash')
     const used = this.store.getMeta<string[]>('usedPairings') ?? []
     if (used.includes(hash)) return bad('used')
     let uid: string

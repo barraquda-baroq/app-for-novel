@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b --noEmit",
     "test": "node scripts/test.mjs",
     "test:unit": "vitest run",
     "test:worker": "vitest run --config vitest.workers.config.ts",

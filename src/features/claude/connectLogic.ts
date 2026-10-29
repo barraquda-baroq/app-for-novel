@@ -6,62 +6,40 @@
 //    {uid, pairing: sha256hex(s + '.' + k), pairedAt: サーバー時刻, approvedOn: 端末の呼び名, writes, v: 1} を書く（k そのものは書かない）
 // 4. 送信待ちを送ってから、`${コネクタ}/pair/callback?state=<s>&k=<k>` へ移る（コネクタが指紋を確かめて接続を終える）
 // データ・通信は外から渡す（テストで差し替える）。
+import {
+  callbackUrl,
+  identityUrl,
+  isPairingKey,
+  normalizeOrigin,
+  pairingHash,
+  parseIdentity,
+  validState,
+  APPROVED_ON_MAX_LENGTH,
+  CONNECTOR_DOC_VERSION,
+  type ConnectorIdentity,
+  type ConnectorWrite,
+} from '../../claude/pairing'
 import type { ClaudeAccess, ID } from '../../domain/types'
+
+// 連携の決まりそのもの（URL の形・k・指紋・身元の形）は、コネクタと同じ src/claude/pairing.ts
+export {
+  base64url,
+  callbackUrl,
+  connectorMcpUrl,
+  identityUrl,
+  isPairingKey,
+  normalizeOrigin,
+  pairingHash,
+  parseIdentity,
+  randomPairingKey,
+  sha256hex,
+  validState,
+  type ConnectorIdentity,
+  type ConnectorWrite,
+} from '../../claude/pairing'
 
 /** ビルドの時に決めたコネクタの origin（vite.config.ts。未設定は空） */
 export const CONNECTOR_ORIGIN: string = normalizeOrigin(typeof __CONNECTOR_ORIGIN__ === 'string' ? __CONNECTOR_ORIGIN__ : '')
-
-/** https の origin（開発中は http://localhost も）だけを受け付ける。それ以外は空 */
-export function normalizeOrigin(raw: string): string {
-  const s = raw.trim()
-  if (!s) return ''
-  try {
-    const u = new URL(s)
-    const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
-    if (u.protocol !== 'https:' && !local) return ''
-    if ((u.pathname !== '/' && u.pathname !== '') || u.search || u.hash || u.username || u.password) return ''
-    return u.origin
-  } catch {
-    return ''
-  }
-}
-
-/** claude.ai に登録するコネクタの URL */
-export const connectorMcpUrl = (origin: string) => `${origin}/mcp`
-export const identityUrl = (origin: string) => `${origin}/connect/identity`
-
-/** 連携を終えるためにコネクタへ移る URL（state と k は URL の引数として正しく書く） */
-export function callbackUrl(origin: string, state: string, k: string): string {
-  const q = new URLSearchParams({ state, k })
-  return `${origin}/pair/callback?${q.toString()}`
-}
-
-/** 連携の印 s（コネクタが渡す。空白・制御文字の無い 1〜2048 文字）。違えば null */
-export function validState(s: string | null | undefined): string | null {
-  if (typeof s !== 'string') return null
-  if (s.length < 1 || s.length > 2048) return null
-  // eslint-disable-next-line no-control-regex
-  if (/[\s\u0000-\u001f\u007f]/.test(s)) return null
-  return s
-}
-
-/** コネクタの匿名のアカウント（/connect/identity の答え） */
-export interface ConnectorIdentity {
-  uid: string
-  version: string
-  /** コネクタが書くデータの形の版（アプリの DATA_MODEL と違えば、コネクタは書き込まない） */
-  model: number | null
-}
-
-/** /connect/identity の答えを読む（形が違えば null） */
-export function parseIdentity(v: unknown): ConnectorIdentity | null {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
-  const o = v as Record<string, unknown>
-  if (typeof o.uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(o.uid)) return null
-  const version = typeof o.version === 'string' ? o.version.slice(0, 40) : ''
-  const model = typeof o.model === 'number' && Number.isInteger(o.model) ? o.model : null
-  return { uid: o.uid, version, model }
-}
 
 /** 答えの中の短い説明（エラーの時。HTML としては出さない） */
 function serverMessage(v: unknown): string {
@@ -121,35 +99,70 @@ export async function fetchIdentity(
   }
 }
 
-/** バイト列を base64url（= なし）にする */
-export function base64url(bytes: Uint8Array): string {
-  let bin = ''
-  for (const b of bytes) bin += String.fromCharCode(b)
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+/** 同期が揃うのを待つ長さ（連携の画面） */
+export const SYNC_WAIT_MS = 90_000
+
+/** 連携の画面で［許可する］を出す前の確かめに使う外の働き（画面では Firestore・同期、テストでは差し替える） */
+export interface PrepareDeps {
+  /** ビルドの時に決めたコネクタの origin */
+  origin: string
+  /** クラウドの持ち主のアカウント（config/owner。記録が無ければ null。読めなければ throw） */
+  readOwnerUid(): Promise<string | null>
+  /** 同期が「同期済み」になるまで待つ（limitMs まで。なれば true） */
+  waitSynced(limitMs: number): Promise<boolean>
+  /** コネクタの身元を受け取る（ふつうは fetchIdentity） */
+  fetchIdentity(origin: string): Promise<IdentityResult>
+  /** 画面を離れた・やり直した（true なら先へ進まない。コネクタにも問い合わせない） */
+  cancelled(): boolean
+  /** いまの段階（画面の表示） */
+  onStep?(step: 'checking' | 'sync' | 'identity'): void
 }
 
-/** 連携の鍵 k（32バイトの乱数の base64url。43文字）。このブラウザからコネクタへ URL で渡すだけで、どこにも保存しない */
-export function randomPairingKey(random: (a: Uint8Array<ArrayBuffer>) => unknown = (a) => crypto.getRandomValues(a)): string {
-  const bytes = new Uint8Array(32)
-  random(bytes)
-  return base64url(bytes)
-}
+export type PrepareResult =
+  | { step: 'ready'; identity: ConnectorIdentity; ownerUid: string }
+  | { step: 'notOwner' }
+  | { step: 'noOwner' }
+  | { step: 'ownerError' }
+  | { step: 'syncTimeout' }
+  | { step: 'identityError'; error: string }
+  | { step: 'cancelled' }
 
-export async function sha256hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/** config/connector に書く連携の指紋（コネクタも同じ式で確かめる） */
-export const pairingHash = (state: string, k: string) => sha256hex(`${state}.${k}`)
-
-/** config/connector に書く内容（pairedAt はサーバー時刻を書く側で足す） */
-export interface ConnectorWrite {
-  uid: string
-  pairing: string
-  approvedOn: string
-  writes: boolean
-  v: 1
+/**
+ * ログインしているアカウント（uid）で連携を始められるか確かめる:
+ * 1. クラウドの持ち主か（config/owner。違えば notOwner）
+ * 2. 同期が揃うのを待つ（見せるタイトルを正しく出し、連携の記録を書く前に）。初めての同期なら、持ち主をもう一度読む
+ * 3. ビルドの時に決めた origin のコネクタから身元を受け取る（持ち主と同じアカウントなら断る）
+ */
+export async function prepareConnect(deps: PrepareDeps, uid: string): Promise<PrepareResult> {
+  const step = (s: 'checking' | 'sync' | 'identity') => {
+    if (!deps.cancelled()) deps.onStep?.(s)
+  }
+  step('checking')
+  let owner: string | null
+  try {
+    owner = await deps.readOwnerUid()
+  } catch {
+    return { step: 'ownerError' }
+  }
+  if (owner && owner !== uid) return { step: 'notOwner' }
+  if (deps.cancelled()) return { step: 'cancelled' }
+  step('sync')
+  if (!(await deps.waitSynced(SYNC_WAIT_MS))) return { step: 'syncTimeout' }
+  if (deps.cancelled()) return { step: 'cancelled' }
+  if (!owner) {
+    // 初めての同期で持ち主が記録されたところ
+    owner = await deps.readOwnerUid().catch(() => null)
+    if (!owner) return { step: 'noOwner' }
+    if (owner !== uid) return { step: 'notOwner' }
+  }
+  // 画面を離れた・やり直した後は、コネクタに問い合わせない（問い合わせると、コネクタは匿名のアカウントを作る）
+  if (deps.cancelled()) return { step: 'cancelled' }
+  step('identity')
+  const r = await deps.fetchIdentity(deps.origin)
+  if (!r.ok) return { step: 'identityError', error: r.error }
+  if (r.identity.uid === uid)
+    return { step: 'identityError', error: 'コネクタのアカウントが正しくありません。コネクタを更新してください。' }
+  return { step: 'ready', identity: r.identity, ownerUid: owner }
 }
 
 /** config/connector の内容（設定の Claude 連携に出す） */
@@ -220,14 +233,15 @@ export async function approvePairing(deps: PairingDeps, input: PairingInput): Pr
     return { ok: false, error: 'コネクタのアカウントが正しくありません。コネクタを更新してください。' }
   for (const a of input.access) deps.setAccess(a.titleId, a.access)
   const k = deps.randomKey()
+  if (!isPairingKey(k)) return { ok: false, error: '連携の鍵を作れませんでした。もう一度お試しください。' }
   const pairing = await pairingHash(state, k)
   try {
     await deps.writeConnector({
       uid: input.identity.uid,
       pairing,
-      approvedOn: deps.deviceLabel().slice(0, 100),
+      approvedOn: deps.deviceLabel().slice(0, APPROVED_ON_MAX_LENGTH),
       writes: input.writes,
-      v: 1,
+      v: CONNECTOR_DOC_VERSION,
     })
   } catch (e) {
     const code = typeof e === 'object' && e && 'code' in e ? String((e as { code: unknown }).code) : ''

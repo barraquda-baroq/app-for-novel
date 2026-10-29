@@ -8,6 +8,9 @@ import { nextPacificMidnight, pacificDay, resetLabel } from '../../src/vault/quo
 import { fromFields, fromValue, timestampMicros, toValue } from '../../src/vault/values'
 import { EncodeError, prepareWrite, rowsOfCommit } from '../../src/vault/writer'
 import { safeError, safeUrl, safeValue } from '../../src/log'
+import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../../src/version'
+import { APP_VERSION, DATA_MODEL } from '../../../src/sync/appModel'
+import { PAIRING_FIXTURE as F } from '../../../src/test/pairingFixture'
 
 describe('Firestore の値', () => {
   it('文字列・整数（10進の文字列）・真偽・null・時刻・入れ子', () => {
@@ -76,6 +79,19 @@ describe('暗号', () => {
     expect(isPairingKey(k)).toBe(true)
     expect(isPairingKey('short')).toBe(false)
     expect(isPairingKey(`${k}=`)).toBe(false)
+  })
+
+  it('アプリと同じ値で同じ指紋（src/test/pairingFixture.ts）', async () => {
+    expect(await pairingHash(F.state, F.k)).toBe(F.hash)
+    expect(await pairingHash(F.oddState, F.k)).toBe(F.oddHash)
+    expect(isPairingKey(F.k)).toBe(true)
+  })
+})
+
+describe('アプリとの決まり', () => {
+  it('データの形の版・版はアプリ（src/sync/appModel.ts）と同じ', () => {
+    expect(CONNECTOR_MODEL).toBe(DATA_MODEL)
+    expect(CONNECTOR_VERSION.startsWith(`${APP_VERSION}.`)).toBe(true)
   })
 })
 
