@@ -2,9 +2,11 @@
 // いま書いている欄（最後にフォーカスした本文・推敲メモ）に働く。押してもフォーカスを奪わない
 // （pointerdown / mousedown を止めるので、スマホのキーボードも閉じない）。
 // デスクトップは編集画面のいちばん下、スマホはキーボードのすぐ上（閉じている時は画面の下）に常に出す。
-import { useSyncExternalStore, type SyntheticEvent } from 'react'
+// iPhone のアプリは原稿画面でキーボードの「完了」の帯を消すので（src/platform/keyboard.ts）、代わりに「キーボードを閉じる」を出す。
+import { useState, useSyncExternalStore, type SyntheticEvent } from 'react'
+import { isNativeIos } from '../../platform/platform'
 import { isFieldVisible, useHubTarget, type EditorHub, type FieldHandle } from './editorHub'
-import { HistoryRedoIcon, HistoryUndoIcon } from './pieceIcons'
+import { HistoryRedoIcon, HistoryUndoIcon, KeyboardHideIcon } from './pieceIcons'
 import { SYMBOLS } from './symbols'
 
 /** フォーカスを動かさない（入力欄にカーソルを残し、キーボードを閉じない） */
@@ -21,6 +23,7 @@ export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boole
   const canUndo = useSyncExternalStore(hub.session.subscribe, () => (key ? hub.session.canUndo(key) : false))
   const canRedo = useSyncExternalStore(hub.session.subscribe, () => (key ? hub.session.canRedo(key) : false))
   const symbolsOn = target?.symbols ?? false
+  const [closeKeyboard] = useState(isNativeIos)
   // 見えていない欄（ほかの方法で隠れた欄）は書き換えない
   const act = (f: (t: FieldHandle) => void) => {
     const t = hub.getTarget()
@@ -86,6 +89,23 @@ export function SymbolBar({ hub, dirty, onSave }: { hub: EditorHub; dirty: boole
       >
         保存
       </button>
+      {closeKeyboard ? (
+        <button
+          type="button"
+          className="btn pw-sym pw-sym-icon"
+          // フォーカスを外すとキーボードが閉じる（押した時にフォーカスを奪わないのはほかのボタンと同じ）
+          onClick={() => {
+            const active = document.activeElement
+            if (active instanceof HTMLElement && active !== document.body) active.blur()
+            else hub.getTarget()?.element()?.blur()
+          }}
+          aria-label="キーボードを閉じる"
+          title="キーボードを閉じる"
+          data-testid="symbol-close-keyboard"
+        >
+          <KeyboardHideIcon />
+        </button>
+      ) : null}
     </div>
   )
 }

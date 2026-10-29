@@ -2,7 +2,10 @@
 // Android Chrome はキーボードの分だけ画面（レイアウトの表示領域）が縮む（index.html の interactive-widget=resizes-content）ので 0 のまま。
 // iOS Safari は画面が縮まず、見えている範囲（visualViewport）だけが縮むので、その差を CSS 変数 --kb-inset に入れる。
 // 原稿画面はこの分だけ高さを詰め、いちばん下の記号バーがキーボードのすぐ上に来るようにする（piece.css）。
+// iPhone のアプリ（Capacitor）は WebView が縮まず、キーボードの高さはアプリから届く（src/platform/keyboard.ts の --kb-native）。
+// 大きい方を使う（WebKit がキーボードを扱った時も、二重に詰めない）。
 import { useEffect } from 'react'
+import { nativeKeyboardHeight, onNativeKeyboard } from '../../platform/keyboard'
 import { revealCaret } from './caret'
 
 /** 拡大している時（ピンチ）は測らない */
@@ -18,15 +21,22 @@ export function keyboardInset(layoutHeight: number, vv: { height: number; offset
   return Math.max(0, Math.round(layoutHeight - vv.height - vv.offsetTop))
 }
 
+/** 画面を詰める高さ: visualViewport で測った高さと、アプリから届いたキーボードの高さの大きい方 */
+export function currentKeyboardInset(): number {
+  const vv = window.visualViewport
+  const root = document.documentElement
+  const measured = vv ? keyboardInset(Math.max(window.innerHeight, root.clientHeight), vv) : 0
+  return Math.max(measured, nativeKeyboardHeight())
+}
+
 export function useKeyboardInset(): void {
   useEffect(() => {
     const vv = window.visualViewport
-    if (!vv) return
     const root = document.documentElement
     let frame = 0
     let last = -1
     const apply = () => {
-      const inset = keyboardInset(Math.max(window.innerHeight, root.clientHeight), vv)
+      const inset = currentKeyboardInset()
       if (inset === last) return
       last = inset
       root.style.setProperty('--kb-inset', `${inset}px`)
@@ -40,14 +50,17 @@ export function useKeyboardInset(): void {
       frame = requestAnimationFrame(apply)
     }
     apply()
-    vv.addEventListener('resize', update)
-    vv.addEventListener('scroll', update)
+    vv?.addEventListener('resize', update)
+    vv?.addEventListener('scroll', update)
     window.addEventListener('resize', update)
+    // アプリのキーボードは、出始めた時にすぐ詰める（次の描画を待たない）
+    const offNative = onNativeKeyboard(apply)
     return () => {
       cancelAnimationFrame(frame)
-      vv.removeEventListener('resize', update)
-      vv.removeEventListener('scroll', update)
+      vv?.removeEventListener('resize', update)
+      vv?.removeEventListener('scroll', update)
       window.removeEventListener('resize', update)
+      offNative()
       root.style.removeProperty('--kb-inset')
     }
   }, [])

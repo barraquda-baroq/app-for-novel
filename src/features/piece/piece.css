@@ -9,6 +9,8 @@
 .app:has(> .pw-root) {
   height: calc(100dvh - var(--kb-inset, 0px));
   min-height: 0;
+  /* キーボードの分は高さで詰めるので、ほかの画面の下の余白（styles.css の .app）は付けない */
+  padding-bottom: 0;
   overflow: hidden;
   overflow: clip;
 }

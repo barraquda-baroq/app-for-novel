@@ -31,6 +31,7 @@ import { XIcon } from '../../ui/icons'
 import { AppHeader, type Crumb } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
 import { COPIED } from '../piece/caret'
+import { useIosEditorKeyboard } from '../../platform/keyboard'
 import { useKeyboardInset } from '../piece/keyboardInset'
 import { activeVersionOf } from '../piece/logic'
 import { confirmPendingDrafts, pendingDrafts, type PendingDraft } from './actFlows'
@@ -107,6 +108,7 @@ function SeparateView({ title, piece }: { title: Title; piece: Piece }) {
   const data = useData()
   const navigate = useNavigate()
   useKeyboardInset()
+  useIosEditorKeyboard()
   const wide = useMediaQuery('(min-width: 900px)')
   const isAct = piece.kind === 'act'
   const parent = isAct ? parentOf(data, piece) : undefined

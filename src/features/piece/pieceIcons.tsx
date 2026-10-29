@@ -66,3 +66,11 @@ export const HistoryRedoIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
   </Svg>
 )
+
+/** キーボードを閉じる（キーボード＋下向きの矢印） */
+export const KeyboardHideIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="11" rx="2" />
+    <path d="M7 8h.01M11 8h.01M15 8h.01M8 11.5h8M9 18.5l3 2.5 3-2.5" />
+  </Svg>
+)

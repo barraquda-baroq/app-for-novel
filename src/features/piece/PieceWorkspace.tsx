@@ -38,6 +38,7 @@ import { SEPARATE_FROM_PIECE } from '../acts/separateLogic'
 import { EpisodeFolder } from '../acts/EpisodeFolder'
 import { ActivePane } from './ActivePane'
 import { isTypingWithin, useHeldWhile, useLocalFlag, useScrollSync, useTypingFocus } from './editing'
+import { useIosEditorKeyboard } from '../../platform/keyboard'
 import { useKeyboardInset } from './keyboardInset'
 import { activeVersionOf, actNeighbors, neighborPieces, pieceHeading, resolveSelected } from './logic'
 import { PieceBar } from './PieceBar'
@@ -176,6 +177,7 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
   const rootRef = useRef<HTMLDivElement>(null)
   const { session, hub, dirty, save, discard, ensureSaved } = ps
   useKeyboardInset()
+  useIosEditorKeyboard()
 
   const numbers = useMemo(() => episodeNumbers(data, title.id), [data, title.id])
   // 幕は、属する話の話数・題・章を見出しと位置に使う

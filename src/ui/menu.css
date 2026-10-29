@@ -6,7 +6,8 @@
   flex-direction: column;
   min-width: 220px;
   max-width: calc(100vw - 16px);
-  max-height: calc(100dvh - 16px);
+  /* iPhone のアプリではキーボードの上に収める（--kb-native） */
+  max-height: calc(100dvh - 16px - var(--kb-native, 0px));
   overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--border);

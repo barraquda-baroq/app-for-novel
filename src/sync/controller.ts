@@ -89,15 +89,9 @@ function installHooks(): void {
   onLocalSave(() => engine?.requestUpload())
   onExternalSave(() => engine?.requestUpload())
   if (typeof document !== 'undefined') {
-    let hiddenAt = 0
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') {
-        hiddenAt = Date.now()
-        // 画面を閉じる・裏に回る時は待たずに送る
-        engine?.requestUpload(true)
-      } else if (hiddenAt && Date.now() - hiddenAt > REANCHOR_AFTER_MS) {
-        engine?.reanchor()
-      }
+      if (document.visibilityState === 'hidden') noteAppHidden()
+      else noteAppVisible()
     })
   }
   try {
@@ -118,6 +112,25 @@ function installHooks(): void {
   } catch {
     statusChannel = null
   }
+}
+
+/** 画面が裏に回った時刻（表に戻ったら 0） */
+let hiddenAt = 0
+
+/**
+ * 画面を閉じる・裏に回る時（visibilitychange と、アプリの pause。src/platform/nativeInit.ts）。待たずに送る。
+ * 両方から続けて呼ばれても、裏に回った時刻は最初のものを使う
+ */
+export function noteAppHidden(): void {
+  if (!hiddenAt) hiddenAt = Date.now()
+  engine?.requestUpload(true)
+}
+
+/** 画面が表に戻った時（visibilitychange と、アプリの resume）。長く裏にあったら購読し直す */
+export function noteAppVisible(): void {
+  const since = hiddenAt
+  hiddenAt = 0
+  if (since && Date.now() - since > REANCHOR_AFTER_MS) engine?.reanchor()
 }
 
 function publishStatus(status: SyncStatus): void {
@@ -309,5 +322,6 @@ export async function signInForTest(sub: string): Promise<void> {
 export function resetSyncForTests(): void {
   stopEngine()
   booted = null
+  hiddenAt = 0
   useSync.setState({ ...initial })
 }
