@@ -298,7 +298,10 @@ describe('戦略メモ・推敲案を手で書く', () => {
     const memo = await screen.findByTestId('strategy-memo')
     expect(memo.textContent).toContain('自分で考えた戦略')
     expect(memo.textContent).toContain('〇〇賞')
-    expect(Object.values(getData().strategyNotes)[0]).toMatchObject({ source: 'manual', contests: [{ id: 'k0', name: '〇〇賞' }] })
+    expect(Object.values(getData().strategyNotes)[0]).toMatchObject({
+      source: 'manual',
+      contests: [{ id: 'k0', name: '〇〇賞' }],
+    })
   })
 
   it('推敲案を手で足すと、「手で追加したもの」で絞り込める', async () => {
