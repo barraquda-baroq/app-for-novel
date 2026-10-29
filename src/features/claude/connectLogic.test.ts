@@ -12,6 +12,7 @@ import {
   prepareConnect,
   randomPairingKey,
   validState,
+  NOT_SENT_ERROR,
   type ConnectorWrite,
   type PairingDeps,
   type PrepareDeps,
@@ -42,6 +43,7 @@ function deps(over: Partial<PairingDeps> = {}) {
     },
     flush: vi.fn(async () => {
       calls.push('flush')
+      return true
     }),
     navigate: (url) => {
       calls.push('navigate')
@@ -163,8 +165,8 @@ describe('［許可する］', () => {
     expect(t.written).toEqual([{ uid: 'anonUid123', pairing: await sha(`st-1.${k}`), approvedOn: 'Mac', writes: true, v: 1 }])
     expect(JSON.stringify(t.written)).not.toContain(k)
     expect(t.access).toEqual([['t1', 'read']])
-    // タイトルの設定 → 連携の記録 → 送信 → 移動 の順
-    expect(t.calls).toEqual(['access', 'write', 'flush', 'navigate'])
+    // タイトルの設定 → 送信（届いたのを確かめる）→ 連携の記録 → 移動 の順
+    expect(t.calls).toEqual(['access', 'flush', 'write', 'navigate'])
     const url = new URL(t.navigated())
     expect(url.origin).toBe(ORIGIN)
     expect(url.searchParams.get('state')).toBe('st-1')
@@ -202,11 +204,42 @@ describe('［許可する］', () => {
     expect(t.calls).not.toContain('navigate')
   })
 
-  it('送れなくても（10秒で諦めて）移る', async () => {
-    const t = deps({ flush: async () => Promise.reject(new Error('offline')) })
-    const r = await approvePairing(t.d, { state: 's', identity, ownerUid: 'o', writes: true, access: [] })
-    expect(r.ok).toBe(true)
-    expect(t.calls).toContain('navigate')
+  it('送信待ちが届かなければ（時間切れ・失敗）連携を記録せず、移らない', async () => {
+    for (const flush of [async () => false, async () => Promise.reject(new Error('offline'))]) {
+      const t = deps({
+        flush: async () => {
+          t.calls.push('flush')
+          return flush()
+        },
+      })
+      // この画面で変えていなくても（やり直しの時は、変えた設定がもう端末内にあって送信待ちに残っていることがある）
+      const r = await approvePairing(t.d, { state: 's', identity, ownerUid: 'o', writes: true, access: [] })
+      expect(r).toEqual({ ok: false, error: NOT_SENT_ERROR })
+      expect(t.calls).toEqual(['flush'])
+      expect(t.written).toEqual([])
+    }
+  })
+
+  it('見せないにしたタイトルが届かなければ、連携を記録せず、移らない', async () => {
+    const t = deps({
+      flush: async () => {
+        t.calls.push('flush')
+        return false
+      },
+    })
+    const r = await approvePairing(t.d, {
+      state: 's',
+      identity,
+      ownerUid: 'o',
+      writes: true,
+      access: [{ titleId: 't1', access: 'none' }],
+    })
+    expect(r.ok).toBe(false)
+    expect(t.access).toEqual([['t1', 'none']])
+    expect(t.calls).toEqual(['access', 'flush'])
+    expect(t.calls).not.toContain('write')
+    expect(t.calls).not.toContain('navigate')
+    expect(t.navigated()).toBe('')
   })
 })
 

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi, UseBoundStore } from 'zustand'
 import { createPersistence } from '../../db/persistence'
 import { actions } from '../../store/actions'
-import { getData, initStore, resetStoreForTests } from '../../store/appStore'
+import { getData, getPersistence, initStore, resetStoreForTests } from '../../store/appStore'
 import { AppFrame } from '../../ui/Layout'
 import type { ConnectorWrite } from './connectLogic'
 
@@ -20,7 +20,7 @@ async function sha(text: string): Promise<string> {
 interface FakeSync {
   auth: 'idle' | 'checking' | 'signedOut' | 'signedIn'
   user: { uid: string; name: string; email: string } | null
-  status: { phase: string; pending: number } | null
+  status: { phase: string; pending: number; outdated?: { model: number } | null } | null
   accountMismatch: null
   busy: boolean
   error: string | null
@@ -34,6 +34,8 @@ const doc = vi.hoisted(() => ({
   writeConnector: vi.fn(),
 }))
 const leave = vi.hoisted(() => ({ leaveTo: vi.fn() }))
+/** 仮のクラウド: 「いますぐ同期」で端末内の送信待ちを受け取る（online が false なら受け取らない） */
+const cloud = vi.hoisted(() => ({ online: true, uploads: 0 }))
 
 vi.mock('../../sync/controller', async () => {
   const { create: make } = await import('zustand')
@@ -49,7 +51,15 @@ vi.mock('../../sync/controller', async () => {
     useSync: sync.store,
     signIn: vi.fn(),
     signOut: vi.fn(),
-    syncNow: vi.fn(async () => undefined),
+    syncNow: vi.fn(async () => {
+      if (!cloud.online) return
+      const { getPersistence } = await import('../../store/appStore')
+      const p = getPersistence()
+      if (!p) return
+      const items = await p.readOutbox(100_000)
+      cloud.uploads += items.length
+      await p.completeUpload(items.map((i) => ({ table: i.table, id: i.id, record: i.local })))
+    }),
   }
 })
 vi.mock('../../sync/appModel', () => ({ DATA_MODEL: 3 }))
@@ -83,6 +93,8 @@ function renderPage(state = 'state-123') {
 beforeEach(async () => {
   await initStore(createPersistence(`test-db-connect-${++n}`))
   doc.owner = 'owner-uid'
+  cloud.online = true
+  cloud.uploads = 0
   doc.written = []
   doc.readOwnerUid.mockClear()
   doc.writeConnector.mockClear()
@@ -151,7 +163,41 @@ describe('連携の画面', () => {
     expect(JSON.stringify(doc.written)).not.toContain(k)
     expect(getData().titles[a].claudeAccess).toBe('read')
     expect(getData().titles[b].claudeAccess).toBe('none')
+    // 変えたタイトルの設定は、連携を記録する前にクラウドに届いている
+    expect(cloud.uploads).toBeGreaterThan(0)
+    expect(await getPersistence()!.outboxCount()).toBe(0)
     expect(screen.getByTestId('connect-done')).toBeTruthy()
+  })
+
+  it('記録に失敗しても、選んだ内容（書き込みを許可しない）はそのまま。やり直すと writes: false で記録する', async () => {
+    const user = userEvent.setup()
+    actions.createTitle('見せる作品')
+    doc.writeConnector.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('x'), { code: 'unavailable' })
+    })
+    renderPage()
+    const form = await screen.findByTestId('connect-form')
+    await user.click(within(form).getByTestId('connect-access-read'))
+    await user.click(within(form).getByTestId('connect-writes'))
+    expect((within(form).getByTestId('connect-writes') as HTMLInputElement).checked).toBe(false)
+    await user.click(within(form).getByTestId('connect-approve'))
+    await screen.findByTestId('connect-error')
+    expect((screen.getByTestId('connect-writes') as HTMLInputElement).checked).toBe(false)
+    expect(screen.getByTestId('connect-access-read').getAttribute('aria-pressed')).toBe('true')
+    await user.click(screen.getByTestId('connect-approve'))
+    await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+    expect(doc.written).toHaveLength(1)
+    expect((doc.written[0] as ConnectorWrite).writes).toBe(false)
+  })
+
+  it('新しい版のアプリのデータがあって送れない間は、許可できない（何も書かない）', async () => {
+    actions.createTitle('見せる作品')
+    sync.store.setState({ status: { phase: 'synced', pending: 0, outdated: { model: 4 } } })
+    renderPage()
+    const form = await screen.findByTestId('connect-form')
+    expect(within(form).getByTestId('connect-outdated')).toBeTruthy()
+    expect((within(form).getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(true)
+    expect(doc.writeConnector).not.toHaveBeenCalled()
   })
 
   it('持ち主でなければ問い合わせも記録もしない', async () => {

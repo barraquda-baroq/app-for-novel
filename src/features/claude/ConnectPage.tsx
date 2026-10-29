@@ -12,7 +12,7 @@ import { sortedTitles } from '../../domain/entityOps'
 import type { ClaudeAccess, ID } from '../../domain/types'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
-import { flushNow, useData } from '../../store/appStore'
+import { flushNow, getPersistence, useData } from '../../store/appStore'
 import { attempt } from '../../store/uiStore'
 import { DATA_MODEL } from '../../sync/appModel'
 import { deviceLabel } from '../../sync/conflicts'
@@ -67,29 +67,33 @@ function waitForSynced(ms: number): Promise<boolean> {
   })
 }
 
-/** 送信待ちを送る（limitMs まで。同期を受け持つのがほかの画面でも、送信待ちが無くなるのを待つ） */
-async function flushAll(limitMs: number): Promise<void> {
+/** 送信待ちが無くなったか見直す間隔 */
+const OUTBOX_POLL_MS = 250
+
+/**
+ * 送信待ちを送り、すべてサーバーに受け取られたら true（limitMs まで。届かない・送るのを止めている・時間切れは false）。
+ * 確かめるのは端末内の送信待ち（IndexedDB。どの画面（タブ）でも同じ）で、送ったものはサーバーが受け取ってから外れる。
+ * 同期を受け持つのがほかの画面でも、その画面が送り終えるのを待てる（知らせの古い状態で済ませない）
+ */
+async function flushAll(limitMs: number): Promise<boolean> {
   const until = Date.now() + limitMs
   const left = () => Math.max(0, until - Date.now())
-  await flushNow()
+  // 先にこの画面の編集を端末内に保存する（保存できなければ送れない）
+  if (!(await flushNow())) return false
+  const persistence = getPersistence()
+  if (!persistence) return false
+  // 新しい版のアプリで書かれたデータがある間は送らない（送信待ちは残る）
+  const held = () => !!useSync.getState().status?.outdated
+  const empty = async () => (await persistence.outboxCount().catch(() => -1)) === 0
+  if (held()) return false
+  // 同期を受け持つ画面なら、いますぐ送る（ほかの画面なら、端末内に保存したことがその画面に伝わって送られる）
   await Promise.race([syncNow().catch(() => undefined), new Promise((r) => setTimeout(r, left()))])
-  const settled = () => {
-    const st = useSync.getState().status
-    return !st || (st.pending === 0 && st.phase === 'synced')
+  for (;;) {
+    if (held()) return false
+    if (await empty()) return true
+    if (left() === 0) return false
+    await new Promise((r) => setTimeout(r, Math.min(OUTBOX_POLL_MS, left())))
   }
-  if (settled() || left() === 0) return
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      unsub()
-      resolve()
-    }, left())
-    const unsub = useSync.subscribe(() => {
-      if (!settled()) return
-      clearTimeout(timer)
-      unsub()
-      resolve()
-    })
-  })
 }
 
 export function ConnectPage() {
@@ -101,6 +105,8 @@ export function ConnectPage() {
   const mismatch = sync.accountMismatch !== null
   const [step, setStep] = useState<Step>({ step: 'checking' })
   const [attemptNo, setAttemptNo] = useState(0)
+  // 選んだ内容は記録に失敗した後も残す（連携の記録の間はフォームを外すので、フォームの中には持たない）
+  const [draft, setDraft] = useState<ApproveDraft>({ writes: true, access: {} })
   const host = CONNECTOR_ORIGIN ? new URL(CONNECTOR_ORIGIN).host : ''
 
   useEffect(() => {
@@ -240,6 +246,8 @@ export function ConnectPage() {
             ownerUid={step.ownerUid}
             state={state}
             error={step.step === 'saveError' ? step.error : null}
+            draft={draft}
+            onDraftChange={setDraft}
             onSaving={() => setStep({ step: 'saving' })}
             onDone={() => setStep({ step: 'done' })}
             onError={(error) => setStep({ step: 'saveError', error, identity: step.identity, ownerUid: step.ownerUid })}
@@ -306,26 +314,44 @@ function RetryButton({ onClick }: { onClick: () => void }) {
   )
 }
 
+/** 連携の画面で選んでいる内容（タイトルは変えたものだけ。変えていなければいまの設定を出す） */
+interface ApproveDraft {
+  writes: boolean
+  access: Record<ID, ClaudeAccess>
+}
+
 interface ApproveFormProps {
   identity: ConnectorIdentity
   ownerUid: string
   state: string
   error: string | null
+  draft: ApproveDraft
+  onDraftChange: (draft: ApproveDraft) => void
   onSaving: () => void
   onDone: () => void
   onError: (error: string) => void
   onCancel: () => void
 }
 
-function ApproveForm({ identity, ownerUid, state, error, onSaving, onDone, onError, onCancel }: ApproveFormProps) {
+function ApproveForm({
+  identity,
+  ownerUid,
+  state,
+  error,
+  draft,
+  onDraftChange,
+  onSaving,
+  onDone,
+  onError,
+  onCancel,
+}: ApproveFormProps) {
   const data = useData()
   const titles = useMemo(() => sortedTitles(data), [data])
-  const [access, setAccess] = useState<Record<ID, ClaudeAccess>>(() =>
-    Object.fromEntries(titles.map((t) => [t.id, claudeAccessOf(t)])),
-  )
-  const [writes, setWrites] = useState(true)
+  const writes = draft.writes
+  // 新しい版のアプリで書かれたデータがある間は、タイトルの設定を送れない
+  const outdated = useSync((s) => !!s.status?.outdated)
   const busy = useRef(false)
-  const valueOf = (id: ID): ClaudeAccess => access[id] ?? claudeAccessOf(data.titles[id])
+  const valueOf = (id: ID): ClaudeAccess => draft.access[id] ?? claudeAccessOf(data.titles[id])
   const shown = titles.filter((t) => valueOf(t.id) !== 'none').length
 
   const approve = async () => {
@@ -412,7 +438,7 @@ function ApproveForm({ identity, ownerUid, state, error, onSaving, onDone, onErr
                       type="button"
                       aria-pressed={valueOf(t.id) === o.value}
                       title={CLAUDE_ACCESS_HINTS[o.value]}
-                      onClick={() => setAccess((prev) => ({ ...prev, [t.id]: o.value }))}
+                      onClick={() => onDraftChange({ ...draft, access: { ...draft.access, [t.id]: o.value } })}
                       data-testid={`connect-access-${o.value}`}
                     >
                       {o.label}
@@ -427,7 +453,12 @@ function ApproveForm({ identity, ownerUid, state, error, onSaving, onDone, onErr
       </section>
 
       <label className="check cn-writes">
-        <input type="checkbox" checked={writes} onChange={(e) => setWrites(e.target.checked)} data-testid="connect-writes" />
+        <input
+          type="checkbox"
+          checked={writes}
+          onChange={(e) => onDraftChange({ ...draft, writes: e.target.checked })}
+          data-testid="connect-writes"
+        />
         <span>
           推敲案などの書き込みも許可
           <span className="tiny faint cn-writes-hint">
@@ -440,6 +471,11 @@ function ApproveForm({ identity, ownerUid, state, error, onSaving, onDone, onErr
       <p className="cn-warn" data-testid="connect-phishing-note">
         claude.ai で「接続」を押した直後でなければ、心当たりのない依頼です。［やめる］を押してください。
       </p>
+      {outdated ? (
+        <p className="cn-notice is-warn" role="alert" data-testid="connect-outdated">
+          クラウドのデータがこのアプリより新しい版のアプリで書かれているため、タイトルの設定を送れません。アプリを更新してから、もう一度お試しください。
+        </p>
+      ) : null}
       {error ? (
         <p className="cl-error" role="alert" data-testid="connect-error">
           {error}
@@ -449,7 +485,13 @@ function ApproveForm({ identity, ownerUid, state, error, onSaving, onDone, onErr
         <button type="button" className="btn" onClick={onCancel} data-testid="connect-cancel">
           やめる
         </button>
-        <button type="button" className="btn btn-primary" onClick={() => void approve()} data-testid="connect-approve">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void approve()}
+          disabled={outdated}
+          data-testid="connect-approve"
+        >
           許可する
         </button>
       </div>

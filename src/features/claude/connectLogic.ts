@@ -4,7 +4,8 @@
 //    コネクタの匿名のアカウント {uid, version, model} を受け取る（URL に書かれた uid も使わない）
 // 3. 持ち主が［許可する］を押すと、k（32バイトの乱数。base64url）を作り、config/connector に
 //    {uid, pairing: sha256hex(s + '.' + k), pairedAt: サーバー時刻, approvedOn: 端末の呼び名, writes, v: 1} を書く（k そのものは書かない）
-// 4. 送信待ちを送ってから、`${コネクタ}/pair/callback?state=<s>&k=<k>` へ移る（コネクタが指紋を確かめて接続を終える）
+//    その前に、タイトルの「Claude に見せる」などの送信待ちがクラウドに届いたことを確かめる（届かなければ何も書かない）
+// 4. `${コネクタ}/pair/callback?state=<s>&k=<k>` へ移る（コネクタが指紋を確かめて接続を終える）
 // データ・通信は外から渡す（テストで差し替える）。
 import {
   callbackUrl,
@@ -197,8 +198,11 @@ export interface PairingDeps {
   writeConnector(doc: ConnectorWrite): Promise<void>
   /** タイトルの「Claude に見せる」を変える（ふつうの同期する編集） */
   setAccess(titleId: ID, access: ClaudeAccess): void
-  /** 送信待ちを送る（limitMs まで待つ） */
-  flush(limitMs: number): Promise<void>
+  /**
+   * 送信待ちを送る（limitMs まで待つ）。送信待ちがすべてサーバーに受け取られた（何も残っていない）時だけ true
+   * （送れない・送るのを止めている・時間切れは false）
+   */
+  flush(limitMs: number): Promise<boolean>
   /** コネクタへ移る（ページごと） */
   navigate(url: string): void
   randomKey(): string
@@ -220,9 +224,16 @@ export type PairingResult = { ok: true; url: string } | { ok: false; error: stri
 /** 送信待ちを送るのを待つ長さの上限 */
 export const FLUSH_LIMIT_MS = 10_000
 
+/** 送信待ちを送れなかった時（連携はまだ記録していない） */
+export const NOT_SENT_ERROR =
+  'タイトルの「Claude に見せる」などの変更を、まだクラウドへ送れていません。インターネットの接続を確かめて、もう一度［許可する］を押してください（連携はまだ記録していません）。'
+
 /**
- * ［許可する］: タイトルの設定を変え、config/connector に連携の指紋を書き、送信待ちを送ってからコネクタへ移る。
- * k はコネクタへ移る URL にだけ入れる（Firestore には指紋だけ）
+ * ［許可する］: タイトルの設定を変え、送信待ちがクラウドに届いたのを確かめてから、config/connector に連携の指紋を書き、
+ * コネクタへ移る。k はコネクタへ移る URL にだけ入れる（Firestore には指紋だけ）。
+ * 送信待ちが届かなければ（時間切れ・送るのを止めている時も）連携の記録を書かず、移らない。コネクタは連携の直後に
+ * クラウドのタイトルを読むので、見せない・読むだけにした設定が届く前に連携すると、そのタイトルが Claude に見えてしまう。
+ * この画面で変えていなくても確かめる（記録に失敗した後のやり直しでは、変えた設定はもう端末内にあり、送信待ちに残っていることがある）
  */
 export async function approvePairing(deps: PairingDeps, input: PairingInput): Promise<PairingResult> {
   const origin = deps.origin
@@ -231,9 +242,11 @@ export async function approvePairing(deps: PairingDeps, input: PairingInput): Pr
   if (!state) return { ok: false, error: '連携の印が正しくありません。claude.ai のコネクタの画面からやり直してください。' }
   if (!input.identity.uid || input.identity.uid === input.ownerUid)
     return { ok: false, error: 'コネクタのアカウントが正しくありません。コネクタを更新してください。' }
-  for (const a of input.access) deps.setAccess(a.titleId, a.access)
   const k = deps.randomKey()
   if (!isPairingKey(k)) return { ok: false, error: '連携の鍵を作れませんでした。もう一度お試しください。' }
+  for (const a of input.access) deps.setAccess(a.titleId, a.access)
+  const sent = await deps.flush(FLUSH_LIMIT_MS).catch(() => false)
+  if (!sent) return { ok: false, error: NOT_SENT_ERROR }
   const pairing = await pairingHash(state, k)
   try {
     await deps.writeConnector({
@@ -253,7 +266,6 @@ export async function approvePairing(deps: PairingDeps, input: PairingInput): Pr
           : '連携を記録できませんでした。インターネットの接続を確かめて、もう一度お試しください。',
     }
   }
-  await deps.flush(FLUSH_LIMIT_MS).catch(() => undefined)
   const url = callbackUrl(origin, state, k)
   deps.navigate(url)
   return { ok: true, url }
