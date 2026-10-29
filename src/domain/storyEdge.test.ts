@@ -183,6 +183,9 @@ describe('章の追加位置・名前、複製名、削除理由', () => {
     expect(baseVersionName('第2稿（第1稿を複製）')).toBe('第2稿')
     expect(baseVersionName('')).toBe('無題の稿')
     expect(baseVersionName('決定稿（第1稿を複製）')).toBe('決定稿')
+    // 全角・漢数字の「第n稿」も、前の空白を除いた番号の部分だけにする
+    expect(baseVersionName('第三稿（推敲中）')).toBe('第三稿')
+    expect(baseVersionName(' 第４稿（第3稿を複製）')).toBe('第４稿')
     let { data, ids } = build(1)
     const v1 = data.pieces[ids[0]].versionIds[0]
     const d1 = duplicateVersion(data, v1)

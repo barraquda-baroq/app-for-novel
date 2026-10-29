@@ -114,6 +114,36 @@ describe('操作の前の、保存されていない編集の控え', () => {
     expect(getData().pieces[pieceId].actIds).toEqual(acts)
   })
 
+  it('確認文の新しい稿の名前は、作られる稿と同じ（今ある稿のいちばん大きい番号＋1。削除した稿は数えない）', async () => {
+    const titleId = actions.createTitle('作品')
+    const pieceId = actions.addEpisode(titleId)
+    actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body: 'AAABBBCCC' })
+    actions.addVersion(pieceId)
+    actions.deleteVersion(actions.addVersion(pieceId))
+    const acts = actions.separatePiece(pieceId, [3, 6])
+    actions.deleteVersion(actions.addVersion(acts[0]))
+    // 古い数え方（versionSeq + 1）なら第3稿・第4稿になる
+    expect(getData().pieces[acts[0]].versionSeq).toBe(2)
+    expect(getData().pieces[pieceId].versionSeq).toBe(3)
+    render(<DialogHost />)
+
+    let done = confirmJoin(acts[0])
+    let dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('新しい稿「第2稿（つないだ稿）」を作って採用します')
+    press(dialog, 'つなぐ')
+    expect(await done).toBe(true)
+    let data = getData()
+    expect(data.versions[data.pieces[acts[0]].activeVersionId!].name).toBe('第2稿（つないだ稿）')
+
+    done = confirmUnseparate(pieceId)
+    dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('この話の新しい稿「第3稿（幕をつないだ稿）」として採用し')
+    press(dialog, 'セパレート解除')
+    expect(await done).toBe(true)
+    data = getData()
+    expect(data.versions[data.pieces[pieceId].activeVersionId!].name).toBe('第3稿（幕をつないだ稿）')
+  })
+
   it('控えの内容がもう保存されていれば聞かずに消す。控えが無ければ聞かない', async () => {
     const { acts } = seed()
     const vid = getData().pieces[acts[0]].activeVersionId!

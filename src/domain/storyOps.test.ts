@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createTitle } from './entityOps'
 import { buildReadThrough, NO_ACTIVE_MESSAGE, readThroughText } from './readthrough'
+import { repairData } from './repair'
 import {
   addChapter,
   addEpisode,
@@ -22,6 +23,7 @@ import {
   updateVersion,
 } from './storyOps'
 import { canDeletePiece, episodeNumbers, flatten, pieceLabel } from './structure'
+import { emptyTrash, restoreTrashEntry } from './trash'
 import { DomainError, emptyData, type AppData, type ID } from './types'
 
 function setup() {
@@ -179,7 +181,7 @@ describe('推敲バージョンと採用', () => {
     expect(labels(data, titleId)).toEqual(['第1話'])
   })
 
-  it('採用中のバージョンを削除すると採用なしになる。稿番号は再利用しない', () => {
+  it('採用中のバージョンを削除すると採用なしになる。次の稿の番号は今ある稿のいちばん大きい番号の次', () => {
     let { data, titleId } = setup()
     let id
     ;({ data, id } = add(data, titleId))
@@ -188,8 +190,8 @@ describe('推敲バージョンと採用', () => {
     data = setActiveVersion(data, id, v2.result)
     data = deleteVersion(data, v2.result)
     expect(data.pieces[id].activeVersionId).toBeNull()
-    const v3 = addVersion(data, id)
-    expect(v3.data.versions[v3.result].name).toBe('第3稿')
+    const again = addVersion(data, id)
+    expect(again.data.versions[again.result].name).toBe('第2稿')
   })
 
   it('他の話のバージョンは採用できない', () => {
@@ -198,6 +200,107 @@ describe('推敲バージョンと採用', () => {
     ;({ data, id: a } = add(data, titleId))
     ;({ data, id: b } = add(data, titleId))
     expect(() => setActiveVersion(data, a, data.pieces[b].versionIds[0])).toThrow(DomainError)
+  })
+})
+
+describe('稿の番号（第n稿）', () => {
+  /** 第1話と、その第1稿 */
+  function oneEpisode() {
+    const { data, titleId } = setup()
+    const r = add(data, titleId)
+    return { data: r.data, id: r.id, v1: r.data.pieces[r.id].versionIds[0] }
+  }
+  const names = (data: AppData, id: ID) => data.pieces[id].versionIds.map((v) => data.versions[v].name)
+
+  it('作成→複製→複製→第3稿・第2稿を削除→ゴミ箱を空にする→複製: 第2稿になる（ゴミ箱に残っている間も同じ）', () => {
+    let { data, id, v1 } = oneEpisode()
+    expect(names(data, id)).toEqual(['第1稿'])
+    const d2 = duplicateVersion(data, v1)
+    data = d2.data
+    expect(data.versions[d2.result].name).toBe('第2稿（第1稿を複製）')
+    const d3 = duplicateVersion(data, d2.result)
+    data = d3.data
+    expect(data.versions[d3.result].name).toBe('第3稿（第2稿を複製）')
+
+    data = deleteVersion(data, d3.result)
+    data = deleteVersion(data, d2.result)
+    expect(names(data, id)).toEqual(['第1稿'])
+    // ゴミ箱の稿は数えない
+    const inTrash = duplicateVersion(data, v1)
+    expect(inTrash.data.versions[inTrash.result].name).toBe('第2稿（第1稿を複製）')
+
+    data = emptyTrash(data)
+    const after = duplicateVersion(data, v1)
+    expect(after.data.versions[after.result].name).toBe('第2稿（第1稿を複製）')
+    expect(names(after.data, id)).toEqual(['第1稿', '第2稿（第1稿を複製）'])
+    // versionSeq（古い版のアプリ・同期のため）は戻さない
+    expect(after.data.pieces[id].versionSeq).toBe(3)
+  })
+
+  it('間の欠けた番号は埋めない（第1・3・5・6稿なら次は第7稿）。採用中の稿も採用していない稿も数える', () => {
+    let { data, id, v1 } = oneEpisode()
+    const ids = [v1]
+    for (let i = 0; i < 5; i++) {
+      const r = addVersion(data, id)
+      data = r.data
+      ids.push(r.result)
+    }
+    data = deleteVersion(data, ids[1])
+    data = deleteVersion(data, ids[3])
+    data = setActiveVersion(data, id, ids[5])
+    expect(names(data, id)).toEqual(['第1稿', '第3稿', '第5稿', '第6稿'])
+    const dup = duplicateVersion(data, v1)
+    expect(dup.data.versions[dup.result].name).toBe('第7稿（第1稿を複製）')
+    const blank = addVersion(dup.data, id)
+    expect(blank.data.versions[blank.result].name).toBe('第8稿')
+  })
+
+  it('稿の名前を書き換えると、書き換えた名前の番号で数える（番号のない名前は数えない）', () => {
+    let { data, id, v1 } = oneEpisode()
+    const v2 = addVersion(data, id)
+    data = updateVersion(v2.data, v2.result, { name: '改稿版' })
+    let r = addVersion(data, id)
+    expect(r.data.versions[r.result].name).toBe('第2稿')
+
+    data = updateVersion(data, v2.result, { name: '第十稿（推敲中）' })
+    r = duplicateVersion(data, v2.result)
+    expect(r.data.versions[r.result].name).toBe('第11稿（第十稿を複製）')
+    expect(r.data.pieces[id].versionSeq).toBe(11)
+
+    data = updateVersion(data, v1, { name: '　第１２稿' })
+    r = addVersion(data, id)
+    expect(r.data.versions[r.result].name).toBe('第13稿')
+  })
+
+  it('稿をすべて削除した話に足す稿は第1稿', () => {
+    let { data, id, v1 } = oneEpisode()
+    const v2 = addVersion(data, id)
+    data = deleteVersion(deleteVersion(v2.data, v2.result), v1)
+    expect(data.pieces[id].versionIds).toEqual([])
+    const r = addVersion(data, id)
+    expect(r.data.versions[r.result].name).toBe('第1稿')
+    expect(r.data.pieces[id].versionSeq).toBe(2)
+  })
+
+  it('ゴミ箱から戻した稿の番号も数える', () => {
+    let { data, id } = oneEpisode()
+    const v2 = addVersion(data, id)
+    data = deleteVersion(v2.data, v2.result)
+    data = restoreTrashEntry(data, Object.keys(data.trashEntries)[0]).data
+    const r = addVersion(data, id)
+    expect(r.data.versions[r.result].name).toBe('第3稿')
+  })
+
+  it('番号が増えなくても versionSeq は稿の数より小さくしない（修復で直す所が出ない）', () => {
+    let { data, id, v1 } = oneEpisode()
+    data = updateVersion(data, v1, { name: '改稿版' })
+    for (let i = 0; i < 3; i++) {
+      const r = addVersion(data, id)
+      data = updateVersion(r.data, r.result, { name: `案${i + 1}` })
+    }
+    expect(names(data, id)).toEqual(['改稿版', '案1', '案2', '案3'])
+    expect(data.pieces[id].versionSeq).toBe(4)
+    expect(repairData(data).fixes).toEqual([])
   })
 })
 

@@ -2,10 +2,11 @@
 // 原稿画面から呼ぶ時は、先に保存していない編集を保存するか聞いてから（ensureSaved）呼ぶこと。
 // 操作する話・幕に、端末内の控え（前回保存されなかった編集・別のタブで編集中の編集）があれば、先にそれを伝える
 // （操作は保存した本文で行うので、控えの編集は入らない。続けても控えは残り、あとで残った幕・話を開いた時に新しい稿として残せる）。
-import { joinError, unseparateError } from '../../domain/acts'
+import { JOINED_VERSION_SUFFIX, joinError, UNSEPARATED_VERSION_SUFFIX, unseparateError } from '../../domain/acts'
 import { actLabel, actParts, actsOf, isSplit, parentOf, pieceFullLabel } from '../../domain/structure'
 import { trashNotice } from '../../domain/trash'
 import type { AppData, ID } from '../../domain/types'
+import { nextVersionName } from '../../domain/versionNumber'
 import { actions } from '../../store/actions'
 import { getData } from '../../store/appStore'
 import { attempt, notify, notifyError } from '../../store/uiStore'
@@ -112,7 +113,8 @@ export async function confirmUnseparate(pieceId: ID, opts: ActFlowOptions = {}):
     return false
   }
   const now = getData()
-  const label = pieceFullLabel(now, now.pieces[pieceId] ?? piece)
+  const current = now.pieces[pieceId] ?? piece
+  const label = pieceFullLabel(now, current)
   const leftovers = leftoverCount(
     now,
     acts.map((a) => a.id),
@@ -120,7 +122,7 @@ export async function confirmUnseparate(pieceId: ID, opts: ActFlowOptions = {}):
   const ok = await confirmDialog({
     title: `「${label}」のセパレートを解除しますか？`,
     message:
-      `各幕（${acts.length}幕）の採用稿を順につないだ本文を、この話の新しい稿「第${piece.versionSeq + 1}稿（幕をつないだ稿）」として採用し、幕を1つの話に戻します。${NOTE_CARRY_NOTICE}` +
+      `各幕（${acts.length}幕）の採用稿を順につないだ本文を、この話の新しい稿「${nextVersionName(now, current, UNSEPARATED_VERSION_SUFFIX)}」として採用し、幕を1つの話に戻します。${NOTE_CARRY_NOTICE}` +
       (leftovers > 0
         ? `\n\n各幕の採用していない稿（${leftovers}稿）は${trashNotice('')}ゴミ箱から戻すと、この話の稿として戻ります。`
         : ''),
@@ -149,11 +151,12 @@ export async function confirmJoin(actId: ID, opts: ActFlowOptions = {}): Promise
   if (!(await confirmPendingDrafts([actId, parts[i + 1].act.id], opts))) return false
   const here = actLabel(i + 1)
   const next = actLabel(i + 2)
-  const leftovers = leftoverCount(getData(), [parts[i + 1].act.id])
+  const now = getData()
+  const leftovers = leftoverCount(now, [parts[i + 1].act.id])
   const ok = await confirmDialog({
     title: `${here}と${next}をつなぎますか？`,
     message:
-      `${here}に、${here}と${next}の採用稿をつないだ新しい稿「第${act.versionSeq + 1}稿（つないだ稿）」を作って採用します。${next}はなくなり、後ろの幕の番号が1つずつ繰り上がります。${NOTE_CARRY_NOTICE}` +
+      `${here}に、${here}と${next}の採用稿をつないだ新しい稿「${nextVersionName(now, now.pieces[actId] ?? act, JOINED_VERSION_SUFFIX)}」を作って採用します。${next}はなくなり、後ろの幕の番号が1つずつ繰り上がります。${NOTE_CARRY_NOTICE}` +
       (leftovers > 0
         ? `\n\n${next}の採用していない稿（${leftovers}稿）は${trashNotice('')}ゴミ箱から戻すと、${here}の稿として戻ります。`
         : ''),

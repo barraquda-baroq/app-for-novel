@@ -93,12 +93,21 @@ export function trashDays(entries: TrashEntry[], records: AppData['trashRecords'
   return days
 }
 
-/** 戻した後のお知らせ */
-export function restoredMessage(r: Pick<RestoreResult, 'label' | 'copied' | 'movedToUnassigned'>): string {
+/** 戻した後のお知らせ（同じ名前の稿があって名前を変えた稿があれば、そのことも伝える） */
+export function restoredMessage(
+  r: Pick<RestoreResult, 'label' | 'copied' | 'movedToUnassigned'> & Partial<Pick<RestoreResult, 'renamed'>>,
+): string {
   const name = `「${r.label.trim() || '（名前なし）'}」`
   if (r.movedToUnassigned) return `${name}を「どのタイトルにも属さない」に戻しました（元のタイトルがないため）`
-  if (r.copied) return `${name}を複製として元の場所に戻しました（同じものが残っていたため）`
-  return `${name}を元の場所に戻しました`
+  const renamed = r.renamed ?? []
+  const note =
+    renamed.length === 0
+      ? ''
+      : renamed.length === 1
+        ? `（同じ名前の稿があったため、「${renamed[0]}」という名前にしました）`
+        : `（同じ名前の稿があったため、${renamed.length}稿の名前に「（復元）」を付けました）`
+  if (r.copied) return `${name}を複製として元の場所に戻しました（同じものが残っていたため）${note}`
+  return `${name}を元の場所に戻しました${note}`
 }
 
 /** 同期の競合で残した内容の説明 */

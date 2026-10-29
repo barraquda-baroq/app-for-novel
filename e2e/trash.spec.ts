@@ -169,6 +169,40 @@ test.describe('ゴミ箱', () => {
     expect(left).toBe(0)
   })
 
+  test('稿を戻す時、削除した後に同じ名前の稿ができていれば「（復元）」を付けて戻し、そのことを知らせる', async ({ page }) => {
+    await openApp(page)
+    const { pieceId, deleted } = await seed(page, ({ actions, getData }) => {
+      const titleId = actions.createTitle('推敲中')
+      const pid = actions.addEpisode(titleId)
+      const v2 = actions.duplicateVersion(getData().pieces[pid].versionIds[0])
+      actions.updateVersion(v2, { body: '消した第2稿' })
+      actions.deleteVersion(v2)
+      // 第1稿だけになったので、次の複製も第2稿
+      actions.duplicateVersion(getData().pieces[pid].versionIds[0])
+      return { pieceId: pid, deleted: v2 }
+    })
+    await openApp(page, '/trash')
+    const row = trashRows(page).first()
+    await expect(row.getByTestId('trash-label')).toHaveText('第2稿（第1稿を複製）')
+    await row.getByTestId('trash-restore').click()
+    await expect(
+      page.getByRole('status').filter({
+        hasText:
+          '「第2稿（第1稿を複製）」を元の場所に戻しました（同じ名前の稿があったため、「第2稿（第1稿を複製）（復元）」という名前にしました）',
+      }),
+    ).toBeVisible()
+    const names = await page.evaluate((pid) => {
+      const d = window.__ns.getData()
+      return d.pieces[pid].versionIds.map((id) => [d.versions[id].name, d.versions[id].body])
+    }, pieceId)
+    expect(names).toEqual([
+      ['第1稿', ''],
+      ['第2稿（第1稿を複製）（復元）', '消した第2稿'],
+      ['第2稿（第1稿を複製）', ''],
+    ])
+    expect(await page.evaluate((id) => window.__ns.getData().versions[id].name, deleted)).toBe('第2稿（第1稿を複製）（復元）')
+  })
+
   test('同期の競合で残した内容には印が付き、同じものが残っていれば複製として戻る', async ({ page }) => {
     await openApp(page)
     const { titleId, memoId } = await seed(page, ({ actions }) => {

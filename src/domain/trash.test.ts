@@ -339,6 +339,54 @@ describe('削除するとゴミ箱へ移り、戻すと元どおりになる', (
 
 // ---------- 戻す位置 ----------
 
+describe('稿の名前が重なる時は「（復元）」を付けて戻す', () => {
+  const names = (data: AppData, pieceId: ID) => data.pieces[pieceId].versionIds.map((v) => data.versions[v].name)
+
+  it('削除した後に同じ番号の稿ができていれば「第3稿（復元）」「第3稿（復元2）」として戻す。重ならなければ名前はそのまま', () => {
+    const f = fixture()
+    const p = f.pieces[0]
+    expect(names(f.data, p)).toEqual(['第1稿', '第2稿（第1稿を複製）', '第3稿'])
+    // 重ならない: そのまま
+    const kept = deleteVersion(f.data, f.versions[2])
+    const same = restoreTrashEntry(kept, lastEntry(kept).id)
+    expect(same.result.renamed).toEqual([])
+    let data = same.data
+    expect(names(data, p)).toEqual(['第1稿', '第2稿（第1稿を複製）', '第3稿'])
+
+    data = deleteVersion(f.data, f.versions[2])
+    const v3Entry = lastEntry(data)
+    const x = addVersion(data, p, { body: 'X' })
+    expect(x.data.versions[x.result].name).toBe('第3稿')
+    data = deleteVersion(x.data, x.result)
+    const xEntry = lastEntry(data)
+    const y = addVersion(data, p, { body: 'Y' })
+    data = y.data
+    expect(data.versions[y.result].name).toBe('第3稿')
+
+    const rx = restoreTrashEntry(data, xEntry.id)
+    expect(rx.result.renamed).toEqual(['第3稿（復元）'])
+    data = rx.data
+    expect(data.versions[x.result]).toMatchObject({ name: '第3稿（復元）', body: 'X' })
+    data = restore(data, v3Entry)
+    expect(data.versions[f.versions[2]]).toMatchObject({ name: '第3稿（復元2）', body: '第三稿の本文' })
+    expect(new Set(names(data, p)).size).toBe(data.pieces[p].versionIds.length)
+    // 名前を変えても先頭の「第3稿」は残るので、次は第4稿
+    const next = addVersion(data, p)
+    expect(next.data.versions[next.result].name).toBe('第4稿')
+    expect(repairData(next.data).fixes).toEqual([])
+  })
+
+  it('ほかの話の稿と同じ名前でも変えない', () => {
+    const f = fixture()
+    let data = deleteVersion(f.data, f.versions[2])
+    data = addVersion(data, f.pieces[1]).data
+    data = addVersion(data, f.pieces[1]).data
+    expect(names(data, f.pieces[1])).toEqual(['第1稿', '第2稿', '第3稿'])
+    data = restore(data)
+    expect(data.versions[f.versions[2]].name).toBe('第3稿')
+  })
+})
+
 describe('戻す位置', () => {
   it('並びが変わっていても、直前にあった要素の直後へ戻す', () => {
     const f = fixture()

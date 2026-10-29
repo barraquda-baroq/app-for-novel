@@ -67,6 +67,23 @@ describe('ゴミ箱の一覧の表記', () => {
     expect(restoredMessage({ label: '案', copied: false, movedToUnassigned: true })).toContain(
       '「どのタイトルにも属さない」に戻しました',
     )
+    // 同じ名前の稿があって名前を変えた時は、そのことも伝える
+    expect(restoredMessage({ label: '第2稿', copied: false, movedToUnassigned: false, renamed: ['第2稿（復元）'] })).toBe(
+      '「第2稿」を元の場所に戻しました（同じ名前の稿があったため、「第2稿（復元）」という名前にしました）',
+    )
+    expect(
+      restoredMessage({
+        label: '各幕の採用していなかった稿（3稿）',
+        copied: false,
+        movedToUnassigned: false,
+        renamed: ['第1幕の第2稿（復元）', '第2幕の第2稿（復元）'],
+      }),
+    ).toBe(
+      '「各幕の採用していなかった稿（3稿）」を元の場所に戻しました（同じ名前の稿があったため、2稿の名前に「（復元）」を付けました）',
+    )
+    expect(restoredMessage({ label: '第2稿', copied: false, movedToUnassigned: false, renamed: [] })).toBe(
+      '「第2稿」を元の場所に戻しました',
+    )
   })
 
   it('削除した日ごとにまとめ、特殊ブロックは種類を「特殊ブロック」と書く', () => {

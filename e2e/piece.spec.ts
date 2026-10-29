@@ -452,6 +452,64 @@ test.describe('原稿画面', () => {
     await expect(page.getByText('話が見つかりません。削除された可能性があります。')).toBeVisible()
   })
 
+  test('稿の番号: 第2稿・第3稿を削除してゴミ箱を空にした後の複製は第2稿（今ある稿のいちばん大きい番号の次）', async ({
+    page,
+  }) => {
+    const { titleId, pieceIds } = await seedBasic(page)
+    const pid = pieceIds[0]
+    const rows = page.getByTestId('version-row')
+    const versionNames = () =>
+      page.evaluate((p) => {
+        const d = window.__ns.getData()
+        return d.pieces[p].versionIds.map((id) => d.versions[id].name)
+      }, pid)
+    /** 比較中の稿を削除する（確認して一覧へ戻る） */
+    const deleteCompared = async (left: number) => {
+      await (await compareTool(page, 'delete-version')).click()
+      await expect(page.getByRole('dialog')).toContainText('削除しますか？')
+      await page.getByRole('dialog').getByRole('button', { name: '削除' }).click()
+      await expect(page.getByTestId('versions-heading')).toHaveText(`推敲バージョン（${left}）`)
+    }
+
+    // 作った話は第1稿
+    await openPiece(page, titleId, pid)
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('第1稿')
+
+    // 複製して推敲 → 第2稿、もう一度 → 第3稿
+    await page.getByTestId('duplicate-active').click()
+    await expect(page.getByTestId('version-select')).toContainText('第2稿（第1稿を複製）')
+    await page.getByTestId('duplicate-active').click()
+    await expect(page.getByTestId('version-select')).toContainText('第3稿（第1稿を複製）')
+
+    // 第3稿（いま比較中）・第2稿を削除（ゴミ箱へ）
+    await deleteCompared(2)
+    await rows
+      .filter({ hasText: '第2稿（第1稿を複製）' })
+      .getByRole('button', { name: /を開いて比較する/ })
+      .click()
+    await expect(page.getByTestId('version-select')).toContainText('第2稿（第1稿を複製）')
+    await deleteCompared(1)
+    await expect.poll(versionNames).toEqual(['第1稿'])
+
+    // ゴミ箱を空にする
+    await flush(page)
+    await openApp(page, '/trash')
+    await expect(page.getByTestId('trash-row')).toHaveCount(2)
+    await page.getByTestId('trash-empty-all').click()
+    await page.getByRole('dialog').getByRole('button', { name: '空にする', exact: true }).click()
+    await expect(page.getByTestId('trash-empty')).toBeVisible()
+
+    // 第1稿だけになった話で複製すると、第4稿ではなく第2稿
+    await openPiece(page, titleId, pid)
+    await page.getByTestId('duplicate-active').click()
+    await expect(page.getByTestId('version-select')).toContainText('第2稿（第1稿を複製）')
+    await expect.poll(versionNames).toEqual(['第1稿', '第2稿（第1稿を複製）'])
+    await page.getByTestId('back-to-list').click()
+    await expect(rows).toHaveCount(2)
+    await expect(rows.nth(0)).toContainText('第2稿（第1稿を複製）')
+  })
+
   test('スクロール同期をオンにすると、採用原稿のスクロールに推敲バージョンが追従する', async ({ page }, info) => {
     await openApp(page)
     const long = Array.from({ length: 120 }, (_, i) => `${i + 1}行目の文章です。`).join('\n')

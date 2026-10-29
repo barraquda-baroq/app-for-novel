@@ -65,7 +65,10 @@ export interface Piece {
   activeVersionId: ID | null
   /** 推敲バージョンの並び（作成順） */
   versionIds: ID[]
-  /** 「第n稿」の自動命名用カウンタ（削除しても番号を再利用しない） */
+  /**
+   * 以前の「第n稿」の自動命名用カウンタ。今は名前に使わない（次の番号は今ある稿の名前から決める。src/domain/versionNumber.ts）。
+   * 古い版のアプリ・同期のために残し、稿を作る時に作った番号まで進める
+   */
   versionSeq: number
   /** 幕（kind 'act'）: 属する話（幕に分けた第n話）。それ以外は無い */
   parentId?: ID | null

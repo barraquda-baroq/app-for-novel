@@ -904,3 +904,81 @@ describe('分けた・つないだ稿の元の稿の指紋', () => {
     expect(un.data.versions[un.result]).toMatchObject({ sourceVersionId: ev, sourceHash: textHash('ABCDEFGHI') })
   })
 })
+
+// ---------- 作る稿の番号 ----------
+
+describe('幕の操作で作る稿の番号（今ある稿のいちばん大きい番号＋1）', () => {
+  /** pieceId の稿の名前（並びの順） */
+  const names = (data: AppData, pieceId: ID) => data.pieces[pieceId].versionIds.map((v) => data.versions[v].name)
+
+  it('さらに分ける: 削除した稿の番号は数えない（第1・2稿なら「第3稿（分割）」）', () => {
+    const { data: d0, ids } = setup(['ABCDEFGH'])
+    let { data, acts } = split(d0, ids[0], [4])
+    data = addVersion(data, acts[0], { body: '別案' }).data
+    const third = addVersion(data, acts[0], { body: '別案2' })
+    data = deleteVersion(third.data, third.result)
+    expect(names(data, acts[0])).toEqual(['第1稿', '第2稿'])
+    data = separatePiece(data, acts[0], [2]).data
+    expect(data.versions[data.pieces[acts[0]].activeVersionId!].name).toBe('第3稿（分割）')
+    expect(data.pieces[acts[0]].versionSeq).toBe(3)
+  })
+
+  it('次の幕とつなぐ: 書き換えた名前の番号で数え、間は埋めない（第1稿・第五稿なら「第6稿（つないだ稿）」）', () => {
+    const { data: d0, ids } = setup(['ABCDEF'])
+    let { data, acts } = split(d0, ids[0], [3])
+    const second = addVersion(data, acts[0], { body: '別案' })
+    data = updateVersion(second.data, second.result, { name: '第五稿' })
+    const third = addVersion(data, acts[0], { body: '別案2' })
+    data = deleteVersion(third.data, third.result)
+    // 次の幕の稿の番号は数えない
+    for (let i = 0; i < 3; i++) data = addVersion(data, acts[1]).data
+    expect(names(data, acts[1])).toEqual(['第1稿', '第2稿', '第3稿', '第4稿'])
+    const r = joinActWithNext(data, acts[0])
+    expect(r.data.versions[r.result].name).toBe('第6稿（つないだ稿）')
+    expect(r.data.pieces[acts[0]].versionSeq).toBe(6)
+  })
+
+  it('セパレート解除: 話自身の今ある稿だけを数える（幕の稿・ゴミ箱の稿は数えない）', () => {
+    let { data, ids } = setup(['ABCDEF'])
+    data = addVersion(data, ids[0]).data
+    const third = addVersion(data, ids[0])
+    data = deleteVersion(third.data, third.result)
+    expect(names(data, ids[0])).toEqual(['第1稿', '第2稿'])
+    let acts: ID[]
+    ;({ data, acts } = split(data, ids[0], [3]))
+    for (let i = 0; i < 4; i++) data = addVersion(data, acts[0]).data
+    const r = unseparatePiece(data, ids[0])
+    expect(r.data.versions[r.result].name).toBe('第3稿（幕をつないだ稿）')
+    expect(names(r.data, ids[0])).toEqual(['第1稿', '第2稿', '第3稿（幕をつないだ稿）'])
+    // versionSeq（古い版のアプリのため）は戻さない
+    expect(r.data.pieces[ids[0]].versionSeq).toBe(3)
+  })
+
+  it('消えた幕の稿を、同じ名前の稿のある幕へ戻す時は「（復元）」を付ける', () => {
+    const { data: d0, ids } = setup(['ABCDEF'])
+    let { data, acts } = split(d0, ids[0], [3])
+    data = addVersion(data, acts[0], { body: '1幕の別案' }).data
+    const deleted = addVersion(data, acts[1], { body: '2幕の別案' })
+    data = deleteVersion(deleted.data, deleted.result)
+    const entryId = Object.keys(data.trashEntries)[0]
+    data = joinActWithNext(data, acts[0]).data
+    expect(names(data, acts[0])).toEqual(['第1稿', '第2稿', '第3稿（つないだ稿）'])
+    const back = restoreTrashEntry(data, entryId).data
+    expect(names(back, acts[0])).toEqual(['第1稿', '第2稿', '第3稿（つないだ稿）', '第2稿（復元）'])
+    expect(back.versions[deleted.result]).toMatchObject({ pieceId: acts[0], body: '2幕の別案' })
+    expect(repairData(back).fixes).toEqual([])
+  })
+
+  it('1件に複数の稿がある時も、重なる名前の稿だけ名前を変える', () => {
+    const { data: d0, ids } = setup(['ABCDEF'])
+    let { data, acts } = split(d0, ids[0], [2, 4])
+    data = addVersion(data, acts[0], { body: '1幕の別案' }).data
+    data = addVersion(data, acts[2], { body: '3幕の別案' }).data
+    data = unseparatePiece(data, ids[0]).data
+    const entry = Object.values(data.trashEntries)[0]
+    // 戻す前に、話に同じ名前の稿ができていた
+    data = updateVersion(data, data.pieces[ids[0]].versionIds[0], { name: '第1幕の第2稿' })
+    const back = restoreTrashEntry(data, entry.id).data
+    expect(names(back, ids[0])).toEqual(['第1幕の第2稿', '第2稿（幕をつないだ稿）', '第1幕の第2稿（復元）', '第3幕の第2稿'])
+  })
+})

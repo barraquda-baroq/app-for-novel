@@ -34,6 +34,7 @@ import {
   type Version,
 } from './types'
 import { byOrder, newId, nextOrder, now } from './util'
+import { pieceVersions, restoredVersionName } from './versionNumber'
 
 // ---------- 定数・表記 ----------
 
@@ -347,6 +348,8 @@ export interface RestoreResult {
   copied: boolean
   /** 元のタイトルがなかったので「どのタイトルにも属さない」へ戻した（アイデアのみ） */
   movedToUnassigned: boolean
+  /** 戻す先に同じ名前の稿があったので名前を変えて戻した稿の、新しい名前（「第3稿（復元）」。稿のみ。無ければ空） */
+  renamed: string[]
 }
 
 /** 控えた位置が分かるか（負の値や数でないものは「分からない」。修復で補った件など） */
@@ -733,9 +736,35 @@ function relinkVersion(tx: Tx, version: Version, origin: TrashOrigin): void {
   if (!versionIds.includes(version.id)) versionIds.splice(insertIndex(versionIds, origin), 0, version.id)
   const hasActive = piece.activeVersionId !== null && Boolean(tx.get('versions', piece.activeVersionId))
   const activeVersionId = origin.wasActive && !moved && !hasActive ? version.id : piece.activeVersionId
-  // 別の幕から移って戻った稿もあるので、「第n稿」の番号が重ならないよう数を進めておく
+  // 古い版のアプリは versionSeq + 1 で「第n稿」の名前を付けるので、稿の数より小さくしない（この版の名前は今ある稿から決める）
   const versionSeq = Math.max(piece.versionSeq, versionIds.length)
   tx.put('pieces', { ...piece, versionIds, activeVersionId, versionSeq, updatedAt: now() })
+}
+
+/**
+ * 戻した稿（ids。戻した順）と同じ名前の稿が、戻した先の話・幕にもうあれば「第3稿（復元）」のように名前を変える
+ * （稿の名前が重ならないように。「第n稿」の番号は今ある稿の名前から決めるので、削除した後に同じ名前の稿ができていることがある）。
+ * 同じ件で一緒に戻した稿は、先に戻した稿だけと比べる。戻り値は名前を変えた稿の新しい名前（戻した順）
+ */
+function keepVersionNamesUnique(tx: Tx, ids: readonly ID[]): string[] {
+  const renamed: string[] = []
+  const pending = new Set(ids)
+  for (const id of ids) {
+    pending.delete(id)
+    const v = tx.get('versions', id)
+    const piece = v ? tx.get('pieces', v.pieceId) : undefined
+    if (!v || !piece) continue
+    const taken = new Set(
+      pieceVersions(tx.data, piece)
+        .filter((x) => x.id !== id && !pending.has(x.id))
+        .map((x) => x.name),
+    )
+    const name = restoredVersionName(v.name, taken)
+    if (name === v.name) continue
+    tx.put('versions', { ...v, name })
+    renamed.push(name)
+  }
+  return renamed
 }
 
 /** 幕のレコードか（古い版の端末は幕を第n話として書くことがあるので、属する話 parentId で見る） */
@@ -762,6 +791,7 @@ function relinkAct(tx: Tx, restored: Piece): void {
  * ゴミ箱の1件を元の場所へ戻し、ゴミ箱から消す。
  * - 親（タイトル・話・設定項目）がもう無ければ DomainError（先に親を戻すよう伝える）
  * - 同じ id のものが残っていれば上書きせず、新しい id の複製として戻す（稿は名前に「（ゴミ箱から復元）」を付ける）
+ * - 稿は、戻す先の話・幕に同じ名前の稿が今あれば「（復元）」「（復元2）」…を付けて戻す
  * - アイデアは元のタイトルが無ければ「どのタイトルにも属さない」へ戻す（タイトルを消した時と同じ扱い）
  */
 export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; result: RestoreResult } {
@@ -809,6 +839,7 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
     const origin = entry.origin ?? { titleId: null, index: -1 }
     let titleId: ID | null = null
     let movedToUnassigned = false
+    let renamed: string[] = []
     switch (entry.kind) {
       case 'title':
         titleId = mainId
@@ -833,6 +864,7 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
         relinkVersion(tx, v, origin)
         // 1件に複数の稿があることがある（幕をつないだ・セパレートを解除した時の、採用していなかった稿）。
         // 残りは本体の後ろに、もとの順で並べる
+        const restoredIds = [v.id]
         let prevId = v.id
         for (const item of items) {
           if (item.table !== 'versions' || item.record.id === main.record.id) continue
@@ -840,8 +872,10 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
           const other = tx.get('versions', id)
           if (!other) continue
           relinkVersion(tx, other, { ...origin, index: -1, prevId, wasActive: false })
+          restoredIds.push(id)
           prevId = id
         }
+        renamed = keepVersionNamesUnique(tx, restoredIds)
         break
       }
       case 'memo': {
@@ -912,6 +946,7 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
       titleId,
       copied: ids.has(main.record.id),
       movedToUnassigned,
+      renamed,
     }
   })
 }

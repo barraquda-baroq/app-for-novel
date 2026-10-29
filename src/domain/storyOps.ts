@@ -28,6 +28,7 @@ import {
   type Version,
 } from './types'
 import { insertAt, newId, now, removeValue } from './util'
+import { advancedVersionSeq, nextVersionNumber, numberedPrefix, pieceVersions } from './versionNumber'
 
 // ---------- 内部ヘルパー ----------
 
@@ -98,6 +99,7 @@ function attachPiece(tx: Tx, titleId: ID, pieceId: ID, slot: Slot): void {
   }
 }
 
+/** 稿のレコードを作る（名前を渡さなければ「第seq稿」。seq は呼び出し側で nextVersionNumber から決める） */
 export function makeVersion(piece: Piece, seq: number, body = '', sourceVersionId: ID | null = null, name?: string): Version {
   const ts = now()
   return {
@@ -418,10 +420,7 @@ export function updatePiece(data: AppData, pieceId: ID, patch: { subtitle?: stri
 
 /** 話の稿（versionIds の順。載っていない稿（壊れたデータ）も後ろに付ける） */
 function versionsOfPiece(tx: Tx, p: Piece): Version[] {
-  return [
-    ...p.versionIds.map((vid) => tx.get('versions', vid)).filter((v): v is Version => Boolean(v)),
-    ...tx.all('versions').filter((v) => v.pieceId === p.id && !p.versionIds.includes(v.id)),
-  ]
+  return pieceVersions(tx.data, p)
 }
 
 /** 話をその稿ごとゴミ箱へ移す（途中の話数は削除できない）。幕に分けた話は、幕とその稿もいっしょに1件にまとめる */
@@ -656,6 +655,10 @@ export function removeChapter(data: AppData, chapterId: ID): AppData {
 
 // ---------- 推敲バージョン ----------
 
+/**
+ * 稿を足す。名前を渡さなければ「第n稿」（n はこの話の今ある稿のいちばん大きい番号＋1。src/domain/versionNumber.ts）。
+ * 名前を渡した時（同期の競合で残す稿など）もその名前のまま足す
+ */
 export function addVersion(
   data: AppData,
   pieceId: ID,
@@ -664,31 +667,33 @@ export function addVersion(
   return transact(data, (tx) => {
     const p = requirePiece(tx, pieceId)
     requireUnsplit(p)
-    const seq = p.versionSeq + 1
-    const v = makeVersion(p, seq, opts.body ?? '', opts.sourceVersionId ?? null, opts.name)
+    const n = nextVersionNumber(tx.data, p)
+    const v = makeVersion(p, n, opts.body ?? '', opts.sourceVersionId ?? null, opts.name)
     tx.put('versions', v)
-    tx.put('pieces', { ...p, versionIds: [...p.versionIds, v.id], versionSeq: seq, updatedAt: now() })
+    const versionIds = [...p.versionIds, v.id]
+    tx.put('pieces', { ...p, versionIds, versionSeq: advancedVersionSeq(p, n, versionIds), updatedAt: now() })
     return v.id
   })
 }
 
 /** 複製名に使う元の稿の呼び名。「第2稿（第1稿を複製）」なら「第2稿」。名前が空なら「無題の稿」 */
 export function baseVersionName(name: string): string {
-  const trimmed = name.trim()
-  const m = /^(第\d+稿)/.exec(trimmed)
-  if (m) return m[1]
-  return trimmed.replace(/（[^（）]*を複製）$/, '').trim() || '無題の稿'
+  const prefix = numberedPrefix(name)
+  if (prefix) return prefix
+  const stripped = name.trim().replace(/（[^（）]*を複製）$/, '')
+  return stripped.trim() || '無題の稿'
 }
 
-/** 推敲用に既存バージョンを複製して新しいバージョンを作る */
+/** 推敲用に既存バージョンを複製して新しいバージョン「第n稿（第m稿を複製）」を作る（n は addVersion と同じ） */
 export function duplicateVersion(data: AppData, versionId: ID): { data: AppData; result: ID } {
   const src = data.versions[versionId]
   if (!src) throw new DomainError('バージョンが見つかりません')
   const piece = data.pieces[src.pieceId]
+  if (!piece) throw new DomainError('話が見つかりません')
   return addVersion(data, src.pieceId, {
     body: src.body,
     sourceVersionId: src.id,
-    name: `第${piece.versionSeq + 1}稿（${baseVersionName(src.name)}を複製）`,
+    name: `第${nextVersionNumber(data, piece)}稿（${baseVersionName(src.name)}を複製）`,
   })
 }
 
