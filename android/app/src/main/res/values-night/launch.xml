@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 起動の画面（スプラッシュ）の無地の色。端末がダークの時（起動アニメーションのダークの地と同じ。values/launch.xml） -->
+    <color name="launch_background">#050607</color>
+</resources>

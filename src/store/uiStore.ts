@@ -22,6 +22,11 @@ export interface Prefs {
   showDiff: boolean
   /** 通し読みを縦書きで表示する */
   verticalReading: boolean
+  /**
+   * 起動アニメーションを出す（既定オン）。index.html に埋め込んだ src/launch/launch.js が、アプリより先にこの値を読む
+   * （false の時だけ出さない）
+   */
+  launchAnimation: boolean
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -32,6 +37,7 @@ export const DEFAULT_PREFS: Prefs = {
   editorFontSize: 17,
   showDiff: false,
   verticalReading: false,
+  launchAnimation: true,
 }
 
 const PREFS_KEY = 'novel-studio:prefs'
@@ -80,7 +86,7 @@ export function resolveAppearance(mode: ThemeMode, systemDark: boolean): Appeara
 
 /**
  * ブラウザの枠（アドレスバー・ステータスバー）の色。ヘッダーの背景（--surface）に合わせる。
- * index.html の最初の描画前のスクリプトにも同じ値がある（変える時は両方そろえる）。
+ * 最初の描画の前に外観を決める src/launch/launch.js（index.html に埋め込む）にも同じ値がある（変える時は両方そろえる）。
  */
 export const THEME_COLORS: Record<Appearance, string> = {
   white: '#ffffff',

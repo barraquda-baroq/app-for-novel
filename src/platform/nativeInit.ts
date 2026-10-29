@@ -4,7 +4,9 @@
 // - Android の「戻る」: メニュー・ダイアログ・原稿画面のポップオーバー・推敲案の一覧が開いていれば閉じる（Esc と同じ）、戻れる画面があれば戻る、
 //   いちばん最初の画面なら保存してからアプリを裏に回す（閉じない）
 // - iPhone: キーボードの高さを受け取る（src/platform/keyboard.ts）
-// - 起動の画面（スプラッシュ）は最初の描画の後に消す
+// - 起動の画面（スプラッシュ。ロゴの無い無地）: 起動アニメーション（src/launch/launch.js）を出す時は、アニメーションが最初の絵を描いた時に
+//   消している。出さない時（設定でオフ）は、アプリの最初の描画の後に消す（src/main.tsx。アニメーションを出した時も念のため呼ぶ。
+//   2回目は何も起きない）。どちらも描画できなかった時のために、5秒で消す
 import { App } from '@capacitor/app'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { saveBeforeLeave } from '../store/lifecycle'

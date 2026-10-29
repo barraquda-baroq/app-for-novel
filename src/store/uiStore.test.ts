@@ -22,6 +22,7 @@ describe('表示の設定の移し替え（migratePrefs）', () => {
       editorFontSize: 21,
       showDiff: true,
       verticalReading: true,
+      launchAnimation: true,
     })
     expect(migratePrefs({ theme: 'dark' }).theme).toBe('dark')
     expect(migratePrefs({ theme: 'system' }).theme).toBe('system')
@@ -41,6 +42,13 @@ describe('表示の設定の移し替え（migratePrefs）', () => {
     expect(migratePrefs({ version: PREFS_VERSION, theme: 'white' }).theme).toBe('white')
     // 保存形式の版は設定の値には含めない
     expect(prefs).not.toHaveProperty('version')
+  })
+
+  it('起動アニメーションは既定でオン。オフにした設定はそのまま読む（2.4 までの設定には無いのでオン）', () => {
+    expect(DEFAULT_PREFS.launchAnimation).toBe(true)
+    expect(migratePrefs({ version: PREFS_VERSION, theme: 'dark' }).launchAnimation).toBe(true)
+    expect(migratePrefs({ version: PREFS_VERSION, launchAnimation: false }).launchAnimation).toBe(false)
+    expect(migratePrefs({ version: PREFS_VERSION, launchAnimation: 'off' }).launchAnimation).toBe(true)
   })
 
   it('知らない値・型の違う値・壊れたデータは既定値にする', () => {

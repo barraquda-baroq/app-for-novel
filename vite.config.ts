@@ -1,6 +1,8 @@
 /// <reference types="vitest/config" />
 import { existsSync, readFileSync } from 'node:fs'
-import { defineConfig } from 'vite'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, transformWithEsbuild, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { normalizeOrigin } from './src/claude/pairing'
@@ -40,6 +42,48 @@ export function buildTimeDefine(command: 'build' | 'serve', native: boolean, now
   return command === 'build' && !native ? null : now
 }
 
+/** index.html の <script data-inline="ファイル">…</script> */
+const INLINE_SCRIPT = /<script data-inline="([^"]+)">([\s\S]*?)<\/script>/g
+
+/**
+ * index.html の <script data-inline="ファイル">…</script> の先頭に、そのファイルの中身を埋め込む（src/launch/launch.js: 外観と起動アニメーション）。
+ * 最初の描画の前に、アプリの本体の読み込みを待たずに動かすため（読み込みを1つも増やさない）。minify ではコメントを除いて縮める（ビルド）
+ */
+export async function inlineScripts(html: string, root: string, minify: boolean): Promise<string> {
+  let out = ''
+  let last = 0
+  for (const m of html.matchAll(INLINE_SCRIPT)) {
+    const file = path.resolve(root, m[1])
+    let code = readFileSync(file, 'utf8')
+    // 古い端末でも動く書き方のまま縮める（埋め込むので Vite の変換を通らない）
+    if (minify) code = (await transformWithEsbuild(code, file, { minify: true, target: 'es2020', legalComments: 'none' })).code
+    if (/<\/script/i.test(code)) throw new Error(`${m[1]} に </script> があると埋め込めません`)
+    out += `${html.slice(last, m.index)}<script>\n${code.trim()}\n${m[2].trim()}\n</script>`
+    last = m.index + m[0].length
+  }
+  return out + html.slice(last)
+}
+
+function inlineLaunchScript(): Plugin {
+  const root = fileURLToPath(new URL('.', import.meta.url))
+  let minify = false
+  return {
+    name: 'novel-studio:inline-launch-script',
+    configResolved(config) {
+      minify = config.command === 'build'
+    },
+    configureServer(server) {
+      // 開発中に書き換えたら読み込み直す（モジュールのつながりの外にあるので、Vite は見ていない）
+      const file = path.resolve(root, 'src/launch/launch.js')
+      server.watcher.add(file)
+      server.watcher.on('change', (changed) => {
+        if (path.resolve(changed) === file) server.ws.send({ type: 'full-reload' })
+      })
+    },
+    transformIndexHtml: { order: 'pre', handler: (html) => inlineScripts(html, root, minify) },
+  }
+}
+
 export default defineConfig(({ command, mode }) => {
   // iPhone / Android アプリ（Capacitor）に載せる画面（npm run build:native）。サービスワーカーを入れず、dist-native に出す
   // （capacitor.config.ts の webDir。Web 版の dist を取り違えてアプリに入れることがないように）
@@ -59,6 +103,7 @@ export default defineConfig(({ command, mode }) => {
     optimizeDeps: { include: ['firebase/app', 'firebase/auth', 'firebase/firestore'] },
     plugins: [
       react(),
+      inlineLaunchScript(),
       VitePWA({
         // アプリでは使わない（更新はアプリそのものを入れ直す。virtual:pwa-register は何もしない形になる）
         disable: native,
@@ -68,20 +113,24 @@ export default defineConfig(({ command, mode }) => {
           // Firebase のログイン画面（/__/auth/…）はオフライン用のアプリの画面に差し替えない
           navigateFallbackDenylist: [/^\/__\//],
         },
-        includeAssets: ['icon.svg', 'apple-touch-icon.png'],
+        includeAssets: ['favicon.svg', 'icon.svg', 'apple-touch-icon.png'],
         manifest: {
           name: 'Novel Studio — 小説執筆アプリ',
           short_name: 'Novel Studio',
           description: 'アイデア・設定・話数単位の原稿と推敲バージョン、応募戦略をまとめて管理する小説執筆アプリ',
           lang: 'ja',
-          theme_color: '#2f3a4f',
-          background_color: '#f6f4ef',
+          // アイコン（黒地に緑の点の「NS」）と起動アニメーションのダークの地の色。ウインドウの枠の色は、開いた後は外観に合わせる（index.html の theme-color）
+          theme_color: '#050607',
+          background_color: '#050607',
           display: 'standalone',
           start_url: './',
           scope: './',
+          // 絵は真ん中の 80% の円（maskable の安全な範囲）に収めてあるので、同じ画像を丸などに切り抜かれる用（maskable）にも使う
+          // （scripts/render-icons.mjs）
           icons: [
-            { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
-            { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
+            { src: 'pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: 'pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
             { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
         },

@@ -1,4 +1,4 @@
-// 表示の設定（この端末だけに保存。同期しない）: 外観・原稿の書体と文字サイズ・比較画面の分割・差分ハイライト。
+// 表示の設定（この端末だけに保存。同期しない）: 外観・起動アニメーション・原稿の書体と文字サイズ・比較画面の分割・差分ハイライト。
 import { useId } from 'react'
 import { DEFAULT_PREFS, usePrefs, type EditorFont, type SplitOrientation, type ThemeMode } from '../../store/uiStore'
 
@@ -65,6 +65,7 @@ export function DisplaySettings() {
   const size = usePrefs((s) => s.editorFontSize)
   const split = usePrefs((s) => s.splitOrientation)
   const showDiff = usePrefs((s) => s.showDiff)
+  const launchAnimation = usePrefs((s) => s.launchAnimation)
   const setPrefs = usePrefs((s) => s.setPrefs)
 
   return (
@@ -90,6 +91,32 @@ export function DisplaySettings() {
             testid="theme"
             className="aset-seg-theme"
           />
+        </div>
+      </div>
+
+      <div className="aset-row">
+        <div className="aset-row-label">
+          <span id={`${id}-launch`}>起動アニメーション</span>
+          <span className="aset-row-desc">
+            開いた時に、原稿用紙と点の「Novel
+            Studio」のアニメーションを出します（2秒ほど。画面を押すかキーを押すとすぐ消えます）。Web
+            版はウインドウ・タブを開いた最初の1回だけ、アプリは起動のたびです。
+          </span>
+        </div>
+        <div className="aset-row-control">
+          <label className="switch aset-switch" data-testid="launch-switch">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={launchAnimation}
+              onChange={(e) => setPrefs({ launchAnimation: e.target.checked })}
+              aria-labelledby={`${id}-launch`}
+            />
+            <span className="track" aria-hidden="true" />
+            <span className="aset-switch-state" aria-hidden="true">
+              {launchAnimation ? 'オン' : 'オフ'}
+            </span>
+          </label>
         </div>
       </div>
 

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      起動の画面（スプラッシュ）の無地の色。端末がライトの時（ダークは values-night/launch.xml）。
+      起動アニメーション（src/launch/launch.js）のホワイトの地と同じ色にして、起動の画面からアニメーションの最初の絵へ色が変わらないようにする
+      （アプリの外観を端末と違う設定にしている時だけ、一瞬で色が変わる。docs/SPEC-2.md の 10.）
+    -->
+    <color name="launch_background">#FBFCFE</color>
+</resources>
