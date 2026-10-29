@@ -1,0 +1,22 @@
+{
+  // コネクタ本体（Cloudflare Workers の実行環境）。アプリの純粋なモジュール（../src/domain・../src/claude・
+  // ../src/sync/codec.ts・merge.ts）も同じ設定で型を確かめる
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.worker.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src"]
+}
