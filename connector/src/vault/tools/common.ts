@@ -1,5 +1,6 @@
 // ツールの結果の共通の道具。結果はいつも日本語のテキスト（原稿は structuredContent に入れない）、10万字まで。
 import { resolveTitle } from '../../../../src/claude/refs'
+import { cutPoint } from '../../../../src/claude/view'
 import type { AppData, Title } from '../../../../src/domain/types'
 
 export interface ToolResult {
@@ -78,3 +79,27 @@ export function head(text: string, n = 60): string {
 export function length(text: string): number {
   return Array.from(text).length
 }
+
+/** 1つの項目を全文で読む時の、1回に返す文字数（char_budget。既定 60,000、Claude Code では 12,000） */
+export function itemBudget(v: unknown, claudeCode: boolean): number {
+  const n = num(v)
+  return Math.min(60_000, Math.max(2_000, n ?? (claudeCode ? 12_000 : 60_000)))
+}
+
+/**
+ * 長い1つの文章を、offset から budget 字まで返す（段落・ルビの記法・サロゲートペアの途中で切らない）。
+ * 残りがあれば最後に 続き: cursor="…" を付ける（cursor(次の位置) で作る）。続きのページは contHeader から始める
+ */
+export function pageBody(
+  full: string,
+  opts: { offset: number; budget: number; contHeader: (from: number) => string; cursor: (next: number) => string },
+): string {
+  const from = Math.min(Math.max(0, opts.offset), full.length)
+  const headLine = from > 0 ? `${opts.contHeader(from)}\n` : ''
+  if (full.length - from <= opts.budget) return `${headLine}${full.slice(from)}`
+  let end = cutPoint(full, from, from + opts.budget)
+  if (end <= from) end = Math.min(full.length, from + opts.budget)
+  return `${headLine}${full.slice(from, end)}\n続き: cursor="${opts.cursor(end)}"（残り ${formatChars(full.length - end)}字）`
+}
+
+const formatChars = (n: number) => n.toLocaleString('ja-JP')

@@ -23,6 +23,13 @@ const format = z
   .enum(['concise', 'detailed'])
   .default('concise')
   .describe('concise = 要点だけ（既定）、detailed = 日付・理由なども出す')
+const itemBudgetSchema = z
+  .number()
+  .int()
+  .min(2_000)
+  .max(60_000)
+  .optional()
+  .describe('1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor="…"）')
 const runDate = z.string().max(10).describe('YYYY-MM-DD（日本時間）。省略時は今日')
 const model = z.string().max(L.model).describe('使ったモデルの名前（任意）')
 
@@ -95,11 +102,16 @@ export const SCHEMAS = {
     submission_id: z.string().min(1).max(200).optional().describe('この応募計画（o:…）を詳しく'),
     note_id: z.string().min(1).max(200).optional().describe('この戦略メモ（g:…）を全文で'),
     revision_idea_id: z.string().min(1).max(200).optional().describe('この改稿案（r:…）を全文で'),
+    section: z.enum(['overall']).optional().describe('overall = 全体戦略（タイトルのメモ）を全文で'),
+    char_budget: itemBudgetSchema,
+    cursor: cursor.optional(),
   }),
   novel_get_critique: z.object({
     title_id: titleId,
     prompt_id: z.string().min(1).max(200).optional().describe('この批評プロンプト（q:…）を全文で'),
     result_id: z.string().min(1).max(200).optional().describe('この批評の結果（a:…）を全文で'),
+    char_budget: itemBudgetSchema,
+    cursor: cursor.optional(),
   }),
   novel_list_proofreading: z.object({
     title_id: titleId,

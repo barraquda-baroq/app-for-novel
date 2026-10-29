@@ -324,6 +324,25 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "type": "string",
         "minLength": 1,
         "maxLength": 200
+      },
+      "section": {
+        "description": "overall = 全体戦略（タイトルのメモ）を全文で",
+        "type": "string",
+        "enum": [
+          "overall"
+        ]
+      },
+      "char_budget": {
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "type": "integer",
+        "minimum": 2000,
+        "maximum": 60000
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000,
+        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す"
       }
     },
     "required": [
@@ -350,6 +369,18 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "type": "string",
         "minLength": 1,
         "maxLength": 200
+      },
+      "char_budget": {
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "type": "integer",
+        "minimum": 2000,
+        "maximum": 60000
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000,
+        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す"
       }
     },
     "required": [

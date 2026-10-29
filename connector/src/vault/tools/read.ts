@@ -15,6 +15,7 @@ import {
 import { matchesId, pieceRefLabel, readingOrder, resolvePiece, shortId, type ReadingItem } from '../../../../src/claude/refs'
 import { manuscriptLabel, manuscriptOf } from '../../../../src/claude/snapshot'
 import {
+  cutPoint,
   decodeCursor,
   encodeCursor,
   outlineView,
@@ -36,7 +37,7 @@ import {
 import { actParts, adoptedMetrics, isSplit, pieceFullLabel, pieceLabel } from '../../../../src/domain/structure'
 import { bodyMetrics, formatCount } from '../../../../src/domain/text'
 import type { AppData, ID, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
-import { bool, capText, fail, head, length, num, ok, str, strList, titleArg, type ToolResult } from './common'
+import { bool, fail, head, itemBudget, length, num, ok, pageBody, str, strList, titleArg, type ToolResult } from './common'
 
 export type { ToolResult }
 
@@ -274,12 +275,15 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
   let ids = strList(args.ids) ?? []
   let full = bool(args.full) ?? false
   let start = 0
+  /** 続きから読む項目（start）の中の位置（長い1つの項目を何回かに分けて読む時） */
+  let off0 = 0
   const cursorArg = str(args.cursor)
   if (cursorArg) {
     const c = decodeCursor(cursorArg)
     if (!c || c.k !== 'notes' || c.t !== t.title.id || c.kind !== kind || typeof c.s !== 'number')
       return fail('cursor が読めません（novel_get_notes の続きの cursor をそのまま渡してください）')
     start = c.s
+    off0 = typeof c.o === 'number' && c.o > 0 ? c.o : 0
     ids = Array.isArray(c.ids) ? (c.ids as string[]) : []
     full = c.full === true
   }
@@ -308,9 +312,22 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
   let i = start
   for (; i < chosen.length; i++) {
     const text = chosen[i].full()
-    if (used > 0 && used + text.length > budget) break
-    out.push(used === 0 && text.length > budget ? `${text.slice(0, budget)}\n[...]（長いため、ここまで）` : text)
-    used += text.length
+    // 前のページの続き（項目が変わって短くなっていれば、その終わりまで）
+    const from = i === start ? Math.min(off0, text.length) : 0
+    if (from > 0) out.push(`=== ${kindLabel}の続き [${chosen[i].ref}]（${formatCount(from)}字目から）===`)
+    const rest = text.length - from
+    if (used > 0 && used + rest > budget) break
+    if (used === 0 && rest > budget) {
+      // 1つの項目が長い: 段落の切れ目で分け、残りは同じ項目の続きの cursor で読む
+      let end = cutPoint(text, from, from + budget)
+      if (end <= from) end = Math.min(text.length, from + budget)
+      out.push(text.slice(from, end))
+      const next = encodeCursor({ k: 'notes', t: t.title.id, kind, s: i, o: end, ids, full })
+      out.push(`続き: cursor="${next}"（この項目の残り ${formatCount(text.length - end)}字・残り${chosen.length - i}件）`)
+      return ok(out.join('\n'))
+    }
+    out.push(from > 0 ? text.slice(from) : text)
+    used += rest
   }
   if (i < chosen.length) {
     const next = encodeCursor({ k: 'notes', t: t.title.id, kind, s: i, ids, full })
@@ -322,6 +339,16 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
 // ---------- R7 戦略 ----------
 
 const today = (now: number) => jstDate(now)
+
+/** 一覧に出す全体戦略の長さ（長ければ section="overall" で全文を読む） */
+const OVERALL_HEAD = 20_000
+
+function overallHead(text: string): string {
+  if (text.length <= OVERALL_HEAD) return text
+  let end = cutPoint(text, 0, OVERALL_HEAD)
+  if (end <= 0) end = OVERALL_HEAD
+  return `${text.slice(0, end)}\n[...]（長いため、ここまで。全文は section="overall" で読めます）`
+}
 
 function daysUntil(todayIso: string, deadline: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline)) return null
@@ -357,6 +384,36 @@ function findBy<T extends { id: ID }>(list: readonly T[], kind: Parameters<typeo
   return list.filter((x) => matchesId(kind, ref, x.id))
 }
 
+/** 1つの項目を全文で読む（長ければ char_budget 字ずつ。続きは cursor に項目の id と位置を入れる） */
+function pagedItem(
+  ctx: ReadContext,
+  args: Args,
+  k: 'strategy' | 'critique',
+  titleId: ID,
+  item: { which: string; id: ID; label: string; text: string },
+  offset: number,
+): ToolResult {
+  const budget = itemBudget(args.char_budget, isClaudeCode(ctx.client))
+  return ok(
+    pageBody(item.text, {
+      offset,
+      budget,
+      contHeader: (from) => `=== ${item.label}の続き（${formatCount(from)}字目から）===`,
+      cursor: (o) => encodeCursor({ k, t: titleId, which: item.which, id: item.id, o }),
+    }),
+  )
+}
+
+/** 続きの cursor（1つの項目の続き）を読む。無ければ null、違う形なら 'bad' */
+function itemCursor(args: Args, k: 'strategy' | 'critique', titleId: ID): { which: string; id: string; o: number } | null | 'bad' {
+  const raw = str(args.cursor)
+  if (!raw) return null
+  const c = decodeCursor(raw)
+  if (!c || c.k !== k || c.t !== titleId || typeof c.which !== 'string' || typeof c.id !== 'string' || typeof c.o !== 'number')
+    return 'bad'
+  return { which: c.which, id: c.id, o: c.o }
+}
+
 export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
   const t = titleArg(ctx.view, args.title_id)
   if ('error' in t) return t.error
@@ -375,15 +432,20 @@ export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
       .filter(Boolean)
       .join('・')
 
-  const one = (ref: unknown, kind: 'submission' | 'strategyNote' | 'revisionIdea'): ToolResult | null => {
-    const r = str(ref)
-    if (!r) return null
+  type StrategyItem = 'submission' | 'strategyNote' | 'revisionIdea' | 'overall'
+  /** 1つの項目の全文（見出し・本文） */
+  const itemText = (kind: StrategyItem, id: ID): { label: string; text: string } | null => {
+    if (kind === 'overall')
+      return {
+        label: '全体戦略',
+        text: `=== 『${title.name}』の全体戦略（タイトルのメモ）[${shortId('title', title.id)}] ===\n${title.strategyNote.trim() ? title.strategyNote : '（まだありません）'}`,
+      }
     if (kind === 'submission') {
-      const hits = findBy(subs, 'submission', r)
-      if (hits.length !== 1) return fail(`応募計画 '${r}' が見つかりません`, subs.map((x) => `${shortId('submission', x.id)}「${x.contestName}」`))
-      const x = hits[0]
-      return ok(
-        [
+      const x = subs.find((v) => v.id === id)
+      if (!x) return null
+      return {
+        label: `応募計画「${x.contestName.trim() || '（名前なし）'}」`,
+        text: [
           `=== 応募計画「${x.contestName.trim() || '（名前なし）'}」[${shortId('submission', x.id)}] ===`,
           `主催: ${x.organizer || '―'} / 状態: ${submissionStatusLabel(x.status)}${x.stage ? `（${x.stage}）` : ''} / ${deadlineText(day, x.deadline)}`,
           `URL: ${x.url || '―'} / 応募日: ${x.submittedOn || '―'} / 結果の日: ${x.resultOn || '―'}`,
@@ -394,14 +456,14 @@ export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
           `--- 再応募方針 ---\n${x.resubmissionPlan || '（なし）'}`,
           x.snapshot ? `応募時の原稿の記録: ${jstDate(x.snapshot.at)}・${formatCount(x.snapshot.charCount)}字` : '応募時の原稿の記録: なし',
         ].join('\n'),
-      )
+      }
     }
     if (kind === 'strategyNote') {
-      const hits = findBy(notes, 'strategyNote', r)
-      if (hits.length !== 1) return fail(`戦略メモ '${r}' が見つかりません`, notes.map((x) => `${shortId('strategyNote', x.id)}「${x.heading}」`))
-      const n = hits[0]
-      return ok(
-        [
+      const n = notes.find((v) => v.id === id)
+      if (!n) return null
+      return {
+        label: `戦略メモ「${n.heading}」`,
+        text: [
           `=== 戦略メモ ${n.runDate}「${n.heading}」[${shortId('strategyNote', n.id)}]${n.appliedAt ? '（全体戦略に追記済み）' : ''}${isNewerRecord(n) ? `（${NEWER_RECORD_LABEL}）` : ''} ===`,
           n.body,
           ...(n.contests.length ? ['--- コンテストの候補 ---'] : []),
@@ -410,29 +472,57 @@ export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
               `${c.id} ${c.name}${c.organizer ? `（${c.organizer}）` : ''} ${deadlineText(day, c.deadline)}${c.url ? ` ${c.url}` : ''}${c.submissionId ? ' → 応募計画にした' : ''}\n  相性: ${c.fit || '―'}\n  方針: ${c.plan || '―'}`,
           ),
         ].join('\n'),
-      )
+      }
     }
-    const hits = findBy(ideas, 'revisionIdea', r)
-    if (hits.length !== 1) return fail(`改稿案 '${r}' が見つかりません`, ideas.map((x) => `${shortId('revisionIdea', x.id)}「${x.heading}」`))
-    const idea = hits[0]
-    return ok(
-      [
+    const idea = ideas.find((v) => v.id === id)
+    if (!idea) return null
+    return {
+      label: `改稿案「${idea.heading}」`,
+      text: [
         `=== 改稿案「${idea.heading}」[${shortId('revisionIdea', idea.id)}]${idea.checked ? '（チェック済み: 実装済み・ボツ）' : ''} ===`,
         idea.pieceIds.length ? `関係する話: ${pieceNames(idea.pieceIds)}` : '',
         idea.body,
       ]
         .filter(Boolean)
         .join('\n'),
-    )
+    }
+  }
+  const page = (kind: StrategyItem, id: ID, offset: number): ToolResult => {
+    const item = itemText(kind, id)
+    if (!item) return fail('続きを読む項目が見つかりません（削除された可能性があります。cursor なしで読み直してください）')
+    return pagedItem(ctx, args, 'strategy', title.id, { which: kind, id, ...item }, offset)
+  }
+  const cont = itemCursor(args, 'strategy', title.id)
+  const kinds: readonly string[] = ['submission', 'strategyNote', 'revisionIdea', 'overall']
+  if (cont === 'bad' || (cont && !kinds.includes(cont.which)))
+    return fail('cursor が読めません（novel_get_strategy の続きの cursor をそのまま渡してください）')
+  if (cont) return page(cont.which as StrategyItem, cont.id, cont.o)
+  const one = (ref: unknown, kind: 'submission' | 'strategyNote' | 'revisionIdea'): ToolResult | null => {
+    const r = str(ref)
+    if (!r) return null
+    if (kind === 'submission') {
+      const hits = findBy(subs, 'submission', r)
+      if (hits.length !== 1) return fail(`応募計画 '${r}' が見つかりません`, subs.map((x) => `${shortId('submission', x.id)}「${x.contestName}」`))
+      return page(kind, hits[0].id, 0)
+    }
+    if (kind === 'strategyNote') {
+      const hits = findBy(notes, 'strategyNote', r)
+      if (hits.length !== 1) return fail(`戦略メモ '${r}' が見つかりません`, notes.map((x) => `${shortId('strategyNote', x.id)}「${x.heading}」`))
+      return page(kind, hits[0].id, 0)
+    }
+    const hits = findBy(ideas, 'revisionIdea', r)
+    if (hits.length !== 1) return fail(`改稿案 '${r}' が見つかりません`, ideas.map((x) => `${shortId('revisionIdea', x.id)}「${x.heading}」`))
+    return page(kind, hits[0].id, 0)
   }
   const single = one(args.submission_id, 'submission') ?? one(args.note_id, 'strategyNote') ?? one(args.revision_idea_id, 'revisionIdea')
   if (single) return single
+  if (args.section === 'overall') return page('overall', title.id, 0)
 
   const lines: string[] = [
     `=== 『${title.name}』の戦略（今日 ${day}・日本時間）[${shortId('title', title.id)}] ===`,
     `採用原稿 ${formatCount(s.activeChars)}字（原稿用紙${formatCount(pages)}枚）・第n話${s.episodes}・特殊${s.specials}`,
     '--- 全体戦略 ---',
-    title.strategyNote.trim() ? capText(title.strategyNote, 20_000) : '（まだありません）',
+    title.strategyNote.trim() ? overallHead(title.strategyNote) : '（まだありません）',
     `--- 戦略メモ（${notes.length}件。新しい順）---`,
   ]
   for (const n of notes.slice(0, 30))
@@ -450,7 +540,7 @@ export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
     lines.push(
       `${shortId('submission', x.id)}「${x.contestName.trim() || '（名前なし）'}」${x.organizer ? `${x.organizer} / ` : ''}${submissionStatusLabel(x.status)} / ${deadlineText(day, x.deadline)} / ${limitText(x, s.activeChars, pages)}${x.overview.trim() ? `\n  概要: ${head(x.overview, 60)}` : ''}`,
     )
-  lines.push('1つを全文で読むには submission_id・note_id・revision_idea_id を指定してください。')
+  lines.push('1つを全文で読むには submission_id・note_id・revision_idea_id（全体戦略は section="overall"）を指定してください。')
   return ok(lines.join('\n'))
 }
 
@@ -465,22 +555,20 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
   const allPrompts = [...prompts.title, ...prompts.shared]
   const results = critiqueResultsOf(view, title.id)
   const current = manuscriptOf(view, title.id, ctx.now)
-  const pr = str(args.prompt_id)
-  if (pr) {
-    const hits = allPrompts.filter((p) => matchesId('critiquePrompt', pr, p.id) || p.name.trim() === pr.trim())
-    if (hits.length !== 1)
-      return fail(`批評プロンプト '${pr}' が見つかりません`, allPrompts.map((p) => `${shortId('critiquePrompt', p.id)}「${p.name}」`))
-    const p = hits[0]
-    return ok(`=== 批評プロンプト「${p.name}」[${shortId('critiquePrompt', p.id)}]（${p.titleId === null ? '共通' : 'このタイトル'}）===\n${p.body}`)
-  }
-  const rr = str(args.result_id)
-  if (rr) {
-    const hits = results.filter((r) => matchesId('critiqueResult', rr, r.id))
-    if (hits.length !== 1)
-      return fail(`批評の結果 '${rr}' が見つかりません`, results.map((r) => `${shortId('critiqueResult', r.id)} ${r.runDate}「${r.promptName}」`))
-    const r = hits[0]
-    return ok(
-      [
+  const itemText = (which: 'prompt' | 'result', id: ID): { label: string; text: string } | null => {
+    if (which === 'prompt') {
+      const p = allPrompts.find((x) => x.id === id)
+      if (!p) return null
+      return {
+        label: `批評プロンプト「${p.name}」`,
+        text: `=== 批評プロンプト「${p.name}」[${shortId('critiquePrompt', p.id)}]（${p.titleId === null ? '共通' : 'このタイトル'}）===\n${p.body}`,
+      }
+    }
+    const r = results.find((x) => x.id === id)
+    if (!r) return null
+    return {
+      label: `批評の結果 ${r.runDate}「${r.promptName || '（プロンプトなし）'}」`,
+      text: [
         `=== 批評の結果 ${r.runDate}「${r.promptName || '（プロンプトなし）'}」[${shortId('critiqueResult', r.id)}]${isNewerRecord(r) ? `（${NEWER_RECORD_LABEL}）` : ''} ===`,
         `範囲: ${r.scope.kind === 'range' ? r.scope.label : 'タイトル全体'} / 原稿: ${r.manuscript ? manuscriptLabel(r.manuscript, current) : '控えなし'}${r.model ? ` / モデル: ${r.model}` : ''}`,
         r.artifactUrl ? `アーティファクト: ${r.artifactUrl}` : '',
@@ -492,7 +580,30 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
       ]
         .filter((x) => x !== '')
         .join('\n'),
-    )
+    }
+  }
+  const page = (which: 'prompt' | 'result', id: ID, offset: number): ToolResult => {
+    const item = itemText(which, id)
+    if (!item) return fail('続きを読む項目が見つかりません（削除された可能性があります。cursor なしで読み直してください）')
+    return pagedItem(ctx, args, 'critique', title.id, { which, id, ...item }, offset)
+  }
+  const cont = itemCursor(args, 'critique', title.id)
+  if (cont === 'bad' || (cont && cont.which !== 'prompt' && cont.which !== 'result'))
+    return fail('cursor が読めません（novel_get_critique の続きの cursor をそのまま渡してください）')
+  if (cont) return page(cont.which as 'prompt' | 'result', cont.id, cont.o)
+  const pr = str(args.prompt_id)
+  if (pr) {
+    const hits = allPrompts.filter((p) => matchesId('critiquePrompt', pr, p.id) || p.name.trim() === pr.trim())
+    if (hits.length !== 1)
+      return fail(`批評プロンプト '${pr}' が見つかりません`, allPrompts.map((p) => `${shortId('critiquePrompt', p.id)}「${p.name}」`))
+    return page('prompt', hits[0].id, 0)
+  }
+  const rr = str(args.result_id)
+  if (rr) {
+    const hits = results.filter((r) => matchesId('critiqueResult', rr, r.id))
+    if (hits.length !== 1)
+      return fail(`批評の結果 '${rr}' が見つかりません`, results.map((r) => `${shortId('critiqueResult', r.id)} ${r.runDate}「${r.promptName}」`))
+    return page('result', hits[0].id, 0)
   }
   const lines: string[] = [
     `=== 『${title.name}』の作品批評 [${shortId('title', title.id)}] ===`,

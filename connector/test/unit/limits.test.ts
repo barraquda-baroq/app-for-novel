@@ -1,8 +1,11 @@
 // 300話・約30万字の長編で、どのツールの結果も10万字を超えないこと（続きは cursor で全部読めること）。
 import { beforeAll, describe, expect, it } from 'vitest'
+import { shortId } from '../../../src/claude/refs'
 import { decodeCursor } from '../../../src/claude/view'
 import type { VaultCore } from '../../src/vault/core'
 import { RESULT_LIMIT } from '../../src/vault/tools/common'
+import { addCritiqueResult, addRevisionIdea } from '../../../src/domain/claudeOps'
+import { addMemo, updateMemo, updateTitle } from '../../../src/domain/entityOps'
 import { novel } from '../../../src/test/claudeFixture'
 import { novel300, type Novel300 } from '../fixtures/novel300'
 import { FakeFirebase } from '../support/fakeFirebase'
@@ -124,6 +127,58 @@ describe('長い会話の多い原稿の検索', () => {
       // 見出しの「x〜y件目」が出した一致と合う
       const m = /: 1〜(\d+)件目/.exec(pages[0])
       expect(Number(m?.[1])).toBe(pages[0].split('\n').filter((l) => l.startsWith('#')).length)
+    } finally {
+      core = save
+    }
+  })
+})
+
+describe('長い1つのメモ・改稿案・全体戦略・批評の結果', () => {
+  /** 段落ごとに番号の入った長い本文 */
+  const long = (label: string, chars: number) =>
+    Array.from({ length: Math.ceil(chars / 500) }, (_, i) => `${label}${i}段落。${'あ'.repeat(490)}`).join('\n')
+  /** ページから本文の部分を取り出す（続きの見出し・続きの行を除く） */
+  const bodyOf = (page: string) => {
+    let t = page
+    if (/^=== .*の続き/.test(t)) t = t.slice(t.indexOf('\n') + 1)
+    const c = t.lastIndexOf('\n続き: cursor="')
+    return c >= 0 ? t.slice(0, c) : t
+  }
+
+  it('char_budget ずつ cursor で最後まで読め、どの文字も1回ずつ（10万字を超えない）', async () => {
+    const t = novel(['本文'])
+    const memoBody = long('メモ', 90_000)
+    const ideaBody = long('改稿', 150_000)
+    const overall = long('全体', 45_000)
+    const result = long('批評', 70_000)
+    const m = addMemo(t.data, t.titleId, 'プロット')
+    let data = updateMemo(m.data, m.result, { body: memoBody })
+    const idea = addRevisionIdea(data, t.titleId, { heading: '大きな改稿', body: ideaBody })
+    data = updateTitle(idea.data, t.titleId, { strategyNote: overall })
+    const crit = addCritiqueResult(data, t.titleId, { resultMarkdown: result })
+    data = crit.data
+    const fake = new FakeFirebase()
+    const made = await pairedCore(fake, data, { config: { dailyReadBudget: 1_000_000 } })
+    const save = core
+    core = made.core
+    try {
+      const cases: [string, Record<string, unknown>, string][] = [
+        ['novel_get_notes', { title_id: t.titleId, kind: 'memos', ids: ['プロット'], char_budget: 60_000 }, memoBody],
+        ['novel_get_strategy', { title_id: t.titleId, revision_idea_id: shortId('revisionIdea', idea.result), char_budget: 60_000 }, ideaBody],
+        ['novel_get_strategy', { title_id: t.titleId, section: 'overall', char_budget: 20_000 }, overall],
+        ['novel_get_critique', { title_id: t.titleId, result_id: shortId('critiqueResult', crit.result), char_budget: 30_000 }, result],
+      ]
+      for (const [name, args, body] of cases) {
+        const pages = await all(name, args)
+        expect(pages.length, name).toBeGreaterThan(1)
+        const joined = pages.map(bodyOf).join('')
+        expect(joined.split(body).length, `${name}: 本文がちょうど1回`).toBe(2)
+        for (const p of pages) expect(p.length).toBeLessThanOrEqual(RESULT_LIMIT)
+      }
+      // 一覧の全体戦略は先頭だけ（全文の読み方を出す）
+      const overview = await run('novel_get_strategy', { title_id: t.titleId })
+      expect(overview).toContain('section="overall"')
+      expect(overview).not.toContain('全体89段落')
     } finally {
       core = save
     }
