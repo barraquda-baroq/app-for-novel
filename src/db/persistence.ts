@@ -339,6 +339,11 @@ interface ActsUnit {
   episodeId: string
   /** conflict = 両方で幕の構成が変わった、theirs / mine = 別の端末・この端末だけが変えた、none = どちらも変えていない・同じに変えた */
   kind: 'conflict' | 'theirs' | 'mine' | 'none'
+  /**
+   * 両方の端末が幕の並びを base から同じに変えた（同じ操作をした。kind は none）。話・幕の採用稿はクラウド（先に送った端末）に
+   * 合わせる（項目ごとに合わせると、この端末の採用稿が勝って、先に送った端末の操作の後の書き換えが採用原稿から抜けるため）
+   */
+  same: boolean
   /** 幕の並び: base・この端末（反映する前）・クラウド */
   B: string[]
   M: string[]
@@ -646,6 +651,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       const unit: ActsUnit = {
         episodeId: ep,
         kind,
+        same: Boolean(disk && inc?.record && row) && !noHistory && sameIds(M, T) && !sameIds(M, B),
         B,
         M,
         T,
@@ -686,11 +692,13 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       conflictOf.set(u.episodeId, u)
       for (const id of u.members) conflictOf.set(id, u)
     }
-    /** 話・幕の変化を合わせる時に、幕の構成を片方だけが変えていればその側 */
+    /** 話・幕の変化を合わせる時に、幕の構成を片方だけが変えていればその側。両方が同じに変えていればクラウド */
     const structureOf = (rec: AnyRecord | null, id: string): MergeOptions['acts'] => {
       const ep = rec && isActRecord(rec) ? parentIdOf(rec) : id
       const u = ep ? units.get(ep) : undefined
-      return u && (u.kind === 'theirs' || u.kind === 'mine') ? { structure: u.kind } : undefined
+      if (!u) return undefined
+      if (u.kind === 'theirs' || u.kind === 'mine') return { structure: u.kind }
+      return u.same ? { structure: 'theirs' } : undefined
     }
     /** 稿の話・幕（端末内 → この反映で消した → 反映する前 → base → 届いたもの） */
     const pieceOfVersion = async (v: AnyRecord): Promise<PieceRec | null> => {

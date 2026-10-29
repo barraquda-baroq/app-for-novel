@@ -30,8 +30,8 @@ export interface ActsScenario {
   prepare?: Op
   x: Op
   y: Op
-  /** 揃った後の話の採用原稿（null = 話が無い） */
-  text: string | null
+  /** 揃った後の話の採用原稿（null = 話が無い。送る順番で変わる時は関数） */
+  text: string | null | ((order: Order) => string | null)
   /** 揃った後の幕の数（0 = 分けていない） */
   acts: number | ((order: Order) => number)
   /** 知らせ（その端末に出るはずの detail。[] = 幕の知らせを出さない。書かない端末は確かめない） */
@@ -460,6 +460,34 @@ export const ACTS_SCENARIOS: ActsScenario[] = [
     acts: 2,
     notes: quiet,
   },
+  // 両方が同じ操作をして、X だけが操作の後で書き換えた: 採用稿は先に送った端末のもの（後に送った端末に知らせる）。
+  // 書き換えた稿は、採用しなくても稿として残る
+  {
+    name: 'セパレート解除して書き換える / セパレート解除',
+    emu: true,
+    body: FULL,
+    splitAt: [3, 6],
+    x: (d, ep) => {
+      const next = unseparate(d, ep)
+      return S.updateVersion(next, adopted(next, ep), { body: `${FULL}+X` })
+    },
+    y: unseparate,
+    text: (o) => (o === 'x-first' ? `${FULL}+X` : FULL),
+    acts: 0,
+    notes: (o) => (o === 'x-first' ? { x: [], y: ['mineDropped'] } : { x: ['mineDropped'], y: [] }),
+    check: onEpisode(`${FULL}+X`),
+  },
+  {
+    name: '第1幕と第2幕をつないで書き換える / 同じ幕をつなぐ',
+    body: FULL,
+    splitAt: [3, 6],
+    x: (d, ep) => editAct(0, 'ABCDEF+X')(join(0)(d, ep), ep),
+    y: join(0),
+    text: (o) => (o === 'x-first' ? 'ABCDEF+XGHI' : FULL),
+    acts: 2,
+    notes: (o) => (o === 'x-first' ? { x: [], y: ['mineDropped'] } : { x: ['mineDropped'], y: [] }),
+    check: onAct('ABCDEF+X', 0),
+  },
   {
     name: '分ける / 話の題を変える',
     body: 'ABCDEF',
@@ -672,7 +700,8 @@ export function scenarioProblems(
   const v = view(d)
   const episode = v.pieces[ep]
   const text = episode ? activeBody(v, episode) : null
-  if (text !== s.text) out.push(`採用原稿が違う: ${JSON.stringify(text)}（期待 ${JSON.stringify(s.text)}）`)
+  const wantText = typeof s.text === 'function' ? s.text(order) : s.text
+  if (text !== wantText) out.push(`採用原稿が違う: ${JSON.stringify(text)}（期待 ${JSON.stringify(wantText)}）`)
   const wantActs = typeof s.acts === 'function' ? s.acts(order) : s.acts
   const actCount = episode && isSplit(episode) ? actsOf(v, episode).length : 0
   if (episode && actCount !== wantActs) out.push(`幕の数が違う: ${actCount}（期待 ${wantActs}）`)
