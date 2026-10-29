@@ -80,47 +80,77 @@ export function isDirtyEpisodeRow(e: Pick<GroupEntry, 'base' | 'local' | 'noHist
   return !sameIds(actIdsOf(e.local), actIdsOf(e.base)) || (e.noHistory && actIdsOf(e.local).length > 0)
 }
 
+const push = <K, V>(m: Map<K, V[]>, k: K, v: V) => {
+  const list = m.get(k)
+  if (list) list.push(v)
+  else m.set(k, [v])
+}
+
+/**
+ * 幕のまとまりの話・幕（幕の構成を変えた話の id → その話と幕の id。base とこの端末の幕の並び、この話を指す幕）。
+ * pieces は話・幕の送信待ち
+ */
+export function groupPieces(pieces: readonly GroupEntry[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>()
+  const dirty = pieces.filter(isDirtyEpisodeRow)
+  if (!dirty.length) return out
+  const actsOf = new Map<string, string[]>()
+  for (const p of pieces) {
+    const r = p.local ?? p.base
+    const parentId = r && isActRecord(r) ? parentIdOf(r) : null
+    if (parentId) push(actsOf, parentId, p.id)
+  }
+  for (const row of dirty)
+    out.set(row.id, new Set([row.id, ...actIdsOf(row.base), ...actIdsOf(row.local), ...(actsOf.get(row.id) ?? [])]))
+  return out
+}
+
 /**
  * 幕のまとまり（k → まとまりの名前 `pieces/${話の id}`）。幕の構成を変えた話ごとに、その話・幕（base とこの端末の幕の並び、
  * この話を指す幕）・それらの稿・まだ送っていないこの操作のゴミ箱の件（戻し先がこの話・幕のもの）と中身。
+ * 2つのまとまりに入りうるものは、先の話のまとまりに入れる
  */
 export function groupOutbox(entries: readonly GroupEntry[]): Map<string, string> {
   const out = new Map<string, string>()
-  const pieces = entries.filter((e) => e.table === 'pieces')
-  const dirty = pieces.filter(isDirtyEpisodeRow)
-  if (!dirty.length) return out
-  const versions = entries.filter((e) => e.table === 'versions')
-  const trashEntries = entries.filter((e) => e.table === 'trashEntries')
-  const trashRecords = entries.filter((e) => e.table === 'trashRecords')
-  for (const row of dirty) {
-    const ep = row.id
+  const groups = groupPieces(entries.filter((e) => e.table === 'pieces'))
+  if (!groups.size) return out
+  // 表ごとに一度だけ並べ直す（送信待ちが多い時に、話ごとにすべてを見直さないように）
+  const pieceKey = new Map<string, string>()
+  const versionsOf = new Map<string, string[]>()
+  const entriesOfParent = new Map<string, GroupEntry[]>()
+  const entriesOfPiece = new Map<string, GroupEntry[]>()
+  const recordsOf = new Map<string, string[]>()
+  for (const e of entries) {
+    if (e.table === 'pieces') pieceKey.set(e.id, e.k)
+    else if (e.table === 'versions') {
+      const pieceId = asLoose(e.local ?? e.base)?.pieceId
+      if (typeof pieceId === 'string') push(versionsOf, pieceId, e.k)
+    } else if (e.table === 'trashEntries') {
+      if (e.base !== null || !e.local) continue
+      const origin = asLoose(asLoose(e.local)?.origin)
+      if (!origin) continue
+      if (typeof origin.parentId === 'string') push(entriesOfParent, origin.parentId, e)
+      if (typeof origin.pieceId === 'string') push(entriesOfPiece, origin.pieceId, e)
+    } else if (e.table === 'trashRecords') {
+      const entryId = asLoose(e.local ?? e.base)?.entryId
+      if (typeof entryId === 'string') push(recordsOf, entryId, e.k)
+    }
+  }
+  for (const [ep, set] of groups) {
     const key = `pieces/${ep}`
     const assign = (k: string) => {
       if (!out.has(k)) out.set(k, key)
     }
-    const set = new Set<string>([ep, ...actIdsOf(row.base), ...actIdsOf(row.local)])
-    for (const p of pieces) {
-      const r = p.local ?? p.base
-      if (r && isActRecord(r) && parentIdOf(r) === ep) set.add(p.id)
+    const matched = new Set<GroupEntry>(entriesOfParent.get(ep) ?? [])
+    for (const id of set) {
+      const k = pieceKey.get(id)
+      if (k) assign(k)
+      for (const v of versionsOf.get(id) ?? []) assign(v)
+      for (const t of entriesOfPiece.get(id) ?? []) matched.add(t)
     }
-    for (const p of pieces) if (set.has(p.id)) assign(p.k)
-    for (const v of versions) {
-      const pieceId = asLoose(v.local ?? v.base)?.pieceId
-      if (typeof pieceId === 'string' && set.has(pieceId)) assign(v.k)
-    }
-    const entryIds = new Set<string>()
-    for (const t of trashEntries) {
-      if (t.base !== null || !t.local) continue
-      const origin = asLoose(asLoose(t.local)?.origin)
-      if (!origin) continue
-      if (origin.parentId === ep || (typeof origin.pieceId === 'string' && set.has(origin.pieceId))) {
-        assign(t.k)
-        entryIds.add(t.id)
-      }
-    }
-    for (const r of trashRecords) {
-      const entryId = asLoose(r.local ?? r.base)?.entryId
-      if (typeof entryId === 'string' && entryIds.has(entryId)) assign(r.k)
+    for (const t of matched) {
+      assign(t.k)
+      for (const r of recordsOf.get(t.id) ?? []) assign(r)
     }
   }
   return out

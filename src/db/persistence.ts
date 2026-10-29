@@ -13,6 +13,7 @@ import {
   chooseTarget,
   familyText,
   groupOutbox,
+  groupPieces,
   isActRecord,
   isDirtyEpisodeRow,
   isEpisodeRecord,
@@ -553,6 +554,60 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       )
     }
     return keys.map((k) => items.get(k)).filter((x): x is OutboxItem => Boolean(x))
+  }
+
+  /**
+   * 幕のまとまりに入りうる稿・ゴミ箱の件の送信待ちのキー（groupOutbox に渡す候補。読み出しのトランザクションの中）。
+   * 初めてのログインではすべてが送信待ちになるので、送信待ちを読むたびにすべての稿の本文を読まないように、まとまりの話・幕の
+   * 稿の一覧（端末内と base）に載っている稿と、端末内で消した稿（送信待ちの base で話・幕を見る）だけにする。
+   * ゴミ箱の件は、小さな件を読んで、まとまりに入る件の中身（recordIds）だけを候補にする
+   */
+  async function groupCandidates(keys: readonly string[], pieceItems: readonly OutboxItem[]): Promise<string[]> {
+    // まとまりの話・幕（groupOutbox と同じ）
+    const groups = groupPieces(pieceItems)
+    const episodes = new Set(groups.keys())
+    const members = new Set<string>()
+    for (const set of groups.values()) for (const id of set) members.add(id)
+    const pieceItemOf = new Map(pieceItems.map((it) => [it.id, it]))
+    const listed = new Set<string>()
+    const list = (r: AnyRecord | null | undefined) => {
+      const ids = (r as PieceRec | null | undefined)?.versionIds
+      if (Array.isArray(ids)) for (const id of ids) listed.add(id)
+    }
+    for (const id of members) {
+      const it = pieceItemOf.get(id)
+      if (it) {
+        list(it.local)
+        list(it.base)
+      }
+    }
+    // 送信待ちの無い幕（変えていない幕）は、端末内の内容の稿の一覧
+    const unqueued = [...members].filter((id) => !pieceItemOf.has(id))
+    for (const r of await db.tableOf('pieces').bulkGet(unqueued)) list(r)
+    const out: string[] = []
+    // 一覧に載っていない稿は、送信待ちの base（消した稿・別の話から移った稿）で話・幕を見る（初めてのログインでは base が無い）
+    const unlisted: string[] = []
+    for (const k of keys) {
+      if (!k.startsWith('versions/')) continue
+      if (listed.has(k.slice(k.indexOf('/') + 1))) out.push(k)
+      else unlisted.push(k)
+    }
+    for (const r of await db.outbox.bulkGet(unlisted)) {
+      const pieceId = (r?.base as VersionRec | null | undefined)?.pieceId
+      if (r && typeof pieceId === 'string' && members.has(pieceId)) out.push(r.k)
+    }
+    const recordIds = new Set<string>()
+    for (const t of await itemsOf(keys.filter((k) => k.startsWith('trashEntries/')))) {
+      const entry = t.local as (AnyRecord & { origin?: { parentId?: unknown; pieceId?: unknown }; recordIds?: unknown }) | null
+      if (t.base !== null || !entry?.origin) continue
+      const { parentId, pieceId } = entry.origin
+      if (!((typeof parentId === 'string' && episodes.has(parentId)) || (typeof pieceId === 'string' && members.has(pieceId))))
+        continue
+      out.push(t.k)
+      if (Array.isArray(entry.recordIds)) for (const id of entry.recordIds) recordIds.add(String(id))
+    }
+    for (const k of keys) if (k.startsWith('trashRecords/') && recordIds.has(k.slice(k.indexOf('/') + 1))) out.push(k)
+    return out
   }
 
   /**
@@ -1517,8 +1572,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         const pieceItems = await itemsOf(keys.filter((k) => k.startsWith('pieces/')))
         if (!pieceItems.some(isDirtyEpisodeRow)) return itemsOf(keys.slice(0, limit))
         const known = new Map<string, OutboxItem>()
-        const related = keys.filter((k) => /^(versions|trashEntries|trashRecords)\//.test(k))
-        for (const it of [...pieceItems, ...(await itemsOf(related))]) known.set(it.k, it)
+        for (const it of [...pieceItems, ...(await itemsOf(await groupCandidates(keys, pieceItems)))]) known.set(it.k, it)
         const groups = groupOutbox([...known.values()])
         const members = new Map<string, string[]>()
         for (const k of keys) {

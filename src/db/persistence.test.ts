@@ -3,13 +3,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { joinActWithNext, separatePiece } from '../domain/acts'
 import { addMemo, addSubmission, createTitle, recordSubmissionSnapshot } from '../domain/entityOps'
-import { addEpisode, addVersion, setActiveVersion, updatePiece, updateVersion } from '../domain/storyOps'
+import { addEpisode, addVersion, deleteVersion, setActiveVersion, updatePiece, updateVersion } from '../domain/storyOps'
 import { TABLE_NAMES, emptyData, type AppData, type Version } from '../domain/types'
 import { newId } from '../domain/util'
 import { conflictTrash, conflictVersionCopy, createConflictHooks } from '../sync/conflicts'
+import { groupOutbox } from '../sync/acts'
 import { deepEqual } from '../sync/merge'
 import {
   createPersistence,
+  tableSendRank,
   type AnyRecord,
   type Change,
   type ConflictHooks,
@@ -529,6 +531,57 @@ describe('大きな作品の反映・送信待ちの読む量', () => {
     expect(counts.pieces?.scan ?? 0).toBeLessThanOrEqual(1)
     expect(counts.versions?.scan ?? 0).toBeLessThanOrEqual(1)
     expect(await p.load()).toEqual(restored)
+  })
+
+  it('初めてのログインで幕に分けた話があっても、送信待ちを読むたびにすべての稿を読まない（まとまりと並びは同じ）', async () => {
+    const { data: base, episodes } = largeTitle(60, 60)
+    // 分けた話（第1話）: 第2幕に稿を足してから第1幕とつなぐ（足した稿はゴミ箱へ）。ほかの話の稿も1つゴミ箱へ
+    const ep = episodes[0]
+    let data = addVersion(base, base.pieces[ep].actIds![1], { body: '第2幕の別稿' }).data
+    data = joinActWithNext(data, data.pieces[ep].actIds![0]).data
+    data = deleteVersion(data, data.pieces[episodes[5]].versionIds[1])
+    const p = fresh()
+    await p.save(emptyData(), data)
+    await p.markAllDirty()
+    // いままでの読み方（すべての送信待ちからまとまりを作る）で期待する並び
+    const keyOf = (t: string, id: string) => `${t}/${id}`
+    const entries = TABLE_NAMES.flatMap((t) =>
+      Object.values(data[t] as Record<string, AnyRecord>).map((r) => ({
+        k: keyOf(t, r.id),
+        table: t,
+        id: r.id,
+        base: null,
+        local: r,
+        noHistory: true,
+        force: false,
+      })),
+    )
+    const groups = groupOutbox(entries)
+    const keys = entries
+      .map((e) => e.k)
+      .sort(
+        (a, b) =>
+          tableSendRank(a.slice(0, a.indexOf('/'))) - tableSendRank(b.slice(0, b.indexOf('/'))) || (a < b ? -1 : a > b ? 1 : 0),
+      )
+    const limit = 10
+    const want: string[] = []
+    for (const k of keys) {
+      if (want.length >= limit) break
+      if (want.includes(k)) continue
+      const g = groups.get(k)
+      want.push(...(g ? keys.filter((x) => groups.get(x) === g) : [k]))
+    }
+    const group = [...groups.entries()].filter(([, g]) => g === `pieces/${ep}`).map(([k]) => k)
+    expect(group.some((k) => k.startsWith('trashEntries/'))).toBe(true)
+    let got: Awaited<ReturnType<Persistence['readOutbox']>> = []
+    const counts = await countReads(async () => {
+      got = await p.readOutbox(limit)
+    })
+    expect(got.map((it) => it.k)).toEqual(want)
+    expect(got.map((it) => it.group ?? null)).toEqual(want.map((k) => groups.get(k) ?? null))
+    // 読んだ稿は、まとまりの稿と、送る分（上限まで）だけ
+    const groupVersions = group.filter((k) => k.startsWith('versions/')).length
+    expect(counts.versions?.get ?? 0).toBeLessThanOrEqual(groupVersions + limit)
   })
 
   it('新しい端末が全件を1回で受け取っても、届いた稿を幕に分けた話ごとに読み直さない', async () => {
