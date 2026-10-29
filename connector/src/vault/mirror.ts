@@ -6,10 +6,14 @@
 //   （同じ書き込みの分割文書は名前の順で親の後に来るので、次のページに続くことがある）、最後まで揃わなければ読み直し、
 //   それでも読めなければ端末と同じく飛ばす（unreadable に数える）
 // - 知らない表（新しい版のアプリが足したもの）の文書も保存だけしておく（取り込み直さずに済むように）
+// - 稿の本文はメモリに全部は持たない: 写しの稿は本文を除いた記録で、本文は使う時に1つずつ読む（body。文字数で上限のある LRU）。
+//   文字数・枚数・指紋は取り込んだ時に数えて保存し（lite）、Durable Object を作り直した時は本文を読まずに写しを作る。
+//   応募時の原稿の控え・ゴミ箱の中身はツールで出さないので、本文を除いた形だけを持つ
+import { bodyHashOf, primeBodyHash } from '../../../src/claude/anchor'
 import { decodeRecord, type ChunkDoc, type RecordDoc } from '../../../src/sync/codec'
 import type { Rec } from '../../../src/sync/merge'
-import { bodyMetrics } from '../../../src/domain/text'
-import { TABLE_NAMES, emptyData, type AppData, type TableName } from '../../../src/domain/types'
+import { bodyMetrics, primeBodyMetrics, type BodyMetrics } from '../../../src/domain/text'
+import { TABLE_NAMES, emptyData, type AppData, type ID, type TableName, type Version } from '../../../src/domain/types'
 import { log } from '../log'
 import type { FirestoreRest, FsDoc } from './firestore'
 import type { MirrorStore, RecRow } from './store'
@@ -50,8 +54,29 @@ export interface SyncOutcome {
 
 const PAGE_MAX = 50
 const PAGE_MIN = 5
+/** メモリに持つ稿の本文の文字数の上限（LRU） */
+const BODY_CACHE_CHARS = 3_000_000
 
 type Parsed = { kind: 'rec'; row: RecRow } | { kind: 'chunk'; parent: string; name: string } | null
+
+/** 稿の lite（本文を除いた記録・文字数と枚数・本文の指紋） */
+interface VersionLite {
+  head: Omit<Version, 'body'>
+  metrics: BodyMetrics
+  bodyHash: string
+}
+
+/** 記録の取り出し方の数（テストで、写しを作る時に本文を読まないことを確かめる） */
+export interface MirrorStats {
+  /** 指紋を確かめて取り出した（decodeRecord） */
+  verified: number
+  /** 確かめ済みの行を JSON だけで取り出した */
+  trusted: number
+  /** lite から本文を読まずに作った（稿・応募時の原稿の控え・ゴミ箱の中身） */
+  lite: number
+  /** 稿の本文を読んだ（表ごと） */
+  bodies: number
+}
 
 export class Mirror {
   readonly #store: MirrorStore
@@ -62,6 +87,12 @@ export class Mirror {
   #pending = new Set<string>()
   #unreadable = new Set<string>()
   #pageSize = PAGE_MAX
+  /** 写しの稿の、本文を除いた記録（修復は本文を読まずにこちらで行う。body は空） */
+  #heads: Record<ID, Version> = {}
+  /** 稿の本文（記録の名前 → 本文。古いものから外す） */
+  #bodies = new Map<string, string>()
+  #bodyChars = 0
+  readonly stats: MirrorStats = { verified: 0, trusted: 0, lite: 0, bodies: 0 }
 
   constructor(store: MirrorStore, fs: FirestoreRest, ownerUid: () => string) {
     this.#store = store
@@ -69,10 +100,82 @@ export class Mirror {
     this.#ownerUid = ownerUid
   }
 
-  /** 写しの内容（知っている表だけ。修復・見せる内容の絞り込みの前） */
+  /** 写しの内容（知っている表だけ。修復・見せる内容の絞り込みの前）。稿の本文は読む時に読み込む */
   data(): AppData {
     if (!this.#data) this.#load()
     return this.#data!
+  }
+
+  /** 写しの稿の、本文を除いた記録（body は空。data().versions と同じ id） */
+  versionHeads(): Record<ID, Version> {
+    if (!this.#data) this.#load()
+    return this.#heads
+  }
+
+  /**
+   * 本文を後から読む稿の記録（fields は head、body は読む時に読み込む）。文字数・指紋は from から引き継ぐ
+   * （修復で項目を補った稿を、写しの稿と同じように使うため）
+   */
+  lazyVersion(head: Version, from: Version | undefined): Version {
+    const v = this.#lazy(head)
+    if (from) {
+      primeBodyMetrics(v, bodyMetrics(from))
+      primeBodyHash(v, bodyHashOf(from))
+    }
+    return v
+  }
+
+  #lazy(head: Omit<Version, 'body'> & { body?: string }): Version {
+    const { body: _omit, ...rest } = head
+    void _omit
+    const name = `versions:${head.id}`
+    const v = { ...rest } as Version
+    Object.defineProperty(v, 'body', { get: () => this.body(name), enumerable: true, configurable: true })
+    return v
+  }
+
+  /** 稿の本文（記録の名前 versions:{id}）。メモリに無ければ写しの行から読む */
+  body(name: string): string {
+    const hit = this.#bodies.get(name)
+    if (hit !== undefined) {
+      // 使った順に並べ直す
+      this.#bodies.delete(name)
+      this.#bodies.set(name, hit)
+      return hit
+    }
+    const row = this.#store.getRec(name)
+    const rec = row ? this.#decode(row) : null
+    const body = rec && typeof (rec as { body?: unknown }).body === 'string' ? (rec as unknown as { body: string }).body : null
+    if (body === null) {
+      log('mirror_body_missing', { table: 'versions' })
+      return ''
+    }
+    this.stats.bodies += 1
+    this.#keepBody(name, body)
+    return body
+  }
+
+  #keepBody(name: string, body: string): void {
+    const prev = this.#bodies.get(name)
+    if (prev !== undefined) {
+      this.#bodyChars -= prev.length
+      this.#bodies.delete(name)
+    }
+    if (body.length > BODY_CACHE_CHARS) return
+    this.#bodies.set(name, body)
+    this.#bodyChars += body.length
+    for (const [k, v] of this.#bodies) {
+      if (this.#bodyChars <= BODY_CACHE_CHARS) break
+      this.#bodies.delete(k)
+      this.#bodyChars -= v.length
+    }
+  }
+
+  #dropBody(name: string): void {
+    const prev = this.#bodies.get(name)
+    if (prev === undefined) return
+    this.#bodies.delete(name)
+    this.#bodyChars -= prev.length
   }
 
   /** 内容が変わるたびに増える（見せる内容のキャッシュに使う） */
@@ -107,6 +210,9 @@ export class Mirror {
       this.#store.deleteMeta('warm')
     })
     this.#data = null
+    this.#heads = {}
+    this.#bodies.clear()
+    this.#bodyChars = 0
     this.#pending.clear()
     this.#unreadable.clear()
     this.#version += 1
@@ -115,13 +221,41 @@ export class Mirror {
   #load(): void {
     const data = emptyData()
     this.#data = data
+    this.#heads = {}
     this.#pending.clear()
     this.#unreadable.clear()
-    for (const row of this.#store.allRecs()) this.#apply(row, false)
+    // 確かめ済みの稿などは本文を読まない（lite から作る）。まだ確かめていない行を確かめたら、次からはそうする
+    this.#store.transaction(() => {
+      for (const row of this.#store.loadRecs()) this.#apply(row, false)
+    })
     this.#version += 1
   }
 
+  /** 行から記録を取り出す。確かめ済みの行は JSON を読むだけ、まだなら端末と同じ decodeRecord（指紋も確かめる） */
   #decode(row: RecRow): Rec | null | undefined {
+    if (row.ok) {
+      if (row.deleted) return null
+      let json = row.json
+      if (json === null) {
+        if (!row.chunks) return undefined
+        const parts = this.#store.chunksOf(row.name)
+        if (parts.length < row.chunks || parts.some((c, i) => c.idx !== i || c.hash !== row.hash)) return undefined
+        json = parts
+          .slice(0, row.chunks)
+          .map((c) => c.json)
+          .join('')
+      }
+      try {
+        const rec = JSON.parse(json) as Rec
+        if (rec && typeof rec === 'object' && rec.id === row.id) {
+          this.stats.trusted += 1
+          return rec
+        }
+      } catch {
+        // 下で確かめ直す
+      }
+    }
+    this.stats.verified += 1
     const doc: RecordDoc = {
       table: row.tbl as TableName,
       id: row.id,
@@ -156,11 +290,17 @@ export class Mirror {
   #apply(row: RecRow, cleanup: boolean): boolean {
     if (!KNOWN.has(row.tbl)) return false
     const table = (this.#data as unknown as Record<string, Record<string, unknown>>)[row.tbl]
+    // 確かめ済みで lite のある稿・控え・ゴミ箱の中身は、本文を読まずに作る
+    if (row.ok && row.lite && !row.deleted && this.#applyLite(row, table)) return true
     const rec = this.#decode(row)
     if (rec === null) {
       this.#pending.delete(row.name)
       this.#unreadable.delete(row.name)
       if (cleanup) this.#store.deleteChunks(row.name)
+      if (row.tbl === 'versions') {
+        delete this.#heads[row.id]
+        this.#dropBody(row.name)
+      }
       if (!(row.id in table)) return false
       delete table[row.id]
       return true
@@ -176,10 +316,52 @@ export class Mirror {
     // 使わなくなった分割文書を片付ける（分割しなくなった（chunks 0）時は全部。端末は Firestore から消しているが、消したことは
     // 差分の読み取りには届かないので、残すと夜の確かめで数が合わなくなる）
     if (cleanup) this.#store.deleteChunks(row.name, row.chunks)
-    table[row.id] = rec
-    // 取り込んだ稿の文字数・枚数を先に数えておく（ツールの呼び出しの時に数え直さない。アプリと同じ bodyMetrics のキャッシュ）
-    if (cleanup && row.tbl === 'versions' && typeof (rec as { body?: unknown }).body === 'string') bodyMetrics(rec as unknown as { body: string })
+    let lite: string | null = null
+    if (row.tbl === 'versions' && typeof (rec as { body?: unknown }).body === 'string') {
+      // 稿: 文字数・枚数・指紋を数えて保存し、写しには本文を後から読む記録を入れる
+      const full = rec as unknown as Version
+      const info: VersionLite = { head: headOf(full), metrics: bodyMetrics(full), bodyHash: bodyHashOf(full) }
+      lite = JSON.stringify(info)
+      table[row.id] = this.#versionFrom(info)
+      this.#keepBody(row.name, full.body)
+    } else if (row.tbl === 'snapshotTexts' || row.tbl === 'trashRecords') {
+      const stub = stubOf(row.tbl, rec)
+      lite = JSON.stringify(stub)
+      table[row.id] = stub
+    } else table[row.id] = rec
+    if (!row.ok) this.#store.markOk(row.name, lite)
     return true
+  }
+
+  /** lite から写しの記録を作る（読めなければ false で、ふつうに取り出す） */
+  #applyLite(row: RecRow, table: Record<string, unknown>): boolean {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(row.lite!)
+    } catch {
+      return false
+    }
+    if (row.tbl === 'versions') {
+      const info = parsed as VersionLite
+      if (!info?.head || info.head.id !== row.id || !info.metrics || typeof info.bodyHash !== 'string') return false
+      table[row.id] = this.#versionFrom(info)
+    } else {
+      const stub = parsed as { id?: unknown }
+      if (!stub || stub.id !== row.id) return false
+      table[row.id] = stub
+    }
+    this.#pending.delete(row.name)
+    this.#unreadable.delete(row.name)
+    this.stats.lite += 1
+    return true
+  }
+
+  #versionFrom(info: VersionLite): Version {
+    this.#heads[info.head.id] = { ...info.head, body: '' } as Version
+    const v = this.#lazy(info.head)
+    primeBodyMetrics(v, info.metrics)
+    primeBodyHash(v, info.bodyHash)
+    return v
   }
 
   #parse(doc: FsDoc): Parsed {
@@ -362,4 +544,18 @@ export class Mirror {
   counts(): { live: number; deleted: number; chunks: number } {
     return { ...this.#store.recCount(), chunks: this.#store.chunkCount() }
   }
+}
+
+/** 稿の、本文を除いた記録 */
+function headOf(v: Version): Omit<Version, 'body'> {
+  const { body: _omit, ...rest } = v
+  void _omit
+  return rest
+}
+
+/** ツールで本文を出さない表の記録（応募時の原稿の控えは本文なし、ゴミ箱の中身は元の記録の id だけ） */
+function stubOf(table: 'snapshotTexts' | 'trashRecords', rec: Rec): Rec {
+  if (table === 'snapshotTexts') return { ...rec, body: '' } as Rec
+  const r = rec as unknown as { record?: { id?: unknown } }
+  return { ...rec, record: { id: r.record && typeof r.record === 'object' ? r.record.id : undefined } } as unknown as Rec
 }

@@ -403,7 +403,14 @@ export class VaultCore {
   views(): { raw: AppData; view: AppData; hidden: number } {
     const version = this.mirror.version()
     if (this.#views && this.#views.version === version) return this.#views
-    const raw = repairData(this.mirror.data()).data
+    // 修復は、稿の本文を読まずに本文を除いた記録で行い（修復は本文の形しか見ない）、残った稿を本文を後から読む記録に戻す
+    const data = this.mirror.data()
+    const heads = this.mirror.versionHeads()
+    const repaired = repairData({ ...data, versions: heads }).data
+    const versions: AppData['versions'] = {}
+    for (const [id, v] of Object.entries(repaired.versions))
+      versions[id] = v === heads[id] && data.versions[id] ? data.versions[id] : this.mirror.lazyVersion(v, data.versions[id])
+    const raw: AppData = { ...repaired, versions }
     const view = claudeView(raw)
     const hidden = Object.values(raw.titles).filter((t) => !canClaudeRead(t)).length
     this.#views = { version, raw, view, hidden }

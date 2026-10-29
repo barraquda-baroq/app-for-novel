@@ -2,6 +2,8 @@
 // - rec: Firestore の記録の文書（すべての表。知らない表も残す）。分割した記録は json が null で chunk に分割文書
 // - chunk: 端末が書いた分割文書（25万文字を超える記録）
 // - meta: 受け取った位置（cursor）・身元・連携の状態・数の記録など（JSON）
+// - lite: 取り込んだ時に分かったこと（稿は本文を除いた記録と文字数・指紋、ゴミ箱の中身・応募時の原稿の控えは本文を除いた形）。
+//   rec の ok = 1（指紋を確かめた）の行は、Durable Object を作り直した時に本文を読まず、これから写しを作る（CPU 時間を減らす）
 // 取り込んだ記録（原稿）は暗号化しない（Durable Object の保存領域はもともと暗号化されている。DECISIONS 1）。
 
 export type SqlValue = string | number | null
@@ -30,6 +32,10 @@ export interface RecRow {
   device: string
   json: string | null
   reset: boolean
+  /** 取り込んだ時に指紋を確かめた（読み込む時に指紋を数え直さない） */
+  ok?: boolean
+  /** 取り込んだ時に分かったこと（lite の行。読み込む時だけ） */
+  lite?: string | null
 }
 
 export interface ChunkRow {
@@ -43,12 +49,16 @@ export interface ChunkRow {
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS rec (name TEXT PRIMARY KEY, tbl TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL,
     chunks INTEGER NOT NULL, hash TEXT NOT NULL, upd_us INTEGER NOT NULL, updated TEXT NOT NULL, update_time TEXT NOT NULL,
-    device TEXT NOT NULL, json TEXT, reset INTEGER NOT NULL DEFAULT 0)`,
+    device TEXT NOT NULL, json TEXT, reset INTEGER NOT NULL DEFAULT 0, ok INTEGER NOT NULL DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS chunk (name TEXT PRIMARY KEY, parent TEXT NOT NULL, idx INTEGER NOT NULL, hash TEXT NOT NULL,
     json TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS chunk_parent ON chunk(parent)`,
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS lite (name TEXT PRIMARY KEY, data TEXT NOT NULL)`,
 ]
+
+/** 本文を読まずに写しを作る表（稿・応募時の原稿の控え・ゴミ箱の中身。どれもツールでは本文を一覧に出さない） */
+export const LITE_TABLES = ['versions', 'snapshotTexts', 'trashRecords'] as const
 
 type RecDbRow = {
   name: string
@@ -63,6 +73,8 @@ type RecDbRow = {
   device: string
   json: string | null
   reset: number
+  ok?: number
+  lite?: string | null
 }
 
 const toRec = (r: RecDbRow): RecRow => ({
@@ -78,6 +90,8 @@ const toRec = (r: RecDbRow): RecRow => ({
   device: r.device,
   json: r.json,
   reset: Boolean(r.reset),
+  ok: Boolean(r.ok),
+  ...(r.lite !== undefined ? { lite: r.lite } : {}),
 })
 
 export class MirrorStore {
@@ -86,6 +100,9 @@ export class MirrorStore {
   constructor(sql: SqlRunner) {
     this.sql = sql
     for (const s of SCHEMA) sql.run(s)
+    // 2.3 の最初の版で作った写しに ok の列を足す（無い時だけ）
+    const cols = sql.all<{ name: string }>('PRAGMA table_info(rec)')
+    if (!cols.some((c) => c.name === 'ok')) sql.run('ALTER TABLE rec ADD COLUMN ok INTEGER NOT NULL DEFAULT 0')
   }
 
   transaction<T>(fn: () => T): T {
@@ -125,7 +142,7 @@ export class MirrorStore {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(name) DO UPDATE SET tbl = excluded.tbl, id = excluded.id, deleted = excluded.deleted, chunks = excluded.chunks,
          hash = excluded.hash, upd_us = excluded.upd_us, updated = excluded.updated, update_time = excluded.update_time,
-         device = excluded.device, json = excluded.json, reset = excluded.reset`,
+         device = excluded.device, json = excluded.json, reset = excluded.reset, ok = 0`,
       row.name,
       row.tbl,
       row.id,
@@ -139,11 +156,36 @@ export class MirrorStore {
       row.json,
       row.reset ? 1 : 0,
     )
+    // 中身が変わったので、取り込んだ時に分かったことは確かめ直すまで使わない
+    this.sql.run('DELETE FROM lite WHERE name = ?', row.name)
     return true
   }
 
   allRecs(): RecRow[] {
     return this.sql.all<RecDbRow>('SELECT * FROM rec').map(toRec)
+  }
+
+  /**
+   * 写しを作るための行（Durable Object を作り直した時）。指紋を確かめた稿・応募時の原稿の控え・ゴミ箱の中身は、本文（json）を
+   * 読まずに lite の行を返す
+   */
+  loadRecs(): RecRow[] {
+    const heavy = LITE_TABLES.map((t) => `'${t}'`).join(', ')
+    return this.sql
+      .all<RecDbRow>(
+        `SELECT rec.name, tbl, id, deleted, chunks, hash, upd_us, updated, update_time, device, reset, ok,
+           CASE WHEN ok = 1 AND lite.data IS NOT NULL AND tbl IN (${heavy}) THEN NULL ELSE json END AS json,
+           lite.data AS lite
+         FROM rec LEFT JOIN lite ON lite.name = rec.name`,
+      )
+      .map(toRec)
+  }
+
+  /** 指紋を確かめた（取り込んだ時に分かったことも残す） */
+  markOk(name: string, lite: string | null): void {
+    this.sql.run('UPDATE rec SET ok = 1 WHERE name = ?', name)
+    if (lite !== null)
+      this.sql.run('INSERT INTO lite (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data = excluded.data', name, lite)
   }
 
   recCount(): { live: number; deleted: number } {
@@ -188,5 +230,6 @@ export class MirrorStore {
   clearMirror(): void {
     this.sql.run('DELETE FROM rec')
     this.sql.run('DELETE FROM chunk')
+    this.sql.run('DELETE FROM lite')
   }
 }

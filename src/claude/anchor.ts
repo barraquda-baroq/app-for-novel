@@ -80,6 +80,11 @@ export function strippedMapOf(v: { body: string }): StrippedMap {
 }
 
 const bodyHashes = new WeakMap<object, string>()
+/** 数えてある本文の指紋を、本文を読まずにレコードのキャッシュに入れる（コネクタの写し） */
+export function primeBodyHash(record: object, hash: string): void {
+  bodyHashes.set(record, hash)
+}
+
 /** 本文の指紋（hashJson。稿・つないだ本文のオブジェクトごとに1回だけ数える） */
 export function bodyHashOf(record: { body: string }): string {
   let h = bodyHashes.get(record)
