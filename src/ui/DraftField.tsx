@@ -13,7 +13,10 @@ import {
 import { markDraftClean, markDraftDirty } from '../store/draftRegistry'
 
 const DEFAULT_DELAY = 500
-/** 打ち続けていても、最初の未反映の入力からこの時間以内にはストアへ反映する */
+/**
+ * 打ち続けていても、最初の未反映の入力からこの時間以内にはストアへ反映する。
+ * delay がこれより長い欄（確定した時だけ保存する欄）には当てはめない
+ */
 const MAX_WAIT = 1500
 
 /**
@@ -62,7 +65,11 @@ export function useDraft(value: string, onCommit: (v: string) => void, delay = D
       }
       dirty.current = true
       if (timer.current) clearTimeout(timer.current)
-      const wait = Math.max(0, Math.min(delay, dirtySince.current + MAX_WAIT - Date.now()))
+      // 確定した時だけ保存する欄（delay が MAX_WAIT より長い。応募計画の規定など）は、打っている途中で区切らない
+      // （日本語入力で「10万」と変換している途中の「１０ま」を保存して、入力欄を作り直してしまわないように）。
+      // 未保存の分は Enter・フォーカスを外した時・アンマウント時・画面を閉じる時（flushAllDrafts）に保存される
+      const cap = delay > MAX_WAIT ? delay : dirtySince.current + MAX_WAIT - Date.now()
+      const wait = Math.max(0, Math.min(delay, cap))
       timer.current = setTimeout(flush, wait)
     },
     [delay, flush],

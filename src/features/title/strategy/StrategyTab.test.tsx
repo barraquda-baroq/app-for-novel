@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import { createPersistence } from '../../../db/persistence'
 import type { ID } from '../../../domain/types'
 import { actions } from '../../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../../store/appStore'
+import { useToasts } from '../../../store/uiStore'
 import { downloadFile } from '../../../ui/browser'
 import { AppFrame } from '../../../ui/Layout'
 import { StrategyTab } from './StrategyTab'
@@ -57,6 +58,8 @@ afterEach(() => {
   resetStoreForTests()
   vi.useRealTimers()
   vi.mocked(downloadFile).mockClear()
+  // 前のテストのトーストを持ち越さない
+  useToasts.setState({ toasts: [] })
 })
 
 describe('戦略タブ', () => {
@@ -233,6 +236,39 @@ describe('戦略タブ（規定の備考・提出する梗概／キャッチコ�
     // 応募した後は札を出さない
     await user.click(within(card).getByTestId('submission-close'))
     expect(within(card).queryAllByTestId('submission-text-limit')).toHaveLength(0)
+  })
+
+  it('梗概の文字数の規定は、日本語入力で「10万」と変換している途中では保存・判定せず、確定した時に保存する', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    const subId = actions.addSubmission(titleId, '海風小説大賞')
+    renderTab(titleId)
+    const card = screen.getByTestId('submission-card')
+    await user.click(within(card).getByTestId('submission-toggle'))
+    await user.type(within(card).getByTestId('submission-synopsis'), '海辺の町')
+    await user.tab()
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const input = within(card).getByTestId('submission-synopsis-min') as HTMLInputElement
+    act(() => input.focus())
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '１０' } })
+    fireEvent.change(input, { target: { value: '１０ま' } })
+    // ふつうの欄が反映される 1.5 秒を過ぎても、変換中の入力は保存しない（注意も出さず、入力欄も作り直さない）
+    act(() => vi.advanceTimersByTime(2000))
+    expect(useToasts.getState().toasts).toEqual([])
+    expect(screen.queryByText(/梗概・あらすじの文字数は数字で入力してください/)).toBeNull()
+    expect(within(card).getByTestId('submission-synopsis-min')).toBe(input)
+    expect(input.value).toBe('１０ま')
+    expect(document.activeElement).toBe(input)
+    expect(getData().submissions[subId].synopsisMin).toBeNull()
+    expect(within(card).getByTestId('submission-synopsis-count').textContent).toBe('4字（空白・改行を除く）')
+
+    fireEvent.compositionEnd(input)
+    fireEvent.change(input, { target: { value: '１０万' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(getData().submissions[subId].synopsisMin).toBe(100_000)
+    expect(within(card).getByTestId('submission-synopsis-count').textContent).toBe('4字（空白・改行を除く） → あと99,996字')
   })
 
   it('長い梗概の控えは畳んでおき、開くと読める。古い記録・空の控えは出さない', async () => {

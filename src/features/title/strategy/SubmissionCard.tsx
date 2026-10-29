@@ -88,7 +88,10 @@ export function contestDisplayName(name: string): string {
   return name.trim() || '（コンテスト名未設定）'
 }
 
-/** 規定は入力の途中で判定しないよう、確定（Enter・フォーカスを外す）した時だけ保存する */
+/**
+ * 規定は入力の途中（日本語入力で「10万」と変換している途中など）で判定しないよう、確定（Enter・フォーカスを外す）した
+ * 時だけ保存する。DraftField はふつうの欄の 1.5 秒の区切りを、これほど長い delay には当てはめない
+ */
 const LIMIT_COMMIT_DELAY = 10 * 60 * 1000
 
 const LIMIT_BADGE: Record<LimitCheck['state'], string> = {

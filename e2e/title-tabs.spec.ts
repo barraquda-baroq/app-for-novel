@@ -776,6 +776,55 @@ test.describe('戦略タブ', () => {
     await expectNoHorizontalScroll(page)
   })
 
+  test('文字数の規定は、日本語入力で「10万」と変換している途中では保存・判定せず、確定して Enter で保存する', async ({
+    page,
+  }, info) => {
+    test.skip(info.project.name !== 'desktop', 'Chromium の日本語入力の再現（CDP）はデスクトップで行う')
+    await openApp(page)
+    const { titleId } = await seedTitleWithEpisodes(page, '海の記憶', ['あ'.repeat(1200)])
+    const subId = await seed(page, ({ actions }, id: string) => actions.addSubmission(id, '海風小説大賞'), titleId)
+    await openApp(page, `/t/${titleId}?tab=strategy`)
+    const card = page.getByTestId('submission-card').nth(0)
+    await card.getByTestId('submission-toggle').click()
+    const editor = card.getByTestId('submission-editor')
+    const cdp = await page.context().newCDPSession(page)
+    const composing = async (steps: string[]) => {
+      for (const text of steps)
+        await cdp.send('Input.imeSetComposition', { text, selectionStart: text.length, selectionEnd: text.length })
+    }
+    const saved = () => page.evaluate((id) => window.__ns.getData().submissions[id], subId)
+
+    // 梗概・あらすじの下限: 「１０ま」まで打って変換を考えている間（ふつうの欄が反映される 1.5 秒を過ぎても）は保存しない
+    const min = editor.getByTestId('submission-synopsis-min')
+    await min.click()
+    await composing(['１', '１０', '１０ま'])
+    await page.waitForTimeout(2500)
+    await expect(page.getByText(/文字数は数字で入力してください/)).toHaveCount(0)
+    await expect(min).toHaveValue('１０ま')
+    await expect(min).toBeFocused()
+    expect((await saved()).synopsisMin).toBeNull()
+    await expect(editor.getByTestId('submission-synopsis-count')).toHaveText('0字（空白・改行を除く）')
+    await composing(['１０まん', '１０万'])
+    await cdp.send('Input.insertText', { text: '１０万' })
+    await page.keyboard.press('Enter')
+    await expect(editor.getByTestId('submission-synopsis-count')).toHaveText('0字（空白・改行を除く） → あと100,000字')
+    await expect(min).toHaveValue('100000')
+    expect((await saved()).synopsisMin).toBe(100_000)
+
+    // 原稿の規定（上限）も同じ
+    const max = editor.getByTestId('submission-max')
+    await max.click()
+    await composing(['１', '１ま'])
+    await page.waitForTimeout(2000)
+    await expect(page.getByText(/数字で入力してください/)).toHaveCount(0)
+    await expect(max).toHaveValue('１ま')
+    await composing(['１まん', '１万'])
+    await cdp.send('Input.insertText', { text: '１万' })
+    await page.keyboard.press('Enter')
+    await expect(card.getByTestId('submission-limit')).toHaveText('規定内')
+    expect((await saved()).maxChars).toBe(10_000)
+  })
+
   test('現在の原稿の数字は桁の途中で折り返さない', async ({ page }) => {
     await openApp(page)
     const { titleId } = await seedTitleWithEpisodes(page, '大長編', ['あ'.repeat(1_234_567)])
