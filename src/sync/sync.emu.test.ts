@@ -62,6 +62,11 @@ const listen = vi.hoisted(() => ({
    * 次に全件を読み出す（getDocs・getDocsFromServer）直前に呼ぶ（一度だけ）。読み出しの途中でつながりが切れた時の再現
    */
   beforeList: new Map<unknown, () => Promise<void>>(),
+  /**
+   * 通信できない Firestore（goOffline）。disableNetwork は購読と書き込みの流れだけを止め、トランザクションの読み書きは
+   * エミュレーターに届いてしまうので、送信のトランザクションも「通信できない」で失敗させる
+   */
+  offline: new Set<unknown>(),
 }))
 vi.mock('firebase/firestore', async (importOriginal) => {
   const m = await importOriginal<typeof import('firebase/firestore')>()
@@ -86,6 +91,8 @@ vi.mock('firebase/firestore', async (importOriginal) => {
     return (m.onSnapshot as unknown as (...a: unknown[]) => () => void)(ref, ...rest)
   }
   const runTransaction = (async (fs: unknown, ...rest: unknown[]) => {
+    if (listen.offline.has(fs))
+      throw Object.assign(new Error('通信できません（テスト）'), { name: 'FirebaseError', code: 'unavailable' })
     const r = await (m.runTransaction as unknown as (...a: unknown[]) => Promise<unknown>)(fs, ...rest)
     if (listen.loseReply.delete(fs))
       throw Object.assign(new Error('返事を受け取れませんでした（テスト）'), { name: 'FirebaseError', code: 'unavailable' })
@@ -128,6 +135,18 @@ interface Device {
 const apps: { app: FirebaseApp; fs: Firestore }[] = []
 const devices: Device[] = []
 
+/** 通信できなくする（購読もトランザクションも） */
+async function goOffline(fs: Firestore): Promise<void> {
+  listen.offline.add(fs)
+  await disableNetwork(fs)
+}
+
+/** つながる */
+async function goOnline(fs: Firestore): Promise<void> {
+  listen.offline.delete(fs)
+  await enableNetwork(fs)
+}
+
 /** 止めていたデータの形の版の通知を渡す */
 function releaseModel(fs: Firestore): void {
   const held = listen.holdModel.get(fs) ?? []
@@ -140,6 +159,7 @@ afterEach(async () => {
   listen.holdModel.clear()
   listen.loseReply.clear()
   listen.beforeList.clear()
+  listen.offline.clear()
   for (const d of devices.splice(0)) {
     d.offline()
     d.p.close()
@@ -1161,16 +1181,18 @@ describe('データの形の版: オフラインから戻った時（エミュ�
   const APP = { model: 2, appVersion: '2.2' }
 
   // 同じ端末（同期を続けたまま）がオフラインになり、その間に新しい版のアプリが記録を上げた
-  async function offlineWhileRaised(raise: boolean) {
+  async function offlineWhileRaised(raise: boolean, opts: { modelWait?: number } = {}) {
     const who = account()
-    const a = await makeDevice('a', who, { appModel: APP })
+    const a = await makeDevice('a', who, { appModel: APP, ...opts })
     // 記録を上げる・クラウドを見る、別の Firestore
     const other = await makeDevice('other', who)
     await a.online()
     const ref = appModelRef(other.fs, other.uid)
     // A が「送ってよい」と確かめてから記録を書いた
     await waitFor(async () => (await getDoc(ref)).data()?.model === 2, '形の版が記録される')
-    await disableNetwork(a.fs)
+    // 始めた直後の送受信が終わってから（終わる時の「同期済み」の表示で、オフラインの表示を上書きしないように）
+    await settle(a)
+    await goOffline(a.fs)
     await waitFor(async () => a.engine?.status.phase === 'offline', 'オフラインと表示する')
     let ideaId = ''
     await a.edit((d) => {
@@ -1186,10 +1208,12 @@ describe('データの形の版: オフラインから戻った時（エミュ�
     const { a, ideaDoc } = await offlineWhileRaised(true)
     // つながった直後に送ろうとした（形の版のサーバーからの通知は、まだ届いていない）
     listen.holdModel.set(a.fs, [])
-    await enableNetwork(a.fs)
+    await goOnline(a.fs)
     a.engine?.requestUpload(true)
     await new Promise((r) => setTimeout(r, 1500))
     expect((await getDoc(ideaDoc)).exists()).toBe(false)
+    // 送るトランザクションの中で記録を読んで気付いた（見張りの通知を待たない）
+    expect(a.engine?.status.outdated?.model).toBe(3)
     releaseModel(a.fs)
     await waitFor(async () => a.engine?.status.outdated?.model === 3, '古い版の端末が気付く')
     await new Promise((r) => setTimeout(r, 500))
@@ -1200,10 +1224,25 @@ describe('データの形の版: オフラインから戻った時（エミュ�
 
   it('オフラインから戻って、データの形の版が変わっていなければ、確かめてから送る', async () => {
     const { a, ideaDoc } = await offlineWhileRaised(false)
-    await enableNetwork(a.fs)
+    await goOnline(a.fs)
     await waitFor(async () => (await getDoc(ideaDoc)).exists(), 'オフラインの間の変更が送られる')
     await settle(a)
     expect(a.engine?.status.outdated ?? null).toBeNull()
+  })
+
+  // Wi-Fi はつながったまま、その先のインターネットだけが切れて戻った（online の知らせが無い）: 見張りがつなぎ直すまでの
+  // 間（1分半ほどまで）も、いますぐ同期・ログアウトの前の送信は、記録をトランザクションの中で確かめてすぐ送る
+  it('オフラインから戻って、見張りの通知がまだ届かなくても、いますぐ同期は記録を確かめてすぐ送る', async () => {
+    const { a, ideaDoc } = await offlineWhileRaised(false, { modelWait: 1000 })
+    listen.holdModel.set(a.fs, [])
+    await goOnline(a.fs)
+    await a.engine?.flush()
+    expect((await getDoc(ideaDoc)).exists()).toBe(true)
+    expect(await a.p.outboxCount()).toBe(0)
+    expect(a.engine?.status.outdated ?? null).toBeNull()
+    expect(a.engine?.status.phase).toBe('synced')
+    releaseModel(a.fs)
+    await settle(a)
   })
 })
 
@@ -1237,7 +1276,7 @@ describe('バックアップからの復元: つながりが切れた時（エ�
     let cut = false
     listen.beforeList.set(a.fs, async () => {
       cut = true
-      await disableNetwork(a.fs)
+      await goOffline(a.fs)
     })
     await a.online()
     // 送れないのでオフラインと出す（直す前は、控えから決めた削除だけで送り終えていた）
@@ -1247,7 +1286,7 @@ describe('バックアップからの復元: つながりが切れた時（エ�
     )
     await new Promise((r) => setTimeout(r, 500))
     // つながった
-    await enableNetwork(a.fs)
+    await goOnline(a.fs)
     a.engine?.requestUpload(true)
     await settle(a, b)
     for (const d of [a, b]) expect((await d.load()).memos[memoId]).toBeUndefined()

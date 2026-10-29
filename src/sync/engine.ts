@@ -9,6 +9,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   getDocsFromServer,
   onSnapshot,
@@ -26,7 +27,7 @@ import {
 } from 'firebase/firestore'
 import { tableSendRank, type Change, type OutboxItem } from '../db/persistence'
 import type { TableName } from '../domain/types'
-import { watchAppModel, type AppModel } from './appModel'
+import { appModelRef, asModel, watchAppModel, type AppModel } from './appModel'
 import { decideBatch, nothingToSend, sameAsBase, selectBatch } from './batch'
 import { CHUNK_CHARS, RECORDS, chunkIdOf, decodeRecord, docIdOf, type ChunkDoc, type RecordDoc } from './codec'
 
@@ -129,7 +130,7 @@ const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000]
 /** データの形の版を確かめるまで、送るのを待つ長さの上限（いますぐ同期・ログアウトの前の送信） */
 const MODEL_WAIT_MS = 10_000
 const OFFLINE_MESSAGE = 'オフラインです。つながると自動で同期します。'
-/** 送るトランザクションの途中で、データの形の版を確かめられなくなった・新しい版で書かれていると分かった（何も書かない） */
+/** 送る途中で、データの形の版を確かめられなくなった・新しい版で書かれていると分かった（何も書かない） */
 const MODEL_PAUSED = new Error('データの形の版を確かめるまで送りません')
 /** この端末が送った版の指紋を、文書ごとにいくつまで覚えておくか */
 const SENT_MEMORY = 20
@@ -199,6 +200,14 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
    * newer = 新しい版のアプリで書かれている（どちらも送らない）
    */
   let modelState: 'unknown' | 'ok' | 'newer' = opts.appModel ? 'unknown' : 'ok'
+  /**
+   * 一度サーバーで確かめた後にオフラインになり、記録の見張りがまだサーバーと揃い直していない（unknown の間）。
+   * 見張りの通知は、つながった後もしばらく（Firestore の購読のつなぎ直しを待つ間、1分半ほどまで）届かないことがあるので、
+   * その間は待たずに、送るトランザクションの中で記録を読んで確かめる（送る時の読み取り1回分。同期を始めた直後は待つ）
+   */
+  let modelRecheck = false
+  /** 同期をやめた・新しい版のアプリで書かれたデータに気付いた（送るのをやめる） */
+  const sendPaused = () => stopped || modelState === 'newer'
   let modelUnsub: Unsubscribe | null = null
   /** データの形の版を確かめた（または同期をやめた）。オフラインになると、確かめ直すまでの新しい約束にする */
   let modelKnown: () => void = () => undefined
@@ -496,7 +505,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     const batch = selectBatch(items, { chunkSize, maxChars: BATCH_CHARS, maxDocs: BATCH_DOCS })
     if (!batch.length) return { done: false, progressed: idle.length, conflicts: [] }
     // 送っている途中で、新しい版のアプリで書かれたデータに気付いた（順番を待っている間も含む）: 書かずに戻る（送信待ちは残す）
-    if (modelState !== 'ok') return { done: false, progressed: idle.length, conflicts: [] }
+    if (sendPaused()) return { done: false, progressed: idle.length, conflicts: [] }
     // 書き込みがクラウドに届いたのに、返事を受け取れない（オフラインになった・アプリを閉じた）ことがある。その後に端末内で
     // 消した・元に戻しても「送るものが無い」として外さないように、返事を受け取るまでの印を付けておく（クラウドに残った版が
     // この端末の書き込みの通知として戻り、消したものが生き返らないように）。必ず上書きするもの・印の付いたものは書き直さない
@@ -504,10 +513,20 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (unmarked.length) await target.markUnconfirmed(unmarked)
 
     const result = await runTransaction(fs, async (tx) => {
-      const snaps = await Promise.all(batch.map((b) => tx.get(doc(col, docIdOf(b.it.table, b.it.id)))))
-      // 読んでいる間にオフラインになった・新しい版のアプリで書かれていると分かった: 書かずに終わる（やり直しても同じ。
-      // オフラインの前に始めたトランザクションが、つながった後でデータの形の版を確かめる前に書かないように）
-      if (modelState !== 'ok') throw MODEL_PAUSED
+      // オフラインになってから記録の見張りがサーバーと揃い直すまでは、データの形の版もこのトランザクションで読んで確かめる
+      // （読んだ記録は書き込みといっしょに確かめられるので、書くまでに上げられたらやり直しになり、読み直す）
+      const recheck = modelState !== 'ok' && Boolean(opts.appModel)
+      const [snaps, marker] = await Promise.all([
+        Promise.all(batch.map((b) => tx.get(doc(col, docIdOf(b.it.table, b.it.id))))),
+        recheck ? tx.get(appModelRef(fs, uid)) : Promise.resolve(null),
+      ])
+      if (recheck) {
+        if (marker && newerModel(marker.exists() ? asModel(marker.data()) : null)) throw MODEL_PAUSED
+        if (modelState === 'newer') throw MODEL_PAUSED
+      }
+      // 読んでいる間にオフラインになった・新しい版のアプリで書かれていると分かった: 書かずに終わる（オフラインの前に
+      // 始めたトランザクションが、確かめ直す前に書かないように。次の回は記録を読んで確かめる）
+      else if (modelState !== 'ok') throw MODEL_PAUSED
       const clouds = snaps.map((snap) => (snap.exists() ? (snap.data() as RecordDoc) : null))
       // 共通の履歴が無いものは、クラウドに何も無い時だけ書く（あれば受信で突き合わせる）。
       // 復元・すべて削除の後は、この端末の内容で必ず上書きする。幕のまとまりは全部を書ける時だけ書く
@@ -608,6 +627,25 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (changes.length) await target.applyRemote(changes, undefined, { direct: true })
   }
 
+  /** クラウドの記録がこのアプリより新しい版なら、送るのを止める（要更新の表示）。止めたら true */
+  function newerModel(cur: AppModel | null): boolean {
+    if (!opts.appModel || !cur || cur.model <= opts.appModel.model) return false
+    modelState = 'newer'
+    setStatus({ outdated: cur })
+    return true
+  }
+
+  /**
+   * トランザクションでない書き込み（復元でまとめて消す）の前に、データの形の版を確かめる。オフラインになってから
+   * 記録の見張りがサーバーと揃い直していなければ、サーバーから読む
+   */
+  async function ensureModel(): Promise<void> {
+    if (modelState === 'newer') throw MODEL_PAUSED
+    if (modelState === 'ok' || !opts.appModel) return
+    const snap = await getDocFromServer(appModelRef(fs, uid))
+    if (newerModel(snap.exists() ? asModel(snap.data()) : null)) throw MODEL_PAUSED
+  }
+
   /**
    * バックアップからの復元・すべて削除の後: この端末に無いクラウドのレコードを消す（この端末の内容は、
    * 「必ず上書き」の送信待ちとして続けて送る）。終わったら、記録した位置から受け取り直す。
@@ -615,6 +653,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   async function pushAuthoritative(): Promise<void> {
     if (!(await target.getMeta('authoritative'))) return
     deferred = true
+    await ensureModel()
     const local = await target.localKeys()
     // サーバーから読む（読んでいる途中でつながりが切れると、getDocs は端末の中の控えだけで答えるので、受け取っていない
     // レコードを消し漏らしたまま終わってしまう。サーバーから読めなければ失敗し、つながってからやり直す）
@@ -631,6 +670,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       }
       if (!local.has(`${data.table}/${data.id}`)) doomed.push(d.id)
     })
+    // 読んでいる間に、新しい版のアプリで書かれていると分かった
+    if (modelState === 'newer') throw MODEL_PAUSED
     // 子（稿など）を親（話・タイトル）より先に消す（送信待ちを送る順と同じ）。何回かに分けて書いても、受け取った端末には
     // クラウドにあった子の削除が親の削除より先か同じ通知で届くので、親が消えた時に残っている子はその端末だけのもの（控える）
     // （消すものばかりなので、応募時の原稿の本文は応募計画の後）
@@ -672,12 +713,13 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     }
     // データの形の版をまだ確かめていない・新しい版のアプリで書かれたデータがある間は送らない
     // （送信待ちはそのまま残し、確かめられた・アプリを更新した時に送る）。
-    // まだ確かめていなければ、確かめ終わるまで待ってから送る（いますぐ同期・ログアウトの前の送信が、送らずに終わらないように）。
-    // 長く確かめられない時は、送らずに終わる（送信待ちは残る。確かめられたら送る）。
+    // 同期を始めてからまだ確かめていなければ、確かめ終わるまで待ってから送る（いますぐ同期・ログアウトの前の送信が、
+    // 送らずに終わらないように）。長く確かめられない時は、送らずに終わる（送信待ちは残る。確かめられたら送る）。
+    // 一度確かめた後にオフラインになった時は待たない（送るトランザクションの中で確かめる。modelRecheck）。
     // 送らずに終わる時は、送信待ちの件数を数え直す（ヘッダーの表示と、「いますぐ同期」が送っていないのに同期できたと
     // 言わないように。端末内の読み取りだけ）
     const recount = () => (stopped ? Promise.resolve() : refreshPending().then(noop, noop))
-    if (modelState === 'unknown') {
+    if (modelState === 'unknown' && !modelRecheck) {
       void recount()
       return new Promise<void>((resolve) => {
         const giveUp = () => void recount().then(resolve)
@@ -691,7 +733,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         })
       })
     }
-    if (modelState !== 'ok') return recount()
+    if (modelState === 'newer') return recount()
     uploading = (async () => {
       try {
         await target.flush?.()
@@ -705,10 +747,10 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         let stuck = 0
         for (;;) {
           // 新しい版のアプリで書かれたデータに気付いた: ここで送るのをやめる（送信待ちは残す。ok に戻ったら送り直す）
-          if (stopped || modelState !== 'ok') return
+          if (sendPaused()) return
           const r = await exclusive(uploadBatch)
           if (r.done) break
-          if (stopped || modelState !== 'ok') return
+          if (sendPaused()) return
           if (status.phase !== 'uploading') setStatus({ phase: 'uploading', error: null })
           await refreshPending()
           if (r.conflicts.length && r.progressed === 0) {
@@ -734,6 +776,11 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
             downloaded ? { phase: 'synced', lastSyncedAt: Date.now(), error: null } : { phase: 'downloading', error: null },
           )
       } catch (e) {
+        // 復元でまとめて消す前に、新しい版のアプリで書かれたデータに気付いた（要更新の表示は出してある）
+        if (e === MODEL_PAUSED) {
+          await recount()
+          return
+        }
         fail(e)
         scheduleRetry()
       }
@@ -819,11 +866,12 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         if (stopped) return
         if (s.state === 'unknown') {
           if (modelState === 'ok') {
-            // オフラインになった（つながり直している）: つながった後、サーバーで確かめ直すまで送らない
+            // オフラインになった（つながり直している）: 見張りがサーバーと揃い直すまでは、送る時に記録を読んで確かめる
             // （オフラインの間に新しい版のアプリが記録を上げていることがある）
             modelState = 'unknown'
+            modelRecheck = true
             modelReady = new Promise<void>((resolve) => (modelKnown = resolve))
-            // 送ろうとしないので、送信の失敗からオフラインの表示にはならない。ここで出す
+            // 送る物が無ければ、送信の失敗からオフラインの表示にはならない。ここで出す
             setStatus({ phase: 'offline', error: OFFLINE_MESSAGE })
           }
           // 新しい版のアプリで書かれている（newer・要更新の表示）は、そのまま
@@ -831,6 +879,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         }
         const was = modelState
         modelState = s.state
+        modelRecheck = false
         modelKnown()
         if (s.state === 'newer') setStatus({ outdated: s.cloud })
         else if (status.outdated) setStatus({ outdated: null })

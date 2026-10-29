@@ -24,7 +24,8 @@ export const appModelRef = (fs: Firestore, uid: string) => doc(fs, 'users', uid,
  */
 export type AppModelState = { state: 'ok' } | { state: 'unknown' } | { state: 'newer'; cloud: AppModel }
 
-const asModel = (data: unknown): AppModel | null => {
+/** 記録の内容（形の版が読めなければ null） */
+export const asModel = (data: unknown): AppModel | null => {
   const d = data as { model?: unknown; appVersion?: unknown } | undefined
   if (!d || typeof d.model !== 'number' || !Number.isFinite(d.model)) return null
   return { model: d.model, appVersion: typeof d.appVersion === 'string' ? d.appVersion : '' }
