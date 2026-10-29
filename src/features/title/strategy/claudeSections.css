@@ -681,6 +681,44 @@
   }
 }
 
+/* 戦略メモを手で書く・書き直す */
+.sn-editor-contests {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.sn-editor-contest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.sn-editor-contest-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sn-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 8px 12px;
+}
+
+.sn-editor-contests > .btn {
+  align-self: flex-start;
+}
+
 /* 指で操作する端末ではタップしやすい大きさを確保する（34px 以上） */
 @media (max-width: 720px), (pointer: coarse) {
   .sx-chip,

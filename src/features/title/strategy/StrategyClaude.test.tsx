@@ -1,5 +1,5 @@
 // 戦略タブの 2.3 の区切り（戦略メモ・改稿案・推敲案）と、結果の貼り付け
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -241,6 +241,87 @@ describe('戦略メモ', () => {
     })
     expect(within(memo).getByTestId('strategy-contest-open')).toBeTruthy()
     await waitFor(() => expect(screen.getByTestId('submission-editor')).toBeTruthy())
+  })
+})
+
+describe('戦略メモ・推敲案を手で書く', () => {
+  it('戦略メモを書き直す: 締切と URL を直すと保存され、応募計画にした印は残る。http の URL は断る', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    paste(titleId, {
+      tool: 'novel_add_strategy_note',
+      input: {
+        title_id: 'x',
+        run_date: '2026-10-28',
+        heading: '新人賞を狙う',
+        body: '本文',
+        contests: [{ name: '星海小説大賞', deadline: '2027-03-31', url: 'https://example.com/old' }],
+      },
+    })
+    renderTab(titleId)
+    const memo = screen.getByTestId('strategy-memo')
+    await user.click(within(memo).getByTestId('strategy-contest-plan'))
+    await user.click(within(memo).getByTestId('strategy-memo-edit'))
+    const editor = await screen.findByTestId('strategy-memo-editor')
+    const heading = within(editor).getByTestId('strategy-memo-heading-input')
+    await user.clear(heading)
+    await user.type(heading, '新人賞を狙う（締切を直した）')
+    fireEvent.change(within(editor).getByTestId('strategy-contest-deadline-input'), { target: { value: '2027-04-30' } })
+    const url = within(editor).getByTestId('strategy-contest-url-input')
+    await user.clear(url)
+    await user.type(url, 'http://example.com/new')
+    await user.click(screen.getByTestId('strategy-memo-save'))
+    // http は断る（ダイアログは開いたまま）
+    expect(screen.getByTestId('strategy-memo-editor')).toBeTruthy()
+    expect(Object.values(getData().strategyNotes)[0].contests[0].url).toBe('https://example.com/old')
+    await user.clear(url)
+    await user.type(url, 'https://example.com/new')
+    await user.click(screen.getByTestId('strategy-memo-save'))
+    await waitFor(() => expect(screen.queryByTestId('strategy-memo-editor')).toBeNull())
+    const note = Object.values(getData().strategyNotes)[0]
+    expect(note.heading).toBe('新人賞を狙う（締切を直した）')
+    expect(note.contests[0]).toMatchObject({ id: 'k0', deadline: '2027-04-30', url: 'https://example.com/new' })
+    expect(note.contests[0].submissionId).not.toBeNull()
+    expect(screen.getByTestId('strategy-memo').textContent).toContain('新人賞を狙う（締切を直した）')
+  })
+
+  it('戦略メモを手で足す', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['本文'])
+    renderTab(titleId)
+    await user.click(screen.getByTestId('strategy-memo-add'))
+    const editor = await screen.findByTestId('strategy-memo-editor')
+    await user.type(within(editor).getByTestId('strategy-memo-heading-input'), '自分で考えた戦略')
+    await user.click(within(editor).getByTestId('strategy-contest-add'))
+    await user.type(within(editor).getByTestId('strategy-contest-name-input'), '〇〇賞')
+    await user.click(screen.getByTestId('strategy-memo-save'))
+    const memo = await screen.findByTestId('strategy-memo')
+    expect(memo.textContent).toContain('自分で考えた戦略')
+    expect(memo.textContent).toContain('〇〇賞')
+    expect(Object.values(getData().strategyNotes)[0]).toMatchObject({ source: 'manual', contests: [{ id: 'k0', name: '〇〇賞' }] })
+  })
+
+  it('推敲案を手で足すと、「手で追加したもの」で絞り込める', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['窓から見れる景色。', '第二話。'])
+    paste(titleId, proofCall([{ piece: '#2', excerpt: '第二話', category: 'typo', reason: '確認' }]))
+    renderTab(titleId)
+    await user.click(screen.getByTestId('proof-add'))
+    const dialog = await screen.findByTestId('proof-add-dialog')
+    await user.type(within(dialog).getByTestId('proof-add-excerpt'), '見れる')
+    await user.type(within(dialog).getByTestId('proof-add-suggestion'), '見られる')
+    await user.type(within(dialog).getByTestId('proof-add-reason'), 'ら抜き')
+    await user.selectOptions(within(dialog).getByTestId('proof-add-category'), 'ra_nuki')
+    await user.click(within(dialog).getByTestId('proof-add-flag'))
+    await user.click(screen.getByTestId('proof-add-save'))
+    await waitFor(() => expect(screen.getAllByTestId('proof-item')).toHaveLength(2))
+    const added = Object.values(getData().proofSuggestions).find((s) => s.excerpt === '見れる')!
+    expect(added).toMatchObject({ source: 'manual', runId: null, flagged: true, category: 'ra_nuki', suggestion: '見られる' })
+    expect(added.anchor).not.toBeNull()
+    await user.selectOptions(screen.getByTestId('proof-run-filter'), '手で追加したもの')
+    const items = screen.getAllByTestId('proof-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].textContent).toContain('見れる')
   })
 })
 

@@ -6,6 +6,7 @@ import { memo, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_LABELS, proofCategoryLabel } from '../../../claude/categories'
 import { proofCoverage, proofRunsOf, proofSuggestionsOf } from '../../../claude/order'
+import { readingOrder } from '../../../claude/refs'
 import { isNewerRecord, NEWER_RECORD_LABEL } from '../../../claude/visibility'
 import { episodeNumbers } from '../../../domain/structure'
 import { trashNotice } from '../../../domain/trash'
@@ -15,7 +16,7 @@ import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
 import { confirmDialog } from '../../../ui/dialogs'
-import { EditIcon, MoreIcon, TrashIcon } from '../../../ui/icons'
+import { EditIcon, MoreIcon, PlusIcon, TrashIcon } from '../../../ui/icons'
 import { Modal } from '../../../ui/Modal'
 import { PopupMenu } from '../../../ui/PopupMenu'
 import { FlagIcon, SparkIcon } from '../../claude/claudeIcons'
@@ -75,6 +76,7 @@ export function ProofSuggestions({ titleId, headingId, today, actionsSlot }: Pro
   const [limit, setLimit] = useState(PAGE)
   const [showAllRuns, setShowAllRuns] = useState(false)
   const [editing, setEditing] = useState<ID | null>(null)
+  const [adding, setAdding] = useState(false)
   const shown = useMemo(() => filterProofSuggestions(all, filter), [all, filter])
   const visible = useMemo(() => shown.slice(0, limit), [shown, limit])
   const categories = useMemo(() => categoriesIn(all), [all])
@@ -126,6 +128,10 @@ export function ProofSuggestions({ titleId, headingId, today, actionsSlot }: Pro
         </div>
         <span className="grow" />
         {actionsSlot}
+        <button type="button" className="btn btn-sm" onClick={() => setAdding(true)} data-testid="proof-add">
+          <PlusIcon />
+          推敲案を足す
+        </button>
       </div>
 
       {runs.length || coverage?.text ? (
@@ -248,6 +254,7 @@ export function ProofSuggestions({ titleId, headingId, today, actionsSlot }: Pro
         </>
       )}
       {editTarget ? <ProofEditDialog s={editTarget} onClose={() => setEditing(null)} /> : null}
+      {adding ? <ProofAddDialog titleId={titleId} onClose={() => setAdding(false)} /> : null}
     </section>
   )
 }
@@ -440,6 +447,110 @@ function ProofEditDialog({ s, onClose }: { s: ProofSuggestion; onClose: () => vo
         <label className="field">
           <span>理由</span>
           <textarea className="textarea" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+      </div>
+    </Modal>
+  )
+}
+
+/** 推敲案を手で足す（話・抜き出し・直し方・理由・種類・フラグ）。抜き出しが採用原稿に1か所だけあれば場所を控える */
+function ProofAddDialog({ titleId, onClose }: { titleId: ID; onClose: () => void }) {
+  const data = useData()
+  const options = useMemo(
+    () => readingOrder(data, titleId).map((o) => ({ id: o.piece.id, label: `#${o.index} ${o.fullLabel}` })),
+    [data.titles, data.chapters, data.pieces, titleId], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const [pieceId, setPieceId] = useState<ID>(options[0]?.id ?? '')
+  const [excerpt, setExcerpt] = useState('')
+  const [suggestion, setSuggestion] = useState('')
+  const [reason, setReason] = useState('')
+  const [category, setCategory] = useState<ProofCategory>('other')
+  const [flagged, setFlagged] = useState(false)
+  const save = () => {
+    if (!pieceId) return
+    const id = attempt(() =>
+      actions.addProofSuggestion(titleId, { pieceId, excerpt: excerpt.trim(), suggestion, reason, category, flagged }),
+    )
+    if (!id) return
+    const s = getData().proofSuggestions[id]
+    notify(s?.anchor ? '推敲案を足しました' : '推敲案を足しました（本文の中の場所は見つかりませんでした）')
+    onClose()
+  }
+  return (
+    <Modal
+      title="推敲案を足す"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            キャンセル
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={save}
+            disabled={!pieceId || !excerpt.trim()}
+            data-testid="proof-add-save"
+          >
+            追加
+          </button>
+        </>
+      }
+    >
+      <div className="stack" data-testid="proof-add-dialog">
+        {options.length === 0 ? <p className="small muted">話がまだありません。</p> : null}
+        <label className="field">
+          <span>話</span>
+          <select className="select" value={pieceId} onChange={(e) => setPieceId(e.target.value)} data-testid="proof-add-piece">
+            {options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>抜き出し（本文のとおりに）</span>
+          <input className="input" value={excerpt} onChange={(e) => setExcerpt(e.target.value)} data-testid="proof-add-excerpt" />
+        </label>
+        <label className="field">
+          <span>直し方の案</span>
+          <textarea
+            className="textarea"
+            rows={2}
+            value={suggestion}
+            onChange={(e) => setSuggestion(e.target.value)}
+            data-testid="proof-add-suggestion"
+          />
+        </label>
+        <label className="field">
+          <span>理由</span>
+          <textarea
+            className="textarea"
+            rows={2}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            data-testid="proof-add-reason"
+          />
+        </label>
+        <label className="field">
+          <span>種類</span>
+          <select
+            className="select"
+            value={category}
+            onChange={(e) => setCategory(e.target.value as ProofCategory)}
+            data-testid="proof-add-category"
+          >
+            {PROOF_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {PROOF_CATEGORY_LABELS[c]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={flagged} onChange={(e) => setFlagged(e.target.checked)} data-testid="proof-add-flag" />
+          <span>フラグを立てる（いつも一番上に）</span>
         </label>
       </div>
     </Modal>

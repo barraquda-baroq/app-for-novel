@@ -1,5 +1,6 @@
 // 戦略タブの戦略メモ: Claude が採用原稿をもとに考えた今後の戦略（狙うコンテストなど）のカード。新しい日付から並ぶ。
 // ［全体戦略に追記］で「【Claude YYYY-MM-DD】見出し…」を全体戦略の末尾に足し、コンテストの候補は［応募計画にする］で応募計画にする。
+// 手で足す（［メモを足す］）・書き直す（見出し・本文・コンテストの候補）こともできる（StrategyNoteEditor）。
 import { memo, useMemo, useState } from 'react'
 import { shortDate } from '../../../claude/dates'
 import { strategyNotesOf } from '../../../claude/order'
@@ -11,10 +12,11 @@ import { getData, useData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
 import { formatDateTime } from '../../../ui/browser'
 import { confirmDialog } from '../../../ui/dialogs'
-import { ChevronRightIcon, LinkIcon, PlusIcon, TrashIcon } from '../../../ui/icons'
+import { ChevronRightIcon, EditIcon, LinkIcon, PlusIcon, TrashIcon } from '../../../ui/icons'
 import { SparkIcon } from '../../claude/claudeIcons'
 import { sourceLabel } from '../../claude/claudeUi'
 import { Markdown } from '../../claude/Markdown'
+import { StrategyNoteEditor } from './StrategyNoteEditor'
 import { formatYmd, limitRange } from './strategyLogic'
 
 /** 閉じている時に見せる本文の長さ（これより長ければ「全文を表示」） */
@@ -33,6 +35,9 @@ export interface StrategyNotesProps {
 export function StrategyNotes({ titleId, headingId, today, onReveal, actionsSlot }: StrategyNotesProps) {
   const data = useData()
   const notes = useMemo(() => strategyNotesOf(data, titleId), [data.strategyNotes, titleId]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** 書いているメモ（'new' = 新しく足す） */
+  const [editing, setEditing] = useState<ID | 'new' | null>(null)
+  const editNote = editing && editing !== 'new' ? (data.strategyNotes[editing] ?? null) : null
   return (
     <section className="sx-section" aria-labelledby={headingId} id="sx-notes" data-testid="strategy-memos">
       <div className="sx-head">
@@ -46,19 +51,29 @@ export function StrategyNotes({ titleId, headingId, today, onReveal, actionsSlot
         </div>
         <span className="grow" />
         {actionsSlot}
+        <button type="button" className="btn btn-sm" onClick={() => setEditing('new')} data-testid="strategy-memo-add">
+          <PlusIcon />
+          メモを足す
+        </button>
       </div>
       {notes.length === 0 ? (
         <div className="empty sx-empty" data-testid="strategy-memos-empty">
           <p>まだ戦略メモがありません。</p>
-          <p className="small">Claude のコネクタか「Claude に頼む（手動）」で、狙うコンテストなどの戦略を考えてもらえます。</p>
+          <p className="small">
+            Claude のコネクタか「Claude
+            に頼む（手動）」で、狙うコンテストなどの戦略を考えてもらえます（［メモを足す］で手でも書けます）。
+          </p>
         </div>
       ) : (
         <ol className="sx-list">
           {notes.map((n) => (
-            <NoteCard key={n.id} note={n} today={today} onReveal={onReveal} submissions={data.submissions} />
+            <NoteCard key={n.id} note={n} today={today} onReveal={onReveal} onEdit={setEditing} submissions={data.submissions} />
           ))}
         </ol>
       )}
+      {editing === 'new' || editNote ? (
+        <StrategyNoteEditor key={editing} titleId={titleId} note={editNote} onClose={() => setEditing(null)} />
+      ) : null}
     </section>
   )
 }
@@ -67,11 +82,13 @@ const NoteCard = memo(function NoteCard({
   note,
   today,
   onReveal,
+  onEdit,
   submissions,
 }: {
   note: StrategyNote
   today: string
   onReveal: (id: ID) => void
+  onEdit: (id: ID) => void
   submissions: Record<ID, unknown>
 }) {
   const [full, setFull] = useState(false)
@@ -159,6 +176,16 @@ const NoteCard = memo(function NoteCard({
           </span>
         ) : null}
         <span className="grow" />
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => onEdit(note.id)}
+          aria-label={`「${heading}」を書き直す`}
+          title="書き直す"
+          data-testid="strategy-memo-edit"
+        >
+          <EditIcon />
+        </button>
         <button
           type="button"
           className="icon-btn"
