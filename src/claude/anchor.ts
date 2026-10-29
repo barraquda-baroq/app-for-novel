@@ -236,6 +236,15 @@ export function locateIn(segments: readonly TextSegment[], excerpt: string, cont
   return { status: 'not_found' }
 }
 
+/** 記法込みのまま、無ければ記法を除いて探す */
+function findAnywhere(segments: readonly TextSegment[], excerpt: string): Hit[] {
+  for (const mode of ['raw', 'strip'] as const) {
+    const hits = findAll(segments, excerpt, mode)
+    if (hits.length) return hits
+  }
+  return []
+}
+
 export type ReanchorResult =
   | {
       /** exact = 控えた時のままの本文、moved = 本文が変わったが探し直して見つかった */
@@ -269,7 +278,8 @@ function contextScore(body: string, start: number, end: number, before: string, 
 /**
  * 推敲案の場所を、いまの本文で探し直す。控えた稿がまだ採用されていて本文の指紋も同じなら exact。
  * 変わっていれば、推敲案の話（幕に分けられていれば各幕）、話が無くなっていれば属していた話（幕をつないだ・解除した後）の
- * 採用原稿で excerpt を探し、控えた前後の文字が最も合う所（同じなら控えた位置に近い所）を moved で返す。無ければ lost
+ * 採用原稿で excerpt を探す。幕で見つからず、その幕の話がまだ幕に分かれていれば、話の各幕でも探す（幕をさらに分けて、
+ * 後ろが新しい幕へ移った後）。控えた前後の文字が最も合う所（同じなら控えた位置に近い所）を moved で返す。無ければ lost
  */
 export function reanchor(
   data: AppData,
@@ -279,7 +289,7 @@ export function reanchor(
   const parent = s.parentId ? data.pieces[s.parentId] : undefined
   const host = piece ?? parent
   if (!host) return { status: 'lost' }
-  const segments = adoptedSegments(data, host)
+  let segments = adoptedSegments(data, host)
   const a = s.anchor
   if (a && s.versionId) {
     const same = segments.find((g) => g.version.id === s.versionId)
@@ -294,10 +304,11 @@ export function reanchor(
       }
     }
   }
-  let hits: Hit[] = []
-  for (const mode of ['raw', 'strip'] as const) {
-    hits = findAll(segments, s.excerpt, mode)
-    if (hits.length) break
+  let hits = findAnywhere(segments, s.excerpt)
+  // 幕をさらに分けた後は、抜き出した箇所が後ろの新しい幕へ移っていることがある。幕で見つからなければ、属する話の各幕でも探す
+  if (!hits.length && piece && parent && piece !== parent && isSplit(parent)) {
+    segments = adoptedSegments(data, parent)
+    hits = findAnywhere(segments, s.excerpt)
   }
   if (!hits.length) return { status: 'lost' }
   let best = hits[0]

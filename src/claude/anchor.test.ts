@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinActWithNext, unseparatePiece } from '../domain/acts'
+import { joinActWithNext, separatePiece, unseparatePiece } from '../domain/acts'
 import { parseRuby, stripRuby, stripRubyMap } from '../domain/ruby'
 import { updateVersion } from '../domain/storyOps'
 import { novel, splitEpisode } from '../test/claudeFixture'
@@ -145,6 +145,15 @@ describe('reanchor（本文が変わった後に探し直す）', () => {
     expect(reanchor(changed, s)).toMatchObject({ status: 'moved', offset: 6 + 11 })
     const fixed = updateVersion(n.data, p.versionIds[0], { body: 'あいう見られるえお。かき見られるくけ。' })
     expect(reanchor(fixed, s)).toEqual({ status: 'lost' })
+  })
+  it('幕をさらに分けた後も、後ろの新しい幕で探す', () => {
+    const n = novel(['第一幕。\n第二幕の前半。第二幕の見れる本文。'])
+    const { acts } = splitEpisode(n, n.ids[0], [5])
+    const r = locateExcerpt(n.data, n.data.pieces[n.ids[0]], '見れる')
+    if (r.status !== 'found') throw new Error(r.status)
+    const s = { pieceId: acts[1], parentId: n.ids[0], versionId: r.segment.version.id, anchor: r.anchor, excerpt: '見れる' }
+    const split = separatePiece(n.data, acts[1], [7])
+    expect(reanchor(split.data, s)).toMatchObject({ status: 'moved', pieceId: split.result[1], offset: 4 })
   })
   it('幕をつないだ・セパレートを解除した後も、属していた話で探す', () => {
     const n = novel(['第一幕。\n第二幕の見れる本文。'])
