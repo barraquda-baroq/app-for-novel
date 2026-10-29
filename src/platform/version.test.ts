@@ -7,8 +7,16 @@ import { APP_VERSION } from '../sync/appModel'
 
 const version = (JSON.parse(packageJson) as { version: string }).version
 // iPhone のプロジェクト（ios/）が無い間は、xcconfig も無い
-const xcconfigs = import.meta.glob<string>('../../ios/App/novelstudio.xcconfig', { query: '?raw', import: 'default', eager: true })
-const pbxprojs = import.meta.glob('../../ios/App/App.xcodeproj/project.pbxproj', { query: '?raw', import: 'default', eager: true })
+const xcconfigs = import.meta.glob<string>('../../ios/App/novelstudio.xcconfig', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+const pbxprojs = import.meta.glob('../../ios/App/App.xcodeproj/project.pbxproj', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
 const xcconfig = Object.values(xcconfigs)[0]
 
 /** Android の versionCode と iPhone の CURRENT_PROJECT_VERSION（2.4.0 → 20400） */

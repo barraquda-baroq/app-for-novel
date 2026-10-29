@@ -17,6 +17,8 @@ import {
   type User,
 } from 'firebase/auth'
 import { connectFirestoreEmulator, initializeFirestore, memoryLocalCache, type Firestore } from 'firebase/firestore'
+import { describeNativeAuthError, nativeGoogleIdToken, nativeSignOut } from '../platform/nativeAuth'
+import { isNative } from '../platform/platform'
 
 // Firebase の Web アプリの設定値（公開してよい識別子。原稿はアクセスルールで本人だけに限っている）
 const config = {
@@ -38,8 +40,10 @@ export const usingEmulator = Boolean(emulatorHost)
 /**
  * Firebase Hosting に置いた時は、ログインの画面も同じドメインで開く
  * （Safari などでサードパーティの保存領域が使えなくてもログインできるように）。
+ * アプリ（iPhone / Android）はログインの画面を開かない（端末のアカウント選択を使う）ので、いつもの値のまま。
  */
 function authDomain(): string {
+  if (isNative()) return config.authDomain
   if (typeof location !== 'undefined' && /\.(web\.app|firebaseapp\.com)$/.test(location.hostname)) return location.host
   return config.authDomain
 }
@@ -59,10 +63,12 @@ export function firebase(): FirebaseServices {
     authDomain: authDomain(),
     ...(usingEmulator ? { projectId: 'demo-novel-studio' } : {}),
   })
-  const auth = initializeAuth(app, {
-    persistence: [indexedDBLocalPersistence, browserLocalPersistence],
-    popupRedirectResolver: browserPopupRedirectResolver,
-  })
+  const persistence = [indexedDBLocalPersistence, browserLocalPersistence]
+  // アプリではポップアップ・リダイレクトの仕組みを入れない（使わないうえ、iPhone では初期化が止まることがある）
+  const auth = initializeAuth(
+    app,
+    isNative() ? { persistence } : { persistence, popupRedirectResolver: browserPopupRedirectResolver },
+  )
   const firestore = initializeFirestore(app, { localCache: memoryLocalCache() })
   if (emulatorHost) {
     connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true })
@@ -96,6 +102,12 @@ async function redirectSignIn(auth: Auth, provider: GoogleAuthProvider): Promise
 
 export async function signInWithGoogle(): Promise<void> {
   const { auth } = firebase()
+  if (isNative()) {
+    // 端末のアカウント選択で受け取った ID トークンで、Web と同じようにログインする
+    const idToken = await nativeGoogleIdToken()
+    await signInWithCredential(auth, GoogleAuthProvider.credential(idToken))
+    return
+  }
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: 'select_account' })
   if (prefersRedirect()) {
@@ -116,11 +128,15 @@ export async function signInWithGoogle(): Promise<void> {
 
 /** リダイレクトでログインして戻ってきた時の結果を受け取る */
 export async function completeRedirect(): Promise<void> {
+  // アプリはリダイレクトでログインしない
+  if (isNative()) return
   await getRedirectResult(firebase().auth)
 }
 
 export async function signOutUser(): Promise<void> {
   await signOut(firebase().auth)
+  // アプリは端末のアカウント選択の状態も消す（間違えたアカウントを選び直せるように）
+  if (isNative()) await nativeSignOut()
 }
 
 /** テスト用: エミュレーターの仮のアカウントでログインする */
@@ -132,6 +148,10 @@ export async function signInForTest(sub: string, email = `${sub}@example.com`): 
 
 /** ログインの失敗を利用者向けの言葉にする（閉じただけなら null） */
 export function describeAuthError(e: unknown): string | null {
+  if (isNative()) {
+    const n = describeNativeAuthError(e)
+    if (n !== undefined) return n
+  }
   const code = typeof e === 'object' && e && 'code' in e ? String((e as { code: unknown }).code) : ''
   if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request' || code === 'auth/user-cancelled')
     return null
