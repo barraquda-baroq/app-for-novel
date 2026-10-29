@@ -253,7 +253,8 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
   // 推敲案（2.3）: この話・幕のチェックしていない推敲案の「推敲案 n」と一覧。?ps=<id> で開いた時はその箇所を選ぶ
   const openProof = useMemo(
     () => openProofSuggestionsFor(data, piece.id),
-    [data.proofSuggestions, data.pieces, piece.id], // eslint-disable-line react-hooks/exhaustive-deps
+    // 幕は本文で探し直す（reanchor）ので、稿の本文が変わった時も数え直す
+    [data.proofSuggestions, data.pieces, data.versions, piece.id], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const [proofOpen, setProofOpen] = useState(false)
   const [proofFocus, setProofFocus] = useState<ID | null>(null)

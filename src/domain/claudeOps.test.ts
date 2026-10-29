@@ -39,6 +39,7 @@ import {
   updateProofSuggestion,
   updateRevisionIdea,
 } from './claudeOps'
+import { joinActWithNext } from './acts'
 import { deleteTitle, titleLastEdited } from './entityOps'
 import { repairData } from './repair'
 import { updateVersion } from './storyOps'
@@ -189,7 +190,7 @@ describe('推敲案', () => {
     vi.useRealTimers()
   })
   it('1件の削除。原稿画面の「推敲案 n」は話とその幕のもの', () => {
-    const { n, data: d0, ids } = withSuggestions()
+    const { n, data: d0, ids, tick } = withSuggestions()
     let data = deleteProofSuggestion(d0, ids[0])
     expect(listTrash(data.trashEntries)[0]).toMatchObject({ label: '「見れる」', parentLabel: '第1話' })
     expect(
@@ -199,11 +200,19 @@ describe('推敲案', () => {
     ).toEqual([ids[1], ids[2]].sort())
     const ns = { ...n, data }
     const { acts } = splitEpisode(ns, n.ids[1], [5])
+    tick()
     const r = addProofSuggestion(ns.data, n.titleId, { pieceId: n.ids[1], excerpt: '来れる' })
     data = r.data
     expect(data.proofSuggestions[r.result]).toMatchObject({ pieceId: acts[1], parentId: n.ids[1] })
-    expect(openProofSuggestionsFor(data, acts[1]).map((s) => s.id)).toEqual([r.result])
+    // 幕に分ける前に話に作った案も、いまその幕で見つかれば幕に出す（新しい順）
+    expect(openProofSuggestionsFor(data, acts[1]).map((s) => s.id)).toEqual([r.result, ids[2]])
+    expect(openProofSuggestionsFor(data, acts[0]).map((s) => s.id)).toEqual([ids[1]])
     expect(openProofSuggestionsFor(data, n.ids[1])).toHaveLength(3)
+    // 幕をつないだ後: 無くなった幕を指していた案は、つないだ幕に出る
+    const joined = joinActWithNext(data, acts[0]).data
+    expect(joined.pieces[acts[1]]).toBeUndefined()
+    expect(openProofSuggestionsFor(joined, acts[0]).map((s) => s.id)).toContain(r.result)
+    expect(openProofSuggestionsFor(joined, acts[0])).toHaveLength(3)
     vi.useRealTimers()
   })
   it('実行の記録と確かめた範囲（本文が変わった話）', () => {

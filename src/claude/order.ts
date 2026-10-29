@@ -15,6 +15,7 @@ import type {
   RevisionIdea,
   StrategyNote,
 } from '../domain/types'
+import { reanchor } from './anchor'
 import { readingOrder, type ReadingItem } from './refs'
 
 const byId = (a: { id: ID }, b: { id: ID }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
@@ -46,17 +47,27 @@ export function proofSuggestionsOf(data: AppData, titleId: ID): ProofSuggestion[
 }
 
 /**
- * 話・幕のチェックしていない推敲案（原稿画面の「推敲案 n」）。幕はその幕のものだけ。話は、話のものと、その話の幕のもの
- * （幕に分けている間の幕のもの・幕をつないだ／セパレートを解除する前に幕を指していたもの。parentId が話）
+ * 話・幕のチェックしていない推敲案（原稿画面の「推敲案 n」）。話は、話のものと、その話の幕のもの
+ * （幕に分けている間の幕のもの・幕をつないだ／セパレートを解除する前に幕を指していたもの。parentId が話）。
+ * 幕は、その幕のもの（いま別の幕で見つかるものは除く）と、話のもの（幕に分ける前に作った案）・ほかの幕や無くなった幕の
+ * もの（さらに分けた・つないだ後）のうち、いまこの幕で見つかるもの（reanchor）
  */
 export function openProofSuggestionsFor(data: AppData, pieceId: ID): ProofSuggestion[] {
   const piece = data.pieces[pieceId]
   const ids = new Set<ID>([pieceId])
   if (piece && isSplit(piece)) for (const id of piece.actIds ?? []) ids.add(id)
+  const parentId = piece?.kind === 'act' ? (piece.parentId ?? null) : null
   return sortProofSuggestions(
-    Object.values(data.proofSuggestions).filter(
-      (s) => !s.done && (ids.has(s.pieceId) || (s.parentId !== null && ids.has(s.parentId))),
-    ),
+    Object.values(data.proofSuggestions).filter((s) => {
+      if (s.done) return false
+      if (!parentId) return ids.has(s.pieceId) || (s.parentId !== null && ids.has(s.parentId))
+      const mine = s.pieceId === pieceId
+      if (!mine && s.pieceId !== parentId && s.parentId !== parentId) return false
+      const r = reanchor(data, s)
+      // 見つからない案はその幕に残す（「本文が変わりました」を出す）
+      if (r.status === 'lost') return mine
+      return r.pieceId === pieceId
+    }),
   )
 }
 

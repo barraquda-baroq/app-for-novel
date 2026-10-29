@@ -119,7 +119,8 @@ export function ProofPanel({ titleId, piece, active, hub, focusId, onClose, jump
   const data = useData()
   const open = useMemo(
     () => openProofSuggestionsFor(data, piece.id),
-    [data.proofSuggestions, data.pieces, piece.id], // eslint-disable-line react-hooks/exhaustive-deps
+    // 幕は本文で探し直す（reanchor）ので、稿の本文が変わった時も数え直す
+    [data.proofSuggestions, data.pieces, data.versions, piece.id], // eslint-disable-line react-hooks/exhaustive-deps
   )
   // 開いている間にチェックしたものも残す（チェックを外し直せるように）
   const seen = useRef(new Set<ID>())
