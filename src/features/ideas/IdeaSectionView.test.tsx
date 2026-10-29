@@ -8,6 +8,7 @@ import { createPersistence } from '../../db/persistence'
 import type { ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../store/appStore'
+import { useToasts } from '../../store/uiStore'
 import { AppFrame } from '../../ui/Layout'
 import { TitleIdeasTab } from '../title/ideas/TitleIdeasTab'
 
@@ -31,6 +32,7 @@ const card = (text: string) => cards().find((c) => c.textContent?.includes(text)
 
 beforeEach(async () => {
   localStorage.clear()
+  useToasts.setState({ toasts: [] })
   await initStore(createPersistence(`test-db-ideas-${++n}`))
 })
 
@@ -86,6 +88,30 @@ describe('アイデアの済み（チェック）', () => {
     expect(texts()).toEqual(['案C', '案A', '案B✓'])
     expect(getData().ideas[card('案A').dataset.ideaId!]).toMatchObject({ checked: false, checkedAt: null })
     expect(within(card('案A')).getByTestId('idea-up')).toHaveProperty('disabled', false)
+  })
+
+  it('済みにした・外した時は、消えたように見えないよう通知で知らせ、移った先のカードを少しの間目立たせる', async () => {
+    const user = userEvent.setup()
+    let titleId = ''
+    act(() => {
+      titleId = actions.createTitle('星の海')
+      for (const body of ['案A', '案B', '案C']) actions.addIdea(titleId, '', body)
+    })
+    renderTab(titleId)
+    expect(card('案A').className).not.toContain('is-revealed')
+
+    await user.click(within(card('案A')).getByTestId('idea-check'))
+    expect(texts()).toEqual(['案B', '案C', '案A✓'])
+    const toast = await screen.findByText('「案A」を済みにしました（下の「済み」へ移しました）')
+    // 通知は読み上げにも届く（aria-live）
+    expect(toast.closest('[aria-live]')).toBeTruthy()
+    expect(card('案A').className).toContain('is-revealed')
+    expect(card('案B').className).not.toContain('is-revealed')
+
+    await user.click(within(card('案A')).getByTestId('idea-check'))
+    expect(texts()).toEqual(['案B', '案C', '案A'])
+    expect(await screen.findByText('「案A」の済みを外しました（済みでないものの末尾へ戻しました）')).toBeTruthy()
+    expect(card('案A').className).toContain('is-revealed')
   })
 
   it('2行以上のアイデアは1行目を少し目立たせる。1行だけのものはそのまま', () => {

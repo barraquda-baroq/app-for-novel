@@ -361,6 +361,38 @@ test.describe('ホーム', () => {
     expect(ms).toBeLessThan(1500)
   })
 
+  test('画面より長い仕切りで済みにしても、通知で知らせて移った先のカードを目立たせる（消えたように見えない）', async ({
+    page,
+  }, info) => {
+    if (info.project.name === 'mobile') await page.setViewportSize({ width: 360, height: 760 })
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      for (let i = 0; i < 40; i++) actions.addIdea(null, '', `案${i + 1}`)
+    })
+    await showIdeas(page)
+    const none = section(page, 'none')
+    await expect(cardsIn(none)).toHaveCount(40)
+    const id = await cardsIn(none).nth(1).getAttribute('data-idea-id')
+    const moved = none.locator(`[data-testid="idea-card"][data-idea-id="${id}"]`)
+    await expect(moved.getByTestId('idea-body')).toHaveText('案2')
+
+    await moved.getByTestId('idea-check').check()
+    await expect(page.locator('.toasts').getByText('「案2」を済みにしました（下の「済み」へ移しました）')).toBeVisible()
+    await expect(page.locator('.toasts')).toHaveAttribute('aria-live', 'assertive')
+    await expect(moved).toHaveClass(/is-revealed/)
+    await expect(cardsIn(none).last()).toHaveAttribute('data-idea-id', id!)
+    // 済みの所は画面の外（スクロールはしない）。通知がなければ消えたように見える
+    await expect(moved).not.toBeInViewport()
+    await expect(cardsIn(none).nth(1).getByTestId('idea-body')).toHaveText('案3')
+
+    await moved.getByTestId('idea-check').uncheck()
+    await expect(page.locator('.toasts').getByText('「案2」の済みを外しました（済みでないものの末尾へ戻しました）')).toBeVisible()
+    await expect(moved).toHaveClass(/is-revealed/)
+    await expect(moved).toHaveAttribute('data-checked', 'false')
+    await expect(cardsIn(none).last()).toHaveAttribute('data-idea-id', id!)
+    await noHorizontalScroll(page)
+  })
+
   test('長いアイデアは折りたたまれ、「続きを表示」で全文を読める。仕切りは折りたためる', async ({ page }) => {
     await openApp(page)
     await seed(page, ({ actions }) => {

@@ -196,19 +196,17 @@
   outline-offset: 2px;
 }
 
-/* 追加したカードを少しの間目立たせる */
+/* 追加したカード・済みにした（外した）カードを少しの間目立たせる */
 .idea-card.is-revealed {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
   animation: idea-reveal 1.2s ease-out;
 }
 
+/* 終わりはカードの地の色（済みのカードはグレー）に戻る */
 @keyframes idea-reveal {
   from {
     background: var(--accent-soft);
-  }
-  to {
-    background: var(--surface);
   }
 }
 
@@ -312,6 +310,11 @@
 
 .idea-card.is-checked .idea-check:hover {
   background: var(--surface-3);
+}
+
+/* 済みにした直後も、移った先で目立たせる（済みのカードの影なしより優先） */
+.idea-card.is-checked.is-revealed {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /* 済みでないアイデアと済みのアイデアの区切り */

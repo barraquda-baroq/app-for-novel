@@ -1,5 +1,6 @@
 // アイデア1件のカード。済みのチェックボックス、内容（長い場合は6行で折りたたみ。2行以上なら1行目を少し目立たせる）と、
-// 編集・移動・並べ替え（済みでないものだけ）・削除。済み（実装した・没にした）にすると斜線＋グレーで仕切りの下へ沈む。
+// 編集・移動・並べ替え（済みでないものだけ）・削除。済み（実装した・没にした）にすると斜線＋グレーで仕切りの下へ沈む
+// （通知で知らせ、移った先で少しの間目立たせる）。
 // 古い版で付けた見出しがあれば、編集して保存するまでは見出しとして出す。
 import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -18,7 +19,7 @@ import { IdeaMoveDialog } from './IdeaMoveDialog'
 import { SparkIcon } from './ideaIcons'
 import { ideaEditText, ideaModalDraftKey, ideaShortLabel, splitLead, titleNameFromIdea } from './ideaLogic'
 import { useKeepInPlace } from '../../ui/keepInPlace'
-import { REVEAL_MS, useReveal } from './reveal'
+import { REVEAL_MS, revealIdea, useReveal } from './reveal'
 import { writeLocal } from './storage'
 
 export interface IdeaCardProps {
@@ -52,7 +53,7 @@ function useOverflow(text: string, expanded: boolean, checked: boolean) {
   return [ref, overflow] as const
 }
 
-/** quick capture などで「表示」を押した時に、このカードまでスクロールして少しの間目立たせる */
+/** quick capture などで「表示」を押した時に、このカードまでスクロールして少しの間目立たせる（済みにした・外した時は目立たせるだけ） */
 function useRevealed(ideaId: string, ref: RefObject<HTMLLIElement | null>): boolean {
   // 同じアイデアをもう一度見せる時も反応させる（seq が変わる）
   const seq = useReveal((s) => (s.id === ideaId ? s.seq : 0))
@@ -118,7 +119,15 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
 
   const toggleChecked = (next: boolean) => {
     check.mark()
-    attempt(() => actions.setIdeaChecked(idea.id, next))
+    if (!attempt(() => (actions.setIdeaChecked(idea.id, next), true))) return
+    // カードは仕切りの下・済みでないものの末尾へ動くので、消えたように見えないよう知らせる（削除とは別）
+    notify(
+      next
+        ? `「${label}」を済みにしました（下の「済み」へ移しました）`
+        : `「${label}」の済みを外しました（済みでないものの末尾へ戻しました）`,
+    )
+    // 移った先で少しの間目立たせる（スクロールはしない。フォーカスはチェックボックスに残す）
+    revealIdea(idea.id, false)
   }
 
   // 動かしたカードが押した指の下に残るように（続けて押すとそのまま動かし続けられる）
