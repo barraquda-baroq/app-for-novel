@@ -2,7 +2,8 @@
 // 公開: npm run deploy（Windows の PowerShell でも Mac のターミナルでも同じ。docs/DEPLOY.md）
 //   1. アプリをビルドする（tsc -b → vite build）。connector.local.json があれば、コネクタの URL をアプリに入れる
 //   2. Firebase Hosting とアクセスルールを公開する（firebase deploy --only hosting,firestore）
-//   3. connector.local.json があれば、Claude 用のコネクタも公開する（connector/scripts/deploy.mjs）
+//   3. connector.local.json があれば、Claude 用のコネクタも型を確かめてから公開する（connector/scripts/deploy.mjs。
+//      コネクタはアプリの src/domain・src/claude などをそのまま使うので、アプリと同じ版から公開する）
 // オプション: --skip-app（1・2 をしない）、--skip-connector（3 をしない）
 // npm・npx・シェルを通さず、各ツールの JS を node で直接動かす（&& のつなぎも使わない）。
 import path from 'node:path'
@@ -45,6 +46,11 @@ async function main() {
       say(`\n✗ ${MISSING_CONNECTOR_DEPS}`)
       process.exit(1)
     } else {
+      await step('コネクタの型の確かめ（tsc -p connector/tsconfig.worker.json）', need('typescript', 'tsc'), [
+        '-p',
+        path.join('connector', 'tsconfig.worker.json'),
+        '--noEmit',
+      ])
       const { deployConnector } = await import(pathToFileURL(path.join(repoDir, 'connector', 'scripts', 'deploy.mjs')).href)
       say('\n▶ Claude 用のコネクタの公開')
       const r = await deployConnector({ origin: local.origin })
