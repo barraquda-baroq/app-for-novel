@@ -1,7 +1,7 @@
 # Novel Studio — 小説執筆アプリ
 
 アイデア・設定・話数単位の原稿と推敲バージョン・コンテスト応募戦略を、タイトルごとにまとめて管理する小説執筆アプリです。
-Windows ではブラウザで動く PWA（Edge の「アプリとしてインストール」）、iPhone・Android では同じ画面を載せた専用のアプリ（2.4。Capacitor）で使います。
+Windows ではブラウザで動く PWA（Chrome・Edge の「アプリとしてインストール」）、iPhone・Android では同じ画面を載せた専用のアプリ（2.4。Capacitor）で使います。
 データは端末内（IndexedDB）に保存され、Google アカウントでログインすると、Firebase（Cloud Firestore）を通して Windows・iPhone・Android の間でリアルタイムに同期します（2.x）。
 
 ## できること
