@@ -5,7 +5,15 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { vaultConfig, workerConfig } from '../../src/config'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import { deployVarArgs, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
+import {
+  appBuildEnv,
+  deployVarArgs,
+  isConnectorOrigin,
+  newTokenKey,
+  parseWorkersUrl,
+  readLocalConfig,
+  writeLocalConfig,
+} from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
@@ -44,6 +52,20 @@ describe('docs/CONNECTOR.md のコマンド', () => {
 })
 
 describe('スクリプトの部品', () => {
+  it('公開するアプリのビルドには、開発用の値（エミュレーター・手元のコネクタ）を入れない', () => {
+    const dev = { VITE_FIREBASE_EMULATOR: '127.0.0.1', VITE_CONNECTOR_ORIGIN: 'http://localhost:8787' }
+    expect(appBuildEnv(dev, null)).toEqual({ VITE_FIREBASE_EMULATOR: undefined, VITE_CONNECTOR_ORIGIN: undefined })
+    expect(appBuildEnv(dev, { origin: 'https://c.example.workers.dev' })).toEqual({
+      VITE_FIREBASE_EMULATOR: undefined,
+      VITE_CONNECTOR_ORIGIN: 'https://c.example.workers.dev',
+    })
+    expect(appBuildEnv({ VITE_CONNECTOR_ORIGIN: 'https://d.example.workers.dev' }, null).VITE_CONNECTOR_ORIGIN).toBe(
+      'https://d.example.workers.dev',
+    )
+    // undefined の値は子の環境から外れる（Node の spawn）
+    expect('VITE_FIREBASE_EMULATOR' in appBuildEnv({}, null)).toBe(true)
+  })
+
   it('wrangler deploy の出力から URL を取り出す', () => {
     const out = `Uploaded novel-studio-connector (3.21 sec)\nDeployed novel-studio-connector triggers (1.02 sec)\n  https://novel-studio-connector.baroq.workers.dev\n  schedule: 17 19 * * *`
     expect(parseWorkersUrl(out)).toBe('https://novel-studio-connector.baroq.workers.dev')

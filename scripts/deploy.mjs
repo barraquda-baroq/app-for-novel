@@ -8,7 +8,7 @@
 // npm・npx・シェルを通さず、各ツールの JS を node で直接動かす（&& のつなぎも使わない）。
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { MISSING_CONNECTOR_DEPS, binOf, readLocalConfig, runNode, say, wranglerBin } from '../connector/scripts/lib.mjs'
+import { MISSING_CONNECTOR_DEPS, appBuildEnv, binOf, readLocalConfig, runNode, say, wranglerBin } from '../connector/scripts/lib.mjs'
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const flags = new Set(process.argv.slice(2))
@@ -34,8 +34,12 @@ async function step(label, script, args, env) {
 async function main() {
   const local = readLocalConfig()
   if (!flags.has('--skip-app')) {
-    const env = local ? { VITE_CONNECTOR_ORIGIN: local.origin } : {}
-    if (local) say(`コネクタの URL をアプリに入れます: ${local.origin}`)
+    // 開発用の値（エミュレーター・手元のコネクタ）は公開するアプリに入れない
+    const env = appBuildEnv(process.env, local)
+    if (process.env.VITE_FIREBASE_EMULATOR) say('エミュレーターの設定（VITE_FIREBASE_EMULATOR）は公開するアプリには入れません')
+    if (process.env.VITE_CONNECTOR_ORIGIN && !local && !env.VITE_CONNECTOR_ORIGIN)
+      say('https でないコネクタの URL（VITE_CONNECTOR_ORIGIN）は公開するアプリには入れません')
+    if (env.VITE_CONNECTOR_ORIGIN) say(`コネクタの URL をアプリに入れます: ${env.VITE_CONNECTOR_ORIGIN}`)
     await step('型の確かめ（tsc -b）', need('typescript', 'tsc'), ['-b'], env)
     await step('アプリのビルド（vite build）', need('vite', 'vite'), ['build'], env)
     await step('Firebase Hosting とアクセスルールの公開', need('firebase-tools', 'firebase'), ['deploy', '--only', 'hosting,firestore'])

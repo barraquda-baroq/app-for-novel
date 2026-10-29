@@ -48,6 +48,20 @@ export function writeLocalConfig(origin, file = localConfigPath) {
   fs.writeFileSync(file, `${JSON.stringify({ origin }, null, 2)}\n`)
 }
 
+/**
+ * 公開するアプリをビルドする時の環境変数（runNode の env に渡す。undefined は子の環境から外れる）。
+ * 開発用の値（エミュレーター・手元のコネクタ）は入れない: PowerShell の $env: は画面を閉じるまで残るので、
+ * 開発サーバーを動かした画面で npm run deploy をすると、公開するアプリがエミュレーターにつながってしまう。
+ * コネクタの URL は connector.local.json を優先し、無ければ https の VITE_CONNECTOR_ORIGIN だけを使う
+ */
+export function appBuildEnv(env = process.env, local = null) {
+  const inherited = env.VITE_CONNECTOR_ORIGIN
+  return {
+    VITE_FIREBASE_EMULATOR: undefined,
+    VITE_CONNECTOR_ORIGIN: local ? local.origin : isConnectorOrigin(inherited) ? inherited : undefined,
+  }
+}
+
 /** 公開する時に渡す変数（wrangler.jsonc には書かない） */
 export function deployVarArgs(origin) {
   return ['--var', `MCP_RESOURCE:${origin}/mcp`, '--var', `PUBLIC_ORIGIN:${origin}`]

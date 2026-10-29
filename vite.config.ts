@@ -10,7 +10,7 @@ import { normalizeOrigin } from './src/claude/pairing'
  * connector.local.json（npm run connector:setup が書く。リポジトリには入れない）の origin、無ければ VITE_CONNECTOR_ORIGIN、
  * どちらも無ければ空（設定の Claude 連携は「コネクタ未設定」、連携の画面は先へ進まない）
  */
-function connectorOrigin(): string {
+function connectorOrigin(build: boolean): string {
   let raw = ''
   const file = new URL('./connector.local.json', import.meta.url)
   if (existsSync(file)) {
@@ -27,11 +27,16 @@ function connectorOrigin(): string {
   // アプリの画面・コネクタと同じ決まり（src/claude/pairing.ts）: https の origin（開発中は localhost も）だけ
   const origin = normalizeOrigin(raw)
   if (!origin) console.warn(`コネクタの origin が正しくありません（https://… の origin だけ）: ${raw}`)
+  // 公開するビルドには、手元のコネクタ（http://localhost…）を入れない
+  if (build && origin.startsWith('http:')) {
+    console.warn(`手元のコネクタの URL は公開するアプリに入れません: ${origin}`)
+    return ''
+  }
   return origin
 }
 
-export default defineConfig({
-  define: { __CONNECTOR_ORIGIN__: JSON.stringify(connectorOrigin()) },
+export default defineConfig(({ command }) => ({
+  define: { __CONNECTOR_ORIGIN__: JSON.stringify(connectorOrigin(command === 'build')) },
   // 相対パスで出力しておくと、静的ホスティング・Capacitor/Tauri 等のラッパーにそのまま載せられる
   base: './',
   // 同期（Firebase）は使う時に読み込む。開発サーバーで途中に依存を最適化し直して再読み込みしないよう、先にまとめておく
@@ -71,4 +76,4 @@ export default defineConfig({
     // 同期のテストは Firebase エミュレーターの中で動かす（npm run test:sync）
     exclude: ['src/**/*.emu.test.ts', 'node_modules/**'],
   },
-})
+}))
