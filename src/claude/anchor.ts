@@ -1,6 +1,6 @@
 // 推敲案の場所（抜き出した箇所 excerpt が、話の採用原稿のどこにあるか）。コネクタの追加と手動連携の貼り付けで同じものを使う。
-// - 話の採用原稿（幕に分けた話は各幕の採用稿を読む順に）の中を、まず記法込みの本文のまま、無ければルビ・傍点の記法と
-//   ルビの読みを除いた本文で探し、見つけた位置を元の本文に戻す（記法の途中では切らない）
+// - 話の採用原稿（幕に分けた話は各幕の採用稿を読む順に）の中を、記法込みの本文のままと、ルビ・傍点の記法と
+//   ルビの読みを除いた本文で探し（記法を除いた方が多く見つかればそちらで）、見つけた位置を元の本文に戻す（記法の途中では切らない）
 // - 同じ箇所が何か所もあって context_before（直前の文字）で絞れなければ ambiguous
 // - 本文が後で変わったら、控えた前後の文字を手がかりに探し直す（reanchor。話が幕に分けられた・幕がつながれた後も探す）
 // 位置はすべて UTF-16 の位置。前後の文字はサロゲートペアの途中で切らない。
@@ -156,7 +156,14 @@ function findAll(segments: readonly TextSegment[], excerpt: string, mode: 'raw' 
       }
       return
     }
-    if (!hasRubyMarkup(v.body) && !hasRubyMarkup(excerpt)) return
+    // 記法の無い本文は、記法を除いても同じ本文（対応を作らずに探す）
+    if (!hasRubyMarkup(v.body)) {
+      for (const p of positions(v.body, needle)) {
+        if (ctx && !precededBy(v.body, p, ctx)) continue
+        hits.push({ segment: si, start: p, end: p + needle.length })
+      }
+      return
+    }
     const m = strippedMapOf(v)
     for (const p of positions(m.text, needle)) {
       if (ctx && !precededBy(m.text, p, ctx)) continue
@@ -201,6 +208,8 @@ function anchorOf(seg: TextSegment, start: number, end: number): ProofAnchor {
 /**
  * 話（幕に分けた話なら各幕）の採用原稿の中で excerpt を探す。contextBefore（直前の文字）があれば、それに続く所だけにする
  * （それで1つも無ければ、直前の文字を使わずに探す）。
+ * 記法の無い抜き出し（検索の結果はルビを除いた本文）は、ルビの付いた所にも当たる: 記法を除いた本文の方が多く見つかれば、
+ * そちらで決める（記法込みのままの1か所だけで found にしない）。直前の文字も、記法込みで合わなければ記法を除いて比べる。
  * 見つかった所が1つなら found（幕に分けた話なら、その幕）、複数なら ambiguous、無ければ not_found
  */
 export function locateExcerpt(data: AppData, piece: Piece, excerpt: string, contextBefore?: string): LocateResult {
@@ -211,43 +220,56 @@ export function locateExcerpt(data: AppData, piece: Piece, excerpt: string, cont
 export function locateIn(segments: readonly TextSegment[], excerpt: string, contextBefore?: string): LocateResult {
   const tries = [excerpt]
   if (nfc(excerpt) !== excerpt) tries.push(nfc(excerpt))
-  const ctx = contextBefore ? [contextBefore, nfc(contextBefore)] : []
-  for (const mode of ['raw', 'strip'] as const) {
-    for (const ex of tries) {
-      const all = findAll(segments, ex, mode)
-      if (!all.length) continue
-      let hits = all
-      if (ctx.length) {
-        const narrowed = findAll(segments, ex, mode, ex === excerpt ? ctx[0] : ctx[1])
-        if (narrowed.length) hits = narrowed
+  for (const ex of tries) {
+    const ctx = contextBefore ? (ex === excerpt ? contextBefore : nfc(contextBefore)) : ''
+    const raw = findAll(segments, ex, 'raw')
+    // 記法込みの引用が記法込みのまま見つかれば、それで決める
+    const strip = raw.length && hasRubyMarkup(ex) ? [] : findAll(segments, ex, 'strip')
+    const mode: 'raw' | 'strip' = strip.length > raw.length ? 'strip' : 'raw'
+    const all = mode === 'strip' ? strip : raw
+    if (!all.length) continue
+    let hits = all
+    let matchedBy = mode
+    if (ctx) {
+      let narrowed = findAll(segments, ex, mode, ctx)
+      // 直前の文字をルビを除いて写した時（記法込みの本文では続かない）
+      if (!narrowed.length && mode === 'raw') {
+        narrowed = findAll(segments, ex, 'strip', ctx)
+        if (narrowed.length) matchedBy = 'strip'
       }
-      if (hits.length > 1) {
-        return {
-          status: 'ambiguous',
-          count: hits.length,
-          candidates: hits.slice(0, 5).map((h) => {
-            const seg = segments[h.segment]
-            const a = anchorOf(seg, h.start, h.end)
-            return { pieceId: seg.piece.id, paragraph: a.paragraph, before: a.before, after: a.after }
-          }),
-        }
-      }
-      const hit = hits[0]
-      const occurrence = all.findIndex((h) => h.segment === hit.segment && h.start === hit.start)
-      const segment = segments[hit.segment]
-      return { status: 'found', segment, anchor: anchorOf(segment, hit.start, hit.end), occurrence, matchedBy: mode }
+      if (narrowed.length) hits = narrowed
     }
+    if (hits.length > 1) {
+      return {
+        status: 'ambiguous',
+        count: hits.length,
+        candidates: hits.slice(0, 5).map((h) => {
+          const seg = segments[h.segment]
+          const a = anchorOf(seg, h.start, h.end)
+          return { pieceId: seg.piece.id, paragraph: a.paragraph, before: a.before, after: a.after }
+        }),
+      }
+    }
+    const hit = hits[0]
+    const occurrence = Math.max(
+      0,
+      all.findIndex((h) => h.segment === hit.segment && h.start === hit.start),
+    )
+    const segment = segments[hit.segment]
+    return { status: 'found', segment, anchor: anchorOf(segment, hit.start, hit.end), occurrence, matchedBy }
   }
   return { status: 'not_found' }
 }
 
-/** 記法込みのまま、無ければ記法を除いて探す */
+/**
+ * 記法込みのままと、記法を除いて見つかる所をあわせる（同じ所は1つ）。ルビの付いた所に控えた推敲案も、ルビの無い所に
+ * 控えた推敲案も、前後の文字で控えた所を選べるように
+ */
 function findAnywhere(segments: readonly TextSegment[], excerpt: string): Hit[] {
-  for (const mode of ['raw', 'strip'] as const) {
-    const hits = findAll(segments, excerpt, mode)
-    if (hits.length) return hits
-  }
-  return []
+  const hits = findAll(segments, excerpt, 'raw')
+  const seen = new Set(hits.map((h) => `${h.segment}:${h.start}`))
+  for (const h of findAll(segments, excerpt, 'strip')) if (!seen.has(`${h.segment}:${h.start}`)) hits.push(h)
+  return hits
 }
 
 export type ReanchorResult =

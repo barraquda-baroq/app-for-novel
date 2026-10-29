@@ -133,6 +133,58 @@ describe('locateExcerpt（抜き出した箇所の場所）', () => {
   })
 })
 
+describe('ルビの無い抜き出し（検索の結果から写したもの）が、ルビの付いた所にもある', () => {
+  // 名前の初出にだけルビ: 検索（ルビを除いた本文）では「蒼は言った」が2か所に見える
+  const body = '　朝、｜蒼《あお》は言った。「行こう」\n　風が吹いた。\n　夜、蒼は言った。「待って」'
+  it('直前の文字（ルビを除いた形）で、ルビの付いた所に決まる', () => {
+    const n = novel([body])
+    const r = locateExcerpt(n.data, n.data.pieces[n.ids[0]], '蒼は言った', '朝、')
+    expect(r.status).toBe('found')
+    if (r.status !== 'found') return
+    expect(r.anchor).toMatchObject({ offset: 3, paragraph: 1 })
+    expect(r.matchedBy).toBe('strip')
+    expect(body.slice(r.anchor.offset, r.anchor.offset + r.anchor.length)).toBe('｜蒼《あお》は言った')
+    // ルビの無い方も、直前の文字で決まる
+    const night = locateExcerpt(n.data, n.data.pieces[n.ids[0]], '蒼は言った', '夜、')
+    expect(night).toMatchObject({ status: 'found', anchor: { paragraph: 3 } })
+  })
+  it('直前の文字が無ければ ambiguous（2か所）', () => {
+    const n = novel([body])
+    const r = locateExcerpt(n.data, n.data.pieces[n.ids[0]], '蒼は言った')
+    expect(r.status).toBe('ambiguous')
+    if (r.status === 'ambiguous') expect(r.count).toBe(2)
+  })
+  it('記法込みの引用はそのまま（raw）', () => {
+    const n = novel([body])
+    const r = locateExcerpt(n.data, n.data.pieces[n.ids[0]], '｜蒼《あお》は言った')
+    expect(r).toMatchObject({ status: 'found', matchedBy: 'raw', anchor: { offset: 3, paragraph: 1 } })
+  })
+  it('直前の文字がルビを除いた形なら、記法込みの本文でも絞れる', () => {
+    const n = novel(['　｜彼女《かのじょ》は言った。\n　彼は言った。\n　母は言った。'])
+    const r = locateExcerpt(n.data, n.data.pieces[n.ids[0]], 'は言った', '彼女')
+    expect(r).toMatchObject({ status: 'found', anchor: { paragraph: 1 } })
+  })
+  it('幕に分けた話でも、ルビの無い幕とルビの付いた幕の両方を数える', () => {
+    const n = novel(['　朝、｜蒼《あお》は言った。\n　夜、蒼は言った。昼、蒼は言った。'])
+    splitEpisode(n, n.ids[0], [15])
+    const r = locateExcerpt(n.data, n.data.pieces[n.ids[0]], '蒼は言った')
+    expect(r).toMatchObject({ status: 'ambiguous', count: 3 })
+    expect(locateExcerpt(n.data, n.data.pieces[n.ids[0]], '蒼は言った', '朝、')).toMatchObject({
+      status: 'found',
+      matchedBy: 'strip',
+    })
+  })
+  it('本文を直した後の探し直しでも、控えた所（ルビの付いた所）に戻る', () => {
+    const n = novel([body])
+    const p = n.data.pieces[n.ids[0]]
+    const r = locateExcerpt(n.data, p, '蒼は言った', '朝、')
+    if (r.status !== 'found') throw new Error(r.status)
+    const s = { pieceId: p.id, parentId: null, versionId: r.segment.version.id, anchor: r.anchor, excerpt: '蒼は言った' }
+    const edited = updateVersion(n.data, p.versionIds[0], { body: body.replace('風が吹いた', '風が強く吹いた') })
+    expect(reanchor(edited, s)).toMatchObject({ status: 'moved', offset: 3, paragraph: 1 })
+  })
+})
+
 describe('reanchor（本文が変わった後に探し直す）', () => {
   it('同じ稿・同じ本文なら exact、本文が変われば前後の文字が合う所（moved）、無ければ lost', () => {
     const n = novel(['あいう見れるえお。かき見れるくけ。'])
