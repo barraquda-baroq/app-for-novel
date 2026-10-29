@@ -310,6 +310,39 @@ describe('バックアップからの復元と幕', () => {
     }
   }
 
+  // 幕の操作でない、ふつうの稿の追加・複製: 戻した話の稿の一覧に、名前を変えずに載せ直す（幕の知らせは出さない）
+  const plain: [string, (d: AppData, ep: ID) => AppData, string][] = [
+    ['稿を足した', (d, ep) => S.addVersion(d, ep, { body: 'Yの新しい稿' }).data, 'Yの新しい稿'],
+    ['採用稿を複製した', (d, ep) => S.duplicateVersion(d, d.pieces[ep].activeVersionId!).data, 'ABCDEFGHI'],
+  ]
+  for (const [name, op, body] of plain) {
+    it(`分けていない話に${name}端末と、バックアップから戻した端末（戻した方が先に送る）`, async () => {
+      const start = scenarioStart({ body: 'ABCDEFGHI', splitAt: null })
+      const ep = start.ep
+      const cloud = new FakeCloud()
+      const x = new FakeDevice('X', cloud)
+      const y = new FakeDevice('Y', cloud)
+      await x.edit(() => start.data)
+      await settle(x, y)
+      const backup = await x.load()
+      y.offline()
+      await y.edit((d) => op(d, ep))
+      const before = await y.load()
+      const added = before.pieces[ep].versionIds.find((id) => !backup.versions[id])!
+      await x.restore(backup)
+      await x.sync()
+      await y.receive()
+      await settle(x, y)
+      expect(await sameData(x, y)).toBe(true)
+      const d = await y.load()
+      expect(y.notes).toEqual([])
+      expect(structureProblems(d)).toEqual([])
+      expect(d.versions[added]).toMatchObject({ body, name: before.versions[added].name, pieceId: ep })
+      expect(d.pieces[ep].versionIds).toContain(added)
+      expect(Object.keys(d.trashEntries)).toEqual([])
+    })
+  }
+
   // 戻したバックアップにその話が無い（話を作る前・削除した後に取ったバックアップ、すべて削除）: 話は消えるが、
   // Y が送っていない幕・稿（クラウドに無いので、削除は届かない）の文章は、ゴミ箱に残して知らせる
   const unsent: [string, number[] | null, (d: AppData, ep: ID) => AppData, 'acts' | 'trash'][] = [

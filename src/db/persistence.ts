@@ -898,6 +898,12 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       const listedVersions = new Set(Array.isArray(rec.versionIds) ? rec.versionIds : [])
       for (const v of await versionsT.filter((r) => (r as VersionRec).pieceId === ch.id && !listedVersions.has(r.id)).toArray()) {
         if (!(await localOnly('versions', v.id))) continue
+        // 幕の操作（さらに分ける・つなぐ・解除）で作った稿（sourceHash）だけ控える。ふつうに足した・複製した稿は、
+        // 名前も変えずに戻した話・幕の稿の一覧に載せ直す（幕の操作ではないので、幕の知らせも出さない）
+        if (typeof (v as VersionRec).sourceHash !== 'string') {
+          await w.listVersion(ch.id, v.id)
+          continue
+        }
         keepLocal(v, ch.id)
         noteActs(ep, 'lost')
       }
