@@ -43,6 +43,8 @@ public class SaveAsPlugin extends Plugin {
         Intent data = result.getData();
         if (result.getResultCode() != Activity.RESULT_OK || data == null || data.getData() == null) {
             call.reject("Save canceled", "CANCELED");
+            // startActivityForResult が控えた呼び出しは、終わったら手放す（残しておくと保存のたびに溜まる）
+            bridge.releaseCall(call);
             return;
         }
         Uri dest = data.getData();
@@ -61,6 +63,8 @@ public class SaveAsPlugin extends Plugin {
                 call.resolve(ret);
             } catch (Exception e) {
                 call.reject("保存できませんでした: " + e.getMessage(), e);
+            } finally {
+                bridge.releaseCall(call);
             }
         });
     }

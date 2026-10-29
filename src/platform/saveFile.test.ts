@@ -15,8 +15,19 @@ const h = vi.hoisted(() => {
 
 vi.mock('./platform', () => ({ isNative: () => h.native }))
 vi.mock('../ui/browser', () => ({ downloadFile: h.downloadFile }))
+// 本物の registerPlugin と同じく Proxy を返す。どの名前にも関数を返し、プラグインに無いメソッド（then など）は
+// 「not implemented」で失敗する（受け取った resolve / reject は呼ばない。await したり async 関数から返したりすると終わらない）
 vi.mock('@capacitor/core', () => ({
-  registerPlugin: (name: string) => (name === 'SaveAs' ? { saveAs: h.saveAs } : {}),
+  registerPlugin: (name: string) => {
+    const methods: Record<string, unknown> = name === 'SaveAs' ? { saveAs: h.saveAs } : {}
+    return new Proxy(
+      {},
+      {
+        get: (_t, prop) =>
+          methods[String(prop)] ?? (() => Promise.reject(new Error(`"${name}.${String(prop)}()" is not implemented on android`))),
+      },
+    )
+  },
 }))
 vi.mock('@capacitor/filesystem', () => ({
   Directory: { Cache: 'CACHE' },
@@ -137,6 +148,40 @@ describe('アプリの saveFile', () => {
   it('保存できなければ投げる', async () => {
     h.saveAs.mockRejectedValueOnce(new Error('disk full'))
     await expect(saveFile('a.json', '{}', 'application/json')).rejects.toThrow('disk full')
+  })
+
+  it('保存の途中でもう一度呼ばれたら（2回目のタップ）、重ねて書かずに cancel。終わった後はまた保存できる', async () => {
+    let finish!: (v: { uri: string }) => void
+    h.saveAs.mockImplementationOnce(() => new Promise<{ uri: string }>((resolve) => (finish = resolve)))
+    // 区切りが2つになる長さ（2回目の rmdir・writeFile が1回目の appendFile の間に入ると、中身が消えたり二重になったりする）
+    const text = `${'あ'.repeat(TEXT_SLICE_CHARS)}${'い'.repeat(5)}`
+    const first = saveFile('長い話.txt', text, 'text/plain;charset=utf-8')
+    const second = saveFile('長い話.txt', text, 'text/plain;charset=utf-8')
+    await expect(second).resolves.toBe('cancel')
+    await vi.waitFor(() => expect(h.saveAs).toHaveBeenCalledTimes(1))
+    // 1回目の保存の画面はまだ開いている。その間に押されても何もしない
+    await expect(saveFile('別の話.txt', 'x', 'text/plain')).resolves.toBe('cancel')
+    expect(h.calls).toEqual(['rmdir exports', 'writeFile exports/長い話.txt "" recursive=true'])
+    expect(h.appended.map((a) => a.data).join('')).toBe(text)
+    expect(h.saveAs).toHaveBeenCalledTimes(1)
+    finish({ uri: 'content://saved' })
+    await expect(first).resolves.toBe('saved')
+    // 終わったら、次の保存はふつうに動く
+    h.calls.length = 0
+    h.appended.length = 0
+    await expect(saveFile('次.txt', 'y', 'text/plain')).resolves.toBe('saved')
+    expect(h.calls).toEqual(['rmdir exports', 'writeFile exports/次.txt "" recursive=true'])
+    expect(h.appended.map((a) => a.data)).toEqual(['y'])
+    expect(h.saveAs).toHaveBeenCalledTimes(2)
+  })
+
+  it('保存できなかった後や、やめた後も、次の保存はできる', async () => {
+    h.saveAs.mockRejectedValueOnce(new Error('disk full'))
+    await expect(saveFile('a.txt', 'x', 'text/plain')).rejects.toThrow('disk full')
+    h.saveAs.mockRejectedValueOnce(Object.assign(new Error('Save canceled'), { code: 'CANCELED' }))
+    await expect(saveFile('a.txt', 'x', 'text/plain')).resolves.toBe('cancel')
+    await expect(saveFile('a.txt', 'x', 'text/plain')).resolves.toBe('saved')
+    expect(h.saveAs).toHaveBeenCalledTimes(3)
   })
 
   it('名前の / は一時置き場のフォルダにしない', async () => {

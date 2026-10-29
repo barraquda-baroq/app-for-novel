@@ -71,8 +71,12 @@ export function isSaveCancel(e: unknown): boolean {
 /** 一時置き場に置くファイルの名前（フォルダの区切りになる文字を入れない） */
 const cacheName = (name: string) => name.replace(/[\\/]/g, '_') || 'file'
 
+/** アプリで保存している途中か（一時置き場を作ってから、保存の画面が閉じるまで） */
+let nativeSaving = false
+
 /**
  * ファイルを保存する。'saved' = 保存した（ブラウザはダウンロードを始めた）、'cancel' = 保存の画面でやめた。
+ * アプリで前の保存がまだ終わっていない時（書き出しのボタンの2回目のタップなど）は、何もせずに 'cancel'。
  * 保存できなかった時は投げる
  */
 export async function saveFile(name: string, content: string | Blob, mime: string): Promise<SaveResult> {
@@ -80,6 +84,19 @@ export async function saveFile(name: string, content: string | Blob, mime: strin
     downloadFile(name, content, mime)
     return 'saved'
   }
+  // 一時置き場（exports/）は保存のたびに空にして使い回すので、重ねて保存すると書いている途中のファイルが消えたり
+  // 中身が二重になったりし、Android では保存の画面が2回開く。最初の await より前に確かめて印を付ける（続けて押されても両方は通らない）
+  if (nativeSaving) return 'cancel'
+  nativeSaving = true
+  try {
+    return await saveNative(name, content, mime)
+  } finally {
+    nativeSaving = false
+  }
+}
+
+/** アプリ: 一時置き場に書いてから、SaveAs の保存の画面で保存先を選んでもらう */
+async function saveNative(name: string, content: string | Blob, mime: string): Promise<SaveResult> {
   const { Directory, Encoding, Filesystem } = await import('@capacitor/filesystem')
   const directory = Directory.Cache
   // 前に保存したファイルが残らないよう、一時置き場を空にしてから書く
