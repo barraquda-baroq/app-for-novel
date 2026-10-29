@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { vaultConfig, workerConfig } from '../../src/config'
 // prettier-ignore
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import { answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, ensureTokenKey, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
+import { OAUTH_KV_TITLE, answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, ensureTokenKey, isConnectorOrigin, missingLocalNotice, newTokenKey, parseWorkersUrl, readLocalConfig, wranglerProblem, wranglerProblemHint, writeLocalConfig } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector, parseCheckArgs } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
@@ -178,6 +178,42 @@ describe('スクリプトの部品', () => {
     const rot = fake({ 'secret list': { code: 0, stdout: has } })
     expect(await ensureTokenKey(rot.run, { rotate: true, onRotate: () => (warned = true) })).toEqual({ ok: true, created: true, rotated: true })
     expect(warned).toBe(true)
+  })
+
+  it('wrangler の失敗の原因: ログインが切れた・前のコネクタの KV が残っている（直し方を日本語で）', () => {
+    const expired =
+      "✘ [ERROR] Your auth token has expired and could not be refreshed, and the environment is non-interactive. Run `wrangler login` in an interactive terminal or set a CLOUDFLARE_API_TOKEN."
+    const none =
+      "✘ [ERROR] In a non-interactive environment, it's necessary to set a CLOUDFLARE_API_TOKEN environment variable for wrangler to work."
+    const kv =
+      'Provisioning OAUTH_KV (KV Namespace)...\n🌀 Creating new KV Namespace "novel-studio-connector-oauth-kv"...\n🤖 Using fallback value in non-interactive context: Create new\n✘ [ERROR] A request to the Cloudflare API (/accounts/x/storage/kv/namespaces) failed.\n  a namespace with this account ID and title already exists [code: 10014]'
+    const offline =
+      'Your auth token has expired and could not be refreshed because the Cloudflare auth server could not be reached. This is usually a network problem'
+    expect(wranglerProblem(expired)).toBe('login')
+    expect(wranglerProblem(none)).toBe('login')
+    expect(wranglerProblem(kv)).toBe('kv_exists')
+    expect(wranglerProblem(offline)).toBeNull()
+    expect(wranglerProblem('✘ [ERROR] Build failed with 1 error')).toBeNull()
+    expect(wranglerProblemHint('login')).toContain('npx --prefix connector wrangler login')
+    expect(wranglerProblemHint('login')).toContain('npm run deploy')
+    expect(wranglerProblemHint('kv_exists', 'npm run connector:setup')).toContain(OAUTH_KV_TITLE)
+    expect(wranglerProblemHint('kv_exists', 'npm run connector:setup')).toContain('もう一度 npm run connector:setup')
+    expect(wranglerProblemHint(null)).toBeNull()
+    // KV の名前は wrangler が作る名前（Worker の名前 + バインディング名）と同じ
+    const dir = path.resolve(import.meta.dirname, '../..')
+    const cfg = fs.readFileSync(path.join(dir, 'wrangler.jsonc'), 'utf8')
+    const name = /"name"\s*:\s*"([^"]+)"/.exec(cfg)?.[1]
+    expect(cfg).toContain('"binding": "OAUTH_KV"')
+    expect(OAUTH_KV_TITLE).toBe(`${name}-oauth-kv`)
+  })
+
+  it('connector.local.json の無いパソコンからアプリを公開する時は注意を出す（コネクタの部品が入っている時だけ）', () => {
+    const notice = missingLocalNotice({ local: null, skipApp: false, connectorDeps: true })
+    expect(notice?.join('\n')).toContain('コネクタ未設定')
+    expect(notice?.join('\n')).toContain('npm run connector:setup')
+    expect(missingLocalNotice({ local: { origin: 'https://c.example.workers.dev' }, skipApp: false, connectorDeps: true })).toBeNull()
+    expect(missingLocalNotice({ local: null, skipApp: true, connectorDeps: true })).toBeNull()
+    expect(missingLocalNotice({ local: null, skipApp: false, connectorDeps: false })).toBeNull()
   })
 
   it('鍵は32バイトの乱数（毎回違う）', () => {

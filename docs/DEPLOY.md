@@ -103,6 +103,9 @@ npm run deploy
 ```
 
 Claude 用のコネクタを使っている時は、`npm ci` の後に `npm --prefix connector ci` も実行してください（`npm run deploy` がコネクタも公開します）。
+コネクタの URL を控えた `connector.local.json` は、`npm run connector:setup` を実行したパソコンにだけあります。別のパソコンから更新する時は、
+そのパソコンでも先に一度 `npm run connector:setup` を実行する（同じコネクタ・鍵・連携をそのまま使います）か、`connector.local.json` を
+コピーしてください。無いまま公開すると、アプリは「コネクタ未設定」になり、コネクタも更新されません（docs/CONNECTOR.md の 3）。
 
 開いているアプリには「新しいバージョンのアプリがあります」と出るので、「更新する」を押すと切り替わります（書いている途中の内容は保存してから切り替わります）。
 

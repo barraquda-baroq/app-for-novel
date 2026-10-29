@@ -8,7 +8,20 @@
 // npm・npx・シェルを通さず、各ツールの JS を node で直接動かす（&& のつなぎも使わない）。
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { MISSING_CONNECTOR_DEPS, appBuildEnv, binOf, readLocalConfig, runNode, say, wranglerBin } from '../connector/scripts/lib.mjs'
+import {
+  MISSING_CONNECTOR_DEPS,
+  appBuildEnv,
+  ask,
+  binOf,
+  missingLocalNotice,
+  readLocalConfig,
+  runNode,
+  say,
+  wrangler,
+  wranglerBin,
+  wranglerProblem,
+  wranglerProblemHint,
+} from '../connector/scripts/lib.mjs'
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const flags = new Set(process.argv.slice(2))
@@ -33,6 +46,15 @@ async function step(label, script, args, env) {
 
 async function main() {
   const local = readLocalConfig()
+  // コネクタを別のパソコンで準備した時: このまま公開すると、アプリからコネクタの URL が消える
+  const notice = missingLocalNotice({ local, skipApp: flags.has('--skip-app'), connectorDeps: Boolean(wranglerBin()) })
+  if (notice) {
+    for (const line of notice) say(line)
+    if (process.stdin.isTTY && !(await ask('コネクタの URL なしでアプリを公開しますか？（コネクタをまだ準備していない・使わない時は y）', false))) {
+      say('中止しました（何も公開していません）。')
+      process.exit(1)
+    }
+  }
   if (!flags.has('--skip-app')) {
     // 開発用の値（エミュレーター・手元のコネクタ）は公開するアプリに入れない
     const env = appBuildEnv(process.env, local)
@@ -45,7 +67,11 @@ async function main() {
     await step('Firebase Hosting とアクセスルールの公開', need('firebase-tools', 'firebase'), ['deploy', '--only', 'hosting,firestore'])
   }
   if (!flags.has('--skip-connector')) {
-    if (!local) say('\n（connector.local.json が無いので、Claude 用のコネクタは公開しません。使う時は npm run connector:setup）')
+    if (!local)
+      say(
+        '\n（このパソコンに connector.local.json が無いので、Claude 用のコネクタは公開しませんでした。' +
+          '別のパソコンで準備した時は、このパソコンでも一度 npm run connector:setup を実行してください）',
+      )
     else if (!wranglerBin()) {
       say(`\n✗ ${MISSING_CONNECTOR_DEPS}`)
       process.exit(1)
@@ -57,9 +83,16 @@ async function main() {
       ])
       const { deployConnector } = await import(pathToFileURL(path.join(repoDir, 'connector', 'scripts', 'deploy.mjs')).href)
       say('\n▶ Claude 用のコネクタの公開')
-      const r = await deployConnector({ origin: local.origin })
+      let r = await deployConnector({ origin: local.origin })
+      // Cloudflare のログインが切れた（出力を控えて動かすので、wrangler はブラウザを開けない）: ここでログインして、もう一度
+      if (!r.ok && wranglerProblem(r.output) === 'login' && process.stdin.isTTY) {
+        say('\nCloudflare へのログインが切れています。ブラウザが開いたら Cloudflare にログインして「Allow」を押してください。')
+        const login = await wrangler(['login'])
+        if (login.code === 0) r = await deployConnector({ origin: local.origin })
+      }
       if (!r.ok) {
-        say('✗ コネクタを公開できませんでした（上の表示を見てください。npm --prefix connector ci を忘れていないか）')
+        const hint = wranglerProblemHint(wranglerProblem(r.output))
+        say(`✗ ${hint ?? 'コネクタを公開できませんでした（上の表示を見てください。npm --prefix connector ci を忘れていないか）'}`)
         process.exit(1)
       }
     }

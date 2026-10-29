@@ -2,7 +2,7 @@
 // コネクタを公開する（wrangler deploy）。URL（MCP_RESOURCE・PUBLIC_ORIGIN）は ../connector.local.json から渡す。
 // ふだんはリポジトリの直下の npm run deploy（アプリ・アクセスルール・コネクタをまとめて公開）から呼ばれる。
 import { pathToFileURL } from 'node:url'
-import { deployVarArgs, parseWorkersUrl, readLocalConfig, say, wrangler } from './lib.mjs'
+import { deployVarArgs, parseWorkersUrl, readLocalConfig, say, wrangler, wranglerProblem, wranglerProblemHint } from './lib.mjs'
 
 /** 公開する。戻り値は wrangler の出力にあった URL（無ければ null） */
 export async function deployConnector({ origin = readLocalConfig()?.origin ?? null } = {}) {
@@ -17,7 +17,7 @@ async function main() {
   if (!local) say('（../connector.local.json がありません。初めての時は、リポジトリの直下で npm run connector:setup を実行してください）')
   const r = await deployConnector({ origin: local?.origin ?? null })
   if (!r.ok) {
-    say('コネクタを公開できませんでした（上の wrangler の表示を見てください）。')
+    say(wranglerProblemHint(wranglerProblem(r.output), 'node connector/scripts/deploy.mjs') ?? 'コネクタを公開できませんでした（上の wrangler の表示を見てください）。')
     process.exitCode = 1
     return
   }

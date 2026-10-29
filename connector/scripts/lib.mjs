@@ -161,6 +161,56 @@ export function wrangler(args, opts = {}) {
   return runNode(bin, args, { cwd: connectorDir, ...opts })
 }
 
+/** 最初の公開で自動で作られる OAuth の KV の名前（wrangler: Worker の名前 + "-" + バインディング名） */
+export const OAUTH_KV_TITLE = 'novel-studio-connector-oauth-kv'
+
+/**
+ * wrangler の失敗の出力から、よくある原因を見分ける。
+ * login = Cloudflare のログインが切れた（出力を控えて動かすので、wrangler はブラウザを開けない）、
+ * kv_exists = 消したコネクタの OAuth の KV が残っていて、同じ名前で作り直せない。分からなければ null
+ */
+export function wranglerProblem(output) {
+  const t = String(output ?? '')
+  // ネットワークの問題（ログインは残っている）
+  if (/could not be refreshed because the Cloudflare auth server could not be reached/i.test(t)) return null
+  if (/\[code: 10014\]|namespace with this account ID and title already exists/i.test(t)) return 'kv_exists'
+  // 「non-interactive」だけでは見ない（ほかの問い合わせの既定の値を使った時にも出る）
+  if (
+    /CLOUDFLARE_API_TOKEN environment variable|auth token has expired and could not be refreshed|no credentials were found|You are not (?:logged in|authenticated)|Not logged in/i.test(
+      t,
+    )
+  )
+    return 'login'
+  return null
+}
+
+/** wranglerProblem の直し方（again = もう一度実行するコマンド） */
+export function wranglerProblemHint(problem, again = 'npm run deploy') {
+  if (problem === 'login')
+    return `Cloudflare へのログインが切れています。npx --prefix connector wrangler login を実行して（ブラウザで Cloudflare にログインして「Allow」）、もう一度 ${again} を実行してください（API トークンを作る必要はありません）。`
+  if (problem === 'kv_exists')
+    return (
+      `前に消したコネクタの KV（${OAUTH_KV_TITLE}）が Cloudflare に残っているため、コネクタを作り直せません。` +
+      `もう一度使う時は、Cloudflare のダッシュボードの「ストレージとデータベース → KV」で ${OAUTH_KV_TITLE} を削除してから、もう一度 ${again} を実行してください。` +
+      'コネクタをやめた時は、リポジトリの直下の connector.local.json を削除してから npm run deploy を実行してください（docs/CONNECTOR.md の 4）。'
+    )
+  return null
+}
+
+/**
+ * このパソコンに connector.local.json が無いまま、アプリを公開しようとしている時の注意（コネクタの部品が入っている =
+ * コネクタを使っている時だけ）。connector.local.json は npm run connector:setup をしたパソコンにだけある
+ */
+export function missingLocalNotice({ local, skipApp, connectorDeps }) {
+  if (local || skipApp || !connectorDeps) return null
+  return [
+    '注意: このパソコンには connector.local.json がありません。このまま公開すると、アプリは「コネクタ未設定」になり、' +
+      'claude.ai から接続し直せなくなります（いまの接続は続きます）。コネクタも更新しません。',
+    '  別のパソコンで npm run connector:setup をした時は、このパソコンでも一度 npm run connector:setup を実行する' +
+      '（同じコネクタ・鍵・連携をそのまま使います）か、そのパソコンの connector.local.json をここ（リポジトリの直下）にコピーしてください。',
+  ]
+}
+
 export const MISSING_CONNECTOR_DEPS =
   'コネクタの部品が入っていません。リポジトリの直下で npm --prefix connector ci を実行してから、もう一度試してください。'
 

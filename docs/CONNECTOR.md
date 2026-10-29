@@ -142,6 +142,11 @@ npm run deploy
 
 `npm run deploy` は、アプリ・アクセスルール・コネクタをまとめて公開します（`connector.local.json` がある時だけコネクタも）。
 
+`connector.local.json` は、`npm run connector:setup` を実行したパソコンにだけあります（Git には入りません）。別のパソコン
+（Windows と Mac など）から更新する時は、そのパソコンでも先に一度 `npm run connector:setup` を実行するか（同じコネクタ・KV・鍵・連携を
+そのまま使います）、`connector.local.json` をそのパソコンのリポジトリの直下にコピーしてください。無いまま `npm run deploy` をすると、
+公開したアプリは「コネクタ未設定」になり（claude.ai から接続し直せなくなります）、コネクタも更新されません（`npm run deploy` が注意を出して聞きます）。
+
 ---
 
 ## 4. やめる時・止める時
@@ -152,9 +157,11 @@ npm run deploy
 | 書き込みだけ止める | 同じ画面の「書き込みを許可」をオフ（読むのは続く。アクセスルールで止まる） |
 | あるタイトルだけ見せない | タイトル画面の「Claude に見せる」のチップで「見せない」を選ぶ |
 | claude.ai から外す | 「カスタマイズ → コネクタ → Novel Studio」でコネクタを削除 |
-| コネクタそのものを消す | `npx --prefix connector wrangler delete --name novel-studio-connector`（Cloudflare から消える。鍵を消すだけなら `npx --prefix connector wrangler secret delete TOKEN_ENC_KEY --name novel-studio-connector`）。リポジトリの直下で実行する |
+| コネクタそのものを消す | リポジトリの直下で、次の3つ: ① `npx --prefix connector wrangler delete --name novel-studio-connector`（Cloudflare から Worker が消える）② OAuth 用の KV `novel-studio-connector-oauth-kv` を消す（Cloudflare のダッシュボードの「ストレージとデータベース → KV」で削除。または `npx --prefix connector wrangler kv namespace list` で id を調べて `npx --prefix connector wrangler kv namespace delete --namespace-id <id>`）③ `connector.local.json` を消す（PowerShell は `Remove-Item connector.local.json`、Mac は `rm connector.local.json`）。その後で一度 `npm run deploy`（アプリからコネクタの URL を外す）。鍵を消すだけなら `npx --prefix connector wrangler secret delete TOKEN_ENC_KEY --name novel-studio-connector` |
 
-完全にやめる時は、アプリで［連携を解除］してから claude.ai でコネクタを削除し、必要なら Cloudflare からも消してください。
+完全にやめる時は、アプリで［連携を解除］してから claude.ai でコネクタを削除し、Cloudflare からも消すなら上の「コネクタそのものを消す」の3つをすべて
+行ってから `npm run deploy` を実行してください（KV か `connector.local.json` が残っていると、後の `npm run deploy` がコネクタを作り直そうとして失敗するか、
+消したコネクタが戻ってきます）。
 
 ---
 
@@ -165,6 +172,9 @@ npm run deploy
 | `npm run connector:setup` で「匿名ログインが無効です」 | 1-A の手順 3 をやり直して、もう一度 `npm run connector:setup` |
 | `npm run connector:setup` で「公開できなかったか、URL が分かりませんでした」 | Cloudflare の「Workers & Pages」で workers.dev のサブドメインを決めたか確かめる。`npx --prefix connector wrangler whoami` でログインを確かめる |
 | `npm run connector:setup` で「確かめで問題がありました」 | アプリとアクセスルールはまだ公開されていません。数分待ってから、もう一度 `npm run connector:setup`（終わった手順は飛ばします。最後に claude.ai に登録する URL が出るまで） |
+| `npm run deploy`・`npm run connector:setup` で「KV（novel-studio-connector-oauth-kv）が Cloudflare に残っている」、wrangler の表示に `already exists [code: 10014]` | 前に消したコネクタの KV が残っています。もう一度使う時は、Cloudflare のダッシュボードの「ストレージとデータベース → KV」で `novel-studio-connector-oauth-kv` を削除してから、もう一度実行。コネクタをやめた時は `connector.local.json` を消して `npm run deploy`（§4） |
+| `npm run deploy` で「Cloudflare へのログインが切れています」や「CLOUDFLARE_API_TOKEN」 | `npx --prefix connector wrangler login` を実行して（ブラウザで「Allow」）から、もう一度 `npm run deploy`（API トークンを作る必要はありません） |
+| `npm run deploy` で「このパソコンには connector.local.json がありません」 | 別のパソコンでコネクタを準備した時は、このパソコンでも一度 `npm run connector:setup`（または `connector.local.json` をコピー）してから `npm run deploy`（§3） |
 | 「コネクタの部品が入っていません」 | `npm --prefix connector ci` |
 | `npm` で「スクリプトの実行が無効になっているため…npm.ps1 を読み込むことができません」（Windows） | PowerShell で `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行して `Y`、PowerShell を開き直す（`npm.cmd`・`npx.cmd` と打っても動く） |
 | claude.ai で「Authorization with the MCP server failed」など | `npm run connector:check` を実行して ✗ の行を直す。エラーの画面の `ofid_…` を控えておく |

@@ -26,6 +26,8 @@ import {
   say,
   wrangler,
   wranglerBin,
+  wranglerProblem,
+  wranglerProblemHint,
   writeLocalConfig,
 } from './lib.mjs'
 import path from 'node:path'
@@ -80,7 +82,9 @@ async function main() {
   const first = await deployConnector({ origin: before?.origin ?? null })
   if (!first.ok || !first.url) {
     ng('公開できなかったか、URL が分かりませんでした。')
-    if (/subdomain|workers\.dev/i.test(first.output ?? ''))
+    const hint = first.ok ? null : wranglerProblemHint(wranglerProblem(first.output), 'npm run connector:setup')
+    if (hint) say(`  → ${hint}`)
+    else if (/subdomain|workers\.dev/i.test(first.output ?? ''))
       say('  → Cloudflare のダッシュボードの「Workers & Pages」で、workers.dev のサブドメインを決めてから、もう一度実行してください。')
     process.exitCode = 1
     return
