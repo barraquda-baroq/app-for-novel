@@ -3,7 +3,8 @@
 // iPhone は ios/App/novelstudio.xcconfig の MARKETING_VERSION / CURRENT_PROJECT_VERSION を使う
 import { describe, expect, it } from 'vitest'
 import packageJson from '../../package.json?raw'
-import { APP_VERSION } from '../sync/appModel'
+import { APP_VERSION as MODEL_APP_VERSION } from '../sync/appModel'
+import { APP_VERSION } from '../sync/appVersion'
 
 const version = (JSON.parse(packageJson) as { version: string }).version
 // iPhone のプロジェクト（ios/）が無い間は、xcconfig も無い
@@ -34,6 +35,7 @@ describe('アプリの版', () => {
 
   it('同期の記録に添える版（APP_VERSION）は package.json の x.y', () => {
     expect(APP_VERSION).toBe(version.split('.').slice(0, 2).join('.'))
+    expect(MODEL_APP_VERSION).toBe(APP_VERSION)
   })
 
   it('iPhone のプロジェクトがあれば、xcconfig も同じ版', () => {

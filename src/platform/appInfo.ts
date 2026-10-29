@@ -1,6 +1,6 @@
 // 「このアプリについて」（アプリの設定）とテスト版の期限の知らせ。
 // iPhone のアプリは TestFlight のテスト版で、上げてから 90 日で使えなくなる。ビルドした日時から期限の目安を出し、75 日目から知らせる。
-import { APP_VERSION } from '../sync/appModel'
+import { APP_VERSION } from '../sync/appVersion'
 import type { NativePlatform } from './platform'
 
 const DAY = 24 * 60 * 60 * 1000

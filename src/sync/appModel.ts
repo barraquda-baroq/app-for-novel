@@ -11,8 +11,8 @@ import { doc, onSnapshot, runTransaction, serverTimestamp, type Firestore, type 
  * Claude 用のコネクタも同じ値（CONNECTOR_MODEL）を持ち、違えば書き込まない（読むのは続ける）
  */
 export const DATA_MODEL = 3
-/** 記録に添えるアプリの版（古い版のアプリの画面で「どの版に更新すればよいか」を出すため） */
-export const APP_VERSION = '2.4'
+// 記録に添えるアプリの版（古い版のアプリの画面で「どの版に更新すればよいか」を出すため）
+export { APP_VERSION } from './appVersion'
 
 export interface AppModel {
   model: number
