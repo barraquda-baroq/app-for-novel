@@ -328,9 +328,10 @@ export const ProofItem = memo(function ProofItem({ s, place, onJump, onEdit, com
           <span className="ps-excerpt">「{s.excerpt}」</span>
           {s.suggestion.trim() ? (
             <>
-              <span className="ps-arrow" aria-label="を">
+              <span className="ps-arrow" aria-hidden="true">
                 →
               </span>
+              <span className="visually-hidden">の直し方: </span>
               <span className="ps-suggestion">{s.suggestion}</span>
             </>
           ) : null}

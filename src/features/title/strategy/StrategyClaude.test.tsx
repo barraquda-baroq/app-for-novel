@@ -141,7 +141,7 @@ describe('推敲案', () => {
     const shoku = screen.getAllByTestId('proof-item').find((e) => e.textContent?.includes('食べれる'))!
     await user.click(within(shoku).getByTestId('proof-flag'))
     // フラグを立てたもの同士は新しい順
-    expect(excerpts().slice(0, 2)).toEqual(['「来れる」', '「食べれる」→食べられる'])
+    expect(excerpts().slice(0, 2)).toEqual(['「来れる」', '「食べれる」→の直し方: 食べられる'])
 
     // チェックしたものは下へ（斜線）
     const first = screen.getAllByTestId('proof-item')[0]
