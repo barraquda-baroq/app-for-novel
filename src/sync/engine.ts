@@ -610,7 +610,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     })
     // 子（稿など）を親（話・タイトル）より先に消す（送信待ちを送る順と同じ）。何回かに分けて書いても、受け取った端末には
     // クラウドにあった子の削除が親の削除より先か同じ通知で届くので、親が消えた時に残っている子はその端末だけのもの（控える）
-    const rank = (id: string) => tableSendRank(id.slice(0, id.indexOf(':')))
+    // （消すものばかりなので、応募時の原稿の本文は応募計画の後）
+    const rank = (id: string) => tableSendRank(id.slice(0, id.indexOf(':')), true)
     doomed.sort((a, b) => rank(a) - rank(b))
     for (let i = 0; i < doomed.length; i += 200) {
       const batch = writeBatch(fs)

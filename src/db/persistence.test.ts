@@ -2,7 +2,7 @@
 // どちらでも守られること。
 import { describe, expect, it, vi } from 'vitest'
 import { joinActWithNext, separatePiece } from '../domain/acts'
-import { addMemo, addSubmission, createTitle, recordSubmissionSnapshot } from '../domain/entityOps'
+import { addMemo, addSubmission, createTitle, deleteSubmission, recordSubmissionSnapshot } from '../domain/entityOps'
 import { addEpisode, addVersion, deleteVersion, setActiveVersion, updatePiece, updateVersion } from '../domain/storyOps'
 import { TABLE_NAMES, emptyData, type AppData, type Version } from '../domain/types'
 import { newId } from '../domain/util'
@@ -311,6 +311,29 @@ describe('第2回の見直しで直したこと', () => {
     expect(order.indexOf('versions')).toBeLessThan(order.indexOf('pieces'))
     expect(order.indexOf('pieces')).toBeLessThan(order.indexOf('titles'))
     expect(order[order.length - 1]).toBe('titles')
+  })
+
+  it('応募時の原稿の本文は、足す時は応募計画より先に、消す時は応募計画の後に送る', async () => {
+    const { data, titleId } = sample()
+    const s = addSubmission(data, titleId, '文学賞')
+    const p = fresh()
+    await seed(p, s.data)
+    const recorded = recordSubmissionSnapshot(s.data, s.result)
+    await p.save(s.data, recorded)
+    let keys = (await p.readOutbox(1000)).map((i) => i.k)
+    const text = `snapshotTexts/${Object.keys(recorded.snapshotTexts)[0]}`
+    expect(keys.indexOf(text)).toBeLessThan(keys.indexOf(`submissions/${s.result}`))
+    await p.completeUpload((await p.readOutbox(1000)).map((i) => ({ table: i.table, id: i.id, record: i.local })))
+    // 応募計画をゴミ箱へ（使われなくなった本文は消える）
+    const deleted = deleteSubmission(recorded, s.result)
+    expect(deleted.snapshotTexts).toEqual({})
+    await p.save(recorded, deleted)
+    keys = (await p.readOutbox(1000)).map((i) => i.k)
+    expect(keys.indexOf(text)).toBeGreaterThan(keys.indexOf(`submissions/${s.result}`))
+    // 戻し先の控え（ゴミ箱）は先
+    expect(keys[0].startsWith('trash')).toBe(true)
+    expect(tableSendRank('snapshotTexts', true)).toBeGreaterThan(tableSendRank('submissions'))
+    expect(tableSendRank('snapshotTexts', true)).toBeLessThan(tableSendRank('settingCategories'))
   })
 
   it('別の端末で消されたタイトルの下に、古い表示のまま作ったメモは、ゴミ箱に控えて片付ける', async () => {

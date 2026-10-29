@@ -180,8 +180,14 @@ const SEND_ORDER: TableName[] = [
   'chapters',
   'titles',
 ]
-/** 送る順番の中の表の位置（子の表ほど前。知らない表は最後） */
-export function tableSendRank(table: string): number {
+/**
+ * 送る順番の中の表の位置（子の表ほど前。知らない表は最後）。deleted = 削除を送る。
+ * 応募時の原稿の本文（snapshotTexts）の削除だけは、使っていた応募計画の削除・書き換えの後に送る（足す時は本文が先）。
+ * 先に届くと、受け取った端末はまだ応募計画が使っているので消さずに送り直し、消したはずの本文がクラウドに戻るため
+ * （Firestore は書いた順に届けるので、応募計画の削除・書き換えが先か同じ通知で届く）
+ */
+export function tableSendRank(table: string, deleted = false): number {
+  if (deleted && table === 'snapshotTexts') return SEND_ORDER.indexOf('submissions') + 0.5
   const i = SEND_ORDER.indexOf(table as TableName)
   return i < 0 ? SEND_ORDER.length : i
 }
@@ -1571,7 +1577,17 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       // 操作の前と後の混ざった内容にならないように。途中に始まった保存は、読み終わるのを待ってからまとめて書かれる）
       return db.transaction('r', [db.outbox, ...allTables()], async () => {
         const keys = (await db.outbox.toCollection().primaryKeys()).map(String)
-        keys.sort((a, b) => sendRank(a) - sendRank(b) || (a < b ? -1 : a > b ? 1 : 0))
+        // 応募時の原稿の本文の削除は、応募計画の後に送る（tableSendRank）。端末内に無い本文 = 削除を送る。
+        // 本文の送信待ちがある時だけ、本文の表のキーを読む（中身は読まない）
+        const textPrefix = 'snapshotTexts/'
+        const liveTexts = keys.some((k) => k.startsWith(textPrefix))
+          ? new Set((await db.tableOf('snapshotTexts').toCollection().primaryKeys()).map(String))
+          : new Set<string>()
+        const rankOf = (k: string) =>
+          k.startsWith(textPrefix) && !liveTexts.has(k.slice(textPrefix.length))
+            ? tableSendRank('snapshotTexts', true)
+            : sendRank(k)
+        keys.sort((a, b) => rankOf(a) - rankOf(b) || (a < b ? -1 : a > b ? 1 : 0))
         // 幕の構成を変えた話があれば、その話・幕・稿・ゴミ箱の件を1つのまとまりとして続けて並べる（全部を1回で送る）
         const pieceItems = await itemsOf(keys.filter((k) => k.startsWith('pieces/')))
         if (!pieceItems.some(isDirtyEpisodeRow)) return itemsOf(keys.slice(0, limit))
