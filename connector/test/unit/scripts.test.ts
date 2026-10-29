@@ -31,6 +31,18 @@ describe('wrangler.jsonc の変数', () => {
   })
 })
 
+describe('docs/CONNECTOR.md のコマンド', () => {
+  it('リポジトリの直下で動かす wrangler のコマンドには、Worker の名前を付ける（直下には wrangler.jsonc が無い）', () => {
+    const dir = path.resolve(import.meta.dirname, '../..')
+    const name = /"name"\s*:\s*"([^"]+)"/.exec(fs.readFileSync(path.join(dir, 'wrangler.jsonc'), 'utf8'))?.[1]
+    expect(name).toBeTruthy()
+    const doc = fs.readFileSync(path.join(dir, '../docs/CONNECTOR.md'), 'utf8')
+    const commands = [...doc.matchAll(/`(npx --prefix connector wrangler (?:delete|secret delete)[^`]*)`/g)].map((m) => m[1])
+    expect(commands.length).toBeGreaterThanOrEqual(2)
+    for (const c of commands) expect(c, c).toContain(`--name ${name}`)
+  })
+})
+
 describe('スクリプトの部品', () => {
   it('wrangler deploy の出力から URL を取り出す', () => {
     const out = `Uploaded novel-studio-connector (3.21 sec)\nDeployed novel-studio-connector triggers (1.02 sec)\n  https://novel-studio-connector.baroq.workers.dev\n  schedule: 17 19 * * *`

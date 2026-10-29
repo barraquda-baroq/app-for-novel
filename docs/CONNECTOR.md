@@ -45,7 +45,9 @@ iOS / Android のアプリを作る 2.4 だけは Mac が要りますが、コ�
 ### 1-A. あなたが手で行うこと
 
 1. **Node.js 22 以上を入れる**
-   - Windows: <https://nodejs.org/ja> から LTS 版のインストーラーを入れる。スタートメニューで「PowerShell」を開き、`node -v` が `v22` 以上なら OK
+   - Windows: <https://nodejs.org/ja> から LTS 版のインストーラーを入れる。スタートメニューで「PowerShell」を開き、`node -v` が `v22` 以上なら OK。
+     初めての時だけ `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行し、確かめられたら `Y` を入力して Enter（npm のコマンドを動かせるようにする設定。
+     管理者でなくてよい。docs/DEPLOY.md の手順 1 と同じ）。終わったら PowerShell を閉じて開き直す
    - Mac: 同じページから LTS 版を入れる。「ターミナル」で `node -v` が `v22` 以上なら OK
 2. **Cloudflare に登録する（無料・カード不要）**
    1. <https://dash.cloudflare.com/sign-up/workers-and-pages> で登録し、届いたメールの確認リンクを押す
@@ -145,7 +147,7 @@ npm run deploy
 | 書き込みだけ止める | 同じ画面の「書き込みを許可」をオフ（読むのは続く。アクセスルールで止まる） |
 | あるタイトルだけ見せない | タイトル画面の「Claude に見せる」のチップで「見せない」を選ぶ |
 | claude.ai から外す | 「カスタマイズ → コネクタ → Novel Studio」でコネクタを削除 |
-| コネクタそのものを消す | `npx --prefix connector wrangler delete`（Cloudflare から消える。鍵を消すだけなら `npx --prefix connector wrangler secret delete TOKEN_ENC_KEY`） |
+| コネクタそのものを消す | `npx --prefix connector wrangler delete --name novel-studio-connector`（Cloudflare から消える。鍵を消すだけなら `npx --prefix connector wrangler secret delete TOKEN_ENC_KEY --name novel-studio-connector`）。リポジトリの直下で実行する |
 
 完全にやめる時は、アプリで［連携を解除］してから claude.ai でコネクタを削除し、必要なら Cloudflare からも消してください。
 
@@ -158,6 +160,7 @@ npm run deploy
 | `npm run connector:setup` で「匿名ログインが無効です」 | 1-A の手順 3 をやり直して、もう一度 `npm run connector:setup` |
 | `npm run connector:setup` で「公開できなかったか、URL が分かりませんでした」 | Cloudflare の「Workers & Pages」で workers.dev のサブドメインを決めたか確かめる。`npx --prefix connector wrangler whoami` でログインを確かめる |
 | 「コネクタの部品が入っていません」 | `npm --prefix connector ci` |
+| `npm` で「スクリプトの実行が無効になっているため…npm.ps1 を読み込むことができません」（Windows） | PowerShell で `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行して `Y`、PowerShell を開き直す（`npm.cmd`・`npx.cmd` と打っても動く） |
 | claude.ai で「Authorization with the MCP server failed」など | `npm run connector:check` を実行して ✗ の行を直す。エラーの画面の `ofid_…` を控えておく |
 | それでもつながらない | 最後の手段: `connector/wrangler.jsonc` の `ENABLE_DCR` を `"true"` にして `npm run deploy`。claude.ai でコネクタを削除し、OAuth クライアントを「自動的に登録」にして追加し直す（認証の設定は後から変えられないため） |
 | Novel Studio の画面で「このアカウントは Novel Studio の持ち主ではありません」 | 最初に同期を始めた Google アカウントでログインし直す |
@@ -211,9 +214,9 @@ npm run deploy
 公開した後、または大きく変えた後に:
 
 - [ ] `npm run connector:check` がすべて ✓
-- [ ] MCP Inspector で（パソコンで）: `npx @modelcontextprotocol/inspector@2.11.0` を開き、URL `…/mcp`・Transport「Streamable HTTP」で接続 →
-      OAuth の画面（Novel Studio の同意の画面 → アプリの連携の画面）を通る → tools/list に 15 のツールが日本語の題で並ぶ → `novel_status`・`novel_list_titles` が答える
-- [ ] claude.ai（ブラウザ）: 接続できる。読むツールをすべて1回ずつ（タイトル一覧・目次・採用原稿・稿の一覧・検索・設定/メモ/アイデア・戦略・作品批評・推敲案の一覧・状態）
+  （MCP Inspector などほかのクライアントは、受け付けの決まり（§7: claude.ai の公開の識別子と決まった戻り先だけ）で断られます。確かめには使えません）
+- [ ] claude.ai（ブラウザ）: 接続できる（Novel Studio の同意の画面 → アプリの連携の画面を通る）。コネクタの設定に 15 のツールが日本語の題で並ぶ。
+      読むツールをすべて1回ずつ（タイトル一覧・目次・採用原稿・稿の一覧・検索・設定/メモ/アイデア・戦略・作品批評・推敲案の一覧・状態）
 - [ ] claude.ai: 足すツールを1回ずつ（推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果）。承認の画面にツールの日本語の題が出る。アプリに出る
 - [ ] Claude のデスクトップアプリ・iPhone・Android の Claude アプリで、コネクタをオンにして読む・足すが動く
 - [ ] 同じ推敲案をもう一度足すように頼むと「重複」になる。アプリで削除した推敲案は「以前に削除」になる
@@ -256,5 +259,7 @@ npm --prefix connector run bundle-check   # dexie・firebase・react・zustand �
 - アプリもこの手元のコネクタにつなぐ時は、もう1つの画面で開発サーバーを動かします（`connector.local.json` があれば、そちらが優先されます）
   - Mac（ターミナル）: `VITE_FIREBASE_EMULATOR=127.0.0.1 VITE_CONNECTOR_ORIGIN=http://localhost:8787 npm run dev`
   - Windows（PowerShell）: `$env:VITE_FIREBASE_EMULATOR="127.0.0.1"; $env:VITE_CONNECTOR_ORIGIN="http://localhost:8787"; npm run dev`
+    （`$env:` は PowerShell の画面を閉じるまで残ります。開発サーバー用の画面で動かし、終わったら閉じてください。同じ画面で公開する時は先に
+    `Remove-Item Env:VITE_FIREBASE_EMULATOR, Env:VITE_CONNECTOR_ORIGIN -ErrorAction SilentlyContinue`。`npm run deploy` はこれらを公開するアプリに入れません）
   - 設定 → Claude 連携 に `http://localhost:8787/mcp` が出ます。連携の画面（`#/claude/connect`）は claude.ai の接続から開かれるので、
     手で通して試すより `e2e/pairing.sync.spec.ts` を動かす方が確実です

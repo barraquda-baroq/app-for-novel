@@ -11,6 +11,7 @@ Mac が要るのは 2.4 の iPhone / Android のアプリを作る時だけで�
 
 1. [Node.js](https://nodejs.org/ja) の LTS 版（22 以上）と [Git](https://git-scm.com/) を入れる。
    - Windows: インストーラーで入れてから、スタートメニューで「PowerShell」を開く
+     - 初めての時だけ: PowerShell で `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行し、確かめられたら `Y` を入力して Enter（npm のコマンドを動かせるようにする設定。管理者でなくてよい）。終わったら PowerShell を閉じて開き直す
    - Mac: インストーラーで入れてから、「ターミナル」を開く（Git は `git --version` を実行すると入れ方が出る）
    - どちらも `node -v` が `v22` 以上なら OK
 2. リポジトリを取ってくる（PowerShell・ターミナルで1行ずつ）。
@@ -39,6 +40,9 @@ Mac が要るのは 2.4 の iPhone / Android のアプリを作る時だけで�
 
 > アクセスルールを公開するまでは、ログインしても同期できません（「クラウドへのアクセスが拒否されました」と出ます）。
 > 先に必ず `npm run deploy` を行ってください。
+
+> Windows で `npm` を実行して「このシステムではスクリプトの実行が無効になっているため、ファイル …\npm.ps1 を読み込むことができません」と出たら、
+> 手順 1 の `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` を実行してから PowerShell を開き直してください（`npm.cmd`・`npx.cmd` と打っても動きます）。
 
 5. Google ログインの戻り先を登録する（最初の1回だけ）。アプリはログインの画面も `novel-studio-3352e.web.app` で開くので、
    Google 側にその戻り先を教えておきます。これをしないと、ログインの画面に「エラー 400: redirect_uri_mismatch」と出ます。
@@ -137,5 +141,8 @@ npx firebase emulators:start --config firebase.emu.json --only auth,firestore --
 
 - Mac（ターミナル）: `VITE_FIREBASE_EMULATOR=127.0.0.1 npm run dev`
 - Windows（PowerShell）: `$env:VITE_FIREBASE_EMULATOR="127.0.0.1"; npm run dev`
+  （PowerShell の `$env:` はその画面を閉じるまで残ります。開発サーバーはこのための PowerShell の画面で動かし、終わったら画面を閉じてください。
+  同じ画面で `npm run deploy` をする時は、先に `Remove-Item Env:VITE_FIREBASE_EMULATOR, Env:VITE_CONNECTOR_ORIGIN -ErrorAction SilentlyContinue` を実行します。
+  `npm run deploy` はこれらの開発用の値を公開するアプリに入れませんが、念のため）
 
 エミュレーターにつないだ開発サーバーでは、「Google でログイン」を押すとエミュレーターの仮のログイン画面が開きます。
