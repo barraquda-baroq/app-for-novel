@@ -18,8 +18,11 @@ export interface AppModel {
 
 export const appModelRef = (fs: Firestore, uid: string) => doc(fs, 'users', uid, 'meta', 'app')
 
-/** ok = 送ってよい、newer = 新しい版のアプリで書かれたデータがある（送らない） */
-export type AppModelState = { state: 'ok' } | { state: 'newer'; cloud: AppModel }
+/**
+ * ok = 送ってよい、newer = 新しい版のアプリで書かれたデータがある（送らない）、
+ * unknown = サーバーと確かめられなくなった（オフラインになった。つながってサーバーから届くまで送らない）
+ */
+export type AppModelState = { state: 'ok' } | { state: 'unknown' } | { state: 'newer'; cloud: AppModel }
 
 const asModel = (data: unknown): AppModel | null => {
   const d = data as { model?: unknown; appVersion?: unknown } | undefined
@@ -30,6 +33,9 @@ const asModel = (data: unknown): AppModel | null => {
 /**
  * データの形の版を見張る。サーバーから届いた内容だけを見る（端末の中の控えは古いことがある）。
  * 記録が無い・低ければ、この版に上げる（トランザクションで読み直してから）。
+ * 端末の中の控えからの通知（オフラインになった時に届く）は unknown として知らせる: オフラインの間に新しい版のアプリが
+ * 記録を上げていることがあるので、つながった後はサーバーから届くまで送らない（状態だけの変化も受け取るので、つながると
+ * 内容が変わっていなくてもサーバーからの通知が届く）
  */
 export function watchAppModel(fs: Firestore, uid: string, app: AppModel, onState: (s: AppModelState) => void): Unsubscribe {
   const ref = appModelRef(fs, uid)
@@ -56,7 +62,10 @@ export function watchAppModel(fs: Firestore, uid: string, app: AppModel, onState
     // 状態だけの変化も受け取る（端末の中の控えからの通知の後、内容が同じでも「サーバーと揃った」通知を受け取れるように）
     { includeMetadataChanges: true },
     (snap) => {
-      if (snap.metadata.fromCache) return
+      if (snap.metadata.fromCache) {
+        onState({ state: 'unknown' })
+        return
+      }
       const cur = snap.exists() ? asModel(snap.data()) : null
       if (cur && cur.model > app.model) {
         onState({ state: 'newer', cloud: cur })

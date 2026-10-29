@@ -5,7 +5,9 @@ import { GoogleAuthProvider, connectAuthEmulator, getAuth, signInWithCredential 
 import {
   collection,
   connectFirestoreEmulator,
+  disableNetwork,
   doc,
+  enableNetwork,
   getDoc,
   getDocs,
   initializeFirestore,
@@ -44,14 +46,29 @@ import { stableStringify } from './merge'
  * 購読の通知を端末ごとに間引く（ページが止まった・裏に回った間に、自分の書き込みの通知を受け取れなかった時の再現）。
  * dropOwn に Firestore と端末の名前を入れると、その端末の書き込みだけの通知を捨てる（ほかの端末の書き込みは届く）
  */
-const listen = vi.hoisted(() => ({ dropOwn: new Map<unknown, string>() }))
+const listen = vi.hoisted(() => ({
+  dropOwn: new Map<unknown, string>(),
+  /**
+   * データの形の版（meta/app）の、サーバーからの通知を止めておく Firestore と、止めている間に届いた通知
+   * （つながった直後、形の版の通知より先に送ろうとした時の再現。releaseModel で渡す）
+   */
+  holdModel: new Map<unknown, (() => void)[]>(),
+}))
 vi.mock('firebase/firestore', async (importOriginal) => {
   const m = await importOriginal<typeof import('firebase/firestore')>()
-  type Snap = { docChanges?: () => { doc: { data: () => { device?: unknown } } }[] }
-  const onSnapshot = (ref: { firestore: unknown }, ...rest: unknown[]) => {
+  type Snap = {
+    docChanges?: () => { doc: { data: () => { device?: unknown } } }[]
+    metadata?: { fromCache: boolean }
+  }
+  const onSnapshot = (ref: { firestore: unknown; path?: string }, ...rest: unknown[]) => {
     const i = rest.findIndex((x) => typeof x === 'function')
     const next = rest[i] as (snap: Snap) => void
     rest[i] = (snap: Snap) => {
+      const held = listen.holdModel.get(ref.firestore)
+      if (held && ref.path?.endsWith('/meta/app') && !snap.metadata?.fromCache) {
+        held.push(() => next(snap))
+        return
+      }
       const own = listen.dropOwn.get(ref.firestore)
       const changes = own && snap.docChanges ? snap.docChanges() : []
       if (own && changes.length && changes.every((c) => c.doc.data().device === own)) return
@@ -84,8 +101,16 @@ interface Device {
 const apps: { app: FirebaseApp; fs: Firestore }[] = []
 const devices: Device[] = []
 
+/** 止めていたデータの形の版の通知を渡す */
+function releaseModel(fs: Firestore): void {
+  const held = listen.holdModel.get(fs) ?? []
+  listen.holdModel.delete(fs)
+  for (const f of held) f()
+}
+
 afterEach(async () => {
   listen.dropOwn.clear()
+  listen.holdModel.clear()
   for (const d of devices.splice(0)) {
     d.offline()
     d.p.close()
@@ -987,6 +1012,52 @@ describe('データの形の版（エミュレーター）', () => {
     expect(cloudMemos.length).toBeGreaterThan(0)
     expect(cloudMemos.length).toBeLessThanOrEqual(100)
     expect(await a.p.outboxCount()).toBeGreaterThanOrEqual(150)
+  })
+
+  // 同じ端末（同期を続けたまま）がオフラインになり、その間に新しい版のアプリが記録を上げた
+  async function offlineWhileRaised(raise: boolean) {
+    const who = account()
+    const a = await makeDevice('a', who, { appModel: APP })
+    // 記録を上げる・クラウドを見る、別の Firestore
+    const other = await makeDevice('other', who)
+    await a.online()
+    const ref = appModelRef(other.fs, other.uid)
+    // A が「送ってよい」と確かめてから記録を書いた
+    await waitFor(async () => (await getDoc(ref)).data()?.model === 2, '形の版が記録される')
+    await disableNetwork(a.fs)
+    await waitFor(async () => a.engine?.status.phase === 'offline', 'オフラインと表示する')
+    let ideaId = ''
+    await a.edit((d) => {
+      const r = E.addIdea(d, null, 'オフラインで書いた', '本文')
+      ideaId = r.result
+      return r.data
+    })
+    if (raise) await setDoc(ref, { model: 3, appVersion: '2.3', updatedAt: serverTimestamp() })
+    return { a, ideaDoc: doc(other.fs, 'users', other.uid, 'records', `ideas:${ideaId}`) }
+  }
+
+  it('オフラインから戻った時は、データの形の版をサーバーで確かめ直すまで送らない（その間に上がっていれば送らない）', async () => {
+    const { a, ideaDoc } = await offlineWhileRaised(true)
+    // つながった直後に送ろうとした（形の版のサーバーからの通知は、まだ届いていない）
+    listen.holdModel.set(a.fs, [])
+    await enableNetwork(a.fs)
+    a.engine?.requestUpload(true)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect((await getDoc(ideaDoc)).exists()).toBe(false)
+    releaseModel(a.fs)
+    await waitFor(async () => a.engine?.status.outdated?.model === 3, '古い版の端末が気付く')
+    await new Promise((r) => setTimeout(r, 500))
+    await a.engine?.idle()
+    expect((await getDoc(ideaDoc)).exists()).toBe(false)
+    expect(await a.p.outboxCount()).toBeGreaterThan(0)
+  })
+
+  it('オフラインから戻って、データの形の版が変わっていなければ、確かめてから送る', async () => {
+    const { a, ideaDoc } = await offlineWhileRaised(false)
+    await enableNetwork(a.fs)
+    await waitFor(async () => (await getDoc(ideaDoc)).exists(), 'オフラインの間の変更が送られる')
+    await settle(a)
+    expect(a.engine?.status.outdated ?? null).toBeNull()
   })
 
   it('いますぐ同期は、データの形の版を確かめ終わるのを待ってから送る', async () => {

@@ -120,6 +120,9 @@ const BATCH_DOCS = 400
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000]
 /** データの形の版を確かめるまで、送るのを待つ長さの上限（いますぐ同期・ログアウトの前の送信） */
 const MODEL_WAIT_MS = 10_000
+const OFFLINE_MESSAGE = 'オフラインです。つながると自動で同期します。'
+/** 送るトランザクションの途中で、データの形の版を確かめられなくなった・新しい版で書かれていると分かった（何も書かない） */
+const MODEL_PAUSED = new Error('データの形の版を確かめるまで送りません')
 /** この端末が送った版の指紋を、文書ごとにいくつまで覚えておくか */
 const SENT_MEMORY = 20
 
@@ -147,7 +150,7 @@ function describeError(e: unknown): { offline: boolean; message: string } {
   const code = errorCode(e)
   if (e instanceof SyncError) return { offline: false, message: e.message }
   if (code === 'unavailable' || code === 'deadline-exceeded' || (typeof navigator !== 'undefined' && navigator.onLine === false))
-    return { offline: true, message: 'オフラインです。つながると自動で同期します。' }
+    return { offline: true, message: OFFLINE_MESSAGE }
   if (code === 'permission-denied')
     return {
       offline: false,
@@ -180,12 +183,15 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   const sent = new Map<string, string[]>()
   /** 持ち主の確認が済んだ（ownerLock の時） */
   let ownerOk = opts.ownerLock === false
-  /** データの形の版: unknown = まだサーバーから確かめていない、newer = 新しい版のアプリで書かれている（どちらも送らない） */
+  /**
+   * データの形の版: unknown = まだサーバーから確かめていない（オフラインになって、確かめ直すまでも）、
+   * newer = 新しい版のアプリで書かれている（どちらも送らない）
+   */
   let modelState: 'unknown' | 'ok' | 'newer' = opts.appModel ? 'unknown' : 'ok'
   let modelUnsub: Unsubscribe | null = null
-  /** データの形の版を初めて確かめた（または同期をやめた） */
+  /** データの形の版を確かめた（または同期をやめた）。オフラインになると、確かめ直すまでの新しい約束にする */
   let modelKnown: () => void = () => undefined
-  const modelReady = new Promise<void>((resolve) => (modelKnown = resolve))
+  let modelReady = new Promise<void>((resolve) => (modelKnown = resolve))
 
   // 送受信を1つずつ行うための鎖
   let lock: Promise<unknown> = Promise.resolve()
@@ -483,6 +489,9 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
 
     const result = await runTransaction(fs, async (tx) => {
       const snaps = await Promise.all(batch.map((b) => tx.get(doc(col, docIdOf(b.it.table, b.it.id)))))
+      // 読んでいる間にオフラインになった・新しい版のアプリで書かれていると分かった: 書かずに終わる（やり直しても同じ。
+      // オフラインの前に始めたトランザクションが、つながった後でデータの形の版を確かめる前に書かないように）
+      if (modelState !== 'ok') throw MODEL_PAUSED
       const clouds = snaps.map((snap) => (snap.exists() ? (snap.data() as RecordDoc) : null))
       // 共通の履歴が無いものは、クラウドに何も無い時だけ書く（あれば受信で突き合わせる）。
       // 復元・すべて削除の後は、この端末の内容で必ず上書きする。幕のまとまりは全部を書ける時だけ書く
@@ -529,7 +538,11 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         })
       })
       return { written, conflicts: decision.conflicts }
+    }).catch((e: unknown) => {
+      if (e === MODEL_PAUSED) return null
+      throw e
     })
+    if (!result) return { done: false, progressed: idle.length, conflicts: [] }
     for (const w of result.written) {
       const id = docIdOf(w.change.table, w.change.id)
       rememberSent(id, w.hash)
@@ -658,6 +671,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           if (stopped || modelState !== 'ok') return
           const r = await exclusive(uploadBatch)
           if (r.done) break
+          if (stopped || modelState !== 'ok') return
           if (status.phase !== 'uploading') setStatus({ phase: 'uploading', error: null })
           await refreshPending()
           if (r.conflicts.length && r.progressed === 0) {
@@ -762,6 +776,18 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (opts.appModel && !modelUnsub) {
       modelUnsub = watchAppModel(fs, uid, opts.appModel, (s) => {
         if (stopped) return
+        if (s.state === 'unknown') {
+          if (modelState === 'ok') {
+            // オフラインになった（つながり直している）: つながった後、サーバーで確かめ直すまで送らない
+            // （オフラインの間に新しい版のアプリが記録を上げていることがある）
+            modelState = 'unknown'
+            modelReady = new Promise<void>((resolve) => (modelKnown = resolve))
+            // 送ろうとしないので、送信の失敗からオフラインの表示にはならない。ここで出す
+            setStatus({ phase: 'offline', error: OFFLINE_MESSAGE })
+          }
+          // 新しい版のアプリで書かれている（newer・要更新の表示）は、そのまま
+          return
+        }
         const was = modelState
         modelState = s.state
         modelKnown()
