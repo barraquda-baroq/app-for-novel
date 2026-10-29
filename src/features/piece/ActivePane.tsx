@@ -79,7 +79,11 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
 
   return (
     <div className="pw-pane pw-pane-active" data-testid="active-pane">
-      <div className={`pw-head pw-ahead${moreOpen ? ' is-more-open' : ''}`} ref={headRef}>
+      <div
+        className={`pw-head pw-ahead${moreOpen ? ' is-more-open' : ''}`}
+        ref={headRef}
+        data-back-close={moreOpen ? 'esc' : undefined}
+      >
         <span className="badge badge-active pw-head-badge">採用中</span>
         <SessionInput
           key={active.id}

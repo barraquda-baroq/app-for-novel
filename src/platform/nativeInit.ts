@@ -1,7 +1,7 @@
 // アプリ（iPhone / Android）の起動時の準備。src/main.tsx から呼ぶ（ブラウザでは何もしない）。
 // - 裏に回る（pause）: 書きかけも含めてすぐ保存し、同期は待たずに送る。表に戻る（resume）: 長く裏にあったら同期を購読し直す
 //   （WebView の visibilitychange が届かないことがあるので、アプリの知らせでも同じことをする。二重に届いても害はない）
-// - Android の「戻る」: メニュー・ダイアログが開いていれば閉じる（Esc と同じ）、戻れる画面があれば戻る、
+// - Android の「戻る」: メニュー・ダイアログ・原稿画面のポップオーバー・推敲案の一覧が開いていれば閉じる（Esc と同じ）、戻れる画面があれば戻る、
 //   いちばん最初の画面なら保存してからアプリを裏に回す（閉じない）
 // - iPhone: キーボードの高さを受け取る（src/platform/keyboard.ts）
 // - 起動の画面（スプラッシュ）は最初の描画の後に消す
@@ -13,17 +13,33 @@ import { startIosKeyboard } from './keyboard'
 import { nativePlatform } from './platform'
 
 /**
- * いちばん上のメニュー・ダイアログに Esc を送って閉じる（それぞれの Esc の扱いをそのまま使う）。
+ * いちばん上の重なり（メニュー → ダイアログ → 原稿画面のポップオーバー → 推敲案の一覧）を閉じる（それぞれの Esc の扱いをそのまま使う）。
+ * 原稿画面のものは data-back-close の印で見つける（esc = Esc を送る、click = その閉じるボタンを押す）。
  * 開いているものが無ければ false
  */
 export function closeTopLayer(doc: Document = document): boolean {
+  const esc = (el: Element) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
   const menus = doc.querySelectorAll<HTMLElement>('[role="menu"]')
   const modals = doc.querySelectorAll<HTMLElement>('.modal-backdrop .modal')
   // メニューはダイアログの上に開く
   const target = menus[menus.length - 1] ?? modals[modals.length - 1]
-  if (!target) return false
-  target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-  return true
+  if (target) {
+    esc(target)
+    return true
+  }
+  // 原稿画面のポップオーバー（表示の設定・「…」。useDismiss は document の Esc で閉じる）
+  const pop = doc.querySelector<HTMLElement>('[data-back-close="esc"]')
+  if (pop) {
+    esc(pop)
+    return true
+  }
+  // 推敲案の一覧（スマホでは下から出る。Esc はフォーカスが中にある時だけなので、閉じるボタンを押す）。ダイアログの下にあることもある
+  const btn = doc.querySelector<HTMLElement>('[data-back-close="click"]')
+  if (btn) {
+    btn.click()
+    return true
+  }
+  return false
 }
 
 export interface BackButtonDeps {

@@ -185,6 +185,8 @@ export function ProofPanel({ titleId, piece, active, hub, focusId, onClose, jump
           onClick={onClose}
           aria-label="推敲案の一覧を閉じる"
           data-testid="proof-panel-close"
+          // Android の「戻る」で押す（src/platform/nativeInit.ts の closeTopLayer）
+          data-back-close="click"
         >
           <XIcon />
         </button>

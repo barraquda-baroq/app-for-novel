@@ -196,7 +196,7 @@ export function PieceBar({
         <ChevronRightIcon />
       </button>
 
-      <div className={`pw-view${menuOpen ? ' is-open' : ''}`} ref={viewRef}>
+      <div className={`pw-view${menuOpen ? ' is-open' : ''}`} ref={viewRef} data-back-close={menuOpen ? 'esc' : undefined}>
         {compact ? null : ratioControl}
 
         <label

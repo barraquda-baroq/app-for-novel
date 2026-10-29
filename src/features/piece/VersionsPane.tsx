@@ -356,7 +356,11 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
 
   return (
     <div className={`pw-pane pw-pane-compare${isActive ? ' is-active-selected' : ''}`} data-testid="compare-pane">
-      <div className={`pw-head pw-chead${moreOpen ? ' is-more-open' : ''}`} ref={headRef}>
+      <div
+        className={`pw-head pw-chead${moreOpen ? ' is-more-open' : ''}`}
+        ref={headRef}
+        data-back-close={moreOpen ? 'esc' : undefined}
+      >
         <button
           type="button"
           className="btn btn-ghost pw-tbtn pw-back"

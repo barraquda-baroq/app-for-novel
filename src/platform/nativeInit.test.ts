@@ -54,6 +54,42 @@ describe('closeTopLayer', () => {
   it('何も開いていなければ false', () => {
     expect(closeTopLayer()).toBe(false)
   })
+
+  it('原稿画面のポップオーバー（表示の設定・「…」）に Esc を送る', () => {
+    document.body.innerHTML = '<div class="pw-view is-open" data-back-close="esc" id="view"></div>'
+    const keys: string[] = []
+    document.addEventListener('keydown', (e) => keys.push(`${(e.target as HTMLElement).id}:${e.key}`))
+    expect(closeTopLayer()).toBe(true)
+    expect(keys).toEqual(['view:Escape'])
+  })
+
+  it('推敲案の一覧は閉じるボタンを押す', () => {
+    document.body.innerHTML = '<aside><button type="button" data-back-close="click" id="close"></button></aside>'
+    const clicked = vi.fn()
+    document.getElementById('close')!.addEventListener('click', clicked)
+    expect(closeTopLayer()).toBe(true)
+    expect(clicked).toHaveBeenCalledTimes(1)
+  })
+
+  it('ポップオーバーは推敲案の一覧より先、ダイアログはどちらよりも先に閉じる', () => {
+    document.body.innerHTML =
+      '<aside><button type="button" data-back-close="click" id="close"></button></aside>' +
+      '<div data-back-close="esc" id="pop"></div>' +
+      '<div class="modal-backdrop"><div class="modal" id="m"></div></div>'
+    const keys: string[] = []
+    const clicked = vi.fn()
+    document.addEventListener('keydown', (e) => keys.push(`${(e.target as HTMLElement).id}:${e.key}`))
+    document.getElementById('close')!.addEventListener('click', clicked)
+    expect(closeTopLayer()).toBe(true)
+    expect(keys).toEqual(['m:Escape'])
+    document.querySelector('.modal-backdrop')!.remove()
+    expect(closeTopLayer()).toBe(true)
+    expect(keys).toEqual(['m:Escape', 'pop:Escape'])
+    document.getElementById('pop')!.remove()
+    expect(closeTopLayer()).toBe(true)
+    expect(clicked).toHaveBeenCalledTimes(1)
+    expect(keys).toHaveLength(2)
+  })
 })
 
 describe('handleBackButton', () => {
@@ -63,6 +99,13 @@ describe('handleBackButton', () => {
     await handleBackButton(true, d)
     expect(d.back).not.toHaveBeenCalled()
     expect(d.minimize).not.toHaveBeenCalled()
+  })
+
+  it('推敲案の一覧が開いていれば、戻らずに閉じる', async () => {
+    document.body.innerHTML = '<button type="button" data-back-close="click"></button>'
+    const d = deps()
+    await handleBackButton(true, d)
+    expect(d.back).not.toHaveBeenCalled()
   })
 
   it('戻れる画面があれば戻る', async () => {

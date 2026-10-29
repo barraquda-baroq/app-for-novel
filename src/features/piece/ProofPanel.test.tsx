@@ -1,10 +1,12 @@
 // 原稿画面の「推敲案 n」と一覧: 本文（保存していない編集も含めて）の中で箇所を選ぶ・チェックする・別の幕へ移る
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { act } from 'react'
 import { createMemoryRouter, Outlet, RouterProvider, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { previewPaste } from '../../claude/paste'
 import { createPersistence } from '../../db/persistence'
+import { closeTopLayer } from '../../platform/nativeInit'
 import type { ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../store/appStore'
@@ -134,5 +136,61 @@ describe('原稿画面の推敲案', () => {
     await waitFor(() => expect(screen.getByTestId('location').textContent).toBe(`/t/${titleId}/p/${acts[1]}`))
     await waitFor(() => expect(editor().value.slice(editor().selectionStart, editor().selectionEnd)).toBe('見れる'))
     void user
+  })
+})
+
+describe('Android の「戻る」（closeTopLayer）', () => {
+  it('原稿画面のポップオーバー（表示の設定・「…」）→ 推敲案の一覧の順に閉じ、画面は離れない', async () => {
+    const user = userEvent.setup()
+    const { titleId, pieceIds } = seed(['一行目。\n\n窓から見れる景色。'])
+    suggest(titleId, [{ piece: '#1', excerpt: '見れる', category: 'ra_nuki', reason: 'ら抜き' }])
+    const id = Object.values(getData().proofSuggestions)[0].id
+    const path = `/t/${titleId}/p/${pieceIds[0]}`
+    renderAt(`${path}?ps=${id}`)
+    await screen.findByTestId('proof-panel')
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe(path))
+    const back = () => {
+      let closed = false
+      act(() => {
+        closed = closeTopLayer()
+      })
+      return closed
+    }
+
+    // 表示の設定
+    await user.click(screen.getByTestId('view-menu-button'))
+    expect(screen.getByTestId('view-menu-button').getAttribute('aria-expanded')).toBe('true')
+    expect(back()).toBe(true)
+    expect(screen.getByTestId('view-menu-button').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByTestId('proof-panel')).toBeTruthy()
+
+    // 採用原稿の「…」
+    await user.click(screen.getByTestId('active-more-button'))
+    expect(screen.getByTestId('active-more-button').getAttribute('aria-expanded')).toBe('true')
+    expect(back()).toBe(true)
+    expect(screen.getByTestId('active-more-button').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByTestId('proof-panel')).toBeTruthy()
+
+    // 推敲案の一覧
+    expect(back()).toBe(true)
+    expect(screen.queryByTestId('proof-panel')).toBeNull()
+    // もう閉じるものは無い（この後は前の画面へ戻る）
+    expect(back()).toBe(false)
+    expect(screen.getByTestId('location').textContent).toBe(path)
+  })
+
+  it('比較している稿の「…」も閉じる', async () => {
+    const user = userEvent.setup()
+    const { pieceIds, titleId } = seed(['一行目。'])
+    const v2 = actions.addVersion(pieceIds[0], { body: '二行目。' })
+    renderAt(`/t/${titleId}/p/${pieceIds[0]}?v=${v2}`)
+    await user.click(await screen.findByTestId('compare-more-button'))
+    expect(screen.getByTestId('compare-more-button').getAttribute('aria-expanded')).toBe('true')
+    let closed = false
+    act(() => {
+      closed = closeTopLayer()
+    })
+    expect(closed).toBe(true)
+    expect(screen.getByTestId('compare-more-button').getAttribute('aria-expanded')).toBe('false')
   })
 })
