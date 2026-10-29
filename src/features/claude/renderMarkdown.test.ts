@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderMarkdown } from './markdown'
+import { renderMarkdown } from './renderMarkdown'
 
 describe('批評の結果・戦略メモの Markdown（そのまま信用しない）', () => {
   it('ふつうの Markdown は HTML にする', () => {
