@@ -61,6 +61,14 @@ export const PlugIcon = (p: IconProps) => (
   </Svg>
 )
 
+/** 推敲案（蛍光ペン） */
+export const MarkerIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14.5 4.5l5 5-8.5 8.5H6v-5z" />
+    <path d="M12 7l5 5M4 21h16" />
+  </Svg>
+)
+
 /** 本文の中の場所へ（目） */
 export const LocateIcon = (p: IconProps) => (
   <Svg {...p}>

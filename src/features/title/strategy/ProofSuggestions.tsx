@@ -254,10 +254,12 @@ export interface ProofItemProps {
   onEdit?: (id: ID) => void
   /** 原稿画面の一覧（場所は出さず、押すと本文の中で選ぶ） */
   compact?: boolean
+  /** 原稿画面の一覧で、いま選んでいる推敲案 */
+  selected?: boolean
 }
 
 /** 推敲案の1行（戦略タブと原稿画面の一覧で使う） */
-export const ProofItem = memo(function ProofItem({ s, place, onJump, onEdit, compact }: ProofItemProps) {
+export const ProofItem = memo(function ProofItem({ s, place, onJump, onEdit, compact, selected }: ProofItemProps) {
   const [menu, setMenu] = useState<HTMLElement | null>(null)
   const category = proofCategoryLabel(s.category, s.categoryLabel)
   const badge = sourceLabel(s.source)
@@ -278,7 +280,7 @@ export const ProofItem = memo(function ProofItem({ s, place, onJump, onEdit, com
         : `${place.label}・${MISSING_LABEL}`
   return (
     <li
-      className={`ps-item${s.done ? ' is-done' : ''}${s.flagged ? ' is-flagged' : ''}${place.state !== 'found' ? ' is-lost' : ''}`}
+      className={`ps-item${s.done ? ' is-done' : ''}${s.flagged ? ' is-flagged' : ''}${place.state !== 'found' ? ' is-lost' : ''}${selected ? ' is-selected' : ''}`}
       data-testid="proof-item"
       data-proof-id={s.id}
       data-done={s.done}

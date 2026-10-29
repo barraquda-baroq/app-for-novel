@@ -21,8 +21,9 @@ import {
   pieceFullLabel,
   pieceLabel,
 } from '../../domain/structure'
+import { openProofSuggestionsFor } from '../../claude/order'
 import type { AppData, ID, Piece, Title } from '../../domain/types'
-import { paths } from '../../routes'
+import { paths, PROOF_PARAM } from '../../routes'
 import { getData, useData } from '../../store/appStore'
 import { usePrefs } from '../../store/uiStore'
 import { useDocumentTitle, useMediaQuery, useSplitOrientation } from '../../ui/hooks'
@@ -41,6 +42,7 @@ import { useKeyboardInset } from './keyboardInset'
 import { activeVersionOf, actNeighbors, neighborPieces, pieceHeading, resolveSelected } from './logic'
 import { PieceBar } from './PieceBar'
 import './piece.css'
+import { ProofChip, ProofPanel, useProofJump } from './ProofPanel'
 import { SaveControls } from './SaveControls'
 import { readCrashDraft, type CrashDraft } from './crashDraft'
 import { askOrphanDrafts, orphanState, type LastSeen } from './orphan'
@@ -248,6 +250,37 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
   const comparing = Boolean(selected)
   useScrollSync(scrollSync && comparing, rootRef, `${active?.id ?? ''}|${selected?.id ?? ''}|${showDiff ? 1 : 0}|${orientation}`)
 
+  // 推敲案（2.3）: この話・幕のチェックしていない推敲案の「推敲案 n」と一覧。?ps=<id> で開いた時はその箇所を選ぶ
+  const openProof = useMemo(
+    () => openProofSuggestionsFor(data, piece.id),
+    [data.proofSuggestions, data.pieces, piece.id], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const [proofOpen, setProofOpen] = useState(false)
+  const [proofFocus, setProofFocus] = useState<ID | null>(null)
+  const jumpToProof = useProofJump(title.id, piece, active, hub)
+  const proofParam = params.get(PROOF_PARAM)
+  useEffect(() => {
+    if (!proofParam) return
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete(PROOF_PARAM)
+        return next
+      },
+      { replace: true },
+    )
+    const s = getData().proofSuggestions[proofParam]
+    if (!s) return
+    setProofFocus(s.id)
+    // 狭い画面では一覧を開かず、本文のその箇所だけを見せる
+    if (!window.matchMedia?.('(max-width: 720px)').matches) setProofOpen(true)
+    // 本文欄ができてから選ぶ
+    const t = window.setTimeout(() => jumpToProof(s), 50)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proofParam])
+  const closeProof = useCallback(() => setProofOpen(false), [])
+
   // 保存していない編集があれば、移動する前に確かめる（usePieceSession.ts の useBlocker）
   const goTo = (id: ID | null) => {
     if (!id) return
@@ -420,12 +453,33 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
         orientation={orientation}
         ratio={splitRatio}
         onRatioChange={(r) => setPrefs({ splitRatio: r })}
-        first={<ActivePane api={api} active={active} />}
+        first={
+          <ActivePane
+            api={api}
+            active={active}
+            extra={
+              openProof.length || proofOpen ? (
+                <ProofChip count={openProof.length} open={proofOpen} onToggle={() => setProofOpen((v) => !v)} />
+              ) : null
+            }
+          />
+        }
         second={<VersionsPane api={api} active={active} selected={selected} showDiff={showDiff} />}
         firstLabel="採用原稿"
         secondLabel="推敲バージョン"
       />
       <SymbolBar hub={hub} dirty={dirty} onSave={() => void save()} />
+      {proofOpen ? (
+        <ProofPanel
+          titleId={title.id}
+          piece={piece}
+          active={active}
+          hub={hub}
+          focusId={proofFocus}
+          onClose={closeProof}
+          jump={jumpToProof}
+        />
+      ) : null}
     </div>
   )
 }

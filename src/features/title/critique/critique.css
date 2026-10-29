@@ -173,12 +173,28 @@
 .cq-snapshot summary {
   display: flex;
   align-items: center;
+  gap: 6px;
+  list-style: none;
   min-height: 36px;
   padding: 4px 10px;
   color: var(--text-muted);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.cq-snapshot summary::-webkit-details-marker {
+  display: none;
+}
+
+.cq-snapshot-chevron {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.15s;
+}
+
+.cq-snapshot[open] .cq-snapshot-chevron {
+  transform: rotate(90deg);
 }
 
 .cq-snapshot-text {

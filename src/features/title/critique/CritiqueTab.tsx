@@ -447,6 +447,7 @@ const ResultCard = memo(function ResultCard({
       {r.promptText.trim() ? (
         <details className="cq-snapshot">
           <summary data-testid="critique-result-prompt-toggle">
+            <ChevronRightIcon className="icon cq-snapshot-chevron" />
             使ったプロンプト{promptGone ? '（プロンプトは削除されています）' : ''}
           </summary>
           <pre className="cq-snapshot-text" data-testid="critique-result-prompt">
