@@ -110,7 +110,23 @@ function normalizeSnapshot(raw: unknown, texts: AppData['snapshotTexts'], fix: (
     }
     snap.pieces = pieces
   }
+  // 提出した梗概・あらすじ／キャッチコピーの控え（後から足した項目。古い記録には無い）
+  if (typeof raw.synopsis === 'string') snap.synopsis = raw.synopsis
+  if (typeof raw.catchphrase === 'string') snap.catchphrase = raw.catchphrase
   return snap
+}
+
+/**
+ * 応募計画の後から足した項目（規定の備考・提出する梗概／キャッチコピー・特記事項）。
+ * 古いデータには無いので、無い項目は無いまま（画面では空・規定なしとして扱い、補ったことにもしない）。
+ * ある項目は形だけ直す
+ */
+function submissionExtras(s: Submission): Partial<Submission> {
+  const out: Partial<Submission> = {}
+  for (const k of ['limitNote', 'synopsis', 'catchphrase', 'specialNotes'] as const) if (s[k] !== undefined) out[k] = str(s[k])
+  for (const k of ['synopsisMin', 'synopsisMax', 'catchphraseMin', 'catchphraseMax'] as const)
+    if (s[k] !== undefined) out[k] = numOrNull(s[k])
+  return out
 }
 
 export function repairData(input: AppData): RepairResult {
@@ -438,6 +454,7 @@ export function repairData(input: AppData): RepairResult {
       minChars: numOrNull(s.minChars),
       maxChars: numOrNull(s.maxChars),
       limitUnit: unit,
+      ...submissionExtras(s),
       result: str(s.result),
       revisionPlan: str(s.revisionPlan),
       resubmissionPlan: str(s.resubmissionPlan),

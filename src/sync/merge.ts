@@ -144,7 +144,8 @@ export const TEXT_FIELDS: Partial<Record<TableName, readonly string[]>> = {
   memos: ['body'],
   ideas: ['body'],
   settingEntries: ['body'],
-  submissions: ['overview', 'result', 'revisionPlan', 'resubmissionPlan'],
+  // 規定の備考・提出する梗概・あらすじ・特記事項も長い文章（キャッチコピーと文字数の規定は短い項目として項目ごとに合わせる）
+  submissions: ['overview', 'limitNote', 'synopsis', 'specialNotes', 'result', 'revisionPlan', 'resubmissionPlan'],
   titles: ['synopsis', 'strategyNote'],
   chapters: ['note'],
   versions: ['note'],

@@ -192,6 +192,10 @@ export interface SubmissionSnapshot {
   order?: ID[]
   /** pieceId -> 当時の内容（古い記録には無い） */
   pieces?: Record<ID, SnapshotPiece>
+  /** 応募時に提出した梗概・あらすじ（記録した時の応募計画の内容。古い記録には無い） */
+  synopsis?: string
+  /** 応募時に提出したキャッチコピー（古い記録には無い） */
+  catchphrase?: string
 }
 
 /** 規定の単位。chars = 文字数（空白・改行除く）、pages = 400字詰め原稿用紙換算の枚数 */
@@ -218,6 +222,21 @@ export interface Submission {
   minChars: number | null
   maxChars: number | null
   limitUnit?: LimitUnit
+  // 規定の備考・提出する梗概／キャッチコピー・特記事項は後から足した項目（古いデータには無い。無ければ空・規定なしとして扱う）
+  /** 規定の備考（ルビ不可・章タイトル必須など、コンテストごとに少しずつ違う注意点） */
+  limitNote?: string
+  /** 提出する梗概・あらすじ */
+  synopsis?: string
+  /** 梗概・あらすじの文字数の規定（空白・改行を除いた字数。未設定は null） */
+  synopsisMin?: number | null
+  synopsisMax?: number | null
+  /** 提出するキャッチコピー */
+  catchphrase?: string
+  /** キャッチコピーの文字数の規定（空白・改行を除いた字数。未設定は null） */
+  catchphraseMin?: number | null
+  catchphraseMax?: number | null
+  /** 特記事項（自由に書き込める欄） */
+  specialNotes?: string
   /** 結果の詳細・講評 */
   result: string
   /** 結果を踏まえた改稿方針 */

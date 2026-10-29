@@ -9,6 +9,14 @@ import {
   takeSnapshot,
   updateSubmission,
 } from '../../../domain/entityOps'
+import {
+  submissionExtraLines,
+  submissionTextOf,
+  submissionTextStatus,
+  textCountLabel,
+  textLimitCheck,
+  textLimitRange,
+} from '../../../domain/submissionTexts'
 import { bodyMetrics } from '../../../domain/text'
 import {
   addEpisode,
@@ -45,6 +53,7 @@ import {
   sortByDeadline,
   statusPhase,
   statusTone,
+  textLimitChips,
   toYmd,
 } from './strategyLogic'
 
@@ -544,5 +553,88 @@ describe('幕に分けた話の現在の原稿', () => {
     expect(manuscriptSummary(data, t.result)).toMatchObject({ chars: 5, episodes: 1, missingActive: 0, missingActs: 0 })
     data = setActiveVersion(data, s.result[0], null)
     expect(manuscriptSummary(data, t.result)).toMatchObject({ chars: 3, missingActive: 1, missingActs: 1, missingEpisodes: 0 })
+  })
+})
+
+describe('提出する梗概・あらすじ／キャッチコピー', () => {
+  it('文字数の判定（あと…字・…字超えています・規定内）。規定が無ければ判定しない', () => {
+    expect(textLimitCheck(250, 300, 400)).toEqual({ state: 'short', diff: 50, text: 'あと50字' })
+    expect(textLimitCheck(1_412, null, 400)).toEqual({ state: 'over', diff: 1_012, text: '1,012字超えています' })
+    expect(textLimitCheck(300, 300, 400)?.text).toBe('規定内')
+    expect(textLimitCheck(400, 300, 400)?.text).toBe('規定内')
+    expect(textLimitCheck(0, 1, null)?.text).toBe('あと1字')
+    expect(textLimitCheck(10, null, null)).toBeNull()
+    expect(textLimitRange(300, 400)).toBe('300〜400字')
+    expect(textLimitRange(1_000, null)).toBe('1,000字以上')
+    expect(textLimitRange(null, 40)).toBe('40字以内')
+    expect(textLimitRange(null, null)).toBe('')
+  })
+
+  it('原稿と同じ数え方: 空白・改行、ルビ・傍点の記号とルビの読みは数えない', () => {
+    const s = { synopsis: '｜海辺《うみべ》の　町で\n《《少女》》が\r\n 歌う。', synopsisMin: 12, synopsisMax: null }
+    expect(submissionTextStatus(s, 'synopsis')).toMatchObject({ count: 11, check: { state: 'short', text: 'あと1字' } })
+    expect(textCountLabel(submissionTextStatus(s, 'synopsis'))).toBe('11字（規定 12字以上・あと1字）')
+    expect(textCountLabel(submissionTextStatus({ catchphrase: '星を拾う。' }, 'catchphrase'))).toBe('5字')
+  })
+
+  it('古いデータ（項目が無い）は空・規定なしとして扱う', () => {
+    expect(submissionTextOf({}, 'synopsis')).toEqual({ text: '', min: null, max: null })
+    expect(submissionTextOf({ catchphrase: 'ひと言', catchphraseMax: 30 }, 'catchphrase')).toEqual({
+      text: 'ひと言',
+      min: null,
+      max: 30,
+    })
+    expect(textLimitChips({ status: 'planned' })).toEqual([])
+    expect(submissionExtraLines({})).toEqual([])
+  })
+
+  it('畳んだカードの札は、応募前で規定を外れているものだけ（規定内・規定なし・応募後は出さない）', () => {
+    const base = {
+      status: 'planned' as SubmissionStatus,
+      synopsis: 'あ'.repeat(612),
+      synopsisMin: 400,
+      synopsisMax: 600,
+      catchphrase: 'あ'.repeat(15),
+      catchphraseMin: 20,
+      catchphraseMax: 40,
+    }
+    expect(textLimitChips(base)).toEqual([
+      { field: 'synopsis', state: 'over', text: '梗概 +12字', title: '梗概・あらすじ 612字（規定 400〜600字）' },
+      { field: 'catchphrase', state: 'short', text: 'キャッチコピー あと5字', title: 'キャッチコピー 15字（規定 20〜40字）' },
+    ])
+    // 検討中も応募前
+    expect(textLimitChips({ ...base, status: 'considering' })).toHaveLength(2)
+    // 規定内・規定なしは出さない
+    expect(textLimitChips({ ...base, synopsis: 'あ'.repeat(500) }).map((c) => c.field)).toEqual(['catchphrase'])
+    expect(textLimitChips({ ...base, catchphraseMin: null, catchphraseMax: null }).map((c) => c.field)).toEqual(['synopsis'])
+    // 応募した後は出さない
+    for (const status of ['submitted', 'reviewing', 'passed', 'won', 'rejected', 'withdrawn'] as const)
+      expect(textLimitChips({ ...base, status })).toEqual([])
+    // 空でも規定があれば数える（下限に足りない）
+    expect(textLimitChips({ status: 'planned', synopsis: '', synopsisMin: 1_000, synopsisMax: null })[0].text).toBe(
+      '梗概 あと1,000字',
+    )
+  })
+
+  it('Claude に渡す一覧の抜粋（書いていない項目は出さない）', () => {
+    expect(
+      submissionExtraLines({
+        limitNote: 'ルビ不可。\n章タイトル必須。',
+        synopsis: 'あ'.repeat(330),
+        synopsisMin: 100,
+        synopsisMax: 300,
+        catchphrase: 'その嘘は、世界を救うためについた。',
+        catchphraseMax: 40,
+        specialNotes: '',
+      }),
+    ).toEqual([
+      '規定の備考: ルビ不可。 章タイトル必須。',
+      '梗概・あらすじ: 330字（規定 100〜300字・30字超えています）',
+      'キャッチコピー: 17字（規定 40字以内・規定内） 「その嘘は、世界を救うためについた。」',
+    ])
+    expect(submissionExtraLines({ synopsis: '', synopsisMax: 800, specialNotes: '担当さんに確認' })).toEqual([
+      '梗概・あらすじ: 0字（規定 800字以内・規定内）',
+      '特記事項: 担当さんに確認',
+    ])
   })
 })

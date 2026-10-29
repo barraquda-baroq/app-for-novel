@@ -1,5 +1,6 @@
 // 応募計画1件のカード。見出し行に応募順・コンテスト名・状態と、状態に応じた情報
-// （応募前: 締切・規定の判定／結果待ち: 応募日・結果発表まで／終了: 結果・改稿方針・再応募方針の抜粋）、開くと詳細を編集できる。
+// （応募前: 締切・規定の判定・提出する梗概／キャッチコピーの規定の注意／結果待ち: 応募日・結果発表まで／
+// 終了: 結果・改稿方針・再応募方針の抜粋）、開くと詳細を編集できる。
 import { memo, useId, useMemo, useRef, useState } from 'react'
 import {
   SUBMISSION_STATUSES,
@@ -12,7 +13,14 @@ import {
   type SubmissionPatch,
 } from '../../../domain/entityOps'
 import { strippedBody } from '../../../domain/ruby'
-import { formatCount } from '../../../domain/text'
+import {
+  SUBMISSION_TEXT,
+  SUBMISSION_TEXT_FIELDS,
+  submissionTextOf,
+  textLimitCheck,
+  type SubmissionTextField,
+} from '../../../domain/submissionTexts'
+import { countChars, formatCount } from '../../../domain/text'
 import { trashNotice } from '../../../domain/trash'
 import type {
   AppData,
@@ -60,6 +68,7 @@ import {
   snapshotView,
   statusPhase,
   statusTone,
+  textLimitChips,
   toYmd,
   unitSuffix,
   type CurrentManuscript,
@@ -79,7 +88,10 @@ export function contestDisplayName(name: string): string {
   return name.trim() || '（コンテスト名未設定）'
 }
 
-/** 規定は入力の途中で判定しないよう、確定（Enter・フォーカスを外す）した時だけ保存する */
+/**
+ * 規定は入力の途中（日本語入力で「10万」と変換している途中など）で判定しないよう、確定（Enter・フォーカスを外す）した
+ * 時だけ保存する。DraftField はふつうの欄の 1.5 秒の区切りを、これほど長い delay には当てはめない
+ */
 const LIMIT_COMMIT_DELAY = 10 * 60 * 1000
 
 const LIMIT_BADGE: Record<LimitCheck['state'], string> = {
@@ -156,6 +168,8 @@ export const SubmissionCard = memo(function SubmissionCard({
   const submittedOn = phase === 'waiting' ? formatYmd(s.submittedOn) : ''
   const basis = phase === 'finished' ? null : limitBasis(s, current, recorded)
   const check = basis ? limitCheck(basis.amount, s.minChars, s.maxChars, unit, limitTense(s.status)) : null
+  // 提出する梗概・キャッチコピーの規定の注意（応募前で規定を外れている時だけ）。カードの内容が変わった時だけ数える
+  const textChips = useMemo(() => textLimitChips(s), [s])
   const followUps = phase === 'finished' && !expanded ? followUpLines(s) : null
   const followUpsEmpty = followUps !== null && followUps.every((f) => !f.text)
   const name = contestDisplayName(s.contestName)
@@ -233,6 +247,17 @@ export const SubmissionCard = memo(function SubmissionCard({
                   {limitBadgeText(check, basis.source)}
                 </span>
               ) : null}
+              {textChips.map((c) => (
+                <span
+                  key={c.field}
+                  className={`badge ${LIMIT_BADGE[c.state]}`}
+                  data-testid="submission-text-limit"
+                  data-field={c.field}
+                  title={c.title}
+                >
+                  {c.text}
+                </span>
+              ))}
             </span>
             {followUps && !followUpsEmpty ? (
               <span className="sg-followups" data-testid="submission-followups">
@@ -339,6 +364,11 @@ function OrderRow({ position, count, onUp, onDown }: { position: number; count: 
   )
 }
 
+/** 梗概・あらすじかキャッチコピーを書いてある（応募計画、または応募時の記録の控え） */
+function hasSubmittedTexts(x: Partial<Record<SubmissionTextField, string>>): boolean {
+  return SUBMISSION_TEXT_FIELDS.some((f) => Boolean(x[f]?.trim()))
+}
+
 /**
  * 状態を「応募済み」（または応募前から「選考中」）にした時、応募時の原稿がまだ記録されていなければ、
  * 今の採用原稿を記録するか尋ねる。記録する場合は、応募日が空なら今日を入れる。
@@ -357,6 +387,7 @@ async function changeStatus(id: string, next: SubmissionStatus): Promise<void> {
     message:
       `現在の採用原稿（${formatCount(summary.chars)}字・${pieceCountLabel(summary.episodes, summary.specials)}）を、` +
       `この応募先に応募した原稿として記録します。後から改稿しても、応募した時の内容を見返せます。` +
+      (hasSubmittedTexts(prev) ? '梗概・あらすじとキャッチコピーも、今の内容を提出したものとして控えます。' : '') +
       (prev.submittedOn.trim() ? '' : `\n応募日には今日（${formatYmd(today)}）を入れます。`),
     confirmLabel: '記録する',
     cancelLabel: '記録しない',
@@ -435,7 +466,7 @@ function SubmissionEditor({
   }
 
   const text = (
-    field: 'overview' | 'result' | 'revisionPlan' | 'resubmissionPlan',
+    field: 'overview' | 'limitNote' | 'specialNotes' | 'result' | 'revisionPlan' | 'resubmissionPlan',
     label: string,
     placeholder: string,
     testId: string,
@@ -446,7 +477,8 @@ function SubmissionEditor({
         key={`${s.id}:${field}`}
         className="textarea sg-textarea"
         rows={2}
-        value={s[field]}
+        // 規定の備考・特記事項は後から足した項目（古いデータには無い）
+        value={s[field] ?? ''}
         onCommit={(v) => commitSubmission(s.id, { [field]: v })}
         placeholder={placeholder}
         data-testid={testId}
@@ -648,14 +680,39 @@ function SubmissionEditor({
             ) : null}
           </p>
           {minMaxInvalid ? <p className="small sg-limit-warn">下限が上限より大きくなっています。</p> : null}
+          <div className="sg-limit-note">
+            {text(
+              'limitNote',
+              '規定の備考',
+              '例：ルビ不可、章タイトル必須、縦書きの指定、改行・空行のルールなど',
+              'submission-limit-note',
+            )}
+          </div>
         </fieldset>
 
         {text(
           'overview',
           'コンテストの概要',
-          '対象ジャンル・賞金や賞典・選考の流れ・応募規定・求められている作風など',
+          '対象ジャンル・賞金や賞典・選考の流れ・求められている作風など（細かな規定は上の「規定の備考」へ）',
           'submission-overview',
         )}
+        <SubmissionTextBox
+          key={`${s.id}:synopsis`}
+          submission={s}
+          field="synopsis"
+          rows={3}
+          placeholder="応募フォームや原稿の冒頭に付ける梗概・あらすじ（結末まで書くかなどは募集要項に合わせて）"
+          testId="submission-synopsis"
+        />
+        <SubmissionTextBox
+          key={`${s.id}:catchphrase`}
+          submission={s}
+          field="catchphrase"
+          rows={1}
+          placeholder="作品をひと言で伝えるキャッチコピー"
+          testId="submission-catchphrase"
+        />
+        {text('specialNotes', '特記事項', '自由に書き込めます', 'submission-special-notes')}
         {text('result', '結果・講評', '選考結果、編集者や選考委員の講評、評価シートの内容など', 'submission-result')}
         {text(
           'revisionPlan',
@@ -683,6 +740,120 @@ function SubmissionEditor({
           閉じる
         </button>
       </div>
+    </div>
+  )
+}
+
+/** 提出する文章の文字数の規定の単位（梗概・キャッチコピーは字数で決まっていることがほとんど） */
+const TEXT_LIMIT_SUFFIX = unitSuffix('chars')
+
+/** 提出する文章の入力欄の見出し */
+const TEXT_HEADING: Record<SubmissionTextField, string> = {
+  synopsis: '提出する梗概・あらすじ',
+  catchphrase: 'キャッチコピー',
+}
+
+/**
+ * 原稿と一緒に提出する文章（梗概・あらすじ、キャッチコピー）。本文・文字数の規定（下限〜上限。原稿の規定と同じく
+ * 確定した時だけ保存する）と、入力中の文字数（原稿と同じ数え方）・規定の判定
+ */
+function SubmissionTextBox({
+  submission: s,
+  field,
+  rows,
+  placeholder,
+  testId,
+}: {
+  submission: Submission
+  field: SubmissionTextField
+  rows: number
+  placeholder: string
+  testId: string
+}) {
+  const uid = useId()
+  const def = SUBMISSION_TEXT[field]
+  const { text, min, max } = submissionTextOf(s, field)
+  // 数は入力中の下書きで数える（保存を待たずに変わる）
+  const [draft, setDraft] = useState(text)
+  const count = useMemo(() => countChars(draft), [draft])
+  const check = textLimitCheck(count, min, max)
+  // 数字として読めない入力をしたら、その入力欄だけを保存済みの値に戻す（規定の欄と同じ）
+  const [reset, setReset] = useState({ min: 0, max: 0 })
+
+  const commitLimit = (which: 'min' | 'max', raw: string) => {
+    const parsed = parseLimit(raw)
+    if (parsed === undefined) {
+      notifyError(`${def.name}の文字数は数字で入力してください（例：800、1万）`)
+      setReset((prev) => ({ ...prev, [which]: prev[which] + 1 }))
+      return
+    }
+    commitSubmission(s.id, which === 'min' ? { [def.min]: parsed } : { [def.max]: parsed })
+  }
+
+  const limitInput = (which: 'min' | 'max') => {
+    const value = which === 'min' ? min : max
+    const word = which === 'min' ? '下限' : '上限'
+    return (
+      <label className="sg-limit-field">
+        <span className="visually-hidden">
+          {def.name}の{word}
+        </span>
+        <span aria-hidden="true" className="sg-limit-label">
+          {word}
+        </span>
+        <DraftInput
+          key={`${s.id}:${field}:${which}:${reset[which]}`}
+          className="input sg-limit-input is-text"
+          inputMode="numeric"
+          value={value === null ? '' : String(value)}
+          onCommit={(v) => commitLimit(which, v)}
+          delay={LIMIT_COMMIT_DELAY}
+          placeholder="なし"
+          data-testid={`${testId}-${which}`}
+        />
+        <span className="sg-limit-unit">{TEXT_LIMIT_SUFFIX}</span>
+      </label>
+    )
+  }
+
+  return (
+    <div className="field sg-text-box" data-testid={`${testId}-box`}>
+      <label className="field-label" htmlFor={`${uid}-text`}>
+        {TEXT_HEADING[field]}
+      </label>
+      <GrowTextarea
+        key={`${s.id}:${field}`}
+        id={`${uid}-text`}
+        className={`textarea sg-textarea${rows <= 1 ? ' is-short' : ''}`}
+        rows={rows}
+        value={text}
+        onCommit={(v) => commitSubmission(s.id, { [field]: v })}
+        onDraftChange={setDraft}
+        placeholder={placeholder}
+        data-testid={testId}
+      />
+      <div className="sg-text-foot">
+        <span className="sg-limit-inputs" role="group" aria-label={`${def.name}の文字数の規定`}>
+          {limitInput('min')}
+          <span className="sg-limit-sep" aria-hidden="true">
+            〜
+          </span>
+          {limitInput('max')}
+        </span>
+        <p className={`sg-limit-status small${check ? ` is-${check.state}` : ''}`} data-testid={`${testId}-count`}>
+          <span className="sg-text-count">{formatCount(count)}字</span>
+          <span className="faint">（空白・改行を除く）</span>
+          {check ? (
+            <>
+              {' → '}
+              <strong>{check.text}</strong>
+            </>
+          ) : null}
+        </p>
+      </div>
+      {min !== null && max !== null && min > max ? (
+        <p className="small sg-limit-warn">下限が上限より大きくなっています。</p>
+      ) : null}
     </div>
   )
 }
@@ -742,7 +913,11 @@ function SnapshotBox({
     if (latest.snapshot) {
       const ok = await confirmDialog({
         title: '応募時の原稿を記録し直しますか？',
-        message: `前回の記録（${formatDateTime(latest.snapshot.at)}・${formatCount(snapshotCounts(getData(), latest.snapshot).charCount)}字）は、現在の採用原稿で上書きされます。`,
+        message:
+          `前回の記録（${formatDateTime(latest.snapshot.at)}・${formatCount(snapshotCounts(getData(), latest.snapshot).charCount)}字）は、現在の採用原稿で上書きされます。` +
+          (hasSubmittedTexts(latest) || hasSubmittedTexts(latest.snapshot)
+            ? '提出した梗概・あらすじとキャッチコピーの控えも、今の内容になります。'
+            : ''),
         confirmLabel: '記録し直す',
       })
       if (!ok) return
@@ -795,6 +970,7 @@ function SnapshotBox({
               記録した後、採用原稿は変わっていません。
             </p>
           )}
+          <SubmittedTexts snapshot={snap} />
           {view.detailed ? (
             <>
               <details className="sg-snap-details" open={rowsOpen} onToggle={(e) => setRowsToggled(e.currentTarget.open)}>
@@ -848,7 +1024,7 @@ function SnapshotBox({
         </>
       ) : (
         <p className="small muted">
-          応募した時点で、どの稿を採用していたか・本文・文字数を記録しておけます。後から改稿しても、応募した原稿を読み返したり書き出したりでき、変えた話がひと目で分かります。
+          応募した時点で、どの稿を採用していたか・本文・文字数（と、提出した梗概・あらすじ／キャッチコピー）を記録しておけます。後から改稿しても、応募した原稿を読み返したり書き出したりでき、変えた話がひと目で分かります。
         </p>
       )}
       {reading && snap && recorded ? (
@@ -861,6 +1037,47 @@ function SnapshotBox({
         />
       ) : null}
     </section>
+  )
+}
+
+/** 提出した文章の控えを最初から開いておく長さの上限（長い梗概は畳んでおく） */
+const OPEN_TEXT_CHARS = 200
+const OPEN_TEXT_LINES = 4
+
+/** 応募時に記録した、提出した梗概・あらすじ／キャッチコピー（読むだけ）。古い記録・空のものは出さない */
+function SubmittedTexts({ snapshot }: { snapshot: SubmissionSnapshot }) {
+  const items = SUBMISSION_TEXT_FIELDS.map((field) => ({ field, text: snapshot[field] ?? '' })).filter((x) => x.text.trim())
+  if (!items.length) return null
+  return (
+    <div className="sg-snap-texts" data-testid="snapshot-texts">
+      {items.map((x) => (
+        <SubmittedText key={x.field} field={x.field} text={x.text} />
+      ))}
+    </div>
+  )
+}
+
+function SubmittedText({ field, text }: { field: SubmissionTextField; text: string }) {
+  const count = useMemo(() => countChars(text), [text])
+  const long = text.length > OPEN_TEXT_CHARS || text.split('\n').length > OPEN_TEXT_LINES
+  const [open, setOpen] = useState(!long)
+  const label = SUBMISSION_TEXT[field].name
+  return (
+    <details
+      className="sg-snap-details"
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+      data-testid={`snapshot-${field}`}
+    >
+      <summary data-testid={`snapshot-${field}-toggle`}>
+        提出した{label}（{formatCount(count)}字）
+      </summary>
+      {open ? (
+        <p className="sg-snap-text-body" data-testid={`snapshot-${field}-text`}>
+          {text}
+        </p>
+      ) : null}
+    </details>
   )
 }
 

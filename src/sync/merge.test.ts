@@ -195,6 +195,52 @@ describe('長い文章の項目が両方で書き換えられた時', () => {
     expect((r.record as typeof base).name).toBe('こちら')
     expect(r.joined).toBeUndefined()
   })
+  it('応募計画: 規定の備考・提出する梗概・特記事項はつなぎ、キャッチコピーと文字数の規定は短い項目（この端末を優先）', () => {
+    const base = {
+      id: 's',
+      limitNote: '元',
+      synopsis: '元',
+      specialNotes: '元',
+      catchphrase: '元',
+      synopsisMax: 800,
+      catchphraseMax: 40,
+      updatedAt: 1,
+    }
+    const mine = {
+      ...base,
+      limitNote: 'こちらの備考',
+      synopsis: 'こちらの梗概',
+      specialNotes: 'こちらのメモ',
+      catchphrase: 'こちら',
+      synopsisMax: 600,
+      catchphraseMax: 30,
+    }
+    const theirs = {
+      ...base,
+      limitNote: 'あちらの備考',
+      synopsis: 'あちらの梗概',
+      specialNotes: 'あちらのメモ',
+      catchphrase: 'あちら',
+      synopsisMax: 1000,
+      catchphraseMax: 50,
+    }
+    const r = mergeRemote('submissions', base, mine, theirs, D)
+    const rec = r.record as typeof base
+    expect(r.joined).toEqual(['limitNote', 'synopsis', 'specialNotes'])
+    expect(rec.synopsis).toBe('あちらの梗概\n\n――――（同期の競合: テスト端末で同時に書かれた内容）――――\nこちらの梗概')
+    expect(rec.limitNote).toContain('あちらの備考')
+    expect(rec.limitNote).toContain('こちらの備考')
+    expect(rec.catchphrase).toBe('こちら')
+    expect([rec.synopsisMax, rec.catchphraseMax]).toEqual([600, 30])
+  })
+  it('項目を知らない古い版の端末が応募計画を書き換えても、知らない項目はクラウドの内容のまま残る', () => {
+    // 古い版の端末の控え（base）と内容（mine）には新しい項目が無い。クラウド（theirs）では別の端末が書いていた
+    const base = { id: 's', overview: '元', updatedAt: 1 }
+    const mine = { ...base, overview: '古い端末で書いた概要' }
+    const theirs = { ...base, synopsis: '新しい端末で書いた梗概', synopsisMax: 800, updatedAt: 2 }
+    const rec = mergeRemote('submissions', base, mine, theirs, D).record as typeof theirs & typeof mine
+    expect(rec).toMatchObject({ overview: '古い端末で書いた概要', synopsis: '新しい端末で書いた梗概', synopsisMax: 800 })
+  })
   it('同じ内容になっていれば、クラウドの内容そのもの（更新日時も）を使う', () => {
     const base = { id: 'm', body: '元', updatedAt: 1 }
     const theirs = { ...base, body: '同じ', updatedAt: 7 }

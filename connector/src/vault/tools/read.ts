@@ -35,6 +35,13 @@ import {
   titleSummary,
 } from '../../../../src/domain/entityOps'
 import { actParts, adoptedMetrics, isSplit, pieceFullLabel, pieceLabel } from '../../../../src/domain/structure'
+import {
+  SUBMISSION_TEXT,
+  SUBMISSION_TEXT_FIELDS,
+  submissionExtraLines,
+  submissionTextStatus,
+  textLimitRange,
+} from '../../../../src/domain/submissionTexts'
 import { bodyMetrics, formatCount } from '../../../../src/domain/text'
 import type { AppData, ID, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
 import { bool, fail, head, itemBudget, length, num, ok, pageBody, str, strList, titleArg, type ToolResult } from './common'
@@ -380,6 +387,27 @@ function limitText(s: Submission, chars: number, pages: number): string {
   return `規定 ${range}（いま ${formatCount(cur)}${unit}・${check}）`
 }
 
+/**
+ * 1つの応募計画を全文で読む時の、後から足した項目（規定の備考・提出する梗概／キャッチコピーと文字数・規定の判定・特記事項）。
+ * 古いデータには無い。書いていない項目（梗概・キャッチコピーは規定も無いもの）は出さない
+ */
+function submissionExtrasFull(x: Submission): string[] {
+  const out: string[] = []
+  if ((x.limitNote ?? '').trim()) out.push(`--- 規定の備考 ---\n${x.limitNote}`)
+  for (const field of SUBMISSION_TEXT_FIELDS) {
+    const st = submissionTextStatus(x, field)
+    if (!st.text.trim() && !st.check) continue
+    const limit = st.check ? `・規定 ${textLimitRange(st.min, st.max)} → ${st.check.text}` : ''
+    out.push(
+      `--- 提出する${SUBMISSION_TEXT[field].name} ---`,
+      `${formatCount(st.count)}字（空白・改行を除く）${limit}`,
+      st.text.trim() ? st.text : '（まだ書いていません）',
+    )
+  }
+  if ((x.specialNotes ?? '').trim()) out.push(`--- 特記事項 ---\n${x.specialNotes}`)
+  return out
+}
+
 function findBy<T extends { id: ID }>(list: readonly T[], kind: Parameters<typeof shortId>[0], ref: string): T[] {
   return list.filter((x) => matchesId(kind, ref, x.id))
 }
@@ -456,6 +484,7 @@ export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
           `URL: ${x.url || '―'} / 応募日: ${x.submittedOn || '―'} / 結果の日: ${x.resultOn || '―'}`,
           limitText(x, s.activeChars, pages),
           `--- 概要 ---\n${x.overview || '（なし）'}`,
+          ...submissionExtrasFull(x),
           `--- 結果・講評 ---\n${x.result || '（なし）'}`,
           `--- 改稿方針 ---\n${x.revisionPlan || '（なし）'}`,
           `--- 再応募方針 ---\n${x.resubmissionPlan || '（なし）'}`,
@@ -558,7 +587,11 @@ export function getStrategy(ctx: ReadContext, args: Args): ToolResult {
   lines.push(`--- 応募計画（${subs.length}件）---`)
   for (const x of subs)
     lines.push(
-      `${shortId('submission', x.id)}「${x.contestName.trim() || '（名前なし）'}」${x.organizer ? `${x.organizer} / ` : ''}${submissionStatusLabel(x.status)} / ${deadlineText(day, x.deadline)} / ${limitText(x, s.activeChars, pages)}${x.overview.trim() ? `\n  概要: ${head(x.overview, 60)}` : ''}`,
+      [
+        `${shortId('submission', x.id)}「${x.contestName.trim() || '（名前なし）'}」${x.organizer ? `${x.organizer} / ` : ''}${submissionStatusLabel(x.status)} / ${deadlineText(day, x.deadline)} / ${limitText(x, s.activeChars, pages)}`,
+        ...(x.overview.trim() ? [`概要: ${head(x.overview, 60)}`] : []),
+        ...submissionExtraLines(x, head),
+      ].join('\n  '),
     )
   lines.push('1つを全文で読むには submission_id・note_id・revision_idea_id（全体戦略は section="overall"）を指定してください。')
   return ok(lines.join('\n'))
