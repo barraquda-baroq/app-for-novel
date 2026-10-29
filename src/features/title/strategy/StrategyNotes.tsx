@@ -134,7 +134,7 @@ const NoteCard = memo(function NoteCard({
       <h3 className="sn-heading">{heading}</h3>
       {note.body.trim() ? (
         <div className={`sn-body${long && !full ? ' is-clamped' : ''}`}>
-          <Markdown text={note.body} testId="strategy-memo-body" />
+          <Markdown text={note.body} preview={long && !full} testId="strategy-memo-body" />
         </div>
       ) : null}
       {long ? (
