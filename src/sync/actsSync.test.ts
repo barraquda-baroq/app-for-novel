@@ -311,6 +311,40 @@ describe('バックアップからの復元と幕', () => {
   }
 })
 
+describe('バックアップから戻した端末と、その後の幕の操作', () => {
+  it('戻した後に分けた話は、送る前に自分の復元の書き込みが届き直しても（購読し直した）、分けたまま送る', async () => {
+    const start = scenarioStart({ body: 'ABCDEFGHI', splitAt: null })
+    const ep = start.ep
+    const cloud = new FakeCloud()
+    const x = new FakeDevice('X', cloud)
+    const y = new FakeDevice('Y', cloud)
+    await x.edit(() => start.data)
+    await settle(x, y)
+    const backup = await x.load()
+    await x.restore(backup)
+    await x.sync()
+    await settle(x, y)
+    const restoreTs = cloud.ts
+    x.notes = []
+    await x.edit((d) => A.separatePiece(d, ep, [3]).data)
+    await x.edit((d) => S.updateVersion(d, d.pieces[actsIds(d, ep)[1]].activeVersionId!, { body: 'DEFGHI+X' }))
+    // 送る前に購読し直した（再読み込み・オフラインから戻った）: 記録した位置と同じ時刻の、自分の復元の書き込みが届き直す
+    x.cursor = restoreTs - 1
+    await x.receive()
+    const raw = await x.load()
+    expect(structureProblems(raw)).toEqual([])
+    expect(raw.pieces[ep].actIds).toHaveLength(2)
+    await settle(x, y)
+    expect(await sameData(x, y)).toBe(true)
+    const d = await y.load()
+    expect(structureProblems(d)).toEqual([])
+    const v = repairData(d).data
+    expect(isSplit(v.pieces[ep])).toBe(true)
+    expect(activeBody(v, v.pieces[ep])).toBe('ABCDEFGHI+X')
+    expect(x.notes.filter((n) => n.kind === 'acts')).toEqual([])
+  })
+})
+
 describe('分けてから解除した話と、元の稿の書き換え', () => {
   it('解除の後で書き換えられた元の稿と解除した稿をまとめて受け取った端末には、知らせを出さない', async () => {
     const start = scenarioStart({ body: 'ABCDEF', splitAt: null })

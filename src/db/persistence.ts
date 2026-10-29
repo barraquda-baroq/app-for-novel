@@ -760,6 +760,11 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     const newVersions: string[] = []
     /** この端末で変えていたのに、別の端末で消された話・幕 */
     const editedHere = new Set<string>()
+    /**
+     * 別の端末の復元・すべて削除の内容をそのまま当てた話・幕（3b で、その下のこの端末だけの幕・稿を片付ける）。
+     * この端末の内容を残した時（この端末が書いたものの返事・この端末の復元をまだ送っていない）は入れない
+     */
+    const resetApplied = new Set<string>()
     for (const ch of changes) {
       if (!KNOWN_TABLES.has(ch.table)) continue
       const k = outboxKey(ch.table, ch.id)
@@ -793,6 +798,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         if (queued) await db.outbox.delete(k)
         if (ch.record) {
           if (!deepEqual(disk, ch.record)) await w.put(ch.table, ch.record)
+          if (ch.table === 'pieces') resetApplied.add(ch.id)
         } else if (disk) {
           await w.del(ch.table, ch.id, disk)
           noteDeleted(parents, ch.table, ch.id)
@@ -866,10 +872,12 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
     // ---------- 3b. 別の端末がバックアップから戻した話・幕の下の、この端末だけの幕・稿 ----------
     // 戻した内容を正とする（この端末の送信待ちは 2 で消した）。この端末で分けた・つないだまま送っていない幕・稿は
     // クラウドに無いので、戻した端末は消さない。話の幕の並び・稿の一覧に載らないまま残らないように、稿を控えて片付ける
-    // （稿は 7 で、残る幕・話の稿「（競合: ○○での幕の操作）」か、採用原稿にそのまま入っていればゴミ箱の1件に）
+    // （稿は 7 で、残る幕・話の稿「（競合: ○○での幕の操作）」か、採用原稿にそのまま入っていればゴミ箱の1件に）。
+    // 2 で戻した内容をそのまま当てた話・幕だけ（端末内 = 戻した内容）。この端末の内容を残した話・幕は、端末内の幕の並び・
+    // 稿の一覧がこの端末の幕・稿を載せているので片付けない
     const localOnly = async (table: TableName, id: string) => (await rowOf(table, id))?.base === null
     for (const ch of changes) {
-      if (!ch.reset || ch.table !== 'pieces' || !ch.record || skip.has(outboxKey(ch.table, ch.id))) continue
+      if (!ch.reset || ch.table !== 'pieces' || !ch.record || !resetApplied.has(ch.id)) continue
       const rec = ch.record as PieceRec
       const ep = isEpisodeRecord(rec) ? ch.id : isActRecord(rec) ? parentIdOf(rec) : null
       if (!ep) continue
