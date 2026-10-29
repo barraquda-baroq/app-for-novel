@@ -1,6 +1,8 @@
 // アプリ（iPhone / Android）の Google ログイン。端末のアカウント選択（Android は Credential Manager、iPhone は Google Sign-In）で
 // ID トークンだけを受け取り、ログインそのものは Web と同じ Firebase JS SDK で行う（src/sync/firebase.ts の signInWithCredential）。
-// 同期・アクセスルール・持ち主の確認は Web と同じものがそのまま働く。プラグインはアプリでログインする時だけ読み込む。
+// 同期・アクセスルール・持ち主の確認は Web と同じものがそのまま働く。プラグインはアプリでログインする時だけ呼ぶ。
+import { registerPlugin } from '@capacitor/core'
+import type { FirebaseAuthenticationPlugin } from '@capacitor-firebase/authentication'
 
 /** 時間内に終わらなければ code = timeoutCode のエラーで失敗させる */
 export function withTimeout<T>(p: Promise<T>, ms: number, timeoutCode = 'native-timeout'): Promise<T> {
@@ -24,12 +26,14 @@ export const SIGN_IN_TIMEOUT_MS = 120_000
 /** ログアウトを待つ長さ（端末側の状態を消せなくても、アプリのログアウトは済んでいる） */
 const SIGN_OUT_TIMEOUT_MS = 5_000
 
-const plugin = async () => (await import('@capacitor-firebase/authentication')).FirebaseAuthentication
+// パッケージの入口は読み込まない（Web 版の実装が firebase/auth のほぼ全部を Firebase のチャンクに引き込むため）。呼ぶとアプリのネイティブのプラグインに届く。
+// registerPlugin が返すもの（Proxy）はどの名前にも関数を返す（then も）。async 関数から返したり await したりすると then が呼ばれて
+// 「then() is not implemented」で終わらなくなるので、メソッドをそのまま呼ぶ
+const FirebaseAuthentication = registerPlugin<FirebaseAuthenticationPlugin>('FirebaseAuthentication')
 
 /** 端末の Google のアカウント選択を開き、選んだアカウントの ID トークンを返す */
 export async function nativeGoogleIdToken(): Promise<string> {
-  const auth = await plugin()
-  const r = await withTimeout(auth.signInWithGoogle({ skipNativeAuth: true }), SIGN_IN_TIMEOUT_MS)
+  const r = await withTimeout(FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true }), SIGN_IN_TIMEOUT_MS)
   const token = r.credential?.idToken
   if (!token) throw Object.assign(new Error('no idToken'), { code: 'auth/missing-id-token' })
   return token
@@ -38,8 +42,7 @@ export async function nativeGoogleIdToken(): Promise<string> {
 /** 端末のアカウント選択の状態も消す（次のログインで別のアカウントを選べるように） */
 export async function nativeSignOut(): Promise<void> {
   try {
-    const auth = await plugin()
-    await withTimeout(auth.signOut(), SIGN_OUT_TIMEOUT_MS)
+    await withTimeout(FirebaseAuthentication.signOut(), SIGN_OUT_TIMEOUT_MS)
   } catch {
     /* 消せなくても、アプリのログアウトは済んでいる */
   }

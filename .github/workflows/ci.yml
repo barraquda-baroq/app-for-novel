@@ -45,6 +45,9 @@ jobs:
         run: npm run test:connector:emu
       - name: ビルド
         run: npm run build
+      # アプリでだけ使うログインのプラグインの Web 版の実装が、Web 版の Firebase のチャンクに入っていないこと（src/platform/nativeAuth.ts）
+      - name: Web 版の中身の確かめ
+        run: node scripts/check-web-bundle.mjs
       - name: E2E テスト用ブラウザ
         run: npx playwright install --with-deps chromium webkit
       # E2E_WEBKIT: iPhone のアプリのキーボードの配置（e2e/native-keyboard.spec.ts）を WebKit でも確かめる

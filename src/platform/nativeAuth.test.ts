@@ -4,10 +4,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const h = vi.hoisted(() => ({
   signInWithGoogle: vi.fn(),
   signOut: vi.fn(),
+  registered: [] as string[],
 }))
 
-vi.mock('@capacitor-firebase/authentication', () => ({
-  FirebaseAuthentication: { signInWithGoogle: h.signInWithGoogle, signOut: h.signOut },
+// 本物の registerPlugin と同じく Proxy を返す。どの名前にも関数を返し、アプリに無いメソッド（then など）は
+// 「not implemented」で失敗する（受け取った resolve / reject は呼ばない）。await すると終わらなくなるのを確かめるため
+vi.mock('@capacitor/core', () => ({
+  registerPlugin: (name: string) => {
+    h.registered.push(name)
+    const methods: Record<string, unknown> = { signInWithGoogle: h.signInWithGoogle, signOut: h.signOut }
+    return new Proxy(
+      {},
+      {
+        get: (_t, prop) =>
+          methods[String(prop)] ?? (() => Promise.reject(new Error(`"${name}.${String(prop)}()" is not implemented on android`))),
+      },
+    )
+  },
 }))
 
 import { describeNativeAuthError, nativeGoogleIdToken, nativeSignOut, SIGN_IN_TIMEOUT_MS, withTimeout } from './nativeAuth'
@@ -18,6 +31,12 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.useRealTimers()
+})
+
+describe('プラグイン', () => {
+  it('パッケージの入口ではなく、アプリのプラグインを名前で呼ぶ（Web 版の実装を読み込まない）', () => {
+    expect(h.registered).toEqual(['FirebaseAuthentication'])
+  })
 })
 
 describe('nativeGoogleIdToken', () => {
