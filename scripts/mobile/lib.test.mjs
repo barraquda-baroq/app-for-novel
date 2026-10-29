@@ -263,6 +263,17 @@ describe('adb', () => {
     expect(lib.parseAdbDevices('List of devices attached\n\n')).toEqual([])
   })
 
+  it('スマホを待つ時の状態（許可を待っている・まだ無い・使える）', () => {
+    const d = (serial, state) => ({ serial, state, model: '' })
+    expect(lib.adbWaitState([], undefined)).toBe('missing')
+    expect(lib.adbWaitState([d('A', 'unauthorized')], undefined)).toBe('unauthorized')
+    expect(lib.adbWaitState([d('A', 'authorizing')], undefined)).toBe('unauthorized')
+    expect(lib.adbWaitState([d('A', 'offline')], undefined)).toBe('missing')
+    expect(lib.adbWaitState([d('A', 'unauthorized'), d('B', 'device')], undefined)).toBe('ready')
+    expect(lib.adbWaitState([d('B', 'device')], 'A')).toBe('missing')
+    expect(lib.adbWaitState([d('A', 'unauthorized'), d('B', 'device')], 'A')).toBe('unauthorized')
+  })
+
   it('インストールの失敗は「アプリを削除しない」案内にする', () => {
     expect(lib.explainInstallFailure('Performing Streamed Install\nSuccess\n')).toBeNull()
     const sig = lib.explainInstallFailure(

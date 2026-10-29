@@ -291,6 +291,14 @@ export function parseAdbDevices(text) {
   return out
 }
 
+/** スマホを待つ時の状態（ready = 入れられる、unauthorized = スマホの画面で許可を待っている、missing = まだ見つからない） */
+export function adbWaitState(devices, serial) {
+  const mine = serial ? devices.filter((d) => d.serial === serial) : devices
+  if (mine.some((d) => d.state === 'device')) return 'ready'
+  if (mine.some((d) => d.state === 'unauthorized' || d.state === 'authorizing')) return 'unauthorized'
+  return 'missing'
+}
+
 /** adb install の出力を見て、失敗の時の日本語の案内を返す（成功・分からない時は null） */
 export function explainInstallFailure(text) {
   const t = String(text ?? '')

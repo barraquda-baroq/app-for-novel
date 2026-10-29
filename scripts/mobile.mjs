@@ -557,6 +557,30 @@ async function androidPreflight() {
   return { jbr, sdk, env: { ...process.env, JAVA_HOME: jbr, ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, [pathKey]: PATH } }
 }
 
+/**
+ * ビルドの前に adb を動かして、スマホに「USB デバッグを許可しますか？」を出す（パソコンの adb がスマホとやり取りした時に初めて出る）。
+ * 許可される（つながる）まで 60 秒ほど待つ。待っても使えなければ false（理由は chooseDevice が説明する）
+ */
+export async function waitForDevice(adb, env, serial, { tries = 30, intervalMs = 2000 } = {}) {
+  const told = new Set()
+  for (let i = 0; i < tries; i++) {
+    const r = await exec(adb, ['devices', '-l'], { capture: true, env })
+    if (r.code !== 0) throw new Stop(`adb を動かせませんでした:\n${r.out.trim()}`)
+    const state = lib.adbWaitState(lib.parseAdbDevices(r.out), serial)
+    if (state === 'ready') return true
+    if (!told.has(state)) {
+      told.add(state)
+      say(
+        state === 'unauthorized'
+          ? 'スマホの画面の「USB デバッグを許可しますか？」で「このパソコンからの接続を常に許可」にチェックして「許可」を押してください（60 秒待ちます）…'
+          : 'スマホを USB ケーブルでつないで、ロックを外してください（60 秒待ちます）…',
+      )
+    }
+    if (i < tries - 1) await sleep(intervalMs)
+  }
+  return false
+}
+
 async function chooseDevice(adb, env, serial) {
   const r = await exec(adb, ['devices', '-l'], { capture: true, env })
   if (r.code !== 0) throw new Stop(`adb を動かせませんでした:\n${r.out.trim()}`)
@@ -564,12 +588,12 @@ async function chooseDevice(adb, env, serial) {
   const ready = all.filter((d) => d.state === 'device')
   if (serial) {
     const d = ready.find((x) => x.serial === serial)
-    if (!d) throw new Stop(`--serial ${serial} のスマホが見つかりません。`)
+    if (!d) throw new Stop(`スマホ（${serial}）が見つかりません。USB でつないでロックを外してから、もう一度試してください。`)
     return d
   }
   if (ready.length === 1) return ready[0]
   if (ready.length === 0) {
-    if (all.some((d) => d.state === 'unauthorized'))
+    if (all.some((d) => d.state === 'unauthorized' || d.state === 'authorizing'))
       throw new Stop(
         'スマホが USB デバッグを許可していません。スマホの画面の「USB デバッグを許可しますか？」で「このパソコンからの接続を常に許可」にチェックして「許可」を押し、もう一度試してください。',
       )
@@ -594,6 +618,10 @@ async function chooseDevice(adb, env, serial) {
 
 async function androidInstall(opts) {
   const { sdk, env } = await androidPreflight()
+  // 長いビルドの前にスマホを確かめる（初めての時の「USB デバッグを許可しますか？」もここで出る）。見つからなければビルドせずに止める
+  const adb = lib.adbIn(ctx.platform, sdk)
+  await waitForDevice(adb, env, opts.serial)
+  const first = await chooseDevice(adb, env, opts.serial)
   await buildAndSync('android')
   say('\n▶ Android のアプリのビルド（gradlew assembleRelease。初めての時は部品のダウンロードで 5〜15 分かかります）')
   const g = lib.gradleCommand(ctx.platform, ['assembleRelease'])
@@ -602,12 +630,12 @@ async function androidInstall(opts) {
     throw new Stop(
       'Android のアプリのビルドに失敗しました（上の表示を見てください）。' +
         (ctx.platform === 'win32'
-          ? '\n  「パスが長すぎる」「Filename longer than 260 characters」と出た時は、リポジトリを C:\\dev\\app-for-novel のような短い場所に置き直してください（docs/MOBILE.md）。'
+          ? '\n  「パスが長すぎる」「Filename longer than 260 characters」と出た時は、リポジトリを C:\\Users\\<名前>\\dev\\app-for-novel のような短い場所に置き直してください（docs/MOBILE.md）。'
           : ''),
     )
   ok(`できました: ${rel(files.releaseApk)}`)
-  const adb = lib.adbIn(ctx.platform, sdk)
-  const device = await chooseDevice(adb, env, opts.serial)
+  // ビルドの間に外した時は、ここで知らせる（選んだスマホをもう一度聞かない）
+  const device = await chooseDevice(adb, env, first.serial)
   say(`\n▶ ${device.model || device.serial} に上書きで入れます（adb install -r。スマホのデータはそのまま）`)
   const r = await exec(adb, ['-s', device.serial, 'install', '-r', files.releaseApk], { capture: true, env })
   process.stdout.write(r.out)
