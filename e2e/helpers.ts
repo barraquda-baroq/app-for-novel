@@ -16,6 +16,8 @@ interface DevHook {
   connectorOrigin: string
   /** 手動連携の貼り付けと同じ作り方で Claude の記録を足す（戻り値は足した数） */
   pasteClaude: (titleId: string, text: string, now?: number) => Promise<number>
+  /** iPhone のアプリのキーボードの高さが届いたことにする（src/platform/keyboard.ts） */
+  setNativeKeyboard: (h: number) => void
 }
 
 declare global {

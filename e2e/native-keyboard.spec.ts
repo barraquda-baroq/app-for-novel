@@ -8,8 +8,7 @@ const W = 390
 const H = 844
 const KB = 336
 
-const setKeyboard = (page: Page, px: number) =>
-  page.evaluate((h) => (window as unknown as { __ns: { setNativeKeyboard: (h: number) => void } }).__ns.setNativeKeyboard(h), px)
+const setKeyboard = (page: Page, px: number) => page.evaluate((h) => window.__ns.setNativeKeyboard(h), px)
 
 const bottomOf = async (l: Locator) => {
   const b = (await l.boundingBox())!
