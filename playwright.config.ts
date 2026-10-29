@@ -28,5 +28,10 @@ export default defineConfig({
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1400, height: 900 } } },
     { name: 'mobile', use: { ...devices['Pixel 7'] } },
+    // iPhone のアプリ（WKWebView）と同じ WebKit で、キーボードの上の配置を確かめる。WebKit を入れた所（CI）だけで動かす:
+    // npx playwright install webkit のあと E2E_WEBKIT=1
+    ...(process.env.E2E_WEBKIT
+      ? [{ name: 'webkit', testMatch: '**/native-keyboard.spec.ts', use: { ...devices['Desktop Safari'] } }]
+      : []),
   ],
 })
