@@ -81,6 +81,33 @@ export function newTokenKey() {
   return randomBytes(32).toString('base64url')
 }
 
+/** wrangler の出力の最後の数行（失敗の理由を見せる。秘密は標準入力で渡すので出力には出ない） */
+export function lastLines(text, n = 6) {
+  return String(text ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.trimEnd())
+    .filter(Boolean)
+    .slice(-n)
+    .map((l) => `    ${l}`)
+    .join('\n')
+}
+
+/**
+ * 鍵（TOKEN_ENC_KEY）を用意する（run は wrangler。テストでは差し替える）。もうあれば、そのまま使う（rotate の時だけ作り直す）。
+ * 鍵があるか確かめられなかった時（一時的な失敗）は、作り直さずに止まる: 作り直すと Claude との連携が切れるため。
+ * 戻り値: { ok: true, created, rotated } か { ok: false, reason: 'list_failed' | 'put_failed', why }（why は wrangler の表示の最後の数行）
+ */
+export async function ensureTokenKey(run, { rotate = false, makeKey = newTokenKey, onRotate = () => {} } = {}) {
+  const list = await run(['secret', 'list', '--format', 'json'], { capture: true, quiet: true })
+  if (list.code !== 0) return { ok: false, reason: 'list_failed', why: lastLines(`${list.stderr}\n${list.stdout}`) }
+  const hasKey = /"name"\s*:\s*"TOKEN_ENC_KEY"/.test(list.stdout)
+  if (hasKey && !rotate) return { ok: true, created: false, rotated: false }
+  if (hasKey) onRotate()
+  const put = await run(['secret', 'put', 'TOKEN_ENC_KEY'], { input: makeKey(), capture: true, quiet: true })
+  if (put.code !== 0) return { ok: false, reason: 'put_failed', why: lastLines(`${put.stderr}\n${put.stdout}`) }
+  return { ok: true, created: true, rotated: hasKey }
+}
+
 /** パッケージの CLI の JS ファイル（fromDir から見つける） */
 export function binOf(pkg, binName, fromDir) {
   const require = createRequire(path.join(fromDir, 'package.json'))

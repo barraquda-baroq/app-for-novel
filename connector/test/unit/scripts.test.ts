@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { vaultConfig, workerConfig } from '../../src/config'
 // prettier-ignore
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import { answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
+import { answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, ensureTokenKey, isConnectorOrigin, newTokenKey, parseWorkersUrl, readLocalConfig, writeLocalConfig } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector, parseCheckArgs } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
@@ -136,6 +136,45 @@ describe('スクリプトの部品', () => {
     for (const a of ['n', 'ｎ', 'no', 'いいえ']) expect(answerIsYes(a), a).toBe(false)
     expect(answerIsYes('')).toBe(true)
     expect(answerIsYes('', false)).toBe(false)
+  })
+
+  it('鍵: あればそのまま。確かめられない時（一時的な失敗）は作り直さずに止まり、wrangler の理由を見せる', async () => {
+    type Call = { args: string[]; input?: string }
+    const fake = (answers: Record<string, { code: number; stdout?: string; stderr?: string }>) => {
+      const calls: Call[] = []
+      const run = async (args: string[], opts: { input?: string } = {}) => {
+        calls.push({ args, input: opts.input })
+        const a = answers[args.slice(0, 2).join(' ')] ?? { code: 0 }
+        return { code: a.code, stdout: a.stdout ?? '', stderr: a.stderr ?? '' }
+      }
+      return { run, calls }
+    }
+    const has = '[{"name":"TOKEN_ENC_KEY","type":"secret_text"}]'
+    // もうある: 作らない
+    const kept = fake({ 'secret list': { code: 0, stdout: has } })
+    expect(await ensureTokenKey(kept.run)).toEqual({ ok: true, created: false, rotated: false })
+    expect(kept.calls.map((c) => c.args[1])).toEqual(['list'])
+    // 一覧が一時的に失敗: 鍵を作り直さない（作り直すと連携が切れる）
+    const blip = fake({ 'secret list': { code: 1, stderr: '✘ [ERROR] A request to the Cloudflare API failed. (status 503)' } })
+    const r = await ensureTokenKey(blip.run)
+    expect(r).toMatchObject({ ok: false, reason: 'list_failed' })
+    expect(r.why).toContain('status 503')
+    expect(blip.calls.map((c) => c.args[1])).toEqual(['list'])
+    // 初めて（一覧は空）: 作って標準入力で渡す
+    const first = fake({ 'secret list': { code: 0, stdout: '[]' } })
+    expect(await ensureTokenKey(first.run, { makeKey: () => 'k'.repeat(43) })).toEqual({ ok: true, created: true, rotated: false })
+    expect(first.calls[1]).toEqual({ args: ['secret', 'put', 'TOKEN_ENC_KEY'], input: 'k'.repeat(43) })
+    // 保存に失敗: 理由を見せる（鍵そのものは出力に無い）
+    const denied = fake({ 'secret list': { code: 0, stdout: '[]' }, 'secret put': { code: 1, stderr: 'Authentication error [code: 10000]' } })
+    const d = await ensureTokenKey(denied.run, { makeKey: () => 'secret-value' })
+    expect(d).toMatchObject({ ok: false, reason: 'put_failed' })
+    expect(d.why).toContain('code: 10000')
+    expect(d.why).not.toContain('secret-value')
+    // 作り直す（--rotate-key）: 知らせてから作る
+    let warned = false
+    const rot = fake({ 'secret list': { code: 0, stdout: has } })
+    expect(await ensureTokenKey(rot.run, { rotate: true, onRotate: () => (warned = true) })).toEqual({ ok: true, created: true, rotated: true })
+    expect(warned).toBe(true)
   })
 
   it('鍵は32バイトの乱数（毎回違う）', () => {

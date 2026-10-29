@@ -16,7 +16,7 @@ import {
   MISSING_CONNECTOR_DEPS,
   ask,
   dcrEnabledInConfig,
-  newTokenKey,
+  ensureTokenKey,
   ng,
   nodeVersionOk,
   ok,
@@ -104,19 +104,20 @@ async function main() {
 
   // 4. 鍵
   say('\n[4/7] 鍵（TOKEN_ENC_KEY）を用意します（画面には出しません）')
-  const list = await wrangler(['secret', 'list', '--format', 'json'], { capture: true, quiet: true })
-  const hasKey = list.code === 0 && /"name"\s*:\s*"TOKEN_ENC_KEY"/.test(list.stdout)
-  if (hasKey && !flags.has('--rotate-key')) ok('鍵はもう設定されています（そのまま使います）')
-  else {
-    if (hasKey) say('  鍵を作り直します（Claude との連携は、claude.ai でコネクタに接続し直すまで止まります）。')
-    const put = await wrangler(['secret', 'put', 'TOKEN_ENC_KEY'], { input: newTokenKey(), capture: true, quiet: true })
-    if (put.code !== 0) {
-      ng('鍵を保存できませんでした。もう一度実行してください。')
-      process.exitCode = 1
-      return
-    }
-    ok('鍵を作って Cloudflare に保存しました')
+  const key = await ensureTokenKey(wrangler, {
+    rotate: flags.has('--rotate-key'),
+    onRotate: () => say('  鍵を作り直します（Claude との連携は、claude.ai でコネクタに接続し直すまで止まります）。'),
+  })
+  if (!key.ok) {
+    if (key.reason === 'list_failed')
+      ng('Cloudflare で鍵があるか確かめられませんでした（鍵はそのままです）。しばらく待ってから、もう一度実行してください。')
+    else ng('鍵を保存できませんでした。しばらく待ってから、もう一度実行してください。')
+    if (key.why) say(key.why)
+    process.exitCode = 1
+    return
   }
+  if (key.created) ok('鍵を作って Cloudflare に保存しました')
+  else ok('鍵はもう設定されています（そのまま使います）')
 
   // 5. 確かめる（公開が行き渡るまで少し待つ）
   say('\n[5/7] コネクタを確かめます')
