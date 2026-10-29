@@ -737,9 +737,30 @@ export function searchTextView(data: AppData, titleId: ID, opts: SearchOptions):
   }
   const what = `「${query}」${mode === 'regex' ? '（正規表現）' : ''}`
   const where = `${scope === 'adopted' ? '採用原稿' : 'すべての稿'}・#${range.from}〜#${range.to}・ルビを除いた本文`
+  // 続きがあれば、このページで調べたのは範囲の途中まで（「見つかりません」「N件」を全体の答えのように言わない）
+  let note = ''
+  if (next) {
+    const ref = (u: number) => units[u]?.label.split(' ')[0] ?? `#${range.from}`
+    const first = opts.cursor ? ref(at.u) : `#${range.from}`
+    // 最後に（途中まで・すべて）調べた区切り
+    const lastU = next.o > 0 ? next.u : next.u - 1
+    const last = ref(Math.max(lastU, at.u))
+    const span = first === last ? first : `${first}〜${last}`
+    note = `。${span} まで調べました${next.o > 0 ? `（${last} は途中まで）` : ''}。残りは 続き の cursor で（cursor が無くなるまで探し終わっていません）`
+  }
   const head = opts.countOnly
-    ? `${what} ${formatCount(total + hits)}件（${where}）${counts.size ? `: ${[...counts].map(([i, n]) => `#${i} ×${n}`).join('、')}` : ''}`
-    : `${what} の検索（${where}）: ${hits ? `${formatCount(total + 1)}〜${formatCount(total + hits)}件目` : total ? '続きはありません' : '見つかりません'}`
+    ? `${what} ${next ? 'ここまで ' : ''}${formatCount(total + hits)}件（${where}）${counts.size ? `: ${[...counts].map(([i, n]) => `#${i} ×${n}`).join('、')}` : ''}${note}`
+    : `${what} の検索（${where}）: ${
+        hits
+          ? `${formatCount(total + 1)}〜${formatCount(total + hits)}件目`
+          : next
+            ? total
+              ? 'ここまで新しい一致はありません'
+              : 'ここまで見つかりません'
+            : total
+              ? '続きはありません'
+              : '見つかりません'
+      }${note}`
   const nextCursor = next ? encodeCursor({ k: 'search', t: titleId, q: qkey, u: next.u, o: next.o, n: total + hits }) : null
   const tail = nextCursor ? [`続き: cursor="${nextCursor}"（${units[next!.u].label}から）`] : []
   return { ok: true, text: [head, ...lines, ...tail].join('\n'), nextCursor }

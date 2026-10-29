@@ -203,4 +203,46 @@ describe('検索（searchTextView）', () => {
     const r = ok(searchTextView(n.data, n.titleId, { query: '見れる', scope: 'all_versions' }))
     expect(r.text).toContain('#1 第1話 第1稿（採用中）')
   })
+  it('調べる量の上限で途中まで: 見出しは調べた範囲と「途中」を言い、続きで最後の話の一致まで届く', () => {
+    const bodies = Array.from({ length: 6 }, (_, i) => `第${i + 1}話の本文です。雨の音がする。`)
+    bodies[5] += '珍しい言葉。'
+    const n = novel(bodies)
+    const first = ok(searchTextView(n.data, n.titleId, { query: '珍しい言葉', workBudget: 20 }))
+    const head = first.text.split('\n')[0]
+    expect(head).toContain('まで調べました')
+    expect(head).toContain('ここまで見つかりません')
+    expect(head).not.toMatch(/: 見つかりません$/)
+    expect(head).toContain('#1 まで調べました')
+    expect(first.nextCursor).not.toBeNull()
+    // 件数だけでも、途中なら「ここまで」
+    const count = ok(searchTextView(n.data, n.titleId, { query: '雨の音', countOnly: true, workBudget: 20 }))
+    expect(count.text.split('\n')[0]).toMatch(
+      /^「雨の音」 ここまで 1件（採用原稿・#1〜#6・ルビを除いた本文）: #1 ×1。#1 まで調べました。/,
+    )
+    // cursor をたどると最後の話で見つかり、最後のページは途中と言わない
+    let cursor: string | null = first.nextCursor
+    let found = ''
+    let last = ''
+    for (let i = 0; i < 10 && cursor; i++) {
+      const page = ok(searchTextView(n.data, n.titleId, { query: '珍しい言葉', workBudget: 20, cursor }))
+      last = page.text.split('\n')[0]
+      found += page.text
+      cursor = page.nextCursor
+    }
+    expect(cursor).toBeNull()
+    expect(found).toContain('#6 第6話 ¶1')
+    expect(last).not.toContain('まで調べました')
+    let n2 = 0
+    let c2: string | null = null
+    let countLast = ''
+    do {
+      const page = ok(
+        searchTextView(n.data, n.titleId, { query: '雨の音', countOnly: true, workBudget: 20, ...(c2 ? { cursor: c2 } : {}) }),
+      )
+      countLast = page.text.split('\n')[0]
+      c2 = page.nextCursor
+      n2++
+    } while (c2 && n2 < 10)
+    expect(countLast).toMatch(/^「雨の音」 6件（採用原稿・#1〜#6・ルビを除いた本文）/)
+  })
 })
