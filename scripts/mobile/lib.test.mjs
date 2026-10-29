@@ -398,8 +398,15 @@ describe('ビルドの結果', () => {
 })
 
 describe('コマンド', () => {
-  it('引数（--android・--ios を付けなければ両方）', () => {
-    expect(lib.parseMobileArgs(['firebase'])).toMatchObject({ command: 'firebase', android: true, ios: true })
+  it('引数（--android・--ios を付けなければ、Mac は両方・Windows は Android だけ）', () => {
+    expect(lib.parseMobileArgs(['firebase'], 'darwin')).toMatchObject({
+      command: 'firebase',
+      android: true,
+      ios: true,
+      defaulted: true,
+    })
+    // iPhone のアプリは Mac で作るので、Windows では Android だけ
+    expect(lib.parseMobileArgs(['firebase'], 'win32')).toMatchObject({ android: true, ios: false, defaulted: true })
     expect(lib.parseMobileArgs(['firebase', '--android'])).toMatchObject({ android: true, ios: false })
     expect(lib.parseMobileArgs(['firebase', '--ios', '--team', 'ABCDE12345'])).toMatchObject({
       android: false,

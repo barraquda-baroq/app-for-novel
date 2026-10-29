@@ -500,10 +500,21 @@ export function parseApksignerSha256(text) {
 // ---- コマンドの引数 ----
 
 /**
- * scripts/mobile.mjs の引数。command と、--android・--ios、値を取る --team・--use・--serial・--ios-client-id
+ * scripts/mobile.mjs の引数。command と、--android・--ios、値を取る --team・--use・--serial・--ios-client-id。
+ * --android・--ios のどちらも付けない時（defaulted）は、Mac では両方、Windows などでは Android だけ（iPhone のアプリは Mac で作るので）
  */
-export function parseMobileArgs(argv) {
-  const out = { command: '', android: false, ios: false, team: '', use: '', serial: '', iosClientId: '', unknown: [] }
+export function parseMobileArgs(argv, platform = process.platform) {
+  const out = {
+    command: '',
+    android: false,
+    ios: false,
+    defaulted: false,
+    team: '',
+    use: '',
+    serial: '',
+    iosClientId: '',
+    unknown: [],
+  }
   const takes = { '--team': 'team', '--use': 'use', '--serial': 'serial', '--ios-client-id': 'iosClientId' }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -515,10 +526,10 @@ export function parseMobileArgs(argv) {
     else if (!a.startsWith('-') && !out.command) out.command = a
     else out.unknown.push(a)
   }
-  // どちらも付けない時は両方
   if (!out.android && !out.ios) {
+    out.defaulted = true
     out.android = true
-    out.ios = true
+    out.ios = platform === 'darwin'
   }
   return out
 }

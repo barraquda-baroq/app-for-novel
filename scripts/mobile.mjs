@@ -4,7 +4,8 @@
 //   npm run mobile:keystore                        Android の署名の鍵を作る（パスワードは画面に出さずに2回入力）
 //   npm run mobile:keystore -- --use <鍵のファイル>  別のパソコンで作った鍵を、このパソコンでも使う
 //   npm run mobile:firebase [-- --android | --ios] [--team <チームID>]
-//                                                  Firebase にアプリを登録し、ログインの設定ファイルを取ってくる（先に npx firebase login）
+//                                                  Firebase にアプリを登録し、ログインの設定ファイルを取ってくる（先に npx firebase login）。
+//                                                  どちらも付けない時は、Mac では両方、Windows では Android だけ
 //   npm run android:install [-- --serial <端末>]   ビルドして、USB でつないだ Android のスマホに上書きで入れる
 //   npm run android:open                           ビルドして Android Studio で開く
 //   npm run ios:open                               （Mac だけ）ビルドして Xcode で開く
@@ -482,12 +483,14 @@ async function firebaseCommand(opts) {
     try {
       allOk = (await firebaseAndroid()) && allOk
     } catch (e) {
-      if (!(e instanceof Stop) || opts.ios === false || !opts.bothDefault) throw e
+      // Mac で両方の時は、Android の準備（鍵）がまだでも iPhone は続ける
+      if (!(e instanceof Stop) || !opts.ios || !opts.defaulted) throw e
       ng(e.message)
       allOk = false
     }
   }
   if (opts.ios) allOk = (await firebaseIos(opts)) && allOk
+  else if (opts.defaulted) say('\n（iPhone の設定は Mac で npm run mobile:firebase -- --ios --team <チームID>）')
   if (!allOk) process.exitCode = 1
   else
     say(
@@ -635,7 +638,6 @@ const USAGE = `使い方（docs/MOBILE.md）:
 
 export async function main(argv = process.argv.slice(2)) {
   const opts = lib.parseMobileArgs(argv)
-  opts.bothDefault = !argv.includes('--android') && !argv.includes('--ios')
   const commands = {
     doctor,
     keystore: () => keystore(opts),

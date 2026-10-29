@@ -329,6 +329,10 @@ API キー（Browser key）に「ウェブサイトの制限」が付いてい�
 
 Android の `versionCode`（`20400`）・`versionName` は `android/app/build.gradle` が `package.json` から作ります。
 
+スクリプトを使わずに手で写す時は、`npm run build:native` の後に `npx cap sync android`・`npx cap sync ios` とプラットフォームを付けます
+（付けない `npx cap sync` は、Windows では iPhone の部分（Swift Package のシンボリックリンク）で失敗します）。
+`ios/` の Xcode のプロジェクトのファイル（`project.pbxproj`）を手で直した時は、CI の `ios` が通ることを確かめてください。
+
 データの形の版（`DATA_MODEL`）を上げる版を出す時は、先に TestFlight に上げて `npm run android:install` もし、
 両方の端末に新しい版を入れてから `npm run deploy` します（同じ日に続けて。古い版のアプリは送るのを止めて「要更新」になります）。
 
