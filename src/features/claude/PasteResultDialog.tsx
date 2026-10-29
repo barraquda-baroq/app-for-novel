@@ -111,7 +111,7 @@ export function PasteResultDialog({ titleId, critique, promptId, onClose, onAdde
               </select>
             </label>
             <label className="field">
-              <span>アーティファクトの URL（任意・https）</span>
+              <span>アーティファクトの URL（任意・https。答えに無い時に使います）</span>
               <input
                 className="input"
                 type="url"

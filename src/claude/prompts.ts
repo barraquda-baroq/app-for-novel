@@ -116,7 +116,7 @@ export function critiqueManualPrompt(
       title_id: shortId('title', c.title.id),
       ...(c.prompt ? { prompt_id: shortId('critiquePrompt', c.prompt.id) } : {}),
       run_date: c.today,
-      result_markdown: '## 総評\\n…',
+      result_markdown: '## 総評\n…',
       ...(c.scope ? { scope: c.scope } : {}),
     },
   })
@@ -146,7 +146,7 @@ export function strategyPrompt(c: PromptContext): string {
         title_id: tid,
         run_date: c.today,
         heading: '今後の応募戦略',
-        body: '## 狙い\\n…',
+        body: '## 狙い\n…',
         contests: [
           {
             name: '〇〇小説大賞',

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { addClaudeRecords, addCritiquePrompt } from '../domain/claudeOps'
 import { novel } from '../test/claudeFixture'
 import { extractBlock, parseCalls, PASTE_FENCE, previewPaste } from './paste'
-import { buildManualParts, critiqueConnectorPrompt, MANUAL_PART_CHARS } from './prompts'
+import { buildManualParts, critiqueConnectorPrompt, critiqueManualPrompt, MANUAL_PART_CHARS, strategyPrompt } from './prompts'
 import { WRITE_TOOLS } from './records'
 
 const NOW = Date.UTC(2026, 9, 28, 3, 0)
@@ -44,6 +44,14 @@ describe('依頼文とパート分け', () => {
       expect(calls.ok).toBe(true)
       if (calls.ok) for (const c of calls.calls) expect(WRITE_TOOLS).toContain(c.tool)
     }
+  })
+  it('JSON の例の改行は \\n が1つ（文字列の中の改行の書き方と同じ）', () => {
+    const c = { title: { id: 'title-1', name: '星の庭' }, rangeLabel: 'タイトル全体', parts: 1, today: '2026-10-28' }
+    const crit = critiqueManualPrompt({ ...c, prompt: null })
+    const strat = strategyPrompt(c)
+    expect(crit).toContain('## 総評\\n…')
+    expect(strat).toContain('## 狙い\\n…')
+    for (const p of [crit, strat]) expect(p).not.toContain('\\\\n')
   })
   it('作品批評は批評プロンプトの本文を入れ、ルビを除いて送る。戦略は目次・全体戦略・応募計画も送る', () => {
     const n = novel(['｜東京《とうきょう》へ'])
@@ -145,6 +153,30 @@ describe('貼り付け', () => {
     })
     expect(wrong.ok).toBe(false)
     expect(previewPaste(n.data, 'ただの文', { titleId: n.titleId, now: NOW }).ok).toBe(false)
+  })
+  it('作品批評のコードブロックに URL が無ければ、画面で入れた URL を使う（答えの URL はそのまま）', () => {
+    const n = novel(['本文'])
+    const typed = 'https://claude.ai/public/artifacts/typed'
+    const opts = { titleId: n.titleId, now: NOW, plainCritique: { artifactUrl: typed } }
+    const p = previewPaste(n.data, answer({ tool: 'novel_add_critique_result', input: { result_markdown: '## 総評' } }), opts)
+    if (!p.ok) throw new Error(p.error)
+    expect(p.plain).toBe(false)
+    expect(p.records[0].record).toMatchObject({ resultMarkdown: '## 総評', artifactUrl: typed })
+    const own = 'https://claude.ai/public/artifacts/own'
+    const q = previewPaste(
+      n.data,
+      answer({ tool: 'novel_add_critique_result', input: { result_markdown: '## 総評', artifact_url: own } }),
+      opts,
+    )
+    if (!q.ok) throw new Error(q.error)
+    expect(q.records[0].record).toMatchObject({ artifactUrl: own })
+    // https でなければ、1件ごとの結果で断る
+    const bad = previewPaste(n.data, answer({ tool: 'novel_add_critique_result', input: { result_markdown: '## 総評' } }), {
+      ...opts,
+      plainCritique: { artifactUrl: 'http://example.com/x' },
+    })
+    if (!bad.ok) throw new Error(bad.error)
+    expect(bad.created).toBe(0)
   })
   it('戦略は戦略メモと改稿案をまとめて貼り付けられる', () => {
     const n = novel(['本文'])

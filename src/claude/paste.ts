@@ -1,7 +1,8 @@
 // 手動連携の「結果を貼り付け」。Claude の答えの最後の ```novel-studio-v1 のコードブロックの JSON を読み、
 // コネクタと同じ作り方（src/claude/records.ts）で記録にする（source = 'paste'。id は内容から作るので、2回貼り付けても増えない）。
 // JSON の形は、コネクタの書き込みツールの呼び出し {"tool": "novel_add_proofreading", "input": {…}}、またはその配列。
-// 作品批評は、コードブロックが無ければ答えの Markdown をそのまま結果として受け付ける（URL は画面で入れる）。
+// 作品批評は、コードブロックが無ければ答えの Markdown をそのまま結果として受け付ける（URL は画面で入れる。コードブロックの
+// 結果に artifact_url が無い時も、画面で入れた URL を使う）。
 import type { AppData, ClaudeTableName, ID } from '../domain/types'
 import {
   buildToolCall,
@@ -104,7 +105,7 @@ export interface PasteOptions {
   expect?: readonly WriteTool[]
   /**
    * 作品批評: コードブロックが無ければ、貼り付けた文を Markdown の結果として受け付ける（promptId はその批評プロンプト、
-   * artifactUrl は画面で入れた URL）
+   * artifactUrl は画面で入れた URL）。コードブロックがあっても、作品批評の結果に artifact_url が無ければ artifactUrl を使う
    */
   plainCritique?: { promptId?: ID | null; artifactUrl?: string; runDate?: string }
 }
@@ -143,7 +144,17 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
   if (block.ok) {
     const parsed = parseCalls(block.json)
     if (!parsed.ok) return parsed
-    calls = parsed.calls
+    // 作品批評: 答えに artifact_url が無ければ、画面で入れた URL を使う（https かは1件ごとの確かめで見る）
+    const typedUrl = opts.plainCritique?.artifactUrl?.trim()
+    calls = typedUrl
+      ? parsed.calls.map((c) => {
+          if (c.tool !== 'novel_add_critique_result') return c
+          const u = (c.input as { artifact_url?: unknown }).artifact_url
+          return u === undefined || u === null || u === ''
+            ? ({ ...c, input: { ...c.input, artifact_url: typedUrl } } as WriteToolCall)
+            : c
+        })
+      : parsed.calls
   } else if (opts.plainCritique && (text.trim() || opts.plainCritique.artifactUrl?.trim())) {
     plain = true
     calls = [
