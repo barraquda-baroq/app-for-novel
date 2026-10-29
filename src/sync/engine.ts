@@ -12,6 +12,7 @@ import {
   getDocFromServer,
   getDocs,
   getDocsFromServer,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -190,6 +191,12 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   let downloaded = false
   /** バックアップからの復元・すべて削除をクラウドに当てるまで、受信を止めている */
   let deferred = false
+  /**
+   * この端末の復元・すべて削除を始めた時の、クラウドの最後の書き込みの時刻（サーバーの時刻。_meta の authoritativeFrom）。
+   * 復元はそれまでに書かれたものにだけ当てる。その後にほかの端末が書いたものは消さず・上書きせず、受信で 3者マージする
+   * （復元を途中まで受け取った端末が、その後に書いた・控えた文章を、途中で止まって後で続けた復元で消さないように）
+   */
+  let restoreBound: StoredCursor | null = null
   let status: SyncStatus = { phase: 'starting', pending: 0, lastSyncedAt: null, error: null }
   /** この端末が送った版の指紋（文書ごと、古い順） */
   const sent = new Map<string, string[]>()
@@ -272,6 +279,13 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
    */
   function freshReset(data: RecordDoc, at: StoredCursor | null): boolean {
     return Boolean(data.reset) && (!at || later(at, cursor))
+  }
+
+  /** この端末の復元・すべて削除を始めた後に（bound より後に）、ほかの端末が書いた文書か */
+  function writtenAfter(data: RecordDoc, bound: StoredCursor | null): boolean {
+    if (!bound || data.device === deviceId) return false
+    const at = timeOf(data)
+    return Boolean(at && later(at, bound))
   }
 
   /** この端末が先に送った古い版の通知か（その後にもっと新しい版を送っている） */
@@ -425,6 +439,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         record: rec as Change['record'],
         ...(recDoc.device === deviceId ? { own: true } : {}),
         ...(freshReset(recDoc, at) ? { reset: true } : {}),
+        ...(writtenAfter(recDoc, restoreBound) ? { afterRestore: true } : {}),
       })
     }
     const advance = !fromCache && newest && later(newest, cursor) ? newest : undefined
@@ -511,6 +526,11 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     // この端末の書き込みの通知として戻り、消したものが生き返らないように）。必ず上書きするもの・印の付いたものは書き直さない
     const unmarked = batch.filter((b) => !b.it.force && !b.it.unconfirmed).map((b) => b.it.k)
     if (unmarked.length) await target.markUnconfirmed(unmarked)
+    // 必ず上書きするもの（復元・すべて削除）がある時だけ、復元を始めた時刻を読む（その後にほかの端末が書いた文書は
+    // 上書きせず、base と比べる）。端末内の読み取り1回
+    const bound = batch.some((b) => b.it.force)
+      ? ((await target.getMeta<StoredCursor | null>('authoritativeFrom')) ?? null)
+      : null
 
     const result = await runTransaction(fs, async (tx) => {
       // オフラインになってから記録の見張りがサーバーと揃い直すまでは、データの形の版もこのトランザクションで読んで確かめる
@@ -532,7 +552,11 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
       // 復元・すべて削除の後は、この端末の内容で必ず上書きする。幕のまとまりは全部を書ける時だけ書く
       const decision = decideBatch(
         batch,
-        clouds.map((c) => ({ exists: c !== null, hash: c && !c.deleted ? c.hash : '' })),
+        clouds.map((c) => ({
+          exists: c !== null,
+          hash: c && !c.deleted ? c.hash : '',
+          fresh: c !== null && writtenAfter(c, bound),
+        })),
       )
       const written: { change: Change; hash: string; replaced: StoredCursor | null }[] = []
       /** 書かずに送り終えるもの（返事の無かった送信待ちで、クラウドも端末内も base のまま） */
@@ -622,6 +646,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
           record: rec as Change['record'],
           ...(data.device === deviceId ? { own: true } : {}),
           ...(freshReset(data, timeOf(data)) ? { reset: true } : {}),
+          ...(writtenAfter(data, restoreBound) ? { afterRestore: true } : {}),
         })
     }
     if (changes.length) await target.applyRemote(changes, undefined, { direct: true })
@@ -655,9 +680,32 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     deferred = true
     await ensureModel()
     const local = await target.localKeys()
+    // 復元を始めた時の、クラウドの最後の書き込みの時刻（サーバーの時刻）。復元はそれまでに書かれたものにだけ当てる。
+    // 途中で止まって続きから送る時（アプリを閉じた・再読み込み）は、初めに記録した時刻を使う（その間にほかの端末が
+    // 書いた・控えたものは消さず、受信で受け取る）
+    let bound = (await target.getMeta<StoredCursor | null>('authoritativeFrom')) ?? null
+    let newest: StoredCursor | null = null
+    if (!bound) {
+      // 削除の印も含めて、いちばん新しい書き込み（下の全件の読み出しは、削除されていないものだけなので。読み取り1件）
+      const last = await getDocsFromServer(query(col, orderBy('updated', 'desc'), limit(1)))
+      for (const d of last.docs) {
+        const at = timeOf(d.data())
+        if (at && later(at, newest)) newest = at
+      }
+    }
     // サーバーから読む（読んでいる途中でつながりが切れると、getDocs は端末の中の控えだけで答えるので、受け取っていない
     // レコードを消し漏らしたまま終わってしまう。サーバーから読めなければ失敗し、つながってからやり直す）
     const snap = await getDocsFromServer(query(col, where('deleted', '==', false)))
+    if (!bound) {
+      for (const d of snap.docs) {
+        const at = timeOf(d.data())
+        if (at && later(at, newest)) newest = at
+      }
+      bound = newest ?? { s: 0, n: 0 }
+      await target.setMeta('authoritativeFrom', bound)
+    }
+    const until: StoredCursor = bound
+    restoreBound = until
     const doomed: string[] = []
     const chunkDocs = new Map<string, string[]>()
     snap.forEach((d) => {
@@ -668,7 +716,8 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
         chunkDocs.set(data.parent, list)
         return
       }
-      if (!local.has(`${data.table}/${data.id}`)) doomed.push(d.id)
+      // 復元を始めた後にほかの端末が書いたものは消さない
+      if (!local.has(`${data.table}/${data.id}`) && !writtenAfter(data, until)) doomed.push(d.id)
     })
     // 読んでいる間に、新しい版のアプリで書かれていると分かった
     if (modelState === 'newer') throw MODEL_PAUSED
@@ -859,6 +908,7 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (stopped) return
     cursor = (await target.getMeta<StoredCursor | null>('cursor')) ?? null
     deferred = Boolean(await target.getMeta('authoritative'))
+    restoreBound = (await target.getMeta<StoredCursor | null>('authoritativeFrom')) ?? null
     setStatus({ phase: 'downloading', error: null })
     await refreshPending()
     if (opts.appModel && !modelUnsub) {

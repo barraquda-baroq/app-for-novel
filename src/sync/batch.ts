@@ -99,6 +99,11 @@ export function selectBatch(items: readonly OutboxItem[], limits: BatchLimits): 
 export interface CloudState {
   exists: boolean
   hash: string
+  /**
+   * この端末のバックアップからの復元・すべて削除を始めた後に、ほかの端末が書いた。「必ず上書き」でも上書きせず、
+   * base と比べる（違えば書かずに、受信で 3者マージしてから送る）
+   */
+  fresh?: boolean
 }
 
 export interface BatchDecision {
@@ -110,12 +115,13 @@ export interface BatchDecision {
 
 /**
  * 書くものを決める。1件ずつ、共通の履歴が無いものはクラウドに何も無い時、ほかは base の指紋がクラウドと同じ時に書く
- * （復元・すべて削除の後は必ず上書き）。幕のまとまりは、全部を書ける時だけ書く。
+ * （復元・すべて削除の後は必ず上書き。ただし復元を始めた後にほかの端末が書いたもの（fresh）は base と比べる）。
+ * 幕のまとまりは、全部を書ける時だけ書く。
  */
 export function decideBatch(batch: readonly BatchEntry[], cloud: readonly CloudState[]): BatchDecision {
   const ok = batch.map((b, i) => {
     const c = cloud[i]
-    if (b.it.force) return true
+    if (b.it.force && !c.fresh) return true
     if (b.it.noHistory) return !c.exists
     return (c.exists ? c.hash : '') === b.baseHash
   })

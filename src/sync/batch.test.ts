@@ -108,4 +108,14 @@ describe('書くものを決める', () => {
     const tomb = decideBatch(batch.slice(2), [{ exists: true, hash: '' }])
     expect(tomb.write).toEqual([false])
   })
+
+  it('復元を始めた後にほかの端末が書いた文書は、必ず上書きするものでも base と比べる（違えば書かずに合わせる）', () => {
+    const batch = selectBatch([item('memos/f', { id: 'f', body: '戻した' }, { id: 'f' }, { force: true })], limits)
+    expect(decideBatch(batch, [{ ...changed, fresh: true }]).write).toEqual([false])
+    expect(decideBatch(batch, [{ ...changed, fresh: true }]).conflicts.map((c) => c.k)).toEqual(['memos/f'])
+    // base のまま（ほかの端末が同じ内容で書いた）なら書く
+    expect(decideBatch(batch, [{ ...same(batch[0].it), fresh: true }]).write).toEqual([true])
+    // 始める前に書かれたものは今までどおり上書き
+    expect(decideBatch(batch, [changed]).write).toEqual([true])
+  })
 })

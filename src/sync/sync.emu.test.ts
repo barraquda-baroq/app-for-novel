@@ -67,6 +67,8 @@ const listen = vi.hoisted(() => ({
    * エミュレーターに届いてしまうので、送信のトランザクションも「通信できない」で失敗させる
    */
   offline: new Set<unknown>(),
+  /** 次のまとめた書き込み（writeBatch）を書いた直後に呼ぶ（一度だけ）。復元でまとめて消す途中で止まった時の再現 */
+  afterCommit: new Map<unknown, () => Promise<void>>(),
 }))
 vi.mock('firebase/firestore', async (importOriginal) => {
   const m = await importOriginal<typeof import('firebase/firestore')>()
@@ -110,7 +112,22 @@ vi.mock('firebase/firestore', async (importOriginal) => {
     }
   const getDocs = listing(m.getDocs as never) as unknown as typeof m.getDocs
   const getDocsFromServer = listing(m.getDocsFromServer as never) as unknown as typeof m.getDocsFromServer
-  return { ...m, onSnapshot, runTransaction, getDocs, getDocsFromServer }
+  const writeBatch = ((fs: unknown) => {
+    const batch = (m.writeBatch as unknown as (f: unknown) => { commit: () => Promise<void> })(fs)
+    const commit = batch.commit.bind(batch)
+    batch.commit = async () => {
+      if (listen.offline.has(fs))
+        throw Object.assign(new Error('通信できません（テスト）'), { name: 'FirebaseError', code: 'unavailable' })
+      await commit()
+      const hook = listen.afterCommit.get(fs)
+      if (hook) {
+        listen.afterCommit.delete(fs)
+        await hook()
+      }
+    }
+    return batch
+  }) as unknown as typeof m.writeBatch
+  return { ...m, onSnapshot, runTransaction, getDocs, getDocsFromServer, writeBatch }
 })
 
 const PROJECT = 'demo-novel-studio'
@@ -160,6 +177,7 @@ afterEach(async () => {
   listen.loseReply.clear()
   listen.beforeList.clear()
   listen.offline.clear()
+  listen.afterCommit.clear()
   for (const d of devices.splice(0)) {
     d.offline()
     d.p.close()
@@ -1247,7 +1265,124 @@ describe('データの形の版: オフラインから戻った時（エミュ�
 })
 
 // 読み出しの途中で disableNetwork する（上と同じ理由で、全件を消すテストより後に置く）
-describe('バックアップからの復元: つながりが切れた時（エミュレーター）', () => {
+describe('バックアップからの復元: 途中でつながりが切れた・止まった時（エミュレーター）', () => {
+  it('復元の上書きの途中で止まって後で続けても、その間にほかの端末が書き換えたものを戻した内容で上書きしない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    await a.edit((d) => {
+      let data = E.createTitle(d, '作品').data
+      const titleId = Object.keys(data.titles)[0]
+      for (let i = 0; i < 150; i++) {
+        const m = E.addMemo(data, titleId, `メモ${i}`)
+        data = E.updateMemo(m.data, m.result, { body: `メモ${i}の本文` })
+      }
+      return data
+    })
+    await settle(a, b)
+    const backup = await a.load()
+    // A がバックアップから戻した。上書きの1回目（100件）を送ったところで、アプリを閉じた
+    let reads = 0
+    const realRead = a.p.readOutbox.bind(a.p)
+    a.p.readOutbox = async (n) => {
+      reads += 1
+      if (reads === 2) a.offline()
+      return realRead(n)
+    }
+    await a.restore(backup)
+    await waitFor(async () => reads >= 2 && !a.engine, '1回目を送ったところで止まる')
+    a.p.readOutbox = realRead
+    const queued = new Set((await a.p.readOutbox(1000)).map((it) => it.k))
+    const memoId = Object.keys(backup.memos).find((id) => queued.has(`memos/${id}`))
+    expect(memoId).toBeDefined()
+    // B は1回目を受け取ってから、まだ上書きされていないメモを書き換えて送った
+    await waitFor(async () => {
+      const docs = (await getDocs(collection(b.fs, 'users', b.uid, 'records'))).docs.map((x) => x.data())
+      return docs.some((x) => x.reset === true)
+    }, '1回目がクラウドに届く')
+    await new Promise((r) => setTimeout(r, 500))
+    await b.engine?.idle()
+    await b.edit((d) => E.updateMemo(d, memoId!, { body: 'Bの編集' }))
+    await settle(b)
+    // 後で A を開いた
+    await a.online()
+    await settle(a, b)
+    for (const d of [a, b]) expect((await d.load()).memos[memoId!].body).toBe('Bの編集')
+  })
+
+  it('復元で消す途中で止まって後で続けても、その間にほかの端末が控えた・書いた稿は消さない', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let pieceId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      pieceId = r.pieceId
+      return r.data
+    })
+    await settle(a, b)
+    const backup = await a.load()
+    // A が閉じている間に、B が大きなタイトルを作った（A は受け取っていないので、復元で消す。消すのは2回に分かれる）
+    a.offline()
+    let bigPiece = ''
+    await b.edit((d) => {
+      const r = withTitle(d, '長編')
+      bigPiece = r.pieceId
+      let data = r.data
+      for (let i = 0; i < 250; i++) data = S.addVersion(data, r.pieceId, { body: `稿${i}` }).data
+      return data
+    })
+    await settle(b)
+    // B は閉じてから、その稿の1つ（1回目に消される、文書の ID がいちばん前の稿）を書き換えた（送っていない）
+    b.offline()
+    const bData = await b.load()
+    const first = Object.keys(bData.versions)
+      .filter((id) => bData.versions[id].pieceId === bigPiece)
+      .sort()[0]
+    await b.edit((d) => S.updateVersion(d, first, { body: 'Bの送っていない追記' }))
+    // A がバックアップ（長編が無い）から戻した。消す1回目を書いたところでつながりが切れ、アプリを閉じた
+    await a.restore(backup)
+    let cut = false
+    listen.afterCommit.set(a.fs, async () => {
+      cut = true
+      await goOffline(a.fs)
+    })
+    await a.online()
+    await waitFor(async () => cut && a.engine?.status.phase === 'offline', '1回目を消したところで切れる')
+    a.offline()
+    const ref = doc(b.fs, 'users', b.uid, 'records', `versions:${first}`)
+    expect((await getDoc(ref)).data()?.deleted).toBe(true)
+    // B を開いた: 復元の削除を受け取り、送っていない追記をゴミ箱に控えて送った。戻した話にも稿を足して送った
+    await b.online()
+    const kept = (d: AppData) =>
+      Object.values(d.trashRecords).some((r) => (r.record as { body?: unknown }).body === 'Bの送っていない追記')
+    await waitFor(async () => kept(await b.load()), 'B が追記をゴミ箱に控える')
+    let added = ''
+    await b.edit((d) => {
+      const r = S.addVersion(d, pieceId, { body: 'Bが復元の後に書いた稿' })
+      added = r.result
+      return r.data
+    })
+    await settle(b)
+    // 後で A を開いた（復元の続きから）
+    await goOnline(a.fs)
+    await a.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(kept(data)).toBe(true)
+      expect(data.versions[added]?.body).toBe('Bが復元の後に書いた稿')
+      // 戻した話の稿の一覧にも載ったまま（A の「必ず上書き」は、B がその後に書いた話を上書きせずに合わせる）
+      expect(data.pieces[pieceId].versionIds).toContain(added)
+      expect(data.pieces[bigPiece]).toBeUndefined()
+      expect(Object.values(data.versions).filter((v) => v.pieceId === bigPiece)).toEqual([])
+    }
+  })
+
   it('復元でクラウドのレコードを読み出している途中でつながりが切れても、端末の中の控えだけで消すものを決めない', async () => {
     const who = account()
     const a = await makeDevice('a', who)

@@ -68,6 +68,12 @@ export interface Change {
   reset?: boolean
   /** クラウドから: この端末が書いたもの（返事を受け取れなかった書き込みなど） */
   own?: boolean
+  /**
+   * クラウドから: この端末のバックアップからの復元・すべて削除を始めた後に、ほかの端末が書いたもの（サーバーの時刻で
+   * 比べる。src/sync/engine.ts の pushAuthoritative）。「必ず上書き」の送信待ちがあっても上書きせず、3者マージする
+   * （復元を途中まで受け取った端末が、その後に書いた・控えた文章を、送り残した復元の続きで消さないように）
+   */
+  afterRestore?: boolean
 }
 
 export interface OutboxItem {
@@ -859,8 +865,11 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         textTombstones.push(ch)
         continue
       }
-      // バックアップからの復元・すべて削除の後: この端末の内容で上書きするまで、クラウド側は採らない
-      if (queued?.force) {
+      // バックアップからの復元・すべて削除の後: この端末の内容で上書きするまで、クラウド側は採らない。
+      // ただし復元を始めた後にほかの端末が書いたもの（afterRestore）は、ふつうに 3者マージする（base = 最後に知った
+      // クラウド、この端末 = 戻した内容、クラウド = ほかの端末の書き込み。ほかの端末の文章を残し、違う戻した文章は
+      // 競合の控えにする。送信待ちは「必ず上書き」でなくなる）
+      if (queued?.force && !ch.afterRestore) {
         await db.outbox.put({ ...queued, base: ch.record })
         continue
       }
@@ -1565,6 +1574,8 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
         }
         // 同期の時に、この端末に無いクラウドのレコードも消す
         if (synced) await db.meta.put({ key: 'authoritative', value: at })
+        // 復元ごとに、どこまでのクラウドの内容に当てるか（始めた時のサーバーの時刻）を決め直す
+        await db.meta.delete('authoritativeFrom')
       })
     },
 
@@ -1671,6 +1682,7 @@ export function createPersistence(dbName = DEFAULT_DB_NAME): Persistence {
       await db.transaction('rw', [...allTables(), db.outbox, db.meta], async () => {
         // 共通の履歴が無いので、以前の「クラウドもこの内容に揃える」はやめて、突き合わせるだけにする
         await db.meta.delete('authoritative')
+        await db.meta.delete('authoritativeFrom')
         // （別のアカウントのクラウドに送った、返事の無い書き込みの印も外す）
         await db.outbox.toCollection().modify((r) => {
           r.base = null

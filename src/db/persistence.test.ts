@@ -313,6 +313,36 @@ describe('第2回の見直しで直したこと', () => {
     expect(order[order.length - 1]).toBe('titles')
   })
 
+  it('復元を始めた後にほかの端末が書いたものは、「必ず上書き」の送信待ちがあっても 3者マージする', async () => {
+    const { data, versionId, memoId } = sample()
+    const p = fresh()
+    await seed(p, data)
+    await p.setMeta('uid', 'someone')
+    // 戻したバックアップでは、メモが古い内容
+    const backup = { ...data, memos: { ...data.memos, [memoId]: { ...data.memos[memoId], body: 'バックアップの本文' } } }
+    await p.replaceAll(backup)
+    await p.setMeta('authoritative', null)
+    const theirs = { ...data.versions[versionId], body: '別の端末がその後に書いた本文' }
+    const before = { ...data.memos[memoId], body: '始める前に書かれた本文' }
+    const h = hooks(() => backup)
+    await p.applyRemote(
+      [
+        { table: 'versions', id: versionId, record: theirs, afterRestore: true },
+        { table: 'memos', id: memoId, record: before },
+      ],
+      h,
+    )
+    const disk = await p.load()
+    // 復元を始めた後の書き込み: ほかの端末の本文を採る（戻した内容と同じだったので控えは無い）。もう必ず上書きしない
+    expect(disk.versions[versionId].body).toBe('別の端末がその後に書いた本文')
+    const rows = await p.readOutbox(1000)
+    expect(rows.find((r) => r.id === versionId)).toBeUndefined()
+    // 始める前の書き込み: 戻した内容のまま、必ず上書きする
+    expect(disk.memos[memoId].body).toBe('バックアップの本文')
+    expect(rows.find((r) => r.id === memoId)?.force).toBe(true)
+    expect(h.notes).toEqual([])
+  })
+
   it('応募時の原稿の本文は、足す時は応募計画より先に、消す時は応募計画の後に送る', async () => {
     const { data, titleId } = sample()
     const s = addSubmission(data, titleId, '文学賞')
