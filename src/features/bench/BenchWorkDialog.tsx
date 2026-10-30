@@ -1,5 +1,5 @@
-// ベンチ作品を足す・作品の情報を直す（作品名は必須。著者・出版社・刊行年・ジャンル・PDF の置き場所・メモ）。
-// 保存は［足す］［保存］を押した時（閉じると何も変えない）。
+// 相対比較に作品を追加する・作品の情報を直す（作品名は必須。著者・出版社・刊行年・ジャンル・PDF の置き場所・メモ）。
+// 保存は［追加］［保存］を押した時（閉じると何も変えない）。
 import { useId, useState } from 'react'
 import { BENCH_LIMITS } from '../../domain/benchOps'
 import type { BenchWork, ID } from '../../domain/types'
@@ -41,14 +41,14 @@ export function BenchWorkDialog({ work, onClose, onAdded }: BenchWorkDialogProps
     }
     const id = attempt(() => actions.addBenchWork(input))
     if (!id) return
-    notify(`「${name.trim()}」をベンチ作品に足しました`)
+    notify(`「${name.trim()}」を相対比較に追加しました`)
     onClose()
     onAdded?.(id)
   }
 
   return (
     <Modal
-      title={work ? '作品の情報を直す' : 'ベンチ作品を足す'}
+      title={work ? '作品の情報を直す' : '作品を追加'}
       onClose={onClose}
       footer={
         <>
@@ -56,7 +56,7 @@ export function BenchWorkDialog({ work, onClose, onAdded }: BenchWorkDialogProps
             キャンセル
           </button>
           <button type="submit" form={formId} className="btn btn-primary" data-testid="bench-work-save">
-            {work ? '保存' : '足す'}
+            {work ? '保存' : '追加'}
           </button>
         </>
       }
@@ -72,7 +72,7 @@ export function BenchWorkDialog({ work, onClose, onAdded }: BenchWorkDialogProps
       >
         {!work ? (
           <p className="small muted bw-lead">
-            比べるために読む既存の作品を棚に足します。PDF は claude.ai のプロジェクトに置いたまま、Claude
+            比べるために読む既存の作品を相対比較に追加します。PDF は claude.ai のプロジェクトに置いたまま、Claude
             に分析してもらった内容だけをここに残します。
           </p>
         ) : null}
@@ -148,7 +148,7 @@ export function BenchWorkDialog({ work, onClose, onAdded }: BenchWorkDialogProps
             value={pdfPlace}
             onChange={(e) => setPdfPlace(e.target.value)}
             maxLength={BENCH_LIMITS.pdfPlace}
-            placeholder="例：claude.ai のプロジェクト「ベンチ作品」"
+            placeholder="例：claude.ai のプロジェクト「相対比較」"
             data-testid="bench-work-pdf"
           />
         </label>

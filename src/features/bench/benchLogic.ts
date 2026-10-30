@@ -1,4 +1,4 @@
-// ベンチ作品の画面（ホームの棚・作品の画面）で使う、表示用の純粋な計算。データは変更しない。
+// 相対比較（内部名は bench。ホームの棚・作品の画面）で使う、表示用の純粋な計算。データは変更しない。
 // 棚の作品が多くても重くならないように、作品ごとの分析の並びは、中身が変わらない限り同じ配列を使い続ける
 // （カードは React.memo でレコード単位の props にしている）。
 import { benchAnalysesOf, benchViewpointGroups } from '../../claude/benchOrder'
@@ -85,12 +85,12 @@ export function comparingTitles(data: Pick<AppData, 'titles'>): Map<ID, Comparin
   return new Map([...out].map(([id, names]) => [id, { label: names.map((n) => `『${n}』`).join(''), count: names.length }]))
 }
 
-/** 作品の削除の確認文（分析の数と、比べる作品にしているタイトルでは、ゴミ箱にある間は出ないことを書く） */
+/** 作品の削除の確認文（分析の数と、相対比較する作品にしているタイトルでは、ゴミ箱にある間は出ないことを書く） */
 export function deleteWorkMessage(analyses: number, comparing: number): string {
-  const lines = [trashNotice(analyses > 0 ? `この作品の分析（${analyses}件）もいっしょに` : 'この作品を')]
+  const lines = [trashNotice(`この作品を相対比較から削除し、${analyses > 0 ? `分析（${analyses}件）もいっしょに` : ''}`)]
   if (comparing > 0)
     lines.push(
-      `比べる作品にしているタイトル（${comparing}件）では、ゴミ箱にある間は比べる作品に出ません（ゴミ箱から戻すと、また出ます）。`,
+      `相対比較する作品にしているタイトル（${comparing}件）では、ゴミ箱にある間は相対比較する作品に出ません（ゴミ箱から戻すと、また出ます）。`,
     )
   lines.push('PDF そのものは claude.ai のプロジェクトにあるので、消えません。')
   return lines.join('\n\n')

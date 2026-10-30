@@ -2,7 +2,7 @@
 // 依頼文と本文（コネクタの novel_read_text と同じ形。src/claude/view.ts）を 50,000 字以内のパートに分けてコピーし、
 // Claude には最後に ```novel-studio-v1 のコードブロックで JSON（コネクタの書き込みツールの入力と同じ形）を返してもらう。
 // 返ってきた答えは src/claude/paste.ts で読み、同じ作り方（src/claude/records.ts）で記録にする。
-// ベンチ作品（2.5）の分析の依頼（benchAnalysisPrompt）は本文を送らない: PDF は利用者の claude.ai のプロジェクトにある。
+// 相対比較（2.5。内部名は bench）の作品の分析の依頼（benchAnalysisPrompt）は本文を送らない: PDF は利用者の claude.ai のプロジェクトにある。
 import { benchWorkRef, comparisonMaterial } from './bench'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_LABELS } from './categories'
 import { submissionsOf, submissionStatusLabel } from '../domain/entityOps'
@@ -109,7 +109,7 @@ export function proofreadingPrompt(c: PromptContext): string {
   ].join('\n')
 }
 
-/** 作品批評の依頼文（批評プロンプトの本文を中に入れる）。bench は比べるベンチ作品（分析を本文の前に入れる時） */
+/** 作品批評の依頼文（批評プロンプトの本文を中に入れる）。bench は相対比較する作品（分析を本文の前に入れる時） */
 export function critiqueManualPrompt(
   c: PromptContext & {
     prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'> | null
@@ -137,8 +137,8 @@ export function critiqueManualPrompt(
     ...(bench.length
       ? [
           '',
-          '## 比べる作品',
-          `作者が比べたい既存の作品（ベンチ作品）の分析を、依頼のすぐ後に送ります: ${bench.map((w) => benchWorkRef(w)).join('、')}。批評の中で、これらの作品と比べてください（分析にない内容は推測しないでください）。`,
+          '## 相対比較する作品',
+          `作者が相対比較する既存の作品の分析を、依頼のすぐ後に送ります: ${bench.map((w) => benchWorkRef(w)).join('、')}。批評の中で、これらの作品と比べてください（分析にない内容は推測しないでください）。`,
         ]
       : []),
     '',
@@ -235,7 +235,7 @@ export interface ManualPartsOptions {
   includeText?: boolean
   /** パートの長さの上限（既定 50,000） */
   partChars?: number
-  /** 作品批評: 比べるベンチ作品の分析も入れる作品（タイトルの比べる作品。2.5） */
+  /** 作品批評: 分析も入れる、相対比較する作品（タイトルの benchWorkIds。2.5） */
   benchWorkIds?: readonly ID[]
 }
 
@@ -279,7 +279,7 @@ export function buildManualParts(data: AppData, titleId: ID, opts: ManualPartsOp
     const outline = outlineView(data, titleId, { maxRows: 100_000, includeActs: false })
     material = `=== 目次 ===\n${outline.ok ? outline.text : ''}\n${strategyMaterial(data, title)}`
   }
-  // 作品批評: 比べるベンチ作品の分析を、依頼文の後・本文の前に入れる
+  // 作品批評: 相対比較する作品の分析を、依頼文の後・本文の前に入れる
   const bench =
     opts.task === 'critique' && opts.benchWorkIds?.length
       ? opts.benchWorkIds.map((id) => data.benchWorks[id]).filter((w): w is BenchWork => Boolean(w))
@@ -332,7 +332,7 @@ export function buildManualParts(data: AppData, titleId: ID, opts: ManualPartsOp
 
 /**
  * コネクタを使う時に Claude へ渡す批評の依頼（作品批評の「Claude 用にコピー」）。本文はコネクタで読んでもらい、
- * 結果は novel_add_critique_result で記録してもらう。bench はタイトルの比べるベンチ作品（2.5。分析をコネクタで読んで比べてもらう）
+ * 結果は novel_add_critique_result で記録してもらう。bench はタイトルの相対比較する作品（2.5。分析をコネクタで読んで比べてもらう）
  */
 export function critiqueConnectorPrompt(
   title: Pick<Title, 'id' | 'name'>,
@@ -347,8 +347,8 @@ export function critiqueConnectorPrompt(
     ...(bench.length
       ? [
           '',
-          '## 比べる作品',
-          `比べるベンチ作品: ${bench.map((w) => benchWorkRef(w)).join('、')}。novel_get_bench_analysis でそれぞれの分析を読み、批評の中で比べてください（分析にない内容は推測しないでください）。`,
+          '## 相対比較する作品',
+          `相対比較する作品: ${bench.map((w) => benchWorkRef(w)).join('、')}。novel_get_bench_analysis でそれぞれの分析を読み、批評の中で比べてください（分析にない内容は推測しないでください）。`,
         ]
       : []),
     '',
@@ -360,11 +360,11 @@ export function critiqueConnectorPrompt(
   ].join('\n')
 }
 
-/** ベンチ作品の分析の観点の既定（「Claude に頼む（手動）」で最初に選んでおくもの） */
+/** 相対比較の分析の観点の既定（「Claude に頼む（手動）」で最初に選んでおくもの） */
 export const DEFAULT_BENCH_VIEWPOINTS = ['構成', '文体', '人物', '冒頭の掴み'] as const
 
 /**
- * ベンチ作品の分析の依頼文（ベンチ作品の画面の「Claude に頼む（手動）」）。PDF は利用者の claude.ai のプロジェクトにあるので
+ * 相対比較の作品の分析の依頼文（相対比較の作品の画面の「Claude に頼む（手動）」）。PDF は利用者の claude.ai のプロジェクトにあるので
  * 本文は送らない。最後に novel_add_bench_analysis と同じ形の JSON をコードブロックで返してもらう（貼り付けで取り込む）
  */
 export function benchAnalysisPrompt(
@@ -392,7 +392,7 @@ export function benchAnalysisPrompt(
     'PDF に無いことは推測で書かず、読み取れない時はそう書いてください。引用は短く（数行まで）にしてください。',
     '',
     '## 返し方',
-    `最後に、観点ごとに1つずつ items に入れた次の形の JSON を \`\`\`${PASTE_FENCE} のコードブロックで返してください（Novel Studio のベンチ作品に貼り付けて、分析として残します）。`,
+    `最後に、観点ごとに1つずつ items に入れた次の形の JSON を \`\`\`${PASTE_FENCE} のコードブロックで返してください（Novel Studio の相対比較の作品の画面に貼り付けて、分析として残します）。`,
     fence(example),
     `- viewpoint: 観点の名前（40字以内。上の観点の名前のまま）。body_markdown: その観点の分析の全文（Markdown）。run_date: 今日 ${today}`,
     '- items は1つの呼び出しで20件まで',

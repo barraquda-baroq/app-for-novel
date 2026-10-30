@@ -1,7 +1,7 @@
 // 作品批評タブ: 採用原稿でタイトル全体を、書き手が望む形で Claude に批評してもらうためのプロンプトの一覧
 // （このタイトルのものと、どのタイトルでも使う共通のもの）と、実行したプロンプトと批評結果（Markdown・アーティファクトの URL）の
 // 日付ごとの記録。結果は Claude（コネクタ）から書き込まれるほか、「Claude に頼む（手動）」と「結果を貼り付け」でも残せる。
-// 「比べるベンチ作品」（2.5）: ホームの棚から比べる作品を選ぶと、Claude がその分析を読んで比べる（結果に「比べた作品」が残る）。
+// 「相対比較する作品」（2.5。内部名は bench）: ホームの「相対比較」から作品を選ぶと、Claude がその分析を読んで比べる（結果に「比べた作品」が残る）。
 import { memo, useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { critiquePromptsOf, critiqueResultsOf } from '../../../claude/order'
@@ -54,7 +54,7 @@ export function CritiqueTab({ titleId }: { titleId: ID }) {
   const [paste, setPaste] = useState<{ promptId: ID | null } | null>(null)
   const [expanded, setExpanded] = useState<ReadonlySet<ID>>(() => new Set())
   const [focusId, setFocusId] = useState<ID | null>(null)
-  // 比べるベンチ作品（タイトルの選んだ順）と、棚の作品（作品の名前を出す）
+  // 相対比較する作品（タイトルの選んだ順）と、相対比較の棚の作品（作品の名前を出す）
   const benchWorks = data.benchWorks
   const comparing = useMemo(() => benchWorksOfTitle(data, titleId), [title?.benchWorkIds, benchWorks, titleId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -587,7 +587,7 @@ function ArtifactUrl({ r }: { r: CritiqueResult }) {
 }
 
 /**
- * 「比べるベンチ作品」: ホームの棚から、このタイトルと比べる作品を選ぶ（作品の画面へのリンクと、外す ×）。
+ * 「相対比較する作品」: ホームの「相対比較」から、このタイトルと比べる作品を選ぶ（作品の画面へのリンクと、外す ×）。
  * Claude はコネクタでその分析を読み、手動の依頼には分析を入れられる
  */
 function CompareWorks({
@@ -605,23 +605,23 @@ function CompareWorks({
   const add = (workId: string) => {
     if (!workId) return
     if (attempt(() => (actions.addTitleBenchWork(titleId, workId), true)))
-      notify(`『${benchWorkName(benchWorks[workId])}』を比べる作品にしました`)
+      notify(`『${benchWorkName(benchWorks[workId])}』を相対比較する作品にしました`)
   }
   const remove = (w: BenchWork) => {
     if (attempt(() => (actions.removeTitleBenchWork(titleId, w.id), true)))
-      notify(`『${benchWorkName(w)}』を比べる作品から外しました（作品はホームの棚に残ります）`)
+      notify(`『${benchWorkName(w)}』を相対比較する作品から外しました（作品はホームの「相対比較」に残ります）`)
   }
   return (
     <section className="bw-compare" data-area="bench" aria-labelledby="cq-bench-heading" data-testid="critique-bench">
       <div className="bw-compare-head">
         <h3 id="cq-bench-heading">
           <ShelfIcon />
-          比べるベンチ作品
+          相対比較する作品
         </h3>
         <span className="small muted">
           {comparing.length
             ? 'Claude はコネクタでこれらの作品の分析を読んで比べます。'
-            : 'ホームの「ベンチ作品」から、この作品と比べる既存の作品を選べます。'}
+            : 'ホームの「相対比較」から、このタイトルと比べる既存の作品を選べます。'}
         </span>
       </div>
       {comparing.length ? (
@@ -633,8 +633,8 @@ function CompareWorks({
                 type="button"
                 className="icon-btn"
                 onClick={() => remove(w)}
-                aria-label={`『${benchWorkName(w)}』を比べる作品から外す`}
-                title="比べる作品から外す"
+                aria-label={`『${benchWorkName(w)}』を相対比較する作品から外す`}
+                title="相対比較する作品から外す"
                 data-testid="critique-bench-remove"
               >
                 <XIcon />
@@ -645,17 +645,17 @@ function CompareWorks({
       ) : null}
       {shelf.length === 0 ? (
         <p className="small muted" style={{ margin: 0 }} data-testid="critique-bench-empty">
-          棚にまだ作品がありません。<Link to={paths.homeArea('bench')}>ホームの「ベンチ作品」</Link>で足してください。
+          相対比較にまだ作品がありません。<Link to={paths.homeArea('bench')}>ホームの「相対比較」</Link>で追加してください。
         </p>
       ) : addable.length ? (
         <select
           className="select bw-compare-add"
           value=""
           onChange={(e) => add(e.target.value)}
-          aria-label="比べる作品を足す"
+          aria-label="相対比較する作品を選ぶ"
           data-testid="critique-bench-add"
         >
-          <option value="">＋ 比べる作品を足す…</option>
+          <option value="">＋ 相対比較する作品を選ぶ…</option>
           {addable.map((w) => (
             <option key={w.id} value={w.id}>
               {benchWorkName(w)}
@@ -668,7 +668,7 @@ function CompareWorks({
   )
 }
 
-/** 批評の結果の「比べた作品: 『…』」（作品の画面へのリンク。棚から消えた作品は数だけ） */
+/** 批評の結果の「比べた作品: 『…』」（作品の画面へのリンク。相対比較から消えた作品は数だけ） */
 function ComparedWorks({ ids, works }: { ids: readonly ID[]; works: Record<ID, BenchWork> }) {
   const shown = ids.map((id) => works[id]).filter((w): w is BenchWork => Boolean(w))
   const gone = ids.length - shown.length
@@ -680,7 +680,7 @@ function ComparedWorks({ ids, works }: { ids: readonly ID[]; works: Record<ID, B
           『{benchWorkName(w)}』
         </Link>
       ))}
-      {gone > 0 ? <span className="small muted">（ほか{gone}作品は棚から削除されています）</span> : null}
+      {gone > 0 ? <span className="small muted">（ほか{gone}作品は相対比較から削除されています）</span> : null}
     </p>
   )
 }

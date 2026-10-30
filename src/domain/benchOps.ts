@@ -1,4 +1,4 @@
-// ベンチ作品（ホームの棚の、比べるために読む既存の作品）とその分析の操作。
+// 相対比較（内部名は bench。ホームの棚の、比べるために読む既存の作品）とその分析の操作。
 // 作品はどのタイトルにも属さず、すべてのタイトルで共有する。各タイトルは比べる作品を選べる（Title.benchWorkIds）。
 // 分析は1つの作品にいくつでも（観点・Markdown の本文・日付）。Claude（コネクタ・貼り付け）が作った分析も、作った後は
 // ふつうのレコードとして編集・削除できる。削除はゴミ箱へ（作品はその分析と一緒に1件、分析は1件ずつ）。
@@ -31,9 +31,9 @@ export function sortedBenchWorks(data: Pick<AppData, 'benchWorks'>): BenchWork[]
   return Object.values(data.benchWorks).sort(byOrder)
 }
 
-/** 作品の名前（空なら「無題のベンチ作品」） */
+/** 作品の名前（空なら「無題の作品」） */
 export function benchWorkName(work: Pick<BenchWork, 'name'>): string {
-  return work.name.trim() || '無題のベンチ作品'
+  return work.name.trim() || '無題の作品'
 }
 
 /** 作品を比べる作品にしているタイトル（タイトルの並び順） */
@@ -153,7 +153,7 @@ export function addBenchWork(data: AppData, input: BenchWorkInput): { data: AppD
 
 function requireWork(tx: Tx, id: ID): BenchWork {
   const w = tx.get('benchWorks', id)
-  if (!w) throw new DomainError('ベンチ作品が見つかりません')
+  if (!w) throw new DomainError('相対比較の作品が見つかりません')
   return w
 }
 
@@ -279,7 +279,7 @@ export function addBenchAnalysis(data: AppData, workId: ID, input: BenchAnalysis
 export function updateBenchAnalysis(data: AppData, id: ID, patch: BenchAnalysisInput): AppData {
   return transact(data, (tx) => {
     const a = tx.get('benchAnalyses', id)
-    if (!a) throw new DomainError('ベンチ作品の分析が見つかりません')
+    if (!a) throw new DomainError('相対比較の分析が見つかりません')
     const fields = analysisFields(patch)
     if ((Object.keys(fields) as (keyof BenchAnalysis)[]).every((k) => fields[k] === a[k])) return
     tx.put('benchAnalyses', { ...a, ...fields, updatedAt: now() })

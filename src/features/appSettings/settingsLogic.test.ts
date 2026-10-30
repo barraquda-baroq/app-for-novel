@@ -54,16 +54,16 @@ describe('件数', () => {
   it('表の名前は画面の言い方にそろえる（批評の結果）', () => {
     expect(TABLE_LABELS.critiqueResults).toBe('批評の結果')
   })
-  it('ベンチ作品とその分析は、1件以上ある時だけ件数に出す', () => {
+  it('相対比較の作品とその分析は、1件以上ある時だけ件数に出す', () => {
     const data = createTitle(emptyData(), '星の海').data
     expect(dataCounts(data).map((c) => c.table)).not.toContain('benchWorks')
     data.benchWorks = {
       w1: { id: 'w1', name: '銀河の果て', author: '', pdfPlace: '', note: '', order: 0, createdAt: 1, updatedAt: 1 },
     }
     const counts = dataCounts(data)
-    expect(counts.find((c) => c.table === 'benchWorks')).toEqual({ table: 'benchWorks', label: 'ベンチ作品', count: 1 })
+    expect(counts.find((c) => c.table === 'benchWorks')).toEqual({ table: 'benchWorks', label: '相対比較の作品', count: 1 })
     expect(counts.map((c) => c.table)).not.toContain('benchAnalyses')
-    expect(countsSummary(counts)).toContain('ベンチ作品 1件')
+    expect(countsSummary(counts)).toContain('相対比較の作品 1件')
   })
   it('応募時の原稿の控え（snapshotTexts）は内部の表なので、件数・確認文に出さない', () => {
     const data = createTitle(emptyData(), '星の海').data

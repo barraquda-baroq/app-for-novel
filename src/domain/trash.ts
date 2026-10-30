@@ -123,8 +123,8 @@ export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
   strategyNote: '戦略メモ',
   critiquePrompt: '批評プロンプト',
   critiqueResult: '批評の結果',
-  benchWork: 'ベンチ作品',
-  benchAnalysis: 'ベンチ作品の分析',
+  benchWork: '相対比較の作品',
+  benchAnalysis: '相対比較の分析',
 }
 
 /** 長い文章の最初の行（見出しが無い時の名前。長ければ切る） */
@@ -172,7 +172,7 @@ export const trashLabel = {
   critiquePrompt: (p: Pick<CritiquePrompt, 'name'>) => p.name.trim() || '無題の批評プロンプト',
   critiqueResult: (r: Pick<CritiqueResult, 'promptName' | 'runDate'>) =>
     `${r.runDate ? `${r.runDate} ` : ''}${r.promptName.trim() || '作品批評'}の結果`,
-  benchWork: (w: Pick<BenchWork, 'name'>) => w.name.trim() || '無題のベンチ作品',
+  benchWork: (w: Pick<BenchWork, 'name'>) => w.name.trim() || '無題の作品',
   /** 「構成（2026-10-30）」 */
   benchAnalysis: (a: Pick<BenchAnalysis, 'viewpoint' | 'runDate'>) =>
     `${a.viewpoint.trim() || '観点なし'}${a.runDate ? `（${a.runDate}）` : ''}`,
@@ -447,13 +447,13 @@ function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord, origin?:
       if (p.titleId !== null) titleOf(p.titleId)
       return
     }
-    // ベンチ作品はどのタイトルにも属さない（ホームの棚）
+    // 相対比較の作品はどのタイトルにも属さない（ホームの棚）
     case 'benchWork':
       return
     case 'benchAnalysis': {
       const a = record as BenchAnalysis
       if (!tx.get('benchWorks', a.workId))
-        throw new DomainError('元のベンチ作品がないため戻せません。先にベンチ作品を戻してください。')
+        throw new DomainError('元の作品がないため戻せません。先に相対比較の作品を戻してください。')
       return
     }
   }

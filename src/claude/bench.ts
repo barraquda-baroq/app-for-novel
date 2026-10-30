@@ -1,4 +1,4 @@
-// ベンチ作品（2.5）を Claude に渡す形（コネクタの読むツール・手動連携の依頼文で同じものを使う）と、作品の指し方。
+// 相対比較（2.5。内部名は bench）の作品と分析を Claude に渡す形（コネクタの読むツール・手動連携の依頼文で同じものを使う）と、作品の指し方。
 // - 作品は短い id（w:3f2a9c1b）・id・作品名そのもの（前後や続く空白・全角と半角・Unicode の正規化の違いは問わない。refs.ts の
 //   refKey。タイトル名で指す時と同じ）で指せる
 // - ベンチ作品はどのタイトルにも属さない利用者の覚え書きなので、タイトルの「Claude に見せる」とは関係なく見せる
@@ -22,10 +22,10 @@ export function resolveBenchWork(data: Pick<AppData, 'benchWorks'>, ref: string)
     ? {
         ok: false,
         reason: 'ambiguous',
-        message: `作品名「${ref}」のベンチ作品が${hits.length}件あります。w:… の短い id で指してください`,
+        message: `作品名「${ref}」の相対比較の作品が${hits.length}件あります。w:… の短い id で指してください`,
         candidates,
       }
-    : { ok: false, reason: 'not_found', message: `ベンチ作品 '${ref}' が見つかりません`, candidates }
+    : { ok: false, reason: 'not_found', message: `相対比較の作品 '${ref}' が見つかりません`, candidates }
 }
 
 /** 「w:3f2a9c1b『作品名』（著者）」 */
@@ -73,7 +73,7 @@ export function analysisText(a: BenchAnalysis): string {
  */
 export function workAnalysesText(data: Pick<AppData, 'benchAnalyses'>, work: BenchWork, viewpoints?: readonly string[]): string {
   const list = filterByViewpoints(benchAnalysesOf(data, work.id), viewpoints)
-  const head = `=== ベンチ作品 ${benchWorkRef(work)} ===${benchWorkBiblio(work) ? `\n${benchWorkBiblio(work)}` : ''}`
+  const head = `=== 相対比較の作品 ${benchWorkRef(work)} ===${benchWorkBiblio(work) ? `\n${benchWorkBiblio(work)}` : ''}`
   if (!list.length) return `${head}\n（${viewpoints?.length ? 'この観点の' : ''}分析はまだありません）`
   const parts: string[] = [head]
   for (const g of benchViewpointGroups(list)) {
@@ -83,12 +83,12 @@ export function workAnalysesText(data: Pick<AppData, 'benchAnalyses'>, work: Ben
   return parts.join('\n')
 }
 
-/** 手動連携の作品批評に足す、比べるベンチ作品の分析（無ければ空） */
+/** 手動連携の作品批評に足す、相対比較する作品の分析（無ければ空） */
 export function comparisonMaterial(data: AppData, workIds: readonly ID[]): string {
   const works = workIds.map((id) => data.benchWorks[id]).filter((w): w is BenchWork => Boolean(w))
   if (!works.length) return ''
   const lines = [
-    `=== 比べるベンチ作品の分析（${works.length}作品）===`,
+    `=== 相対比較する作品の分析（${works.length}作品）===`,
     '作者が比べたい既存の作品について、以前に Claude が作品の PDF から分析した内容です。批評の中で、これらの作品と比べてください（分析にない内容は推測しないでください）。',
   ]
   for (const w of works) lines.push('', workAnalysesText(data, w))

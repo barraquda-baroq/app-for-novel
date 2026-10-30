@@ -828,14 +828,14 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "description": "使ったモデルの名前（任意）"
       },
       "bench_works": {
-        "description": "批評の中で比べたベンチ作品（w:… か作品名。20件まで）。アプリの批評の結果に「比べた作品」として出る",
+        "description": "批評の中で比べた相対比較の作品（w:… か作品名。20件まで）。アプリの批評の結果に「比べた作品」として出る",
         "maxItems": 20,
         "type": "array",
         "items": {
           "type": "string",
           "minLength": 1,
           "maxLength": 200,
-          "description": "ベンチ作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる"
+          "description": "相対比較の作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる"
         }
       }
     },
@@ -854,7 +854,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "type": "string",
         "minLength": 1,
         "maxLength": 200,
-        "description": "ベンチ作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる"
+        "description": "相対比較の作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる"
       },
       "viewpoints": {
         "description": "この観点の分析だけを読む（構成・文体など。省略時はすべての観点）",
@@ -896,10 +896,10 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "type": "string",
         "minLength": 1,
         "maxLength": 200,
-        "description": "分析する作品（w:… か作品名）。棚にまだ無い作品は new_work も付ける"
+        "description": "分析する作品（w:… か作品名）。相対比較にまだ無い作品は new_work も付ける"
       },
       "new_work": {
-        "description": "作品が棚に無い時だけ作る作品（付けた時だけ作る。同じ作品名・著者の作品があればそれに足す（著者が違えば別の作品として作る））",
+        "description": "作品が相対比較に無い時だけ作る作品（付けた時だけ作る。同じ作品名・著者の作品があればそれに足す（著者が違えば別の作品として作る））",
         "type": "object",
         "properties": {
           "name": {

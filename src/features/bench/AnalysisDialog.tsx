@@ -1,4 +1,4 @@
-// ベンチ作品の分析を手で足す・直す（観点・日付・Markdown の本文）。観点はすべての作品の分析の観点から選べる
+// 相対比較の作品の分析を手で足す・直す（観点・日付・Markdown の本文）。観点はすべての作品の分析の観点から選べる
 // （作品をまたいで同じ名前にそろえると、観点ごとに比べやすい）。保存は［保存］を押した時。
 import { useId, useMemo, useState } from 'react'
 import { jstDate } from '../../claude/dates'

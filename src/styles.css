@@ -72,7 +72,7 @@
   --area-critique: #7a56d0;
   --area-critique-text: #5e3fa8;
   --area-critique-soft: #efeafb;
-  /* ベンチ作品（ホームの棚。2.5）: 本棚の木の色 */
+  /* 相対比較（ホームの棚。2.5。内部名は bench）: 本棚の木の色 */
   --area-bench: #8a5a2b;
   --area-bench-text: #6b421c;
   --area-bench-soft: #f6ece1;

@@ -11,9 +11,9 @@ export type HomeArea = 'titles' | 'ideas' | 'bench'
 
 export const paths = {
   home: () => '/',
-  /** ホームのその領域の先頭（ベンチ作品の画面のパンくずなど） */
+  /** ホームのその領域の先頭（相対比較の作品の画面のパンくずなど） */
   homeArea: (area: HomeArea) => `/?view=${area}`,
-  /** ベンチ作品（ホームの棚の1冊）の画面 */
+  /** 相対比較の作品（ホームの棚の1冊）の画面 */
   bench: (workId: ID) => `/bench/${workId}`,
   appSettings: () => '/settings',
   trash: () => '/trash',

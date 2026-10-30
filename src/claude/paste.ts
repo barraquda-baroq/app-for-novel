@@ -3,7 +3,7 @@
 // JSON の形は、コネクタの書き込みツールの呼び出し {"tool": "novel_add_proofreading", "input": {…}}、またはその配列。
 // 作品批評は、コードブロックが無ければ答えの Markdown をそのまま結果として受け付ける（URL は画面で入れる。コードブロックの
 // 結果に artifact_url が無い時も、画面で入れた URL を使う）。
-// ベンチ作品の画面（2.5）では、novel_add_bench_analysis の work をその作品にして受け付ける（new_work は使わない）。
+// 相対比較の作品の画面（2.5）では、novel_add_bench_analysis の work をその作品にして受け付ける（new_work は使わない）。
 import type { AppData, ClaudeTableName, ID } from '../domain/types'
 import {
   buildToolCall,
@@ -100,9 +100,9 @@ export function parseCalls(json: string): ParseCallsResult {
 }
 
 export interface PasteOptions {
-  /** 貼り付けたタイトル（JSON の title_id はこれに置き換える）。ベンチ作品の画面では無い */
+  /** 貼り付けたタイトル（JSON の title_id はこれに置き換える）。相対比較の作品の画面では無い */
   titleId?: ID
-  /** 貼り付けたベンチ作品（JSON の work はこれに置き換える。ベンチ作品の画面） */
+  /** 貼り付けた相対比較の作品（JSON の work はこれに置き換える。作品の画面） */
   benchWorkId?: ID
   now: number
   /** 受け付ける書き込みツール（省略ですべて） */
@@ -143,7 +143,7 @@ export type PastePreview =
 export function previewPaste(data: AppData, text: string, opts: PasteOptions): PastePreview {
   if (opts.titleId !== undefined && !data.titles[opts.titleId]) return { ok: false, error: 'タイトルが見つかりません' }
   if (opts.benchWorkId !== undefined && !data.benchWorks[opts.benchWorkId])
-    return { ok: false, error: 'ベンチ作品が見つかりません' }
+    return { ok: false, error: '相対比較の作品が見つかりません' }
   let calls: WriteToolCall[]
   let plain = false
   const block = extractBlock(text)
@@ -196,7 +196,7 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
   for (const call of calls) {
     let result: BuildResult
     if (call.tool === 'novel_add_bench_analysis') {
-      // ベンチ作品の画面ではその作品に書く（棚に無い作品を作る new_work は使わない）
+      // 相対比較の作品の画面ではその作品に書く（相対比較に無い作品を作る new_work は使わない）
       const input = opts.benchWorkId ? { ...call.input, work: opts.benchWorkId, new_work: undefined } : call.input
       result = buildToolCall(data, { tool: call.tool, input } as WriteToolCall, ctx)
     } else if (opts.titleId) {
@@ -232,7 +232,7 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
       summary: result.ok ? summarizeItems(result.items) : (result.error ?? ''),
     })
   }
-  // 推敲案の実行の記録・分析と一緒に作るベンチ作品は数えない（追加する推敲案・分析などの数）
+  // 推敲案の実行の記録・分析と一緒に作る相対比較の作品は数えない（追加する推敲案・分析などの数）
   const created = records.filter((r) => r.table !== 'proofBatches' && r.table !== 'benchWorks').length
   return { ok: true, calls: previews, records, created, plain }
 }

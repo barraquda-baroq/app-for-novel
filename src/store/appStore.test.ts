@@ -181,7 +181,7 @@ describe('複数タブ・保存失敗', () => {
     other.close()
   })
 
-  it('まだ届いていないベンチ作品への比べる作品の印は、表示では外しても、タイトルを書き換えた時に端末内に残る（作品が届けばまた見える）', async () => {
+  it('まだ届いていない相対比較の作品への、相対比較する作品の印は、表示では外しても、タイトルを書き換えた時に端末内に残る（作品が届けばまた見える）', async () => {
     const name = `test-db-${++n}`
     await initStore(createPersistence(name))
     const titleId = actions.createTitle('作品')

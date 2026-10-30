@@ -1,6 +1,6 @@
-// ホーム: 起動するとタイトル群とアイデア領域が表示される。その後に、比べるために読む既存の作品の棚「ベンチ作品」（2.5）。
-// 広い画面（721px〜）では左右に並べ（左にタイトルとその下のベンチ作品、右にアイデア）、スマホでは上下に積む
-// （タイトル → アイデア → ベンチ作品）。スマホでは上部の切り替えで、どの先頭へも1タップで移れる（どれかを隠すことはしない）。
+// ホーム: 起動するとタイトル群とアイデア領域が表示される。その後に、比べるために読む既存の作品の棚「相対比較」（2.5。内部名は bench）。
+// 広い画面（721px〜）では左右に並べ（左にタイトルとその下の相対比較、右にアイデア）、スマホでは上下に積む
+// （タイトル → アイデア → 相対比較）。スマホでは上部の切り替えで、どの先頭へも1タップで移れる（どれかを隠すことはしない）。
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useData } from '../../store/appStore'
@@ -18,7 +18,7 @@ import './home.css'
 const AREAS: { id: HomeView; label: string }[] = [
   { id: 'titles', label: 'タイトル' },
   { id: 'ideas', label: 'アイデア' },
-  { id: 'bench', label: 'ベンチ作品' },
+  { id: 'bench', label: '相対比較' },
 ]
 
 /** スマホの上下表示で、領域の先頭が画面のこの割合より上に来たら、その領域を表示中とみなす */
@@ -73,7 +73,7 @@ export function HomePage() {
     return () => cancelAnimationFrame(raf)
   }, [linkedView, focus, twoColumns])
 
-  // ?view=bench（ベンチ作品の画面のパンくずから）: 棚の先頭を見せ、見出しにフォーカスを移す（どの幅でも）
+  // ?view=bench（相対比較の作品の画面のパンくずから）: 棚の先頭を見せ、見出しにフォーカスを移す（どの幅でも）
   useEffect(() => {
     if (linkedView !== 'bench') return
     const raf = requestAnimationFrame(() => {
@@ -95,8 +95,8 @@ export function HomePage() {
           setCurrent(pinned.current)
           return
         }
-        // 一番上にいる時は「タイトル」。下へ進んでアイデア領域が画面の上半分に来たら「アイデア」、ベンチ作品の棚が来たら
-        // （または最後まで来たら）「ベンチ作品」
+        // 一番上にいる時は「タイトル」。下へ進んでアイデア領域が画面の上半分に来たら「アイデア」、相対比較の棚が来たら
+        // （または最後まで来たら）「相対比較」
         const line = window.innerHeight * SPY_RATIO
         const ideasTop = ideasPane.current?.getBoundingClientRect().top ?? Infinity
         const benchTop = benchPane.current?.getBoundingClientRect().top ?? Infinity

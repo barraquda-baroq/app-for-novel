@@ -23,7 +23,7 @@ const analysis = (id: string, workId: string, viewpoint: string, createdAt: numb
   updatedAt: createdAt,
 })
 
-describe('ベンチ作品の表示の計算', () => {
+describe('相対比較の表示の計算', () => {
   it('作品を作ったものの札: 英字のあとは空白（「Claude が作成」）、全角の括弧のあとは詰める。手で足した作品は出さない', () => {
     expect(createdByLabel('claude')).toBe('Claude が作成')
     expect(createdByLabel('paste')).toBe('Claude（貼り付け）が作成')
@@ -65,11 +65,12 @@ describe('ベンチ作品の表示の計算', () => {
     expect(c.get('w1')).toEqual({ label: '『星の庭』『風の街』', count: 2 })
     expect(c.get('w2')).toEqual({ label: '『星の庭』', count: 1 })
     expect(biblioLine({ author: '山田', publisher: '', year: '2019', genre: undefined })).toBe('山田・2019')
-    expect(deleteWorkMessage(3, 2)).toContain('この作品の分析（3件）もいっしょに')
+    expect(deleteWorkMessage(3, 2)).toContain('この作品を相対比較から削除し、分析（3件）もいっしょにゴミ箱に移します。')
     expect(deleteWorkMessage(3, 2)).toContain(
-      '比べる作品にしているタイトル（2件）では、ゴミ箱にある間は比べる作品に出ません（ゴミ箱から戻すと、また出ます）。',
+      '相対比較する作品にしているタイトル（2件）では、ゴミ箱にある間は相対比較する作品に出ません（ゴミ箱から戻すと、また出ます）。',
     )
-    expect(deleteWorkMessage(0, 0)).not.toContain('比べる作品')
+    expect(deleteWorkMessage(0, 0)).toContain('この作品を相対比較から削除し、ゴミ箱に移します。')
+    expect(deleteWorkMessage(0, 0)).not.toContain('相対比較する作品')
     expect(runDateLabel('2026-10-30')).toBe('2026/10/30')
     expect(runDateLabel('')).toBe('日付なし')
     expect(analysisPreview('## 構成\n- **三幕**の構成')).toBe('構成 - 三幕の構成')

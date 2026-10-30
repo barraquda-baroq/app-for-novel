@@ -1,5 +1,5 @@
-// ベンチ作品（2.5）のツール: 一覧・分析を読む・分析を足す、作品批評の比べるベンチ作品・比べた作品（bench_works）。
-// ベンチ作品はタイトルの「Claude に見せる」と関係なく見せ、書き込みは「書き込みを許可」の時だけ。
+// 相対比較（2.5。内部名は bench）のツール: 一覧・分析を読む・分析を足す、作品批評の相対比較する作品・比べた作品（bench_works）。
+// 相対比較の作品はタイトルの「Claude に見せる」と関係なく見せ、書き込みは「書き込みを許可」の時だけ。
 import { describe, expect, it } from 'vitest'
 import { addBenchAnalysis, addBenchWork, addTitleBenchWork, deleteBenchWork } from '../../../src/domain/benchOps'
 import { addClaudeRecords, setTitleClaudeAccess } from '../../../src/domain/claudeOps'
@@ -16,7 +16,7 @@ import { OWNER, call, pairedCore } from '../support/harness'
 function shelf() {
   const n = novel(['冒頭の本文。'], { name: '星の庭' })
   let data: AppData = n.data
-  const a = addBenchWork(data, { name: '銀河の果て', author: '山田', year: '2019', pdfPlace: 'プロジェクト「ベンチ」' })
+  const a = addBenchWork(data, { name: '銀河の果て', author: '山田', year: '2019', pdfPlace: 'プロジェクト「相対比較」' })
   data = a.data
   const b = addBenchWork(data, { name: '海の記憶', author: '佐藤' })
   data = b.data
@@ -40,17 +40,17 @@ describe('読む（novel_list_bench_works・novel_get_bench_analysis）', () => 
     const s = shelf()
     const { core } = await pairedCore(fake, s.data)
     const text = await call(core, 'novel_list_bench_works')
-    expect(text).toContain('=== ベンチ作品（2作品。作者が比べるために読む既存の作品）===')
+    expect(text).toContain('=== 相対比較（2作品。作者が比べるために読む既存の作品）===')
     expect(text).toContain(`${shortId('benchWork', s.workA)}『銀河の果て』（山田） 山田・2019`)
     expect(text).toContain('分析 3件')
     expect(text).toContain('構成 2件（最新 2026-10-20）・文体 1件（最新 2026-10-02）')
-    expect(text).toContain('PDF の置き場所: プロジェクト「ベンチ」')
+    expect(text).toContain('PDF の置き場所: プロジェクト「相対比較」')
     expect(text).toContain(`比べるタイトル: 『星の庭』[${shortId('title', s.titleId)}]`)
     expect(text).toContain(`${shortId('benchWork', s.workB)}『海の記憶』（佐藤）`)
     expect(text).not.toContain('内緒の話')
   })
 
-  it('タイトルをすべて見せなくても、ベンチ作品は読める', async () => {
+  it('タイトルをすべて見せなくても、相対比較の作品は読める', async () => {
     const fake = new FakeFirebase()
     const s = shelf()
     const data = setTitleClaudeAccess(s.data, s.titleId, 'none')
@@ -111,12 +111,12 @@ describe('読む（novel_list_bench_works・novel_get_bench_analysis）', () => 
 })
 
 describe('作品批評（novel_get_critique・novel_add_critique_result）', () => {
-  it('タイトルの比べるベンチ作品を観点つきで出し、比べた作品を bench_works で記録する', async () => {
+  it('タイトルの相対比較する作品を観点つきで出し、比べた作品を bench_works で記録する', async () => {
     const fake = new FakeFirebase()
     const s = shelf()
     const { core } = await pairedCore(fake, s.data)
     const text = await call(core, 'novel_get_critique', { title_id: s.titleId })
-    expect(text).toContain('--- 比べるベンチ作品（1作品。作者が比べたい既存の作品）---')
+    expect(text).toContain('--- 相対比較する作品（1作品。作者が比べたい既存の作品）---')
     expect(text).toContain(`${shortId('benchWork', s.workA)}『銀河の果て』（山田） 分析 3件: 構成・文体`)
     expect(text).toContain('novel_get_bench_analysis')
     const r = await core.callTool('novel_add_critique_result', {
@@ -149,10 +149,10 @@ describe('作品批評（novel_get_critique・novel_add_critique_result）', () 
     expect(list).toContain(`・${compared}`)
     const full = await call(core, 'novel_get_critique', { title_id: s.titleId, result_id: shortId('critiqueResult', String(f.id.stringValue)) })
     expect(full).toContain(`\n${compared}\n`)
-    expect(full).not.toContain('棚から削除されています')
+    expect(full).not.toContain('相対比較から削除されています')
   })
 
-  it('比べた作品が棚から削除されていれば、その数を添える。比べた作品の無い結果には出さない', async () => {
+  it('比べた作品が相対比較から削除されていれば、その数を添える。比べた作品の無い結果には出さない', async () => {
     const fake = new FakeFirebase()
     const s = shelf()
     const built = buildCritiqueResult(
@@ -169,11 +169,11 @@ describe('作品批評（novel_get_critique・novel_add_critique_result）', () 
     data = deleteBenchWork(data, s.workB)
     const { core } = await pairedCore(fake, data)
     const list = await call(core, 'novel_get_critique', { title_id: s.titleId })
-    expect(list).toContain(`比べた作品: ${shortId('benchWork', s.workA)}『銀河の果て』（山田）（ほか1作品は棚から削除されています）`)
+    expect(list).toContain(`比べた作品: ${shortId('benchWork', s.workA)}『銀河の果て』（山田）（ほか1作品は相対比較から削除されています）`)
     expect(list.match(/比べた作品:/g)).toHaveLength(1)
     const id = built.records[0].record.id
     const full = await call(core, 'novel_get_critique', { title_id: s.titleId, result_id: shortId('critiqueResult', id) })
-    expect(full).toContain('（ほか1作品は棚から削除されています）')
+    expect(full).toContain('（ほか1作品は相対比較から削除されています）')
     const other = await call(core, 'novel_get_critique', {
       title_id: s.titleId,
       result_id: shortId('critiqueResult', plain.records[0].record.id),
@@ -189,7 +189,7 @@ describe('書き込み（novel_add_bench_analysis）', () => {
       .recordDocs(OWNER)
       .filter((d) => d.name.includes(`/${table}:`) && d.fields.device?.stringValue === 'claude-connector')
 
-  it('棚に無い作品は new_work を付けた時だけ作り、分析を観点ごとに作る（同じ内容は重複）', async () => {
+  it('相対比較に無い作品は new_work を付けた時だけ作り、分析を観点ごとに作る（同じ内容は重複）', async () => {
     const fake = new FakeFirebase()
     const s = shelf()
     const { core, clock } = await pairedCore(fake, s.data)
@@ -205,9 +205,10 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     const input = { work: '星を継ぐ', new_work: { name: '星を継ぐ', author: '高橋', pdf_place: 'プロジェクト「SF」' }, items }
     const r = await core.callTool('novel_add_bench_analysis', input)
     expect(r.isError).toBeUndefined()
-    expect(r.text).toContain('ベンチ作品の分析を追加: 追加 2件')
-    expect(r.text).toContain('を棚に足しました')
-    expect(r.text).toContain('アプリのホームの「ベンチ作品」に、各端末が同期すると出ます')
+    expect(r.text).toContain('相対比較に分析を追加: 追加 2件')
+    expect(r.text).toContain('『星を継ぐ』（高橋） を相対比較に追加しました')
+    expect(r.text).toContain('アプリのホームの「相対比較」に、各端末が同期すると出ます')
+    expect(r.text).not.toContain('ベンチ')
     expect(r.structured).toMatchObject({ created: [{ id: expect.stringMatching(/^n:/) }, { id: expect.stringMatching(/^n:/) }] })
     expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
     expect(docsOf(fake, 'benchAnalyses')).toHaveLength(2)
@@ -227,7 +228,7 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
   })
 
-  it('作品名の全角と半角・全角の空白の違いでは、別の作品を作らない（棚の作品に足す）', async () => {
+  it('作品名の全角と半角・全角の空白の違いでは、別の作品を作らない（相対比較の作品に足す）', async () => {
     const fake = new FakeFirebase()
     const s = shelf()
     const up = addBenchWork(s.data, { name: '銀河の果て　上', author: '山田' })
@@ -240,7 +241,7 @@ describe('書き込み（novel_add_bench_analysis）', () => {
         items: [{ viewpoint: '構成', body_markdown: `## 構成\n${name}`, run_date: '2026-10-30' }],
       })
       expect(r.text).toContain('追加 1件')
-      expect(r.text).not.toContain('を棚に足しました')
+      expect(r.text).not.toContain('を相対比較に追加しました')
     }
     expect(docsOf(fake, 'benchWorks')).toHaveLength(0)
     const list = await call(core, 'novel_list_bench_works')
@@ -261,7 +262,7 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     }
     const r = await core.callTool('novel_add_bench_analysis', input)
     expect(r.text).toContain('追加 1件')
-    expect(r.text).toContain('『海の記憶』（田中） を棚に足しました')
+    expect(r.text).toContain('『海の記憶』（田中） を相対比較に追加しました')
     expect(r.text).toContain(`著者の違う同名の作品 ${shortId('benchWork', s.workB)}『海の記憶』（佐藤） があるため、別の作品として足しました`)
     expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
     clock.now += 20_000
@@ -270,7 +271,7 @@ describe('書き込み（novel_add_bench_analysis）', () => {
       items: [{ viewpoint: '文体', body_markdown: '## 文体\n短文', run_date: '2026-10-30' }],
     })
     expect(again.text).toContain('追加 1件')
-    expect(again.text).not.toContain('を棚に足しました')
+    expect(again.text).not.toContain('を相対比較に追加しました')
     expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
     // 佐藤の作品には何も足していない
     const sato = await call(core, 'novel_get_bench_analysis', { work: shortId('benchWork', s.workB) })

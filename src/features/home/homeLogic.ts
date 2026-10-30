@@ -1,4 +1,4 @@
-// ホーム画面（タイトル群・アイデア領域・ベンチ作品の棚）で使う、表示用の純粋な計算。データは変更しない。
+// ホーム画面（タイトル群・アイデア領域・相対比較の棚）で使う、表示用の純粋な計算。データは変更しない。
 import { missingActiveLabel, titleLastEdited, titleSummary, type TitleSummary } from '../../domain/entityOps'
 import { formatCount } from '../../domain/text'
 import { trashNotice } from '../../domain/trash'

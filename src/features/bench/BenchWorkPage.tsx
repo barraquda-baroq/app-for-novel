@@ -1,4 +1,4 @@
-// ベンチ作品の画面（/bench/:workId）: 作品の情報（直せる）と、分析の一覧（観点ごと。まとまりは観点を最初に分析した順、
+// 相対比較の作品の画面（/bench/:workId）: 作品の情報（直せる）と、分析の一覧（観点ごと。まとまりは観点を最初に分析した順、
 // 中は新しい日付から）。分析は開閉でき、長い分析は閉じている間は頭だけを変換して出す（「全文を表示」で全部）。
 // 分析は手で足す・直す・削除でき、「Claude に頼む（手動）」で PDF を置いた claude.ai のプロジェクトに渡す依頼文をコピーし、
 // 「結果を貼り付け」で取り込む（2回貼り付けても増えない）。
@@ -48,8 +48,8 @@ export function BenchWorkPage() {
   if (!work)
     return (
       <NotFound
-        message="ベンチ作品が見つかりません。削除された可能性があります。"
-        action={{ to: paths.homeArea('bench'), label: 'ベンチ作品の一覧へ' }}
+        message="相対比較の作品が見つかりません。削除された可能性があります。"
+        action={{ to: paths.homeArea('bench'), label: '相対比較の一覧へ' }}
       />
     )
   return <BenchWorkView key={work.id} work={work} />
@@ -59,7 +59,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
   const navigate = useNavigate()
   const data = useData()
   const name = workName(work)
-  useDocumentTitle(`ベンチ作品: ${name}`)
+  useDocumentTitle(`相対比較: ${name}`)
   const analyses = useMemo(() => benchAnalysesOf(data, work.id), [data.benchAnalyses, work.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const groups = useMemo(() => benchViewpointGroups(analyses), [analyses])
   const comparing = useMemo(() => titlesComparing(data, work.id), [data.titles, work.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -87,7 +87,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
 
   const remove = async () => {
     const ok = await confirmDialog({
-      title: `「${name}」を削除しますか？`,
+      title: `「${name}」を相対比較から削除しますか？`,
       message: deleteWorkMessage(analyses.length, comparing.length),
       danger: true,
       confirmLabel: '削除',
@@ -102,14 +102,14 @@ function BenchWorkView({ work }: { work: BenchWork }) {
   return (
     <>
       <AppHeader
-        crumbs={[{ label: 'ホーム', to: paths.home() }, { label: 'ベンチ作品', to: paths.homeArea('bench') }, { label: name }]}
+        crumbs={[{ label: 'ホーム', to: paths.home() }, { label: '相対比較', to: paths.homeArea('bench') }, { label: name }]}
       />
       <main className="page bw-page" data-area="bench" data-testid="bench-page">
         <section className="bw-head card" aria-labelledby="bw-name" data-testid="bench-work-head">
           <div className="bw-head-top">
             <span className="badge bw-kind">
               <ShelfIcon />
-              ベンチ作品
+              相対比較
             </span>
             {createdBy ? (
               <span className="badge cl-badge" data-testid="bench-work-source">
@@ -120,7 +120,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
             <span className="grow" />
             <button type="button" className="btn btn-sm" onClick={() => setEditWork(true)} data-testid="bench-work-edit">
               <EditIcon />
-              情報を直す
+              作品の情報を直す
             </button>
             <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()} data-testid="bench-work-delete">
               <TrashIcon />
@@ -210,7 +210,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
               <p>まだ分析がありません。</p>
               <p className="small">
                 コネクタを付けた claude.ai のプロジェクト（PDF
-                を置いたもの）で「この作品を構成・文体の観点で分析して、ベンチ作品に追加して」と頼むか、「Claude
+                を置いたもの）で「この作品を構成・文体の観点で分析して、相対比較に追加して」と頼むか、「Claude
                 に頼む（手動）」の依頼文を使ってください。手で書くこともできます。
               </p>
             </div>

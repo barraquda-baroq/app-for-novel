@@ -716,13 +716,13 @@ function repairBench(d: AppData, fix: (m: string) => void): void {
     }
     if (!same(next, w)) {
       d.benchWorks[w.id] = next
-      fix('ベンチ作品の項目を補いました')
+      fix('相対比較の作品の項目を補いました')
     }
   }
   for (const a of Object.values(d.benchAnalyses)) {
     if (typeof a.workId !== 'string' || !d.benchWorks[a.workId]) {
       delete d.benchAnalyses[a.id]
-      fix('作品のないベンチ作品の分析を表示から外しました')
+      fix('作品のない相対比較の分析を表示から外しました')
       continue
     }
     const next = optionalString<BenchAnalysis>(
@@ -737,7 +737,7 @@ function repairBench(d: AppData, fix: (m: string) => void): void {
     )
     if (!same(next, a)) {
       d.benchAnalyses[a.id] = next
-      fix('ベンチ作品の分析の項目を補いました')
+      fix('相対比較の分析の項目を補いました')
     }
   }
   for (const t of Object.values(d.titles)) {
@@ -746,7 +746,7 @@ function repairBench(d: AppData, fix: (m: string) => void): void {
     const ids = raw.filter((id, i): id is ID => typeof id === 'string' && Boolean(d.benchWorks[id]) && raw.indexOf(id) === i)
     if (!same(ids, t.benchWorkIds)) {
       d.titles[t.id] = { ...t, benchWorkIds: ids }
-      fix('比べるベンチ作品から、無い作品を外しました')
+      fix('相対比較する作品から、無い作品を外しました')
     }
   }
 }

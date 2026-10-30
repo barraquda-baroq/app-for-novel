@@ -438,7 +438,7 @@ function findBy<T extends { id: ID }>(list: readonly T[], kind: Parameters<typeo
 
 /** 1つの項目を全文で読む（長ければ char_budget 字ずつ。続きは cursor に項目の id と位置を入れる） */
 /**
- * 1つの項目を char_budget 字ずつ返す。k と t（タイトル・ベンチ作品の id）と extra（観点の絞り込みなど）を cursor に入れ、
+ * 1つの項目を char_budget 字ずつ返す。k と t（タイトル・相対比較の作品の id）と extra（観点の絞り込みなど）を cursor に入れ、
  * 続きの時に同じ項目を同じ形で作り直せるようにする
  */
 function pagedItem(
@@ -649,12 +649,12 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
   const allPrompts = [...prompts.title, ...prompts.shared]
   const results = critiqueResultsOf(view, title.id)
   const current = manuscriptOf(view, title.id, ctx.now)
-  /** 批評の結果で比べたベンチ作品（2.5。CritiqueResult.benchWorkIds。棚から消えた作品は数だけ） */
+  /** 批評の結果で比べた相対比較の作品（2.5。CritiqueResult.benchWorkIds。相対比較から消えた作品は数だけ） */
   const compared = (ids: readonly ID[] | undefined): string => {
     if (!ids?.length) return ''
     const shown = ids.map((id) => view.benchWorks[id]).filter((w): w is BenchWork => Boolean(w))
     const gone = ids.length - shown.length
-    return `比べた作品: ${shown.map((w) => benchWorkRef(w)).join('、')}${gone > 0 ? `（ほか${gone}作品は棚から削除されています）` : ''}`
+    return `比べた作品: ${shown.map((w) => benchWorkRef(w)).join('、')}${gone > 0 ? `（ほか${gone}作品は相対比較から削除されています）` : ''}`
   }
   const itemText = (which: 'prompt' | 'result', id: ID): { label: string; text: string } | null => {
     if (which === 'prompt') {
@@ -729,10 +729,10 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
         .join(' / ')}`,
     )
   if (!results.length) lines.push('（ありません）')
-  // 比べるベンチ作品（2.5）: 作品と観点を出し、分析は novel_get_bench_analysis で読んでもらう
+  // 相対比較する作品（2.5）: 作品と観点を出し、分析は novel_get_bench_analysis で読んでもらう
   const bench = benchWorksOfTitle(view, title.id)
   if (bench.length) {
-    lines.push(`--- 比べるベンチ作品（${bench.length}作品。作者が比べたい既存の作品）---`)
+    lines.push(`--- 相対比較する作品（${bench.length}作品。作者が比べたい既存の作品）---`)
     for (const w of bench) {
       const analyses = benchAnalysesOf(view, w.id)
       lines.push(
@@ -747,21 +747,21 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
   return ok(lines.join('\n'))
 }
 
-// ---------- R10 ベンチ作品の一覧 ----------
+// ---------- R10 相対比較の作品一覧 ----------
 
 export function listBenchWorks(ctx: ReadContext): ToolResult {
   const works = sortedBenchWorks(ctx.view)
-  const lines: string[] = [`=== ベンチ作品（${works.length}作品。作者が比べるために読む既存の作品）===`]
+  const lines: string[] = [`=== 相対比較（${works.length}作品。作者が比べるために読む既存の作品）===`]
   if (!works.length)
     lines.push(
-      '（まだありません。作品の PDF を読んで novel_add_bench_analysis の new_work を付けて分析を足すと、作品も棚に足されます）',
+      '（まだありません。作品の PDF を読んで novel_add_bench_analysis の new_work を付けて分析を足すと、作品も相対比較に追加されます）',
     )
   for (const w of works) lines.push(benchWorkLine(ctx.view, w))
   if (works.length) lines.push('分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。')
   return ok(lines.join('\n'))
 }
 
-// ---------- R11 ベンチ作品の分析 ----------
+// ---------- R11 相対比較の分析 ----------
 
 export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
   const view = ctx.view
@@ -780,7 +780,7 @@ export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
       const a = view.benchAnalyses[id]
       if (!a || a.workId !== work.id)
         return fail('続きを読む分析が見つかりません（削除された可能性があります。cursor なしで読み直してください）')
-      const text = `=== ベンチ作品 ${benchWorkRef(work)} の分析 ===\n${analysisText(a)}`
+      const text = `=== 相対比較の作品 ${benchWorkRef(work)} の分析 ===\n${analysisText(a)}`
       return pagedItem(ctx, args, 'bench', work.id, { which, id, label: `『${work.name}』の「${a.viewpoint}」`, text }, offset)
     }
     const text = workAnalysesText(view, work, viewpoints)

@@ -1,4 +1,4 @@
-// ホームの棚「ベンチ作品」: 比べるために読む既存の作品（PDF は claude.ai のプロジェクトに置いたまま、分析だけをここに残す）。
+// ホームの棚「相対比較」（内部名は bench）: 比べるために読む既存の作品（PDF は claude.ai のプロジェクトに置いたまま、分析だけをここに残す）。
 // どのタイトルにも属さず、すべてのタイトルで共有する。カードを押すと作品の画面へ。「並べ替え・編集」で並べ替え・削除ができる。
 // カードはレコード単位の props の React.memo（作品が多くても、変わったカードだけを描き直す）。
 import { memo, useMemo, useRef, useState } from 'react'
@@ -50,7 +50,7 @@ export function BenchShelf({ headingId }: { headingId: string }) {
       <div className="home-pane-head">
         <ShelfIcon className="icon home-pane-icon" />
         <h2 id={headingId} tabIndex={-1}>
-          ベンチ作品
+          相対比較
         </h2>
         <span className="home-pane-count" data-testid="bench-count">
           {works.length}
@@ -75,7 +75,7 @@ export function BenchShelf({ headingId }: { headingId: string }) {
           data-testid="new-bench-work"
         >
           <PlusIcon />
-          ベンチ作品
+          作品を追加
         </button>
       </div>
 
@@ -87,7 +87,7 @@ export function BenchShelf({ headingId }: { headingId: string }) {
           </p>
           <button type="button" className="btn" onClick={() => setAdding(true)}>
             <PlusIcon />
-            ベンチ作品を足す
+            作品を追加
           </button>
         </div>
       ) : (
@@ -147,7 +147,7 @@ const BenchCard = memo(function BenchCard({
 
   const remove = async () => {
     const ok = await confirmDialog({
-      title: `「${name}」を削除しますか？`,
+      title: `「${name}」を相対比較から削除しますか？`,
       message: deleteWorkMessage(analyses.length, comparingCount),
       danger: true,
       confirmLabel: '削除',

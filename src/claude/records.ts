@@ -7,7 +7,7 @@
 //   上限があるのは短い項目（名前・見出し・推敲案の引用など）と件数だけ（RECORD_LIMITS）
 // - コネクタ（source = claude）が書く記録だけは、1件を JSON にして 200,000 字まで（コネクタは分割文書を書かないため）。
 //   超える時は、分け方を書いた理由を返す。貼り付け（source = paste）は端末が大きな記録を分割文書に分けて送るので上限なし
-// - ベンチ作品の分析（2.5。W6）は、どのタイトルにも属さない。作品が無ければ new_work を付けた時だけ作品も作る
+// - 相対比較の分析（2.5。W6。内部名は bench）は、どのタイトルにも属さない。作品が無ければ new_work を付けた時だけ作品も作る
 // 作るだけで、データには入れない（アプリはストアの addClaudeRecords、コネクタは Firestore への作成で入れる）。
 import { BENCH_LIMITS, sortedBenchWorks } from '../domain/benchOps'
 import { hashJson } from '../domain/hash'
@@ -172,7 +172,7 @@ export interface CritiqueResultInput {
   /** 範囲（省略時はタイトル全体） */
   scope?: { from: string; to: string }
   model?: string
-  /** 比べたベンチ作品（w:… の短い id・作品名。2.5） */
+  /** 比べた相対比較の作品（w:… の短い id・作品名。2.5） */
   bench_works?: string[]
 }
 
@@ -239,7 +239,7 @@ export const WRITE_TOOL_LABELS: Record<WriteTool, string> = {
   novel_add_strategy_note: '戦略メモを追加',
   novel_save_critique_prompt: '批評プロンプトを保存',
   novel_add_critique_result: '作品批評の結果を記録',
-  novel_add_bench_analysis: 'ベンチ作品の分析を追加',
+  novel_add_bench_analysis: '相対比較に分析を追加',
 }
 
 // ---------- 結果の形 ----------
@@ -1036,7 +1036,7 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
 function benchRefsOf(data: AppData, refs: unknown, notes: string[]): ID[] | string {
   if (refs === undefined || refs === null) return []
   if (!Array.isArray(refs) || refs.length > RECORD_LIMITS.benchRefs)
-    return `bench_works はベンチ作品の指し方（w:… か作品名）の配列（${RECORD_LIMITS.benchRefs}件まで）にしてください`
+    return `bench_works は相対比較の作品の指し方（w:… か作品名）の配列（${RECORD_LIMITS.benchRefs}件まで）にしてください`
   const ids: ID[] = []
   for (const ref of refs) {
     const r = isStr(ref) && ref.trim() ? resolveBenchWork(data, ref) : null
@@ -1071,7 +1071,8 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
   const ref = isStr(input.work) ? input.work.trim() : ''
   const newWork = input.new_work === undefined || input.new_work === null ? null : newWorkOf(input.new_work)
   if (typeof newWork === 'string') return fail(newWork)
-  if (!ref && !newWork) return fail('work がありません（ベンチ作品の w:… か作品名。棚に無い作品は new_work も付ける）')
+  if (!ref && !newWork)
+    return fail('work がありません（相対比較の作品の w:… か作品名。相対比較にまだ無い作品は new_work も付ける）')
   const notes: string[] = []
   const records: NewRecord[] = []
   // 作品: work → new_work の作品名の順に探し、無ければ new_work がある時だけ作る。
@@ -1096,7 +1097,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
     } else if (found?.reason === 'ambiguous') return fail(found.message, found.candidates)
     else
       return fail(
-        `${found?.message ?? 'ベンチ作品が見つかりません'}。棚に無い作品は new_work（name・author など）を付けると、作品も作ります`,
+        `${found?.message ?? '相対比較の作品が見つかりません'}。相対比較にまだ無い作品は new_work（name・author など）を付けると、作品も相対比較に追加します`,
         found?.candidates,
       )
   } else {
@@ -1114,7 +1115,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       }
       if (fits.length > 1)
         return fail(
-          `作品名「${short(name, 30)}」のベンチ作品が${fits.length}件あります。w:… の短い id で指してください`,
+          `作品名「${short(name, 30)}」の相対比較の作品が${fits.length}件あります。w:… の短い id で指してください`,
           fits.slice(0, 30).map((w) => benchWorkRef(w)),
         )
       nameTwin ??= hits[0]
@@ -1126,7 +1127,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       // 以前に Claude が作って削除した作品（同じ id）も、手で足して削除した作品（ゴミ箱に同じ作品名）も作り直さない
       else if (ctx.wasDeleted?.('benchWorks', id) || ctx.trashedBenchWorkNamed?.(newWork.name))
         return fail(
-          `ベンチ作品『${short(newWork.name, 30)}』は以前に削除されています（作り直す時は、アプリのホームの「ベンチ作品」で作るか、ゴミ箱から戻してください）`,
+          `相対比較の作品『${short(newWork.name, 30)}』は以前に削除されています（作り直す時は、アプリのホームの「相対比較」で追加するか、ゴミ箱から戻してください）`,
         )
       else {
         const opt = (v: string | undefined) => (isStr(v) && v.trim() ? v.trim() : undefined)
@@ -1189,7 +1190,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
     const tooBig = sizeProblem(
       rec,
       ctx,
-      'ベンチ作品の分析',
+      '相対比較の分析',
       rec.body,
       (k) =>
         `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ viewpoint・run_date の別々の items にして送ってください（各部の body_markdown の1行目に「（1/${k}）」「（2/${k}）」…と番号を書く。アプリと一覧はこの番号の順に並べます。items が多くなる時は novel_add_bench_analysis を分けて呼ぶ）`,
@@ -1203,7 +1204,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
   // 作品は、分析を1つでも作る時だけ作る（先に作る）
   if (created && records.length) {
     records.unshift({ table: 'benchWorks', record: created })
-    notes.push(`ベンチ作品 ${benchWorkRef(created)} を棚に足しました`)
+    notes.push(`作品 ${benchWorkRef(created)} を相対比較に追加しました`)
     if (nameTwin) notes.push(`著者の違う同名の作品 ${benchWorkRef(nameTwin)} があるため、別の作品として足しました`)
   }
   return { ok: true, records, items, notes }

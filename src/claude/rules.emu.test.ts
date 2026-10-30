@@ -301,7 +301,7 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       ['知らない項目', { ...ok('ci-extra'), extra: { note: 'x' } }],
     ]
     for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
-    // 8つの表（2.3 の6つと、2.5 のベンチ作品・その分析）はどれも作れる
+    // 8つの表（2.3 の6つと、2.5 の相対比較の作品・その分析）はどれも作れる
     for (const table of [
       'proofSuggestions',
       'proofBatches',
@@ -315,7 +315,7 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       expect([table, await connectorCommit(anon, owner.uid, [connectorRecord(table, `c-${table}`)])]).toEqual([table, 200])
   })
 
-  it('ベンチ作品とその分析: 作れるのは新しい記録だけ（書き換え・削除・決まった形でない作成は拒む）', async () => {
+  it('相対比較の作品とその分析: 作れるのは新しい記録だけ（書き換え・削除・決まった形でない作成は拒む）', async () => {
     const work = connectorRecord('benchWorks', 'cw-1', { name: '銀河の果て', author: '山田' })
     const analysis = connectorRecord('benchAnalyses', 'ca-1', { workId: 'cw-1', viewpoint: '構成', body: '## 構成' })
     expect(await connectorCommit(anon, owner.uid, [work, analysis])).toBe(200)

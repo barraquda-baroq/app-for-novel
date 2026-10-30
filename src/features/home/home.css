@@ -1,4 +1,4 @@
-/* ===== ホーム（home-）: タイトル群とアイデア領域、ベンチ作品の棚 ===== */
+/* ===== ホーム（home-）: タイトル群とアイデア領域、相対比較の棚 ===== */
 
 .page.home-page {
   max-width: 1360px;
@@ -7,7 +7,7 @@
 .home-grid {
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  /* 左にタイトルとその下のベンチ作品、右にアイデア（アイデアが長くても、ベンチ作品はタイトルのすぐ下に出る） */
+  /* 左にタイトルとその下の相対比較、右にアイデア（アイデアが長くても、相対比較はタイトルのすぐ下に出る） */
   grid-template-areas:
     'titles ideas'
     'bench ideas';
@@ -604,7 +604,7 @@
   }
 }
 
-/* ---------- ベンチ作品の棚（2.5） ---------- */
+/* ---------- 相対比較の棚（2.5。内部名は bench） ---------- */
 .home-bench-list {
   display: flex;
   flex-direction: column;

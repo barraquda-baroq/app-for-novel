@@ -130,15 +130,28 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(write.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
     expect(tools[3].inputSchema.properties.char_budget).toMatchObject({ default: 20_000, maximum: 60_000 })
     expect(write.outputSchema).toBeTruthy()
-    // ベンチ作品（2.5）: 読む2つと書き込み1つ
+    // 相対比較（2.5。ツールの名前は bench のまま）: 読む2つと書き込み1つ
     const bench = tools.filter((t) => t.name.includes('_bench_'))
     expect(bench.map((t) => [t.name, t.title, t.annotations.readOnlyHint])).toEqual([
-      ['novel_list_bench_works', 'ベンチ作品の一覧を見る', true],
-      ['novel_get_bench_analysis', 'ベンチ作品の分析を読む', true],
-      ['novel_add_bench_analysis', 'ベンチ作品の分析を追加', false],
+      ['novel_list_bench_works', '相対比較の作品一覧を見る', true],
+      ['novel_get_bench_analysis', '相対比較の分析を読む', true],
+      ['novel_add_bench_analysis', '相対比較に分析を追加', false],
     ])
     expect(bench[2].outputSchema).toBeTruthy()
-    expect(init.json.result.instructions).toContain('ベンチ作品')
+    // 作者が「ベンチ作品」「比較作品」と呼んでも、相対比較のツールにつながるように（説明と、追加のツールの説明に書く）
+    const instructions = init.json.result.instructions as string
+    expect(instructions).toContain('相対比較')
+    expect(instructions).toContain('「ベンチ作品」「比較作品」とも呼ぶ')
+    const addBench = TOOL_DEFS.find((t) => t.name === 'novel_add_bench_analysis')!
+    expect(addBench.description).toContain('ホームの「相対比較」')
+    expect(addBench.description).toContain('「ベンチ作品」「比較作品」とも呼ぶ')
+    // それ以外の説明・題には「ベンチ」を出さない
+    for (const t of TOOL_DEFS) {
+      expect(t.title, t.name).not.toContain('ベンチ')
+      if (t !== addBench) expect(t.description, t.name).not.toContain('ベンチ')
+    }
+    expect(instructions.replace('「ベンチ作品」「比較作品」とも呼ぶ', '')).not.toContain('ベンチ')
+    expect(JSON.stringify(TOOL_SCHEMAS)).not.toContain('ベンチ')
     expect(tools[2].outputSchema).toBeUndefined()
     expect(calls).toBe(0)
   })

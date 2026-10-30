@@ -57,7 +57,7 @@ export function ManualDialog({ titleId, task: initialTask, tasks = ALL_TASKS, pr
   const prompts = useMemo(() => critiquePromptsOf(data, titleId), [data, titleId])
   const [prompt, setPrompt] = useState<string>(() => promptId ?? prompts.title[0]?.id ?? prompts.shared[0]?.id ?? NO_PROMPT)
   const [includeText, setIncludeText] = useState(true)
-  // 作品批評: 比べるベンチ作品の分析も入れる（比べる作品を選んでいれば、はじめから入れる）
+  // 作品批評: 相対比較する作品の分析も入れる（相対比較する作品を選んでいれば、はじめから入れる）
   const bench = useMemo(() => benchWorksOfTitle(data, titleId), [data, titleId])
   const [includeBench, setIncludeBench] = useState(true)
   const benchWorkIds = task === 'critique' && includeBench && bench.length ? bench.map((w) => w.id) : undefined
@@ -279,7 +279,7 @@ export function ManualDialog({ titleId, task: initialTask, tasks = ALL_TASKS, pr
               onChange={(e) => setIncludeBench(e.target.checked)}
               data-testid="manual-include-bench"
             />
-            比べるベンチ作品の分析も入れる（{bench.map((w) => `『${w.name.trim() || '無題'}』`).join('')}）
+            相対比較する作品の分析も入れる（{bench.map((w) => `『${w.name.trim() || '無題'}』`).join('')}）
           </label>
         ) : null}
         {task === 'strategy' ? (

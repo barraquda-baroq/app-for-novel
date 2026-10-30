@@ -793,7 +793,7 @@ test.describe('ホーム', () => {
       await expect(jumpIdeas).toHaveAttribute('aria-current', 'true')
       await expect(jumpBench).not.toHaveAttribute('aria-current', 'true')
 
-      // 自分でスクロールし始めたら、また位置から決める（最後まで来たら「ベンチ作品」）
+      // 自分でスクロールし始めたら、また位置から決める（最後まで来たら「相対比較」）
       await page.mouse.wheel(0, -120)
       await expect.poll(atBottom).toBe(false)
       await page.mouse.wheel(0, 2000)

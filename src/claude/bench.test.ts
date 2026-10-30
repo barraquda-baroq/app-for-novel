@@ -28,13 +28,13 @@ const paste: BuildContext = { source: 'paste', now: NOW }
 
 function sample() {
   const n = novel(['冒頭の本文。', '二話の本文。'], { name: '星の庭' })
-  const w = addBenchWork(n.data, { name: '銀河の果て', author: '山田', pdfPlace: 'プロジェクト「ベンチ」' })
+  const w = addBenchWork(n.data, { name: '銀河の果て', author: '山田', pdfPlace: 'プロジェクト「相対比較」' })
   return { ...n, data: w.data, workId: w.result }
 }
 
 const add = (data: AppData, records: Parameters<typeof addClaudeRecords>[1]) => addClaudeRecords(data, records).data
 
-describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
+describe('相対比較の分析（novel_add_bench_analysis）', () => {
   it('作品を id・短い id・作品名で指し、観点ごとの分析を作る（同じ呼び出しの分析は送った順に1ずつずらした時刻）', () => {
     const n = sample()
     for (const work of [n.workId, shortId('benchWork', n.workId), ' 銀河の果て ']) {
@@ -75,7 +75,7 @@ describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
     expect(after.items[0].status).toBe('previously_deleted')
   })
 
-  it('棚に無い作品は new_work を付けた時だけ作る（分析を1つでも作る時だけ。作品が先）。同じ作品名・著者なら同じ作品', () => {
+  it('相対比較に無い作品は new_work を付けた時だけ作る（分析を1つでも作る時だけ。作品が先）。同じ作品名・著者なら同じ作品', () => {
     const n = sample()
     const none = buildBenchAnalysis(n.data, { work: '星を継ぐ', items: [{ viewpoint: '構成', body_markdown: 'x' }] }, claude)
     expect(none.ok).toBe(false)
@@ -105,7 +105,9 @@ describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
       order: 1,
       source: 'claude',
     })
-    expect(r.notes.join()).toContain('を棚に足しました')
+    expect(r.notes.join()).toContain(
+      `作品 ${shortId('benchWork', r.records[0].record.id)}『星を継ぐ』（佐藤） を相対比較に追加しました`,
+    )
     const data = add(n.data, r.records)
     expect(Object.keys(data.benchWorks)).toHaveLength(2)
     expect((r.records[1].record as BenchAnalysis).workId).toBe(r.records[0].record.id)
@@ -237,7 +239,7 @@ describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
     expect((more.records[0].record as BenchAnalysis).workId).toBe(analysis.workId)
     const bare = buildBenchAnalysis(both, { work: '海', items }, claude)
     expect(bare.ok).toBe(false)
-    expect(bare.error).toContain('作品名「海」のベンチ作品が2件あります')
+    expect(bare.error).toContain('作品名「海」の相対比較の作品が2件あります')
     expect(bare.candidates).toHaveLength(2)
 
     // 著者が同じ・new_work の著者が空・棚の作品の著者が空なら、棚の作品に足す
@@ -331,7 +333,7 @@ describe('作品批評の比べた作品（bench_works）', () => {
   })
 })
 
-describe('貼り付け（ベンチ作品の画面）', () => {
+describe('貼り付け（相対比較の作品の画面）', () => {
   const answer = (work = 'w:dummy') =>
     [
       '分析しました。',
@@ -374,7 +376,7 @@ describe('貼り付け（ベンチ作品の画面）', () => {
     expect(q.ok && q.calls[0].result.error).toContain('タイトルの画面の「結果を貼り付け」で')
     expect(previewPaste(n.data, answer(), { benchWorkId: 'gone', now: NOW })).toEqual({
       ok: false,
-      error: 'ベンチ作品が見つかりません',
+      error: '相対比較の作品が見つかりません',
     })
   })
 
@@ -418,13 +420,13 @@ describe('並び・Claude に渡す形', () => {
     expect(groups[1].items.map((a) => a.body)).toEqual(['（1/2）構成・前半', '（2/2）構成・後半', '構成・古い'])
   })
 
-  it('分析の文・比べる作品の材料・作品の指し方', () => {
+  it('分析の文・相対比較する作品の材料・作品の指し方', () => {
     const n = analysed()
     const text = workAnalysesText(n.data, n.data.benchWorks[n.workId], ['構成'])
-    expect(text).toContain(`=== ベンチ作品 ${shortId('benchWork', n.workId)}『銀河の果て』（山田） ===`)
+    expect(text).toContain(`=== 相対比較の作品 ${shortId('benchWork', n.workId)}『銀河の果て』（山田） ===`)
     expect(text).toContain('--- 観点「構成」（3件）---')
     expect(text).not.toContain('文体・新しい')
-    expect(comparisonMaterial(n.data, [n.workId, 'gone'])).toContain('=== 比べるベンチ作品の分析（1作品）===')
+    expect(comparisonMaterial(n.data, [n.workId, 'gone'])).toContain('=== 相対比較する作品の分析（1作品）===')
     expect(comparisonMaterial(n.data, [])).toBe('')
     expect(resolveBenchWork(n.data, 'なし').ok).toBe(false)
   })
@@ -437,27 +439,33 @@ describe('並び・Claude に渡す形', () => {
     expect(p).toContain('- 構成\n- 人物')
     expect(p).toContain('```novel-studio-v1')
     expect(p).toContain(`"work":"${shortId('benchWork', n.workId)}"`)
-    expect(p).toContain('プロジェクト「ベンチ」')
+    expect(p).toContain('プロジェクト「相対比較」')
+    expect(p).toContain('Novel Studio の相対比較の作品の画面に貼り付けて')
     expect(benchAnalysisPrompt(work, [], '2026-10-30')).toContain(DEFAULT_BENCH_VIEWPOINTS.map((v) => `- ${v}`).join('\n'))
 
     const parts = buildManualParts(n.data, n.titleId, { task: 'critique', today: '2026-10-30', benchWorkIds: [n.workId] })
     expect(parts.ok).toBe(true)
     if (!parts.ok) return
     const all = parts.parts.join('\n')
-    expect(all).toContain('## 比べる作品')
-    expect(all).toContain('=== 比べるベンチ作品の分析（1作品）===')
+    expect(all).toContain('## 相対比較する作品')
+    expect(all).toContain('作者が相対比較する既存の作品の分析を、依頼のすぐ後に送ります')
+    expect(all).toContain('=== 相対比較する作品の分析（1作品）===')
+    expect(all).not.toContain('ベンチ作品')
     expect(all).toContain('文体・新しい')
     expect(all).toContain('"bench_works":["w:')
     expect(all.indexOf('文体・新しい')).toBeLessThan(all.indexOf('冒頭の本文。'))
     const without = buildManualParts(n.data, n.titleId, { task: 'critique', today: '2026-10-30' })
-    expect(without.ok && without.parts.join('\n')).not.toContain('比べる作品')
+    expect(without.ok && without.parts.join('\n')).not.toContain('相対比較')
 
     const prompt = { id: 'p1', name: '構成', body: '構成を見て' }
-    expect(critiqueConnectorPrompt(n.data.titles[n.titleId], prompt, [work])).toContain('novel_get_bench_analysis')
-    expect(critiqueConnectorPrompt(n.data.titles[n.titleId], prompt)).not.toContain('ベンチ')
+    const withBench = critiqueConnectorPrompt(n.data.titles[n.titleId], prompt, [work])
+    expect(withBench).toContain('novel_get_bench_analysis')
+    expect(withBench).toContain(`## 相対比較する作品\n相対比較する作品: ${shortId('benchWork', n.workId)}『銀河の果て』（山田）`)
+    expect(withBench).not.toContain('ベンチ作品')
+    expect(critiqueConnectorPrompt(n.data.titles[n.titleId], prompt)).not.toContain('相対比較')
   })
 
-  it('Claude に見せる内容: ベンチ作品はタイトルの設定と関係なく見せる（見せないタイトルの比べる作品の印は出ない）', () => {
+  it('Claude に見せる内容: 相対比較の作品はタイトルの設定と関係なく見せる（見せないタイトルの相対比較する作品の印は出ない）', () => {
     const n = sample()
     let data = addTitleBenchWork(n.data, n.titleId, n.workId)
     data = addBenchAnalysis(data, n.workId, { viewpoint: '構成', body: 'x' }).data

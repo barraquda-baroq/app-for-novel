@@ -2,7 +2,7 @@
 // （追加・重複・以前に削除・見つからない・場所が決まらない・形が違う）を見せてから［追加］で記録にする。
 // 作り方はコネクタと同じ（src/claude/records.ts。id は内容から作るので、同じ答えを2回貼り付けても増えない）。
 // 作品批評では、コードブロックが無ければ答えの Markdown をそのまま結果にする（アーティファクトの URL も入れられる）。
-// ベンチ作品の画面（2.5。benchWorkId）では、その作品の分析（novel_add_bench_analysis）だけを受け付ける。
+// 相対比較の作品の画面（2.5。benchWorkId）では、その作品の分析（novel_add_bench_analysis）だけを受け付ける。
 import { useDeferredValue, useMemo, useState } from 'react'
 import { critiquePromptsOf } from '../../claude/order'
 import { previewPaste, type PastePreview } from '../../claude/paste'
@@ -20,7 +20,7 @@ const MAX_ITEMS_SHOWN = 120
 export interface PasteResultDialogProps {
   /** 貼り付けるタイトル（タイトルの画面） */
   titleId?: ID
-  /** 貼り付けるベンチ作品（ベンチ作品の画面。その作品の分析だけを受け付ける） */
+  /** 貼り付ける相対比較の作品（作品の画面。その作品の分析だけを受け付ける） */
   benchWorkId?: ID
   /** 作品批評: コードブロックが無ければ Markdown をそのまま結果にする */
   critique?: boolean
@@ -57,7 +57,7 @@ export function PasteResultDialog({ titleId, benchWorkId, critique, promptId, on
     if (!fresh.ok) return
     const ids = attempt(() => actions.addClaudeRecords(fresh.records))
     if (!ids) return
-    // 推敲案の実行の記録・分析と一緒に作るベンチ作品は数えない
+    // 推敲案の実行の記録・分析と一緒に作る相対比較の作品は数えない
     const now = getData()
     const n = ids.filter((id) => !now.proofBatches[id] && !now.benchWorks[id]).length
     notify(n > 0 ? `${n}件を追加しました` : '新しく追加するものはありませんでした（もうあります）')

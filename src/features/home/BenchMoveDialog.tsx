@@ -1,4 +1,4 @@
-// ベンチ作品を位置を選んで移動するダイアログ（ホームの棚の並び）。
+// 相対比較の作品を位置を選んで移動するダイアログ（ホームの棚「相対比較」の並び）。
 import { useId, useMemo, useState } from 'react'
 import { sortedBenchWorks } from '../../domain/benchOps'
 import type { ID } from '../../domain/types'
@@ -67,7 +67,7 @@ export function BenchMoveDialog({ workId, onClose }: { workId: ID; onClose: () =
           </select>
         </label>
         <p className="small muted" style={{ margin: 0 }} role="status">
-          {unchanged ? '現在の位置です。移動先を選んでください。' : 'ホームの棚の並びが変わります。'}
+          {unchanged ? '現在の位置です。移動先を選んでください。' : '相対比較の並びが変わります。'}
         </p>
       </form>
     </Modal>

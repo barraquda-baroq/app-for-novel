@@ -16,7 +16,7 @@ import { timestampMicros, type Fields } from './values'
 /** 1回の commit に入れる書き込みの数 */
 export const COMMIT_GROUP = 100
 
-/** Claude の8つの表（アクセスルールで作れる表。2.5 のベンチ作品とその分析も） */
+/** Claude の8つの表（アクセスルールで作れる表。2.5 の相対比較の作品とその分析も） */
 export const WRITABLE_TABLES = new Set([
   'proofSuggestions',
   'proofBatches',

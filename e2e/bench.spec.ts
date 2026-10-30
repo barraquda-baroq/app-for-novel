@@ -1,18 +1,23 @@
-// ベンチ作品（2.5）の E2E テスト: ホームの棚（足す・並べ替え・削除して戻す）、作品の画面（分析を足す・開閉・全文・直す）、
-// 手動の依頼文のコピーと結果の貼り付け（2回目は増えない）、作品批評タブの「比べるベンチ作品」と手動の依頼の分析、
+// 相対比較（2.5。内部名は bench）の E2E テスト: ホームの棚（追加・並べ替え・削除して戻す）、作品の画面（分析を足す・開閉・
+// 全文・直す）、手動の依頼文のコピーと結果の貼り付け（2回目は増えない）、作品批評タブの「相対比較する作品」と手動の依頼の分析、
 // 360px の画面、ディープダーク。
 import { expect, test, type Page } from '@playwright/test'
 import { darkSurfaces, noHorizontalScroll, openApp, seed, tapSize } from './helpers'
 
 const dialog = (page: Page) => page.getByRole('dialog')
 
-/** 作品と分析（観点: 構成・文体）と、比べる作品にしたタイトル */
+/** 作品と分析（観点: 構成・文体）と、相対比較する作品にしたタイトル */
 async function seedShelf(page: Page) {
   return seed(page, ({ actions, getData }) => {
     const titleId = actions.createTitle('星の庭')
     const id = actions.addEpisode(titleId)
     actions.updateVersion(getData().pieces[id].versionIds[0], { body: '冒頭の本文。' })
-    const workId = actions.addBenchWork({ name: '銀河の果て', author: '山田', year: '2019', pdfPlace: 'プロジェクト「ベンチ」' })
+    const workId = actions.addBenchWork({
+      name: '銀河の果て',
+      author: '山田',
+      year: '2019',
+      pdfPlace: 'プロジェクト「相対比較」',
+    })
     const long = Array.from({ length: 30 }, (_, i) => `段落${i + 1}。${'あ'.repeat(200)}`).join('\n\n')
     actions.addBenchAnalysis(workId, {
       viewpoint: '構成',
@@ -27,13 +32,16 @@ async function seedShelf(page: Page) {
 
 const cardNames = (page: Page) => page.getByTestId('bench-card').getByTestId('bench-card-name').allTextContents()
 
-test.describe('ベンチ作品', () => {
-  test('ホームの棚: 作品を足す・並べ替え・削除するとゴミ箱へ。戻すと棚と比べる作品に戻る', async ({ page }) => {
+test.describe('相対比較', () => {
+  test('ホームの「相対比較」: 作品を追加・並べ替え・削除するとゴミ箱へ。戻すと相対比較と相対比較する作品に戻る', async ({
+    page,
+  }) => {
     await openApp(page)
     const { titleId, workId } = await seedShelf(page)
     await openApp(page)
     const shelf = page.getByTestId('bench-shelf')
-    await expect(shelf.getByRole('heading', { name: 'ベンチ作品', level: 2 })).toBeVisible()
+    await expect(shelf.getByRole('heading', { name: '相対比較', level: 2 })).toBeVisible()
+    await expect(shelf.getByTestId('new-bench-work')).toHaveText('作品を追加')
     const card = shelf.getByTestId('bench-card')
     await expect(card.getByTestId('bench-card-author')).toHaveText('山田・2019')
     await expect(card.getByTestId('bench-card-count')).toHaveText('分析 2件')
@@ -44,26 +52,33 @@ test.describe('ベンチ作品', () => {
     await expect(card.getByTestId('bench-card-comparing')).toHaveText('比べるタイトル: 『星の庭』')
     // スマホでは上の切り替えにもある
     if (await page.getByTestId('home-jump').isVisible()) {
-      await expect(page.getByTestId('home-jump-bench')).toContainText('1')
+      await expect(page.getByTestId('home-jump-bench')).toHaveText('相対比較1')
       await page.getByTestId('home-jump-bench').click()
-      await expect(shelf.getByRole('heading', { name: 'ベンチ作品', level: 2 })).toBeFocused()
+      await expect(shelf.getByRole('heading', { name: '相対比較', level: 2 })).toBeFocused()
       await expect(page.getByTestId('home-jump-bench')).toHaveAttribute('aria-current', 'true')
     }
 
-    // 足す（作品名は必須）。足すと作品の画面が開く
+    // 作品を追加（作品名は必須）。追加すると作品の画面が開く
     await page.getByTestId('new-bench-work').click()
+    await expect(dialog(page).getByRole('heading', { name: '作品を追加' })).toBeVisible()
+    await expect(page.getByTestId('bench-work-save')).toHaveText('追加')
     await page.getByTestId('bench-work-save').click()
     await expect(dialog(page).getByRole('alert')).toHaveText('作品名を入れてください')
     await page.getByTestId('bench-work-name').fill('海の記憶')
     await page.getByTestId('bench-work-author').fill('佐藤')
     await page.getByTestId('bench-work-pdf').fill('プロジェクト「海」')
     await page.getByTestId('bench-work-save').click()
+    await expect(page.getByRole('status').filter({ hasText: '「海の記憶」を相対比較に追加しました' })).toBeVisible()
     await expect(page).toHaveURL(/#\/bench\//)
     await expect(page.getByTestId('bench-work-title')).toHaveText('海の記憶')
+    await expect(page).toHaveTitle('相対比較: 海の記憶 — Novel Studio')
     await expect(page.getByTestId('bench-analyses-empty')).toBeVisible()
-    // パンくずの「ベンチ作品」で棚へ戻る
-    await page.getByRole('navigation', { name: '現在地' }).getByRole('link', { name: 'ベンチ作品' }).click()
-    await expect(shelf.getByRole('heading', { name: 'ベンチ作品', level: 2 })).toBeInViewport()
+    // パンくず「ホーム › 相対比較 › 作品名」の「相対比較」で棚へ戻る
+    await expect(page.getByRole('navigation', { name: '現在地' })).toContainText('ホーム')
+    await expect(page.getByRole('navigation', { name: '現在地' })).toContainText('相対比較')
+    await expect(page.getByRole('navigation', { name: '現在地' })).toContainText('海の記憶')
+    await page.getByRole('navigation', { name: '現在地' }).getByRole('link', { name: '相対比較', exact: true }).click()
+    await expect(shelf.getByRole('heading', { name: '相対比較', level: 2 })).toBeInViewport()
     await expect.poll(() => cardNames(page)).toEqual(['銀河の果て', '海の記憶'])
 
     // 並べ替え（↑↓・位置を選んで移動）
@@ -75,19 +90,22 @@ test.describe('ベンチ作品', () => {
     await page.getByTestId('bench-move-submit').click()
     await expect.poll(() => cardNames(page)).toEqual(['銀河の果て', '海の記憶'])
 
-    // 削除（分析ごと。比べる作品にしているタイトルは書き換えず、ゴミ箱にある間は出ない）→ ゴミ箱 → 戻す
+    // 削除（分析ごと。相対比較する作品にしているタイトルは書き換えず、ゴミ箱にある間は出ない）→ ゴミ箱 → 戻す
     await shelf.getByTestId('bench-card').nth(0).getByTestId('bench-delete').click()
-    await expect(dialog(page)).toContainText('この作品の分析（2件）もいっしょに')
-    await expect(dialog(page)).toContainText('比べる作品にしているタイトル（1件）では、ゴミ箱にある間は比べる作品に出ません')
+    await expect(dialog(page)).toContainText('「銀河の果て」を相対比較から削除しますか？')
+    await expect(dialog(page)).toContainText('この作品を相対比較から削除し、分析（2件）もいっしょにゴミ箱に移します。')
+    await expect(dialog(page)).toContainText(
+      '相対比較する作品にしているタイトル（1件）では、ゴミ箱にある間は相対比較する作品に出ません',
+    )
     await dialog(page).getByRole('button', { name: '削除' }).click()
     await expect.poll(() => cardNames(page)).toEqual(['海の記憶'])
     // タイトルは書き換えない（id は残り、作品が無い間は表示から外れる）
     expect(await page.evaluate((t) => window.__ns.getData().titles[t].benchWorkIds, titleId)).toEqual([workId])
     await openApp(page, '/trash')
     const row = page.getByTestId('trash-row').first()
-    await expect(row.getByTestId('trash-kind')).toHaveText('ベンチ作品')
+    await expect(row.getByTestId('trash-kind')).toHaveText('相対比較の作品')
     await expect(row.getByTestId('trash-label')).toHaveText('銀河の果て')
-    await expect(row.getByTestId('trash-place')).toHaveText('ベンチ作品')
+    await expect(row.getByTestId('trash-place')).toHaveText('相対比較')
     await row.getByTestId('trash-restore').click()
     await expect(page.getByRole('status').filter({ hasText: '「銀河の果て」を元の場所に戻しました' })).toBeVisible()
     await openApp(page)
@@ -102,7 +120,8 @@ test.describe('ベンチ作品', () => {
     const { workId } = await seedShelf(page)
     await openApp(page, `/bench/${workId}`)
     await expect(page.getByRole('navigation', { name: '現在地' })).toContainText('ホーム')
-    await expect(page.getByTestId('bench-work-pdf-place')).toHaveText('プロジェクト「ベンチ」')
+    await expect(page.getByTestId('bench-work-pdf-place')).toHaveText('プロジェクト「相対比較」')
+    await expect(page.getByTestId('bench-work-edit')).toHaveText('作品の情報を直す')
     const groups = page.getByTestId('bench-group')
     await expect(groups).toHaveCount(2)
     const structure = page.locator('[data-testid="bench-group"][data-viewpoint="構成"]').getByTestId('bench-analysis')
@@ -132,7 +151,7 @@ test.describe('ベンチ作品', () => {
     await page.getByTestId('bench-analysis-input').fill('## 冒頭\n会話から始まる。')
     await page.getByTestId('bench-analysis-save').click()
     await expect(opening.getByTestId('bench-analysis-body')).toContainText('会話から始まる。')
-    // 削除
+    // 削除（ゴミ箱では「相対比較の分析」、場所は「相対比較 › 作品名」）
     await opening.getByTestId('bench-analysis-delete').click()
     await dialog(page).getByRole('button', { name: '削除' }).click()
     await expect(groups).toHaveCount(2)
@@ -142,6 +161,10 @@ test.describe('ベンチ作品', () => {
     await page.getByTestId('bench-work-save').click()
     await expect(page.getByTestId('bench-work-biblio')).toHaveText('山田・2019・SF')
     await noHorizontalScroll(page)
+    await openApp(page, '/trash')
+    const row = page.getByTestId('trash-row').first()
+    await expect(row.getByTestId('trash-kind')).toHaveText('相対比較の分析')
+    await expect(row.getByTestId('trash-place')).toHaveText('相対比較 › 銀河の果て')
   })
 
   test('Claude に頼む（手動）: 観点を選んで依頼文をコピーし、結果を貼り付けると分析になる（2回目は増えない）', async ({
@@ -200,7 +223,7 @@ test.describe('ベンチ作品', () => {
     await expect(page.getByTestId('bench-analysis')).toHaveCount(4)
   })
 
-  test('作品批評タブ: 比べるベンチ作品を選ぶ・外す。手動の依頼に分析を入れ、結果に「比べた作品」が出る', async ({
+  test('作品批評タブ: 相対比較する作品を選ぶ・外す。手動の依頼に分析を入れ、結果に「比べた作品」が出る', async ({
     page,
     context,
     browserName,
@@ -212,8 +235,10 @@ test.describe('ベンチ作品', () => {
     const other = await seed(page, ({ actions }) => actions.addBenchWork({ name: '海の記憶', author: '佐藤' }))
     await openApp(page, `/t/${titleId}?tab=critique`)
     const row = page.getByTestId('critique-bench')
+    await expect(row.getByRole('heading', { name: '相対比較する作品' })).toBeVisible()
     await expect(row.getByTestId('critique-bench-chip')).toHaveText(['『銀河の果て』'])
     await row.getByTestId('critique-bench-add').selectOption(other)
+    await expect(page.getByRole('status').filter({ hasText: '『海の記憶』を相対比較する作品にしました' })).toBeVisible()
     await expect(row.getByTestId('critique-bench-chip')).toHaveText(['『銀河の果て』', '『海の記憶』'])
     await row.getByTestId('critique-bench-chip').nth(1).getByTestId('critique-bench-remove').click()
     await expect(row.getByTestId('critique-bench-chip')).toHaveText(['『銀河の果て』'])
@@ -221,14 +246,18 @@ test.describe('ベンチ作品', () => {
     // 手動の依頼: 分析を入れる（チェックを外すと入れない）
     await page.getByTestId('critique-manual').click()
     await expect(page.getByTestId('manual-include-bench')).toBeChecked()
+    await expect(page.locator('label', { has: page.getByTestId('manual-include-bench') })).toHaveText(
+      '相対比較する作品の分析も入れる（『銀河の果て』）',
+    )
     await page.getByTestId('manual-copy-part').first().click()
     const withBench = await page.evaluate(() => navigator.clipboard.readText())
-    expect(withBench).toContain('=== 比べるベンチ作品の分析（1作品）===')
+    expect(withBench).toContain('=== 相対比較する作品の分析（1作品）===')
+    expect(withBench).not.toContain('ベンチ作品')
     expect(withBench).toContain('短い文を重ねる。')
     expect(withBench).toContain('"bench_works":["w:')
     await page.getByTestId('manual-include-bench').uncheck()
     await page.getByTestId('manual-copy-part').first().click()
-    expect(await page.evaluate(() => navigator.clipboard.readText())).not.toContain('比べるベンチ作品の分析')
+    expect(await page.evaluate(() => navigator.clipboard.readText())).not.toContain('相対比較する作品の分析')
     await page.getByTestId('manual-close').click()
 
     // 結果を貼り付け（bench_works つき）→「比べた作品」のチップから作品の画面へ
@@ -244,6 +273,7 @@ test.describe('ベンチ作品', () => {
     await page.getByTestId('paste-add').click()
     const chip = page.getByTestId('critique-result').getByTestId('critique-result-bench-chip')
     await expect(chip).toHaveText(['『銀河の果て』'])
+    await expect(page.getByTestId('critique-result').getByTestId('critique-result-bench')).toContainText('比べた作品:')
     await chip.click()
     await expect(page).toHaveURL(new RegExp(`#/bench/${workId}$`))
   })
@@ -282,7 +312,9 @@ test.describe('ベンチ作品', () => {
     await noHorizontalScroll(page)
   })
 
-  test('ディープダーク: 棚・作品の画面・比べるベンチ作品に白い面が出ない（スクリーンショット）', async ({ page }, testInfo) => {
+  test('ディープダーク: 相対比較・作品の画面・相対比較する作品に白い面が出ない（スクリーンショット）', async ({
+    page,
+  }, testInfo) => {
     await openApp(page, '/settings')
     await page.getByTestId('theme-deep-dark').click()
     const { titleId, workId } = await seedShelf(page)

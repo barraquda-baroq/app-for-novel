@@ -72,7 +72,7 @@ function shelf() {
 
 const names = (data: AppData) => sortedBenchWorks(data).map((w) => w.name)
 
-describe('ベンチ作品', () => {
+describe('相対比較の作品', () => {
   it('作品名は必須。著者・出版社・刊行年・ジャンル・PDF の置き場所・メモ。空の任意項目は持たない', () => {
     const { data, ids } = shelf()
     expect(names(data)).toEqual(['作品A', '作品B', '作品C'])
@@ -124,7 +124,7 @@ describe('ベンチ作品', () => {
     expect(benchViewpointSuggestions(data)).toEqual(['文体', '構成', '冒頭の掴み'])
     expect(errorOf(() => addBenchAnalysis(data, ids[0], { viewpoint: '' }))).toBe('観点を入れてください（構成・文体・人物など）')
     expect(errorOf(() => addBenchAnalysis(data, ids[0], { viewpoint: 'あ'.repeat(41) }))).toBe('観点は40字までにしてください')
-    expect(errorOf(() => addBenchAnalysis(data, 'nope', { viewpoint: '構成' }))).toBe('ベンチ作品が見つかりません')
+    expect(errorOf(() => addBenchAnalysis(data, 'nope', { viewpoint: '構成' }))).toBe('相対比較の作品が見つかりません')
     data = updateBenchAnalysis(data, a1, { body: '直した', runDate: '2026-10-01' })
     expect(data.benchAnalyses[a1]).toMatchObject({ body: '直した', runDate: '2026-10-01' })
     expect(errorOf(() => updateBenchAnalysis(data, a1, { runDate: '10/1' }))).toBe('日付は YYYY-MM-DD で入れてください')
@@ -134,7 +134,8 @@ describe('ベンチ作品', () => {
     const entry = listTrash(data.trashEntries)[0]
     expect(entry).toMatchObject({ kind: 'benchAnalysis', label: '構成（2026-10-01）', parentLabel: '作品A' })
     expect(entry.origin.workId).toBe(ids[0])
-    expect(TRASH_KIND_LABELS.benchAnalysis).toBe('ベンチ作品の分析')
+    expect(TRASH_KIND_LABELS.benchWork).toBe('相対比較の作品')
+    expect(TRASH_KIND_LABELS.benchAnalysis).toBe('相対比較の分析')
     const back = restoreTrashEntry(data, entry.id)
     expect(back.data.benchAnalyses[a1].body).toBe('直した')
     expect(back.result.titleId).toBeNull()
@@ -225,19 +226,19 @@ describe('ベンチ作品', () => {
     tick()
     data = deleteBenchWork(data, ids[0])
     expect(errorOf(() => restoreTrashEntry(data, analysisEntry))).toBe(
-      '元のベンチ作品がないため戻せません。先にベンチ作品を戻してください。',
+      '元の作品がないため戻せません。先に相対比較の作品を戻してください。',
     )
     data = restoreTrashEntry(data, listTrash(data.trashEntries)[0].id).data
     expect(restoreTrashEntry(data, analysisEntry).data.benchAnalyses[aid].viewpoint).toBe('構成')
   })
 
-  it('タイトルの比べる作品から外す（作品は棚に残る）。タイトルの削除で作品は消えない', () => {
+  it('タイトルの相対比較する作品から外す（作品は相対比較に残る）。タイトルの削除で作品は消えない', () => {
     const { data: d0, ids, titleA } = shelf()
     let data = addTitleBenchWork(d0, titleA, ids[0])
     data = removeTitleBenchWork(data, titleA, ids[0])
     expect(data.titles[titleA].benchWorkIds).toEqual([])
     expect(removeTitleBenchWork(data, titleA, ids[0]).titles).toBe(data.titles)
-    expect(errorOf(() => addTitleBenchWork(data, titleA, 'nope'))).toBe('ベンチ作品が見つかりません')
+    expect(errorOf(() => addTitleBenchWork(data, titleA, 'nope'))).toBe('相対比較の作品が見つかりません')
     data = addTitleBenchWork(data, titleA, ids[0])
     data = deleteTitle(data, titleA)
     expect(names(data)).toEqual(['作品A', '作品B', '作品C'])
@@ -278,12 +279,14 @@ describe('修復・バックアップ・同期の設定', () => {
     expect(r.data.benchAnalyses.ok).toMatchObject({ body: '', runDate: '', source: 'manual', v: 1 })
     expect(r.data.titles[titleA].benchWorkIds).toEqual([ids[0]])
     expect('benchWorkIds' in r.data.titles[titleB]).toBe(false)
-    expect(r.fixes).toContain('作品のないベンチ作品の分析を表示から外しました')
+    expect(r.fixes).toContain('作品のない相対比較の分析を表示から外しました')
+    expect(r.fixes).toContain('相対比較する作品から、無い作品を外しました')
+    expect(r.fixes.join()).not.toContain('ベンチ')
     // 直すものが無ければ元のまま
     expect(repairData(d0).data).toBe(d0)
   })
 
-  it('バックアップ: 版 3 でベンチ作品も戻る。版 2（2.4 まで）・版 1 のバックアップも読める（無い表は空）', () => {
+  it('バックアップ: 版 3 で相対比較の作品も戻る。版 2（2.4 まで）・版 1 のバックアップも読める（無い表は空）', () => {
     const { data: d0, ids, titleA } = shelf()
     let data = addBenchAnalysis(d0, ids[0], { viewpoint: '構成', body: '分析' }).data
     data = addTitleBenchWork(data, titleA, ids[0])
@@ -357,7 +360,7 @@ describe('修復・バックアップ・同期の設定', () => {
     expect(Object.values(back.data.benchAnalyses)).toHaveLength(2)
   })
 
-  it('空のデータにもベンチ作品の表がある', () => {
+  it('空のデータにも相対比較の作品の表がある', () => {
     expect(emptyData().benchWorks).toEqual({})
     expect(emptyData().benchAnalyses).toEqual({})
   })
