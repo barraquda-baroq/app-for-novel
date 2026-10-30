@@ -23,10 +23,12 @@ import prodRules from '../../firestore.rules?raw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence, type ConflictNote, type Persistence } from '../db/persistence'
 import * as A from '../domain/acts'
+import * as B from '../domain/benchOps'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import { repairData } from '../domain/repair'
 import * as S from '../domain/storyOps'
+import * as T from '../domain/trash'
 import { emptyData, type AppData } from '../domain/types'
 import { newId } from '../domain/util'
 import {
@@ -1358,6 +1360,127 @@ describe('2.3 の推敲案・改稿案などの同期（エミュレーター）
     await b.online()
     await waitFor(async () => (await b.load()).revisionIdeas[ideaId], '受け取り直す')
     expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
+  })
+})
+
+describe('ベンチ作品の同期（エミュレーター）', () => {
+  it('作品と分析が届き、比べる作品は2台で別々に足しても両方残る。片方で作品を削除・片方で分析を書き換えたら控える', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    let workA = ''
+    let workB = ''
+    let analysisId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      titleId = r.titleId
+      const w1 = B.addBenchWork(r.data, { name: '銀河の果て', author: '山田' })
+      workA = w1.result
+      const w2 = B.addBenchWork(w1.data, { name: '海の記憶', author: '佐藤' })
+      workB = w2.result
+      const an = B.addBenchAnalysis(w2.data, workA, { viewpoint: '構成', body: '三幕' })
+      analysisId = an.result
+      return an.data
+    })
+    await settle(a, b)
+    expect((await b.load()).benchAnalyses[analysisId]).toMatchObject({ workId: workA, viewpoint: '構成', body: '三幕' })
+    // オフラインの間に、A は銀河の果て、B は海の記憶を比べる作品に足す（両方残る）。メモは両方で書けばつなぐ
+    b.offline()
+    await a.edit((d) => B.updateBenchWork(B.addTitleBenchWork(d, titleId, workA), workA, { note: 'A のメモ' }))
+    await settle(a)
+    await b.edit((d) => B.updateBenchWork(B.addTitleBenchWork(d, titleId, workB), workA, { note: 'B のメモ' }))
+    await b.online()
+    await settle(a, b)
+    const merged = await a.load()
+    expect([...(merged.titles[titleId].benchWorkIds ?? [])].sort()).toEqual([workA, workB].sort())
+    expect(merged.benchWorks[workA].note).toContain('A のメモ')
+    expect(merged.benchWorks[workA].note).toContain('B のメモ')
+    // A は銀河の果てを削除（分析ごと）、B はその分析を書き換え
+    b.offline()
+    await a.edit((d) => B.deleteBenchWork(d, workA))
+    await settle(a)
+    await b.edit((d) => B.updateBenchAnalysis(d, analysisId, { body: '三幕。B で足した' }))
+    await b.online()
+    await settle(a, b)
+    const data = await a.load()
+    expect(data.benchWorks[workA]).toBeUndefined()
+    expect(data.benchAnalyses[analysisId]).toBeUndefined()
+    expect(data.titles[titleId].benchWorkIds).toEqual([workB])
+    const kept = Object.values(data.trashRecords).find(
+      (r) => r.table === 'benchAnalyses' && (r.record as { body: string }).body.includes('B で足した'),
+    )
+    expect(kept).toBeDefined()
+    expect(data.trashEntries[kept!.entryId]).toMatchObject({ kind: 'benchAnalysis', reason: 'conflict' })
+    // 作品をゴミ箱から戻すと、もう一方の端末でも棚と比べる作品に戻る
+    const entry = Object.values(data.trashEntries).find((e) => e.kind === 'benchWork')!
+    await a.edit((d) => T.restoreTrashEntry(d, entry.id).data)
+    await settle(a, b)
+    const back = await b.load()
+    expect(back.benchWorks[workA].name).toBe('銀河の果て')
+    expect([...(back.titles[titleId].benchWorkIds ?? [])].sort()).toEqual([workA, workB].sort())
+  })
+
+  it('コネクタが作った作品と分析（device: claude-connector）が、送信待ちのある端末に届く', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    await a.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      titleId = r.titleId
+      return r.data
+    })
+    await settle(a)
+    a.offline()
+    await a.edit((d) => E.updateTitle(d, titleId, { synopsis: 'この端末で書いたあらすじ' }))
+    const work = {
+      id: 'cw-test.1',
+      name: '星を継ぐ',
+      author: '高橋',
+      pdfPlace: '',
+      note: '',
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      source: 'claude',
+    }
+    const analysis = {
+      id: 'ca-test.1',
+      workId: work.id,
+      viewpoint: '人物',
+      body: '主人公の弧',
+      runDate: '2026-10-30',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    for (const [table, rec] of [
+      ['benchAnalyses', analysis],
+      ['benchWorks', work],
+    ] as const) {
+      const enc = encodeRecord(rec)
+      await setDoc(doc(a.fs, 'users', a.uid, 'records', `${table}:${rec.id}`), {
+        table,
+        id: rec.id,
+        json: enc.json,
+        chunks: 0,
+        deleted: false,
+        hash: enc.hash,
+        updated: serverTimestamp(),
+        device: 'claude-connector',
+      })
+    }
+    await a.online()
+    await settle(a)
+    const data = await a.load()
+    expect(data.benchWorks[work.id]).toEqual(work)
+    expect(data.benchAnalyses[analysis.id]).toEqual(analysis)
+    expect(data.titles[titleId].synopsis).toBe('この端末で書いたあらすじ')
+    expect(a.notes).toEqual([])
   })
 })
 
