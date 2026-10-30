@@ -299,7 +299,9 @@
     （`trashedBenchNamesOf`。ゴミ箱から戻せば、その作品に足す））。分析の id は作品・観点・
     日付・本文から作る（2回送っても1つ。削除したものは「以前に削除」）。1件が JSON にして 200,000 字を超える時は、作品批評の結果と同じく
     「body_markdown を k つ以上に分け…各部の1行目に（1/k）…」と分け方を返す。
-  - `novel_get_critique` は、タイトルの比べるベンチ作品（作品名・観点）を出し、`novel_get_bench_analysis` で読むよう添える。
+  - `novel_get_critique` は、タイトルの比べるベンチ作品（作品名・観点）を出し、`novel_get_bench_analysis` で読むよう添える。批評の結果
+    （一覧と `result_id` の全文）には、その結果の比べた作品（「比べた作品: w:…『…』（著者）」。棚から削除された作品は「ほか n 作品は棚から
+    削除されています」と数だけ）も出す（前の批評と同じ作品と比べて書き直す時に）。ツールの説明にもこのことを書いた。
     `novel_add_critique_result` は `bench_works`（`w:…` か作品名。20件まで。見つからない作品は外して知らせる）→ `CritiqueResult.benchWorkIds`。
   - サーバーの説明にベンチ作品の一文と短い id（`w:`・`n:`）を足した。
 - **手動連携**（`src/claude/prompts.ts`・`paste.ts`）: 作品の画面の「Claude に頼む（手動）」は、選んだ観点で作品の PDF を分析してもらう依頼文

@@ -56,7 +56,7 @@ import {
   textLimitRange,
 } from '../../../../src/domain/submissionTexts'
 import { bodyMetrics, formatCount } from '../../../../src/domain/text'
-import type { AppData, ID, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
+import type { AppData, BenchWork, ID, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
 import { bool, fail, head, itemBudget, length, num, ok, pageBody, str, strList, titleArg, type ToolResult } from './common'
 
 export type { ToolResult }
@@ -649,6 +649,13 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
   const allPrompts = [...prompts.title, ...prompts.shared]
   const results = critiqueResultsOf(view, title.id)
   const current = manuscriptOf(view, title.id, ctx.now)
+  /** 批評の結果で比べたベンチ作品（2.5。CritiqueResult.benchWorkIds。棚から消えた作品は数だけ） */
+  const compared = (ids: readonly ID[] | undefined): string => {
+    if (!ids?.length) return ''
+    const shown = ids.map((id) => view.benchWorks[id]).filter((w): w is BenchWork => Boolean(w))
+    const gone = ids.length - shown.length
+    return `比べた作品: ${shown.map((w) => benchWorkRef(w)).join('、')}${gone > 0 ? `（ほか${gone}作品は棚から削除されています）` : ''}`
+  }
   const itemText = (which: 'prompt' | 'result', id: ID): { label: string; text: string } | null => {
     if (which === 'prompt') {
       const p = allPrompts.find((x) => x.id === id)
@@ -665,6 +672,7 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
       text: [
         `=== 批評の結果 ${r.runDate}「${r.promptName || '（プロンプトなし）'}」[${shortId('critiqueResult', r.id)}]${isNewerRecord(r) ? `（${NEWER_RECORD_LABEL}）` : ''} ===`,
         `範囲: ${r.scope.kind === 'range' ? r.scope.label : 'タイトル全体'} / 原稿: ${r.manuscript ? manuscriptLabel(r.manuscript, current) : '控えなし'}${r.model ? ` / モデル: ${r.model}` : ''}`,
+        compared(r.benchWorkIds),
         r.artifactUrl ? `アーティファクト: ${r.artifactUrl}` : '',
         r.note.trim() ? `メモ: ${r.note}` : '',
         '--- 使ったプロンプト ---',
@@ -711,7 +719,7 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
   lines.push(`--- 批評の結果（${results.length}件。新しい日付から）---`)
   for (const r of results.slice(0, LIST_RESULTS))
     lines.push(
-      `${shortId('critiqueResult', r.id)} ${r.runDate}「${r.promptName || '（プロンプトなし）'}」${r.scope.kind === 'range' ? r.scope.label : 'タイトル全体'}・${r.manuscript ? manuscriptLabel(r.manuscript, current) : '原稿の控えなし'}${r.resultMarkdown ? `・Markdown ${formatCount(length(r.resultMarkdown))}字` : ''}${r.artifactUrl ? '・URL あり' : ''}${r.resultMarkdown ? `\n  ${head(r.resultMarkdown, 80)}` : ''}`,
+      `${shortId('critiqueResult', r.id)} ${r.runDate}「${r.promptName || '（プロンプトなし）'}」${r.scope.kind === 'range' ? r.scope.label : 'タイトル全体'}・${r.manuscript ? manuscriptLabel(r.manuscript, current) : '原稿の控えなし'}${r.resultMarkdown ? `・Markdown ${formatCount(length(r.resultMarkdown))}字` : ''}${r.artifactUrl ? '・URL あり' : ''}${r.benchWorkIds?.length ? `・${compared(r.benchWorkIds)}` : ''}${r.resultMarkdown ? `\n  ${head(r.resultMarkdown, 80)}` : ''}`,
     )
   if (results.length > LIST_RESULTS)
     lines.push(

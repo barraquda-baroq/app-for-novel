@@ -2,7 +2,8 @@
 // ベンチ作品はタイトルの「Claude に見せる」と関係なく見せ、書き込みは「書き込みを許可」の時だけ。
 import { describe, expect, it } from 'vitest'
 import { addBenchAnalysis, addBenchWork, addTitleBenchWork, deleteBenchWork } from '../../../src/domain/benchOps'
-import { setTitleClaudeAccess } from '../../../src/domain/claudeOps'
+import { addClaudeRecords, setTitleClaudeAccess } from '../../../src/domain/claudeOps'
+import { buildCritiqueResult } from '../../../src/claude/records'
 import { createTitle } from '../../../src/domain/entityOps'
 import { shortId } from '../../../src/claude/refs'
 import type { AppData } from '../../../src/domain/types'
@@ -141,6 +142,43 @@ describe('作品批評（novel_get_critique・novel_add_critique_result）', () 
       () => undefined,
     )
     expect(rec).toMatchObject({ benchWorkIds: [s.workA] })
+
+    // 読み返すと、結果ごとに比べた作品が出る（一覧と result_id の全文）
+    const compared = `比べた作品: ${shortId('benchWork', s.workA)}『銀河の果て』（山田）`
+    const list = await call(core, 'novel_get_critique', { title_id: s.titleId })
+    expect(list).toContain(`・${compared}`)
+    const full = await call(core, 'novel_get_critique', { title_id: s.titleId, result_id: shortId('critiqueResult', String(f.id.stringValue)) })
+    expect(full).toContain(`\n${compared}\n`)
+    expect(full).not.toContain('棚から削除されています')
+  })
+
+  it('比べた作品が棚から削除されていれば、その数を添える。比べた作品の無い結果には出さない', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const built = buildCritiqueResult(
+      s.data,
+      { title_id: s.titleId, result_markdown: '## 二作と比べて', bench_works: [s.workA, s.workB] },
+      { source: 'claude', now: Date.UTC(2026, 9, 30, 3) },
+    )
+    const plain = buildCritiqueResult(
+      s.data,
+      { title_id: s.titleId, result_markdown: '## 比べずに', run_date: '2026-10-01' },
+      { source: 'claude', now: Date.UTC(2026, 9, 1, 3) },
+    )
+    let data = addClaudeRecords(s.data, [...built.records, ...plain.records]).data
+    data = deleteBenchWork(data, s.workB)
+    const { core } = await pairedCore(fake, data)
+    const list = await call(core, 'novel_get_critique', { title_id: s.titleId })
+    expect(list).toContain(`比べた作品: ${shortId('benchWork', s.workA)}『銀河の果て』（山田）（ほか1作品は棚から削除されています）`)
+    expect(list.match(/比べた作品:/g)).toHaveLength(1)
+    const id = built.records[0].record.id
+    const full = await call(core, 'novel_get_critique', { title_id: s.titleId, result_id: shortId('critiqueResult', id) })
+    expect(full).toContain('（ほか1作品は棚から削除されています）')
+    const other = await call(core, 'novel_get_critique', {
+      title_id: s.titleId,
+      result_id: shortId('critiqueResult', plain.records[0].record.id),
+    })
+    expect(other).not.toContain('比べた作品')
   })
 })
 
