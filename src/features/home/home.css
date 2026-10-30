@@ -162,12 +162,15 @@
 }
 
 .segmented.home-jump-seg button {
-  flex: 1;
+  flex: 1 1 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
   min-height: 40px;
+  /* 3つの領域が 360px の幅にも収まるように、横の余白を詰める */
+  padding-inline: 6px;
   font-size: 14px;
 }
 
