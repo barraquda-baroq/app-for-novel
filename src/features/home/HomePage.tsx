@@ -49,6 +49,8 @@ export function HomePage() {
   }
   const ideasPane = useRef<HTMLElement>(null)
   const benchPane = useRef<HTMLElement>(null)
+  // 切り替え（またはリンク）で移った領域。自分でスクロールし始めるまでは、位置ではなくこれを表示中とする
+  const pinned = useRef<HomeView | null>(null)
   const titleCount = Object.keys(data.titles).length
   const ideaCount = useMemo(() => Object.keys(data.ideas).length, [data.ideas])
   const benchCount = Object.keys(data.benchWorks).length
@@ -65,6 +67,8 @@ export function HomePage() {
   // ?view=ideas だけの時は、アイデア領域の先頭を見せる（仕切りの指定があればアイデア領域がその仕切りを見せる）
   useEffect(() => {
     if (linkedView !== 'ideas' || focus || twoColumns) return
+    pinned.current = 'ideas'
+    setCurrent('ideas')
     const raf = requestAnimationFrame(() => ideasPane.current?.scrollIntoView({ block: 'start' }))
     return () => cancelAnimationFrame(raf)
   }, [linkedView, focus, twoColumns])
@@ -86,6 +90,11 @@ export function HomePage() {
     const update = () => {
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
+        // 切り替えで移った直後は、押した領域を表示中のままにする（下が短くて最後で止まっても、押した方を示す）
+        if (pinned.current) {
+          setCurrent(pinned.current)
+          return
+        }
         // 一番上にいる時は「タイトル」。下へ進んでアイデア領域が画面の上半分に来たら「アイデア」、ベンチ作品の棚が来たら
         // （または最後まで来たら）「ベンチ作品」
         const line = window.innerHeight * SPY_RATIO
@@ -96,19 +105,32 @@ export function HomePage() {
         setCurrent(!scrolled ? 'titles' : benchTop <= line || atBottom ? 'bench' : ideasTop <= line ? 'ideas' : 'titles')
       })
     }
+    // 自分でスクロールし始めたら、また位置から決める（切り替えのボタンでも pointerdown・keydown が click より先に来るので、
+    // 前の固定が外れてから、押した領域が新しく固定される）
+    const release = () => {
+      pinned.current = null
+    }
     update()
     window.addEventListener('scroll', update, { passive: true })
     window.addEventListener('resize', update)
+    window.addEventListener('wheel', release, { passive: true })
+    window.addEventListener('pointerdown', release, { passive: true })
+    window.addEventListener('keydown', release)
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('scroll', update)
       window.removeEventListener('resize', update)
+      window.removeEventListener('wheel', release)
+      window.removeEventListener('pointerdown', release)
+      window.removeEventListener('keydown', release)
     }
   }, [twoColumns])
 
   const jumpTo = (area: HomeView) => {
     const pane = document.getElementById(paneIds[area])
     if (!pane) return
+    pinned.current = area
+    setCurrent(area)
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     pane.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
     // 読み上げ・キーボードでも移った先から続けられるように、領域の見出しへフォーカスを移す

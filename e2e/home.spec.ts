@@ -762,6 +762,48 @@ test.describe('ホーム', () => {
     }
   })
 
+  test('アイデアから下が画面より短くても、切り替えで押した領域が表示中になり、自分でスクロールすると位置から決まる', async ({
+    page,
+  }) => {
+    // タイトルなし・アイデア1件（仕切りは折りたたむ）・棚は空: アイデアの先頭までは届かず、最後まで来たところでスクロールが止まる
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      actions.addIdea(null, '', 'どこにも属さないアイデア')
+    })
+    const toggle = section(page, 'none').getByTestId('idea-section-toggle')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    const jumpIdeas = page.getByTestId('home-jump-ideas')
+    const jumpBench = page.getByTestId('home-jump-bench')
+    const ideasHeading = page.getByRole('heading', { name: 'アイデア', level: 2 })
+    const atBottom = () => page.evaluate(() => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2)
+    for (const size of [
+      { width: 390, height: 844 },
+      { width: 360, height: 760 },
+    ]) {
+      await page.setViewportSize(size)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(page.getByTestId('home-jump-titles')).toHaveAttribute('aria-current', 'true')
+
+      await jumpIdeas.click()
+      await expect(ideasHeading).toBeFocused()
+      await expect(ideasHeading).toBeInViewport()
+      // 最後まで来て止まっても（この場合を確かめている）、押した「アイデア」を表示中とする
+      await expect.poll(atBottom).toBe(true)
+      await expect(jumpIdeas).toHaveAttribute('aria-current', 'true')
+      await expect(jumpBench).not.toHaveAttribute('aria-current', 'true')
+
+      // 自分でスクロールし始めたら、また位置から決める（最後まで来たら「ベンチ作品」）
+      await page.mouse.wheel(0, -120)
+      await expect.poll(atBottom).toBe(false)
+      await page.mouse.wheel(0, 2000)
+      await expect.poll(atBottom).toBe(true)
+      await expect(jumpBench).toHaveAttribute('aria-current', 'true')
+      await expect(jumpIdeas).not.toHaveAttribute('aria-current', 'true')
+      await noHorizontalScroll(page)
+    }
+  })
+
   test('仕切りが多くても、仕切りの一覧から目的の仕切りへ移れ、すべて折りたたむ／開くができる', async ({ page }) => {
     await openApp(page)
     await seed(page, ({ actions }) => {
