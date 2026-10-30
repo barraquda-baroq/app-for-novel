@@ -137,7 +137,7 @@ export function AnalysisDialog({ workId, analysis, onClose, onAdded }: AnalysisD
             onChange={(e) => setBody(e.target.value)}
             placeholder={'## 構成\n- 三幕構成。第一幕の終わりに…'}
             spellCheck={false}
-            data-testid="bench-analysis-body"
+            data-testid="bench-analysis-input"
           />
         </label>
       </form>

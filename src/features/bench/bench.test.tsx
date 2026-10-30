@@ -177,7 +177,7 @@ describe('作品の画面', () => {
     expect(chips.slice(0, 2)).toEqual(['文体', '構成'])
     expect(chips).toContain('冒頭の掴み')
     await user.click(within(dialog).getByRole('button', { name: '冒頭の掴み' }))
-    await user.type(within(dialog).getByTestId('bench-analysis-body'), '一文目で謎を置く。')
+    await user.type(within(dialog).getByTestId('bench-analysis-input'), '一文目で謎を置く。')
     await user.click(screen.getByTestId('bench-analysis-save'))
     await waitFor(() => expect(screen.getAllByTestId('bench-group').map((g) => g.getAttribute('data-viewpoint'))).toContain('冒頭の掴み'))
     // 足した分析は開いている
@@ -186,7 +186,7 @@ describe('作品の画面', () => {
     // 直す
     await user.click(within(added).getByTestId('bench-analysis-edit'))
     const edit = await screen.findByTestId('bench-analysis-dialog')
-    const body = within(edit).getByTestId('bench-analysis-body')
+    const body = within(edit).getByTestId('bench-analysis-input')
     await user.clear(body)
     await user.type(body, '直した分析')
     await user.click(screen.getByTestId('bench-analysis-save'))
