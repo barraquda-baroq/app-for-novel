@@ -7,11 +7,15 @@
 //   上限があるのは短い項目（名前・見出し・推敲案の引用など）と件数だけ（RECORD_LIMITS）
 // - コネクタ（source = claude）が書く記録だけは、1件を JSON にして 200,000 字まで（コネクタは分割文書を書かないため）。
 //   超える時は、分け方を書いた理由を返す。貼り付け（source = paste）は端末が大きな記録を分割文書に分けて送るので上限なし
+// - ベンチ作品の分析（2.5。W6）は、どのタイトルにも属さない。作品が無ければ new_work を付けた時だけ作品も作る
 // 作るだけで、データには入れない（アプリはストアの addClaudeRecords、コネクタは Firestore への作成で入れる）。
+import { BENCH_LIMITS, sortedBenchWorks } from '../domain/benchOps'
 import { hashJson } from '../domain/hash'
 import { adoptedText, isSplit, pieceFullLabel, pieceLabel } from '../domain/structure'
 import type {
   AppData,
+  BenchAnalysis,
+  BenchWork,
   ClaudeTableName,
   CritiquePrompt,
   CritiqueResult,
@@ -29,9 +33,12 @@ import type {
 } from '../domain/types'
 import { stableStringify } from '../sync/merge'
 import { locateExcerpt, safeSlice } from './anchor'
+import { benchWorkRef, resolveBenchWork } from './bench'
 import { isProofCategory, PROOF_CATEGORY_GUIDE, PROOF_CATEGORY_LABELS } from './categories'
 import { isIsoDate, jstDate } from './dates'
 import {
+  benchAnalysisId,
+  benchWorkId,
   critiquePromptId,
   critiqueResultId,
   proofBatchId,
@@ -71,6 +78,17 @@ export const RECORD_LIMITS = {
   promptName: 60,
   url: 2_000,
   model: 60,
+  // 2.5: ベンチ作品
+  benchItems: 20,
+  viewpoint: BENCH_LIMITS.viewpoint,
+  benchWorkName: BENCH_LIMITS.workName,
+  benchAuthor: BENCH_LIMITS.author,
+  benchPublisher: BENCH_LIMITS.publisher,
+  benchYear: BENCH_LIMITS.year,
+  benchGenre: BENCH_LIMITS.genre,
+  pdfPlace: BENCH_LIMITS.pdfPlace,
+  /** 作品批評の結果の比べた作品（bench_works）の数 */
+  benchRefs: 20,
 } as const
 
 // ---------- 入力の形（コネクタの書き込みツールの入力と同じ） ----------
@@ -154,6 +172,37 @@ export interface CritiqueResultInput {
   /** 範囲（省略時はタイトル全体） */
   scope?: { from: string; to: string }
   model?: string
+  /** 比べたベンチ作品（w:… の短い id・作品名。2.5） */
+  bench_works?: string[]
+}
+
+/** W6 novel_add_bench_analysis（2.5） */
+export interface BenchAnalysisInput {
+  /** 作品の指し方（w:… の短い id・id・作品名そのもの） */
+  work: string
+  /** 作品がまだ棚に無い時に作る（付けた時だけ作る） */
+  new_work?: BenchNewWorkInput
+  items: BenchAnalysisItemInput[]
+  model?: string
+}
+
+export interface BenchNewWorkInput {
+  name: string
+  author: string
+  publisher?: string
+  year?: string
+  genre?: string
+  /** PDF の置き場所（claude.ai のプロジェクト名など） */
+  pdf_place?: string
+}
+
+export interface BenchAnalysisItemInput {
+  /** 観点の名前（構成・文体・人物・冒頭の掴み…。40字まで） */
+  viewpoint: string
+  /** 分析の本文（Markdown。長さの上限なし） */
+  body_markdown: string
+  /** YYYY-MM-DD（日本時間）。省略時は今日 */
+  run_date?: string
 }
 
 /** 書き込みツールの名前（コネクタと手動連携の JSON の tool） */
@@ -163,6 +212,7 @@ export const WRITE_TOOLS = [
   'novel_add_strategy_note',
   'novel_save_critique_prompt',
   'novel_add_critique_result',
+  'novel_add_bench_analysis',
 ] as const
 
 export type WriteTool = (typeof WRITE_TOOLS)[number]
@@ -173,6 +223,7 @@ export type WriteToolInput = {
   novel_add_strategy_note: StrategyNoteInput
   novel_save_critique_prompt: CritiquePromptInput
   novel_add_critique_result: CritiqueResultInput
+  novel_add_bench_analysis: BenchAnalysisInput
 }
 
 export type WriteToolCall = { [K in WriteTool]: { tool: K; input: WriteToolInput[K] } }[WriteTool]
@@ -188,11 +239,20 @@ export const WRITE_TOOL_LABELS: Record<WriteTool, string> = {
   novel_add_strategy_note: '戦略メモを追加',
   novel_save_critique_prompt: '批評プロンプトを保存',
   novel_add_critique_result: '作品批評の結果を記録',
+  novel_add_bench_analysis: 'ベンチ作品の分析を追加',
 }
 
 // ---------- 結果の形 ----------
 
-export type ClaudeRecord = ProofSuggestion | ProofBatch | RevisionIdea | StrategyNote | CritiquePrompt | CritiqueResult
+export type ClaudeRecord =
+  | ProofSuggestion
+  | ProofBatch
+  | RevisionIdea
+  | StrategyNote
+  | CritiquePrompt
+  | CritiqueResult
+  | BenchWork
+  | BenchAnalysis
 
 export interface NewRecord {
   table: ClaudeTableName
@@ -906,6 +966,9 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
     } else notes.push('scope の話が見つからないため、タイトル全体の批評として記録しました')
   }
   const runDate = runDateOf(input.run_date, ctx, notes)
+  const benchWorkIds = benchRefsOf(data, input.bench_works, notes)
+  if (typeof benchWorkIds === 'string')
+    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: benchWorkIds }], notes }
   const promptText = input.prompt_text ?? prompt?.body ?? ''
   const id = critiqueResultId({ titleId: title.id, runDate, promptText, resultMarkdown: markdown, artifactUrl: url })
   const status = existing(data, ctx, 'critiqueResults', id, new Set())
@@ -929,6 +992,7 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
     manuscript: manuscriptOf(data, title.id, ctx.now),
     model: modelOf(input.model) ?? '',
     note: '',
+    ...(benchWorkIds.length ? { benchWorkIds } : {}),
   }
   const tooBig = sizeProblem(
     rec,
@@ -948,6 +1012,153 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
   }
 }
 
+/**
+ * 作品批評の比べた作品（bench_works）を作品の id にする（見つからない作品は外して notes に書く）。
+ * 形が違えば理由の文字列
+ */
+function benchRefsOf(data: AppData, refs: unknown, notes: string[]): ID[] | string {
+  if (refs === undefined || refs === null) return []
+  if (!Array.isArray(refs) || refs.length > RECORD_LIMITS.benchRefs)
+    return `bench_works はベンチ作品の指し方（w:… か作品名）の配列（${RECORD_LIMITS.benchRefs}件まで）にしてください`
+  const ids: ID[] = []
+  for (const ref of refs) {
+    const r = isStr(ref) && ref.trim() ? resolveBenchWork(data, ref) : null
+    if (r?.ok) {
+      if (!ids.includes(r.value.id)) ids.push(r.value.id)
+    } else notes.push(`bench_works の '${short(String(ref), 30)}' は見つからないため外しました${r ? `（${r.message}）` : ''}`)
+  }
+  return ids
+}
+
+// ---------- W6 ベンチ作品の分析（2.5） ----------
+
+/** 作品がまだ無い時に作る作品（形が違えば理由） */
+function newWorkOf(raw: unknown): BenchNewWorkInput | string {
+  if (!isObj(raw)) return 'new_work の形が違います（{"name": …, "author": …}）'
+  const w = raw as unknown as BenchNewWorkInput
+  const err =
+    checkText(w.name, 'new_work.name', RECORD_LIMITS.benchWorkName, true) ??
+    checkText(w.author, 'new_work.author', RECORD_LIMITS.benchAuthor, false) ??
+    checkText(w.publisher, 'new_work.publisher', RECORD_LIMITS.benchPublisher, false) ??
+    checkText(w.year, 'new_work.year', RECORD_LIMITS.benchYear, false) ??
+    checkText(w.genre, 'new_work.genre', RECORD_LIMITS.benchGenre, false) ??
+    checkText(w.pdf_place, 'new_work.pdf_place', RECORD_LIMITS.pdfPlace, false)
+  return err ?? w
+}
+
+export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx: BuildContext): BuildResult {
+  if (!isObj(input)) return fail('入力の形が違います')
+  if (!Array.isArray(input.items) || input.items.length === 0) return fail('items がありません（分析の配列）')
+  if (input.items.length > RECORD_LIMITS.benchItems)
+    return fail(`items が多すぎます（1回 ${RECORD_LIMITS.benchItems} 件まで。観点ごとに分けて呼んでください）`)
+  const ref = isStr(input.work) ? input.work.trim() : ''
+  const newWork = input.new_work === undefined || input.new_work === null ? null : newWorkOf(input.new_work)
+  if (typeof newWork === 'string') return fail(newWork)
+  if (!ref && !newWork) return fail('work がありません（ベンチ作品の w:… か作品名。棚に無い作品は new_work も付ける）')
+  const notes: string[] = []
+  const records: NewRecord[] = []
+  // 作品: work → new_work の作品名の順に探し、無ければ new_work がある時だけ作る
+  let work: BenchWork | null = null
+  let created: BenchWork | null = null
+  const found = ref ? resolveBenchWork(data, ref) : null
+  if (found?.ok) work = found.value
+  else if (found && found.reason === 'ambiguous') return fail(found.message, found.candidates)
+  else if (newWork) {
+    const byName = resolveBenchWork(data, newWork.name)
+    if (byName.ok) work = byName.value
+    else if (byName.reason === 'ambiguous') return fail(byName.message, byName.candidates)
+    else {
+      const id = benchWorkId(newWork.name, newWork.author ?? '')
+      const same = data.benchWorks[id]
+      if (same) work = same
+      else if (ctx.wasDeleted?.('benchWorks', id))
+        return fail(
+          `ベンチ作品『${short(newWork.name, 30)}』は以前に削除されています（作り直す時は、アプリのホームの「ベンチ作品」で作るか、ゴミ箱から戻してください）`,
+        )
+      else {
+        const opt = (v: string | undefined) => (isStr(v) && v.trim() ? v.trim() : undefined)
+        const publisher = opt(newWork.publisher)
+        const year = opt(newWork.year)
+        const genre = opt(newWork.genre)
+        created = {
+          id,
+          name: newWork.name.trim(),
+          author: (newWork.author ?? '').trim(),
+          ...(publisher ? { publisher } : {}),
+          ...(year ? { year } : {}),
+          ...(genre ? { genre } : {}),
+          pdfPlace: (newWork.pdf_place ?? '').trim(),
+          note: '',
+          order: sortedBenchWorks(data).reduce((m, w) => Math.max(m, w.order), -1) + 1,
+          createdAt: ctx.now,
+          updatedAt: ctx.now,
+          source: ctx.source,
+        }
+        work = created
+      }
+    }
+  } else
+    return fail(
+      `${found?.message ?? 'ベンチ作品が見つかりません'}。棚に無い作品は new_work（name・author など）を付けると、作品も作ります`,
+      found?.candidates,
+    )
+
+  const model = modelOf(input.model)
+  const seen = new Set<string>()
+  const items: ItemResult[] = []
+  input.items.forEach((raw, index) => {
+    if (!isObj(raw)) return items.push({ index, status: 'invalid', label: '分析', hint: '分析の形が違います' })
+    const item = raw as unknown as BenchAnalysisItemInput
+    const label =
+      isStr(item.viewpoint) && item.viewpoint.trim()
+        ? `『${short(work!.name, 20)}』の「${short(item.viewpoint, 20)}」`
+        : `『${short(work!.name, 20)}』の分析`
+    const err =
+      checkText(item.viewpoint, 'viewpoint', RECORD_LIMITS.viewpoint, true) ??
+      checkText(item.body_markdown, 'body_markdown', null, true)
+    if (err) return items.push({ index, status: 'invalid', label, hint: err })
+    const itemNotes: string[] = []
+    const runDate = runDateOf(item.run_date, ctx, itemNotes)
+    notes.push(...itemNotes)
+    const id = benchAnalysisId({ workId: work!.id, viewpoint: item.viewpoint, runDate, body: item.body_markdown })
+    const status = existing(data, ctx, 'benchAnalyses', id, seen)
+    if (status) return items.push({ index, status, id, table: 'benchAnalyses', label, hint: STATUS_HINTS[status] })
+    // 同じ呼び出しの分析は、送った順に1ずつずらした時刻にする（観点のまとまりの順が送った順になるように）
+    const at = ctx.now + index
+    const rec: BenchAnalysis = {
+      id,
+      workId: work!.id,
+      viewpoint: item.viewpoint.trim(),
+      body: item.body_markdown,
+      runDate,
+      source: ctx.source,
+      ...(model ? { model } : {}),
+      v: CLAUDE_RECORD_VERSION,
+      createdAt: at,
+      updatedAt: at,
+    }
+    const tooBig = sizeProblem(
+      rec,
+      ctx,
+      'ベンチ作品の分析',
+      rec.body,
+      (k) =>
+        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ viewpoint・run_date の別々の items にして送ってください（各部の body_markdown の1行目に「（1/${k}）」「（2/${k}）」…と番号を書く。アプリと一覧はこの番号の順に並べます。items が多くなる時は novel_add_bench_analysis を分けて呼ぶ）`,
+      'viewpoint を短くしてください',
+    )
+    if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
+    seen.add(`benchAnalyses:${id}`)
+    records.push({ table: 'benchAnalyses', record: rec })
+    items.push({ index, status: 'created', id, table: 'benchAnalyses', label })
+  })
+  // 作品は、分析を1つでも作る時だけ作る（先に作る）
+  if (created && records.length) {
+    records.unshift({ table: 'benchWorks', record: created })
+    notes.push(`ベンチ作品 ${benchWorkRef(created)} を棚に足しました`)
+  }
+  return { ok: true, records, items, notes }
+}
+
 // ---------- まとめ ----------
 
 /** 書き込みツールの呼び出し1つから記録を作る */
@@ -963,6 +1174,8 @@ export function buildToolCall(data: AppData, call: WriteToolCall, ctx: BuildCont
       return buildCritiquePrompt(data, call.input, ctx)
     case 'novel_add_critique_result':
       return buildCritiqueResult(data, call.input, ctx)
+    case 'novel_add_bench_analysis':
+      return buildBenchAnalysis(data, call.input, ctx)
     default:
       return fail(`知らないツールです: ${String((call as { tool?: unknown }).tool)}`)
   }

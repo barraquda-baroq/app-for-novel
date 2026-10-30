@@ -2,11 +2,13 @@
 // 依頼文と本文（コネクタの novel_read_text と同じ形。src/claude/view.ts）を 50,000 字以内のパートに分けてコピーし、
 // Claude には最後に ```novel-studio-v1 のコードブロックで JSON（コネクタの書き込みツールの入力と同じ形）を返してもらう。
 // 返ってきた答えは src/claude/paste.ts で読み、同じ作り方（src/claude/records.ts）で記録にする。
+// ベンチ作品（2.5）の分析の依頼（benchAnalysisPrompt）は本文を送らない: PDF は利用者の claude.ai のプロジェクトにある。
+import { benchWorkRef, comparisonMaterial } from './bench'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_LABELS } from './categories'
 import { submissionsOf, submissionStatusLabel } from '../domain/entityOps'
 import { submissionExtraLines } from '../domain/submissionTexts'
 import { formatCount } from '../domain/text'
-import type { AppData, CritiquePrompt, ID, Title } from '../domain/types'
+import type { AppData, BenchWork, CritiquePrompt, ID, Title } from '../domain/types'
 import { PASTE_FENCE } from './paste'
 import { shortId } from './refs'
 import { outlineView, readTextPages, type ReadSelection } from './view'
@@ -107,10 +109,15 @@ export function proofreadingPrompt(c: PromptContext): string {
   ].join('\n')
 }
 
-/** 作品批評の依頼文（批評プロンプトの本文を中に入れる） */
+/** 作品批評の依頼文（批評プロンプトの本文を中に入れる）。bench は比べるベンチ作品（分析を本文の前に入れる時） */
 export function critiqueManualPrompt(
-  c: PromptContext & { prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'> | null; scope?: { from: string; to: string } },
+  c: PromptContext & {
+    prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'> | null
+    scope?: { from: string; to: string }
+    bench?: readonly Pick<BenchWork, 'id' | 'name' | 'author'>[]
+  },
 ): string {
+  const bench = c.bench ?? []
   const example = JSON.stringify({
     tool: 'novel_add_critique_result',
     input: {
@@ -119,6 +126,7 @@ export function critiqueManualPrompt(
       run_date: c.today,
       result_markdown: '## 総評\n…',
       ...(c.scope ? { scope: c.scope } : {}),
+      ...(bench.length ? { bench_works: bench.map((w) => shortId('benchWork', w.id)) } : {}),
     },
   })
   return [
@@ -126,12 +134,20 @@ export function critiqueManualPrompt(
     '',
     '## 批評の依頼',
     c.prompt ? c.prompt.body.trim() || '（依頼文が空です）' : 'この作品を批評してください。',
+    ...(bench.length
+      ? [
+          '',
+          '## 比べる作品',
+          `作者が比べたい既存の作品（ベンチ作品）の分析を、依頼のすぐ後に送ります: ${bench.map((w) => benchWorkRef(w)).join('、')}。批評の中で、これらの作品と比べてください（分析にない内容は推測しないでください）。`,
+        ]
+      : []),
     '',
     TEXT_FORMAT,
     '',
     '## 返し方',
     `批評は Markdown で書いてください。最後に、批評の全文を result_markdown に入れた次の形の JSON を \`\`\`${PASTE_FENCE} のコードブロックで返してください（Novel Studio に貼り付けて、作品批評の結果として残します）。`,
     'アーティファクトにした時は、その URL（https）が分かれば artifact_url に入れてください（分からなければ省略。後でアプリから入れられます）。',
+    ...(bench.length ? ['bench_works には、批評の中で実際に比べた作品だけを残してください。'] : []),
     fence(example),
     RETURN_RULES,
   ].join('\n')
@@ -219,6 +235,8 @@ export interface ManualPartsOptions {
   includeText?: boolean
   /** パートの長さの上限（既定 50,000） */
   partChars?: number
+  /** 作品批評: 比べるベンチ作品の分析も入れる作品（タイトルの比べる作品。2.5） */
+  benchWorkIds?: readonly ID[]
 }
 
 export type ManualPartsResult =
@@ -261,13 +279,23 @@ export function buildManualParts(data: AppData, titleId: ID, opts: ManualPartsOp
     const outline = outlineView(data, titleId, { maxRows: 100_000, includeActs: false })
     material = `=== 目次 ===\n${outline.ok ? outline.text : ''}\n${strategyMaterial(data, title)}`
   }
+  // 作品批評: 比べるベンチ作品の分析を、依頼文の後・本文の前に入れる
+  const bench =
+    opts.task === 'critique' && opts.benchWorkIds?.length
+      ? opts.benchWorkIds.map((id) => data.benchWorks[id]).filter((w): w is BenchWork => Boolean(w))
+      : []
+  if (bench.length)
+    material = comparisonMaterial(
+      data,
+      bench.map((w) => w.id),
+    )
   const headOf = (parts: number) => {
     const c: PromptContext = { title, rangeLabel, parts, today: opts.today }
     const prompt =
       opts.task === 'proofreading'
         ? proofreadingPrompt(c)
         : opts.task === 'critique'
-          ? critiqueManualPrompt({ ...c, prompt: opts.prompt ?? null, scope })
+          ? critiqueManualPrompt({ ...c, prompt: opts.prompt ?? null, scope, bench })
           : strategyPrompt(c)
     return material ? `${prompt}\n\n${material}` : prompt
   }
@@ -304,22 +332,70 @@ export function buildManualParts(data: AppData, titleId: ID, opts: ManualPartsOp
 
 /**
  * コネクタを使う時に Claude へ渡す批評の依頼（作品批評の「Claude 用にコピー」）。本文はコネクタで読んでもらい、
- * 結果は novel_add_critique_result で記録してもらう
+ * 結果は novel_add_critique_result で記録してもらう。bench はタイトルの比べるベンチ作品（2.5。分析をコネクタで読んで比べてもらう）
  */
 export function critiqueConnectorPrompt(
   title: Pick<Title, 'id' | 'name'>,
   prompt: Pick<CritiquePrompt, 'id' | 'name' | 'body'>,
+  bench: readonly Pick<BenchWork, 'id' | 'name' | 'author'>[] = [],
 ): string {
   return [
     `Novel Studio コネクタで『${title.name}』[${shortId('title', title.id)}] の採用原稿を読み（novel_read_text。ruby は strip で）、次の依頼のとおりに批評してください。`,
     '',
     '## 批評の依頼',
     prompt.body.trim() || '（依頼文が空です）',
+    ...(bench.length
+      ? [
+          '',
+          '## 比べる作品',
+          `比べるベンチ作品: ${bench.map((w) => benchWorkRef(w)).join('、')}。novel_get_bench_analysis でそれぞれの分析を読み、批評の中で比べてください（分析にない内容は推測しないでください）。`,
+        ]
+      : []),
     '',
     '## 記録',
-    `批評が終わったら、novel_add_critique_result で結果を記録してください（prompt_id は ${shortId('critiquePrompt', prompt.id)}、result_markdown に批評の全文）。`,
+    `批評が終わったら、novel_add_critique_result で結果を記録してください（prompt_id は ${shortId('critiquePrompt', prompt.id)}、result_markdown に批評の全文${bench.length ? '、bench_works に実際に比べた作品の w:…' : ''}）。`,
     'タイトル全体が一度に読めない時は、範囲（scope）ごとに記録してから、まとめの批評も記録してください。',
     '',
     `（コネクタを使わない時は、Novel Studio の「Claude に頼む（手動）」でコピーした本文と一緒に送ってください。結果は最後に \`\`\`${PASTE_FENCE} のコードブロックで返してもらいます）`,
+  ].join('\n')
+}
+
+/** ベンチ作品の分析の観点の既定（「Claude に頼む（手動）」で最初に選んでおくもの） */
+export const DEFAULT_BENCH_VIEWPOINTS = ['構成', '文体', '人物', '冒頭の掴み'] as const
+
+/**
+ * ベンチ作品の分析の依頼文（ベンチ作品の画面の「Claude に頼む（手動）」）。PDF は利用者の claude.ai のプロジェクトにあるので
+ * 本文は送らない。最後に novel_add_bench_analysis と同じ形の JSON をコードブロックで返してもらう（貼り付けで取り込む）
+ */
+export function benchAnalysisPrompt(
+  work: Pick<BenchWork, 'id' | 'name' | 'author' | 'pdfPlace'>,
+  viewpoints: readonly string[],
+  today: string,
+): string {
+  const points = viewpoints.map((v) => v.trim()).filter(Boolean)
+  const list = points.length ? points : [...DEFAULT_BENCH_VIEWPOINTS]
+  const example = JSON.stringify({
+    tool: 'novel_add_bench_analysis',
+    input: {
+      work: shortId('benchWork', work.id),
+      items: list.slice(0, 2).map((v) => ({ viewpoint: v, body_markdown: `## ${v}\n…`, run_date: today })),
+    },
+  })
+  const place = work.pdfPlace.trim()
+  return [
+    `このプロジェクトのナレッジにある作品『${work.name.trim() || '無題'}』${work.author.trim() ? `（${work.author.trim()}）` : ''}の PDF を読んで、小説の書き手が自分の作品と比べるための分析を書いてください。${place ? `（PDF の置き場所: ${place}）` : ''}`,
+    '',
+    '## 分析の観点',
+    ...list.map((v) => `- ${v}`),
+    '',
+    '観点ごとに、作品の具体的な箇所（章・場面・短い引用）を挙げて、なぜ効いているのか・書き手が学べることを Markdown で書いてください。',
+    'PDF に無いことは推測で書かず、読み取れない時はそう書いてください。引用は短く（数行まで）にしてください。',
+    '',
+    '## 返し方',
+    `最後に、観点ごとに1つずつ items に入れた次の形の JSON を \`\`\`${PASTE_FENCE} のコードブロックで返してください（Novel Studio のベンチ作品に貼り付けて、分析として残します）。`,
+    fence(example),
+    `- viewpoint: 観点の名前（40字以内。上の観点の名前のまま）。body_markdown: その観点の分析の全文（Markdown）。run_date: 今日 ${today}`,
+    '- items は1つの呼び出しで20件まで',
+    RETURN_RULES,
   ].join('\n')
 }

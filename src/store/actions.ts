@@ -2,6 +2,7 @@
 // 仕様違反は DomainError を投げるので、UI 側では attempt() で受けてトースト表示する。
 import type { NewRecord } from '../claude/records'
 import * as A from '../domain/acts'
+import * as B from '../domain/benchOps'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import {
@@ -161,6 +162,22 @@ export const actions = {
 
   // 2.3: 手動連携の貼り付けで作った記録を入れる（もうある・ゴミ箱にあるものは入れない）。戻り値は入れた記録の id
   addClaudeRecords: (records: readonly NewRecord[]) => run((d) => C.addClaudeRecords(d, records)),
+
+  // 2.5: ベンチ作品（ホームの棚）とその分析
+  /** 戻り値は作品の id */
+  addBenchWork: (input: B.BenchWorkInput) => run((d) => B.addBenchWork(d, input)),
+  updateBenchWork: (id: ID, patch: B.BenchWorkInput) => apply((d) => B.updateBenchWork(d, id, patch)),
+  moveBenchWorkStep: (id: ID, dir: -1 | 1) => apply((d) => B.moveBenchWorkStep(d, id, dir)),
+  moveBenchWorkTo: (id: ID, index: number) => apply((d) => B.moveBenchWorkTo(d, id, index)),
+  /** 作品を分析といっしょにゴミ箱へ（比べる作品にしていたタイトルからも外す） */
+  deleteBenchWork: (id: ID) => apply((d) => B.deleteBenchWork(d, id)),
+  /** 戻り値は分析の id */
+  addBenchAnalysis: (workId: ID, input: B.BenchAnalysisInput) => run((d) => B.addBenchAnalysis(d, workId, input)),
+  updateBenchAnalysis: (id: ID, patch: B.BenchAnalysisInput) => apply((d) => B.updateBenchAnalysis(d, id, patch)),
+  deleteBenchAnalysis: (id: ID) => apply((d) => B.deleteBenchAnalysis(d, id)),
+  /** タイトルの比べるベンチ作品に足す・外す */
+  addTitleBenchWork: (titleId: ID, workId: ID) => apply((d) => B.addTitleBenchWork(d, titleId, workId)),
+  removeTitleBenchWork: (titleId: ID, workId: ID) => apply((d) => B.removeTitleBenchWork(d, titleId, workId)),
 
   // ゴミ箱（削除の操作は上の各 delete… がゴミ箱へ移す）
   restoreTrashEntry: (entryId: ID) => run((d) => T.restoreTrashEntry(d, entryId)),

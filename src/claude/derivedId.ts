@@ -13,6 +13,8 @@ export type DerivedKind =
   | 'strategyNote'
   | 'critiquePrompt'
   | 'critiqueResult'
+  | 'benchWork'
+  | 'benchAnalysis'
 
 /** 種類ごとの1文字 */
 export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
@@ -23,6 +25,8 @@ export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
   strategyNote: 'n',
   critiquePrompt: 'p',
   critiqueResult: 'q',
+  benchWork: 'w',
+  benchAnalysis: 'a',
 }
 
 /** 比べる前に揃える（Unicode の正規化 NFC。合成済みの文字と組み合わせの文字を同じに扱う） */
@@ -98,4 +102,14 @@ export function critiqueResultId(p: {
   artifactUrl: string
 }): ID {
   return derivedId('critiqueResult', [p.titleId, p.runDate, long(p.promptText), long(p.resultMarkdown), p.artifactUrl.trim()])
+}
+
+/** ベンチ作品（Claude が分析と一緒に作る作品。同じ作品名・著者なら同じ id） */
+export function benchWorkId(name: string, author: string): ID {
+  return derivedId('benchWork', [name.trim(), author.trim()])
+}
+
+/** ベンチ作品の分析（同じ作品・観点・日付・本文なら同じ id） */
+export function benchAnalysisId(p: { workId: ID; viewpoint: string; runDate: string; body: string }): ID {
+  return derivedId('benchAnalysis', [p.workId, p.viewpoint.trim(), p.runDate, long(p.body)])
 }
