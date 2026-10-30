@@ -181,6 +181,31 @@ describe('複数タブ・保存失敗', () => {
     other.close()
   })
 
+  it('まだ届いていないベンチ作品への比べる作品の印は、表示では外しても、タイトルを書き換えた時に端末内に残る（作品が届けばまた見える）', async () => {
+    const name = `test-db-${++n}`
+    await initStore(createPersistence(name))
+    const titleId = actions.createTitle('作品')
+    const workId = actions.addBenchWork({ name: '銀河の果て' })
+    actions.addTitleBenchWork(titleId, workId)
+    await flushNow()
+    resetStoreForTests()
+    // 別の端末で比べる作品にした作品が、タイトルより後に届く（この端末にはまだ無い）
+    const writer = createPersistence(name)
+    const disk = await writer.load()
+    await writer.save(disk, { ...disk, titles: { [titleId]: { ...disk.titles[titleId], benchWorkIds: [workId, 'later'] } } })
+    writer.close()
+
+    await initStore(createPersistence(name))
+    expect(useApp.getState().data.titles[titleId].benchWorkIds).toEqual([workId])
+    actions.updateTitle(titleId, { name: '作品（改題）' })
+    expect(await flushNow()).toBe(true)
+    const other = createPersistence(name)
+    const saved = (await other.load()).titles[titleId]
+    expect(saved.name).toBe('作品（改題）')
+    expect(saved.benchWorkIds).toEqual([workId, 'later'])
+    other.close()
+  })
+
   it('ただし修復が表示から外した記録の中の項目は、削除して戻す・バックアップの書き出し・復元では残らない（古い版の端末で応募時の控えが消える仕組み。SPEC-2 の 9.）', async () => {
     // 新しい版の端末が書いた内容を、この版の修復が知らない項目として扱う（2.4 までの端末と `snapshot.synopsis` の関係と同じ）
     const snapshot = { at: 1, charCount: 0, activeVersions: {}, futureField: '新しい版の控え' }
