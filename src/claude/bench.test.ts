@@ -18,7 +18,8 @@ import {
   trashedIdsOf,
   type BuildContext,
 } from './records'
-import { shortId } from './refs'
+import { benchWorkId } from './derivedId'
+import { refKey, shortId } from './refs'
 import { claudeView } from './visibility'
 
 const NOW = Date.UTC(2026, 9, 30, 3, 0)
@@ -160,6 +161,57 @@ describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
     expect(back.records.map((x) => x.table)).toEqual(['benchAnalyses'])
     expect((back.records[0].record as BenchAnalysis).workId).toBe(hand.result)
     expect(Object.values(restored.benchWorks).filter((w) => w.name === '銀河')).toHaveLength(1)
+  })
+
+  it('作品名は全角と半角・全角の空白・続く空白の違いを問わない（タイトル名で指す時と同じ）。同じ作品を2つ作らない', () => {
+    const n = sample()
+    const up = addBenchWork(n.data, { name: '銀河の果て　上', author: '山田' })
+    const sf = addBenchWork(up.data, { name: 'ＳＦ傑作選', author: '' })
+    const data = sf.data
+    for (const [ref, id] of [
+      ['銀河の果て 上', up.result],
+      ['銀河の果て  上', up.result],
+      ['SF傑作選', sf.result],
+      [' ＳＦ傑作選 ', sf.result],
+    ] as const) {
+      const r = resolveBenchWork(data, ref)
+      expect(r.ok && r.value.id).toBe(id)
+    }
+    // new_work を付けても、棚の作品に足す（作品は作らない）。作品名はそのまま
+    const r = buildBenchAnalysis(
+      data,
+      {
+        work: '銀河の果て 上',
+        new_work: { name: '銀河の果て 上', author: '山田' },
+        items: [{ viewpoint: '構成', body_markdown: '三幕', run_date: '2026-10-30' }],
+      },
+      claude,
+    )
+    expect(r.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+    expect((r.records[0].record as BenchAnalysis).workId).toBe(up.result)
+    expect(data.benchWorks[up.result].name).toBe('銀河の果て　上')
+    const s2 = buildBenchAnalysis(
+      data,
+      { work: 'SF傑作選', new_work: { name: 'SF傑作選', author: '' }, items: [{ viewpoint: '文体', body_markdown: '短文' }] },
+      paste,
+    )
+    expect(s2.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+    expect((s2.records[0].record as BenchAnalysis).workId).toBe(sf.result)
+    // Claude が作る作品の id も同じ比べ方（全角と半角・続く空白の違いは同じ id）
+    expect(benchWorkId('ＳＦ傑作選', '')).toBe(benchWorkId('SF傑作選', ''))
+    expect(benchWorkId('銀河の果て　上', '山田')).toBe(benchWorkId('銀河の果て  上 ', ' 山田'))
+    expect(benchWorkId('銀河の果て', '山田')).not.toBe(benchWorkId('銀河の果て', '佐藤'))
+    expect(refKey('ＳＦ　傑作選 ')).toBe('SF 傑作選')
+    // ゴミ箱の作品名も同じ比べ方
+    const gone = deleteBenchWork(data, sf.result)
+    expect(trashedBenchNamesOf(gone)('SF傑作選')).toBe(true)
+    const again = buildBenchAnalysis(
+      gone,
+      { work: 'SF傑作選', new_work: { name: 'SF傑作選', author: '' }, items: [{ viewpoint: '文体', body_markdown: '短文' }] },
+      { ...claude, wasDeleted: trashedIdsOf(gone), trashedBenchWorkNamed: trashedBenchNamesOf(gone) },
+    )
+    expect(again.ok).toBe(false)
+    expect(again.error).toContain('以前に削除されています')
   })
 
   it('同じ作品名が2つあれば短い id で指してもらう。入力の形・件数・観点の長さ・日付', () => {

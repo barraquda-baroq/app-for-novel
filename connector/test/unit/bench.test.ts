@@ -189,6 +189,28 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
   })
 
+  it('作品名の全角と半角・全角の空白の違いでは、別の作品を作らない（棚の作品に足す）', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const up = addBenchWork(s.data, { name: '銀河の果て　上', author: '山田' })
+    const sf = addBenchWork(up.data, { name: 'ＳＦ傑作選', author: '' })
+    const { core } = await pairedCore(fake, sf.data)
+    for (const name of ['銀河の果て 上', 'SF傑作選']) {
+      const r = await core.callTool('novel_add_bench_analysis', {
+        work: name,
+        new_work: { name, author: name === 'SF傑作選' ? '' : '山田' },
+        items: [{ viewpoint: '構成', body_markdown: `## 構成\n${name}`, run_date: '2026-10-30' }],
+      })
+      expect(r.text).toContain('追加 1件')
+      expect(r.text).not.toContain('を棚に足しました')
+    }
+    expect(docsOf(fake, 'benchWorks')).toHaveLength(0)
+    const list = await call(core, 'novel_list_bench_works')
+    expect(list.match(/『銀河の果て/g)).toHaveLength(2)
+    expect(list).toContain(`${shortId('benchWork', up.result)}『銀河の果て　上』（山田）`)
+    expect(list).not.toContain('『SF傑作選』')
+  })
+
   it('手で足して削除した作品（ゴミ箱に同じ作品名）は new_work で作り直さない', async () => {
     const fake = new FakeFirebase()
     const s = shelf()

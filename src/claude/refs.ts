@@ -94,7 +94,11 @@ export function pieceRefLabel(data: AppData, piece: Piece, order?: readonly Read
   return `${item ? `#${item.index} ` : ''}${pieceFullLabel(data, piece)} [${shortId('piece', piece.id)}]`
 }
 
-const normalizeRef = (s: string) =>
+/**
+ * 名前で指す時に比べる形（Unicode の NFKC で全角の英数字・全角の空白などをそろえ、続く空白は1つにして前後を落とす）。
+ * タイトル・章・話の見出しのほか、ベンチ作品の作品名・著者（bench.ts・derivedId.ts の benchWorkId）でも同じものを使う
+ */
+export const refKey = (s: string): string =>
   s
     .normalize('NFKC')
     .replace(/[\s　]+/g, ' ')
@@ -111,7 +115,7 @@ export function resolveTitle(data: AppData, ref: string): Resolved<Title> {
   const titles = Object.values(data.titles)
   const byId = titles.filter((t) => matchesId('title', r, t.id))
   if (byId.length === 1) return { ok: true, value: byId[0] }
-  const byName = byId.length ? byId : titles.filter((t) => normalizeRef(t.name) === normalizeRef(r))
+  const byName = byId.length ? byId : titles.filter((t) => refKey(t.name) === refKey(r))
   if (byName.length === 1) return { ok: true, value: byName[0] }
   const candidates = (byName.length ? byName : titles).slice(0, 20).map((t) => `${shortId('title', t.id)}『${t.name}』`)
   return byName.length
@@ -146,7 +150,7 @@ export function resolvePiece(data: AppData, titleId: ID, ref: string, order?: re
   const byId = all.filter((p) => matchesId('piece', r, p.id))
   if (byId.length) return pick(byId, r)
 
-  const n = normalizeRef(r)
+  const n = refKey(r)
   // '#12'・'#12.2'
   const hash = /^#(\d+)(?:\.(\d+))?$/.exec(n)
   if (hash) {
@@ -163,7 +167,7 @@ export function resolvePiece(data: AppData, titleId: ID, ref: string, order?: re
     const [, chapterName, num, actNum] = ep
     let items = list.filter((x) => x.piece.kind === 'episode' && x.label === `第${Number(num)}話`)
     if (chapterName) {
-      const chapters = chaptersOf(data, titleId).filter((c: Chapter) => normalizeRef(c.name) === normalizeRef(chapterName))
+      const chapters = chaptersOf(data, titleId).filter((c: Chapter) => refKey(c.name) === refKey(chapterName))
       items = items.filter((x) => chapters.some((c) => c.id === x.chapterId))
     }
     if (actNum) {
@@ -179,9 +183,7 @@ export function resolvePiece(data: AppData, titleId: ID, ref: string, order?: re
   }
 
   // 特殊ブロックの見出し・「第12話　題」の題まで含めた表記
-  const byLabel = list.filter(
-    (x) => normalizeRef(x.fullLabel) === n || (x.piece.kind === 'special' && normalizeRef(x.label) === n),
-  )
+  const byLabel = list.filter((x) => refKey(x.fullLabel) === n || (x.piece.kind === 'special' && refKey(x.label) === n))
   if (byLabel.length)
     return pick(
       byLabel.map((x) => x.piece),

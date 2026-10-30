@@ -4,6 +4,7 @@
 // 形: `c` + 種類の1文字 + `-` + 指紋（[a-z0-9.-] だけ・40字以内）。手で作ったレコードの id（newId の UUID）とは重ならない。
 import { hashJson } from '../domain/hash'
 import type { ID } from '../domain/types'
+import { refKey } from './refs'
 
 export type DerivedKind =
   | 'proofSuggestion'
@@ -104,9 +105,12 @@ export function critiqueResultId(p: {
   return derivedId('critiqueResult', [p.titleId, p.runDate, long(p.promptText), long(p.resultMarkdown), p.artifactUrl.trim()])
 }
 
-/** ベンチ作品（Claude が分析と一緒に作る作品。同じ作品名・著者なら同じ id） */
+/**
+ * ベンチ作品（Claude が分析と一緒に作る作品。同じ作品名・著者なら同じ id。作品名で探す時と同じく、全角と半角・続く空白の
+ * 違いは同じとみなす（refs.ts の refKey））
+ */
 export function benchWorkId(name: string, author: string): ID {
-  return derivedId('benchWork', [name.trim(), author.trim()])
+  return derivedId('benchWork', [refKey(name), refKey(author)])
 }
 
 /** ベンチ作品の分析（同じ作品・観点・日付・本文なら同じ id） */

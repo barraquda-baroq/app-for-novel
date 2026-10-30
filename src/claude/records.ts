@@ -47,7 +47,7 @@ import {
   revisionIdeaId,
   strategyNoteId,
 } from './derivedId'
-import { matchesId, readingOrder, resolvePiece, resolveTitle, shortId, type ReadingItem } from './refs'
+import { matchesId, readingOrder, refKey, resolvePiece, resolveTitle, shortId, type ReadingItem } from './refs'
 import { manuscriptOf } from './snapshot'
 import { canClaudeWrite, CLAUDE_RECORD_VERSION } from './visibility'
 
@@ -413,8 +413,9 @@ export function trashedIdsOf(data: AppData): (table: ClaudeTableName, id: ID) =>
 export function trashedBenchNamesOf(data: AppData): (name: string) => boolean {
   const set = new Set<string>()
   for (const e of Object.values(data.trashEntries))
-    if (e.kind === 'benchWork' && typeof e.label === 'string') set.add(e.label.normalize('NFC').trim())
-  return (name) => set.has(name.normalize('NFC').trim())
+    if (e.kind === 'benchWork' && typeof e.label === 'string') set.add(refKey(e.label))
+  // 作品名で探す時と同じ比べ方（全角と半角・続く空白の違いは同じ）
+  return (name) => set.has(refKey(name))
 }
 
 /** 作る前の確かめ（もうある・以前に削除された・同じ入力の中で重なる） */

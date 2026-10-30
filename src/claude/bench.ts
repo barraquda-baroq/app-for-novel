@@ -1,11 +1,12 @@
 // ベンチ作品（2.5）を Claude に渡す形（コネクタの読むツール・手動連携の依頼文で同じものを使う）と、作品の指し方。
-// - 作品は短い id（w:3f2a9c1b）・id・作品名そのもの（前後の空白・Unicode の正規化の違いは問わない）で指せる
+// - 作品は短い id（w:3f2a9c1b）・id・作品名そのもの（前後や続く空白・全角と半角・Unicode の正規化の違いは問わない。refs.ts の
+//   refKey。タイトル名で指す時と同じ）で指せる
 // - ベンチ作品はどのタイトルにも属さない利用者の覚え書きなので、タイトルの「Claude に見せる」とは関係なく見せる
 import { benchWorkName, sortedBenchWorks, titlesComparing } from '../domain/benchOps'
 import { formatCount } from '../domain/text'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../domain/types'
 import { benchAnalysesOf, benchViewpointGroups } from './benchOrder'
-import { matchesId, shortId, type Resolved } from './refs'
+import { matchesId, refKey, shortId, type Resolved } from './refs'
 
 const norm = (s: string) => s.normalize('NFC').trim()
 
@@ -13,7 +14,8 @@ const norm = (s: string) => s.normalize('NFC').trim()
 export function resolveBenchWork(data: Pick<AppData, 'benchWorks'>, ref: string): Resolved<BenchWork> {
   const works = sortedBenchWorks(data)
   const byId = works.filter((w) => matchesId('benchWork', ref, w.id))
-  const hits = byId.length ? byId : works.filter((w) => norm(w.name) === norm(ref))
+  const key = refKey(ref)
+  const hits = byId.length ? byId : works.filter((w) => refKey(w.name) === key)
   if (hits.length === 1) return { ok: true, value: hits[0] }
   const candidates = (hits.length ? hits : works).slice(0, 30).map((w) => benchWorkRef(w))
   return hits.length
