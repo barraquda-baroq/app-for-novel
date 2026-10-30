@@ -1,7 +1,7 @@
 // Vault の中身（Durable Object の外でも動く。テストでは node:sqlite と Firebase エミュレーターで動かす）。
 // 持ち主ごとに1つ（idFromName('owner')）。コネクタの身元・連携の状態・持ち主の記録の写し・数の記録・書き込みの順番を持つ。
 import { isPairingHash, PAIRING_TTL_MS } from '../../../src/claude/pairing'
-import { trashedIdsOf, buildToolCall, isWriteTool, type WriteTool } from '../../../src/claude/records'
+import { trashedBenchNamesOf, trashedIdsOf, buildToolCall, isWriteTool, type WriteTool } from '../../../src/claude/records'
 import { claudeView, canClaudeRead } from '../../../src/claude/visibility'
 import { repairData } from '../../../src/domain/repair'
 import type { AppData } from '../../../src/domain/types'
@@ -580,6 +580,8 @@ export class VaultCore {
           source: 'claude',
           now: this.#now(),
           wasDeleted: (table, id) => this.mirror.wasDeleted(table, id) || trashed(table, id),
+          // 手で足して削除した作品（ゴミ箱の一覧は写しでも中身を省かない）
+          trashedBenchWorkNamed: trashedBenchNamesOf(raw),
         })
         if (!built.ok) return buildError(built)
         let prepared

@@ -1,7 +1,7 @@
 // ベンチ作品（2.5）のツール: 一覧・分析を読む・分析を足す、作品批評の比べるベンチ作品・比べた作品（bench_works）。
 // ベンチ作品はタイトルの「Claude に見せる」と関係なく見せ、書き込みは「書き込みを許可」の時だけ。
 import { describe, expect, it } from 'vitest'
-import { addBenchAnalysis, addBenchWork, addTitleBenchWork } from '../../../src/domain/benchOps'
+import { addBenchAnalysis, addBenchWork, addTitleBenchWork, deleteBenchWork } from '../../../src/domain/benchOps'
 import { setTitleClaudeAccess } from '../../../src/domain/claudeOps'
 import { createTitle } from '../../../src/domain/entityOps'
 import { shortId } from '../../../src/claude/refs'
@@ -187,6 +187,29 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     })
     expect(more.text).toContain('追加 1件')
     expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
+  })
+
+  it('手で足して削除した作品（ゴミ箱に同じ作品名）は new_work で作り直さない', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    // 「海の記憶」（佐藤）は棚で手で足した作品（id は内容から作った id ではない）。削除してゴミ箱へ
+    const { core } = await pairedCore(fake, deleteBenchWork(s.data, s.workB))
+    const r = await core.callTool('novel_add_bench_analysis', {
+      work: '海の記憶',
+      new_work: { name: '海の記憶', author: '佐藤' },
+      items: [{ viewpoint: '構成', body_markdown: '## 構成\n二部構成。', run_date: '2026-10-30' }],
+    })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('以前に削除されています')
+    expect(r.text).toContain('ゴミ箱から戻してください')
+    expect(docsOf(fake, 'benchWorks')).toHaveLength(0)
+    expect(docsOf(fake, 'benchAnalyses')).toHaveLength(0)
+    // 棚にある作品はそのまま書ける
+    const ok = await core.callTool('novel_add_bench_analysis', {
+      work: '銀河の果て',
+      items: [{ viewpoint: '人物', body_markdown: '主人公の弧' }],
+    })
+    expect(ok.text).toContain('追加 1件')
   })
 
   it('大きすぎる分析は作らず、番号を付けて分けるよう返す。「書き込みを許可」が外れていれば書かない', async () => {

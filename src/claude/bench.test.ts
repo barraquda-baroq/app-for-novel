@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { addBenchAnalysis, addBenchWork, addTitleBenchWork, deleteBenchAnalysis, deleteBenchWork } from '../domain/benchOps'
 import { addClaudeRecords } from '../domain/claudeOps'
 import { setTitleClaudeAccess } from '../domain/claudeOps'
+import { listTrash, restoreTrashEntry } from '../domain/trash'
 import type { AppData, BenchAnalysis } from '../domain/types'
 import { decodeRecord, encodeRecord } from '../sync/codec'
 import { novel } from '../test/claudeFixture'
@@ -9,7 +10,14 @@ import { comparisonMaterial, resolveBenchWork, workAnalysesText } from './bench'
 import { benchAnalysesOf, benchViewpointGroups } from './benchOrder'
 import { previewPaste } from './paste'
 import { benchAnalysisPrompt, buildManualParts, critiqueConnectorPrompt, DEFAULT_BENCH_VIEWPOINTS } from './prompts'
-import { buildBenchAnalysis, buildCritiqueResult, RECORD_LIMITS, trashedIdsOf, type BuildContext } from './records'
+import {
+  buildBenchAnalysis,
+  buildCritiqueResult,
+  RECORD_LIMITS,
+  trashedBenchNamesOf,
+  trashedIdsOf,
+  type BuildContext,
+} from './records'
 import { shortId } from './refs'
 import { claudeView } from './visibility'
 
@@ -113,6 +121,45 @@ describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
     const back = buildBenchAnalysis(deleted, input, { ...claude, wasDeleted: trashedIdsOf(deleted) })
     expect(back.ok).toBe(false)
     expect(back.error).toContain('以前に削除されています')
+  })
+
+  it('手で足して削除した作品（ゴミ箱に同じ作品名）は new_work で作り直さない。ゴミ箱から戻せばその作品に足す', () => {
+    const n = sample()
+    const hand = addBenchWork(n.data, { name: '銀河', author: '山田' })
+    const withAnalysis = addBenchAnalysis(hand.data, hand.result, { viewpoint: '構成', body: '三幕', runDate: '2026-10-01' }).data
+    const deleted = deleteBenchWork(withAnalysis, hand.result)
+    const input = {
+      work: '銀河',
+      new_work: { name: '銀河', author: '山田' },
+      items: [{ viewpoint: '文体', body_markdown: '短文', run_date: '2026-10-30' }],
+    }
+    const ctxOf = (data: AppData, base: BuildContext): BuildContext => ({
+      ...base,
+      wasDeleted: trashedIdsOf(data),
+      trashedBenchWorkNamed: trashedBenchNamesOf(data),
+    })
+    for (const base of [claude, paste]) {
+      const r = buildBenchAnalysis(deleted, input, ctxOf(deleted, base))
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain('以前に削除されています')
+      expect(r.error).toContain('ゴミ箱から戻してください')
+      expect(r.records).toHaveLength(0)
+    }
+    // 前後の空白・正規化の違いがあっても同じ作品名
+    expect(trashedBenchNamesOf(deleted)(' 銀河 ')).toBe(true)
+    expect(trashedBenchNamesOf(deleted)('銀河の果て')).toBe(false)
+    // 貼り付け（タイトルの画面）でも同じ
+    const text = `\`\`\`novel-studio-v1\n${JSON.stringify({ tool: 'novel_add_bench_analysis', input })}\n\`\`\``
+    const p = previewPaste(deleted, text, { titleId: n.titleId, now: NOW })
+    expect(p.ok && p.created).toBe(0)
+    expect(p.ok && p.calls[0].result.error).toContain('以前に削除されています')
+    // ゴミ箱から戻せば、その作品（手で足した id）に足す
+    const entry = listTrash(deleted.trashEntries).find((e) => e.kind === 'benchWork')!
+    const restored = restoreTrashEntry(deleted, entry.id).data
+    const back = buildBenchAnalysis(restored, input, ctxOf(restored, claude))
+    expect(back.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+    expect((back.records[0].record as BenchAnalysis).workId).toBe(hand.result)
+    expect(Object.values(restored.benchWorks).filter((w) => w.name === '銀河')).toHaveLength(1)
   })
 
   it('同じ作品名が2つあれば短い id で指してもらう。入力の形・件数・観点の長さ・日付', () => {

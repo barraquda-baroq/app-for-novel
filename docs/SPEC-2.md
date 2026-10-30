@@ -288,7 +288,8 @@
     1つだけ。長ければ `char_budget` 字ずつ（既定 60,000、Claude Code では 12,000）、続きは cursor（観点の絞り込みも続く）。
   - `novel_add_bench_analysis`「ベンチ作品の分析を追加」（作るだけ）: `{ work, new_work?: { name, author, publisher?, year?, genre?, pdf_place? },
     items[≤20]: { viewpoint, body_markdown, run_date? }, model? }`。作品は `work` → `new_work.name` の順に探し、棚に無ければ `new_work` がある時だけ
-    作る（分析を1つでも作る時だけ。id は作品名・著者から作るので、同じ作品を2回作らない。削除した作品は作り直さない）。分析の id は作品・観点・
+    作る（分析を1つでも作る時だけ。id は作品名・著者から作るので、同じ作品を2回作らない。削除した作品は作り直さない。Claude が作って削除した
+    作品は id で、手で足して削除した作品はゴミ箱の同じ作品名で見分ける（`trashedBenchNamesOf`。ゴミ箱から戻せば、その作品に足す））。分析の id は作品・観点・
     日付・本文から作る（2回送っても1つ。削除したものは「以前に削除」）。1件が JSON にして 200,000 字を超える時は、作品批評の結果と同じく
     「body_markdown を k つ以上に分け…各部の1行目に（1/k）…」と分け方を返す。
   - `novel_get_critique` は、タイトルの比べるベンチ作品（作品名・観点）を出し、`novel_get_bench_analysis` で読むよう添える。

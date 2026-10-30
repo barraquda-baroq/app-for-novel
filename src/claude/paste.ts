@@ -9,6 +9,7 @@ import {
   buildToolCall,
   isWriteTool,
   summarizeItems,
+  trashedBenchNamesOf,
   trashedIdsOf,
   WRITE_TOOL_LABELS,
   type BuildResult,
@@ -183,7 +184,12 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
         error: `ここでは「${opts.expect.map((t) => WRITE_TOOL_LABELS[t]).join('」「')}」だけを貼り付けられます（貼り付けた答えは「${WRITE_TOOL_LABELS[bad.tool]}」）`,
       }
   }
-  const ctx = { source: 'paste' as const, now: opts.now, wasDeleted: trashedIdsOf(data) }
+  const ctx = {
+    source: 'paste' as const,
+    now: opts.now,
+    wasDeleted: trashedIdsOf(data),
+    trashedBenchWorkNamed: trashedBenchNamesOf(data),
+  }
   const previews: PasteCallPreview[] = []
   const records: NewRecord[] = []
   const seen = new Set<string>()

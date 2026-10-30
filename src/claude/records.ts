@@ -299,6 +299,11 @@ export interface BuildContext {
   now: number
   /** 以前に削除された記録か（アプリ: ゴミ箱の中身 trashedIdsOf、コネクタ: クラウドの削除の印） */
   wasDeleted?: (table: ClaudeTableName, id: ID) => boolean
+  /**
+   * ゴミ箱に同じ作品名のベンチ作品があるか（アプリ・コネクタとも trashEntries から。trashedBenchNamesOf）。
+   * 手で足した作品は id が内容から作った id でないので、new_work で作り直さないように作品名で見分ける
+   */
+  trashedBenchWorkNamed?: (name: string) => boolean
 }
 
 // ---------- 小さな道具 ----------
@@ -399,6 +404,17 @@ export function trashedIdsOf(data: AppData): (table: ClaudeTableName, id: ID) =>
     if (rec && typeof rec.id === 'string') set.add(`${r.table}:${rec.id}`)
   }
   return (table, id) => set.has(`${table}:${id}`)
+}
+
+/**
+ * ゴミ箱に入っているベンチ作品の作品名（ゴミ箱の1件の表記 label は作品名。trashLabel.benchWork）。
+ * ゴミ箱の一覧 trashEntries はアプリでもコネクタでも中身を省かずに持つので、どちらでも同じに見分けられる
+ */
+export function trashedBenchNamesOf(data: AppData): (name: string) => boolean {
+  const set = new Set<string>()
+  for (const e of Object.values(data.trashEntries))
+    if (e.kind === 'benchWork' && typeof e.label === 'string') set.add(e.label.normalize('NFC').trim())
+  return (name) => set.has(name.normalize('NFC').trim())
 }
 
 /** 作る前の確かめ（もうある・以前に削除された・同じ入力の中で重なる） */
@@ -1071,7 +1087,8 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       const id = benchWorkId(newWork.name, newWork.author ?? '')
       const same = data.benchWorks[id]
       if (same) work = same
-      else if (ctx.wasDeleted?.('benchWorks', id))
+      // 以前に Claude が作って削除した作品（同じ id）も、手で足して削除した作品（ゴミ箱に同じ作品名）も作り直さない
+      else if (ctx.wasDeleted?.('benchWorks', id) || ctx.trashedBenchWorkNamed?.(newWork.name))
         return fail(
           `ベンチ作品『${short(newWork.name, 30)}』は以前に削除されています（作り直す時は、アプリのホームの「ベンチ作品」で作るか、ゴミ箱から戻してください）`,
         )
