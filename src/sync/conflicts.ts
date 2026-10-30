@@ -6,6 +6,8 @@ import { actLabel, pieceFullLabel } from '../domain/structure'
 import { trashLabel } from '../domain/trash'
 import type {
   AppData,
+  BenchAnalysis,
+  BenchWork,
   ContentTableName,
   CritiquePrompt,
   CritiqueResult,
@@ -172,6 +174,9 @@ const KIND_OF: Partial<Record<ContentTableName, TrashKind>> = {
   strategyNotes: 'strategyNote',
   critiquePrompts: 'critiquePrompt',
   critiqueResults: 'critiqueResult',
+  // 2.5
+  benchWorks: 'benchWork',
+  benchAnalyses: 'benchAnalysis',
 }
 
 /**
@@ -273,6 +278,18 @@ export function conflictTrash(
     const r = record as unknown as CritiqueResult
     titleId = r.titleId
     label = trashLabel.critiqueResult(r)
+    origin.index = -1
+  } else if (table === 'benchWorks') {
+    // ベンチ作品はどのタイトルにも属さない（棚の元の位置へ戻す）
+    const w = record as unknown as BenchWork
+    label = trashLabel.benchWork(w)
+    origin.index = typeof w.order === 'number' ? w.order : -1
+  } else if (table === 'benchAnalyses') {
+    const a = record as unknown as BenchAnalysis
+    label = trashLabel.benchAnalysis(a)
+    const work = data.benchWorks[a.workId]
+    if (work) parentLabel = trashLabel.benchWork(work)
+    origin.workId = a.workId
     origin.index = -1
   }
   origin.titleId = table === 'titles' ? null : titleId

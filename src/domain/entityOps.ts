@@ -6,7 +6,7 @@ export { textHash }
 import { orderOrigin, putInTrash, trashLabel, type TrashSpec } from './trash'
 import { Tx, transact } from './tx'
 import {
-  CLAUDE_TABLES,
+  TITLE_CLAUDE_TABLES,
   DomainError,
   type AppData,
   type ID,
@@ -141,7 +141,7 @@ export function deleteTitle(data: AppData, titleId: ID): AppData {
         .map((record) => ({ table: 'settingEntries' as const, record })),
       ...submissions.map((record) => ({ table: 'submissions' as const, record })),
       ...usedSnapshotTexts(tx, submissions).map((record) => ({ table: 'snapshotTexts' as const, record })),
-      ...CLAUDE_TABLES.flatMap((table) =>
+      ...TITLE_CLAUDE_TABLES.flatMap((table) =>
         (tx.all(table) as { id: ID; titleId: ID | null; createdAt: number }[])
           .filter(belongs)
           .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))

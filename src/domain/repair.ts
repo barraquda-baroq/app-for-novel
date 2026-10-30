@@ -5,6 +5,8 @@ import { textHash } from './text'
 import { TRASH_KIND_LABELS, isContentTable, isTrashKind } from './trash'
 import {
   type AppData,
+  type BenchAnalysis,
+  type BenchWork,
   type Chapter,
   type ClaudeSource,
   type ClaudeTableName,
@@ -149,6 +151,9 @@ export function repairData(input: AppData): RepairResult {
     strategyNotes: { ...(input.strategyNotes ?? {}) },
     critiquePrompts: { ...(input.critiquePrompts ?? {}) },
     critiqueResults: { ...(input.critiqueResults ?? {}) },
+    // 2.5 の表（古いバックアップ・古い形のデータには無い）
+    benchWorks: { ...(input.benchWorks ?? {}) },
+    benchAnalyses: { ...(input.benchAnalyses ?? {}) },
     trashEntries: { ...(input.trashEntries ?? {}) },
     trashRecords: { ...(input.trashRecords ?? {}) },
   }
@@ -490,6 +495,8 @@ export function repairData(input: AppData): RepairResult {
 
   repairClaudeRecords(d, fix)
 
+  repairBench(d, fix)
+
   repairTrash(d, fix)
 
   return { data: fixes.length ? d : input, fixes }
@@ -680,7 +687,68 @@ function repairClaudeRecords(d: AppData, fix: (m: string) => void): void {
     manuscript: normalizeManuscript(r.manuscript),
     model: str(r.model),
     note: str(r.note),
+    // 比べたベンチ作品（2.5。無い古い記録には足さない）。消えた作品も記録には残す（画面はある作品だけを出す）
+    ...(r.benchWorkIds !== undefined ? { benchWorkIds: strList(r.benchWorkIds) } : {}),
   }))
+}
+
+// ---------- 2.5: ベンチ作品 ----------
+// 表示用に足りない項目を補う（知らない項目は残す）。作品の無い分析は見えなくする（同期の途中で、作品より先に分析が届いた時など）。
+// タイトルの比べる作品（Title.benchWorkIds）は、ある作品だけにする（持たないタイトルには足さない。書き戻さないので、
+// 作品が後から届けば、また見える）。
+
+function repairBench(d: AppData, fix: (m: string) => void): void {
+  for (const w of Object.values(d.benchWorks)) {
+    let next: BenchWork = {
+      ...w,
+      name: str(w.name),
+      author: str(w.author),
+      pdfPlace: str(w.pdfPlace),
+      note: str(w.note),
+      order: num(w.order),
+      createdAt: num(w.createdAt),
+      updatedAt: num(w.updatedAt),
+    }
+    for (const key of ['publisher', 'year', 'genre'] as const) next = optionalString(next, key)
+    if (next.source !== undefined && !SOURCES.includes(next.source)) {
+      next = { ...next }
+      delete next.source
+    }
+    if (!same(next, w)) {
+      d.benchWorks[w.id] = next
+      fix('ベンチ作品の項目を補いました')
+    }
+  }
+  for (const a of Object.values(d.benchAnalyses)) {
+    if (typeof a.workId !== 'string' || !d.benchWorks[a.workId]) {
+      delete d.benchAnalyses[a.id]
+      fix('作品のないベンチ作品の分析を表示から外しました')
+      continue
+    }
+    const next = optionalString<BenchAnalysis>(
+      {
+        ...a,
+        ...claudeBase(a),
+        viewpoint: str(a.viewpoint),
+        body: str(a.body),
+        runDate: str(a.runDate),
+      },
+      'model',
+    )
+    if (!same(next, a)) {
+      d.benchAnalyses[a.id] = next
+      fix('ベンチ作品の分析の項目を補いました')
+    }
+  }
+  for (const t of Object.values(d.titles)) {
+    if (t.benchWorkIds === undefined) continue
+    const raw: unknown[] = Array.isArray(t.benchWorkIds) ? t.benchWorkIds : []
+    const ids = raw.filter((id, i): id is ID => typeof id === 'string' && Boolean(d.benchWorks[id]) && raw.indexOf(id) === i)
+    if (!same(ids, t.benchWorkIds)) {
+      d.titles[t.id] = { ...t, benchWorkIds: ids }
+      fix('比べるベンチ作品から、無い作品を外しました')
+    }
+  }
 }
 
 /** 削除した時点の場所の形を整える（項目の順番は変えない。知らない項目は残す） */

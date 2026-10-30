@@ -19,6 +19,8 @@ const KIND: Record<ClaudeTableName, ShortIdKind> = {
   strategyNotes: 'strategyNote',
   critiquePrompts: 'critiquePrompt',
   critiqueResults: 'critiqueResult',
+  benchWorks: 'benchWork',
+  benchAnalyses: 'benchAnalysis',
 }
 
 const WHERE: Record<WriteTool, string> = {

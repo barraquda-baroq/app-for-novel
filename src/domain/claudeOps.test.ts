@@ -450,7 +450,7 @@ describe('タイトル・ゴミ箱・バックアップ・修復', () => {
     }
     expect(titleLastEdited(later, titleId)).toBe(before)
   })
-  it('バックアップは版 2 で書き出し、2.3 の記録も戻る。版 1（2.2 まで）のバックアップも読める', () => {
+  it('バックアップは版 3 で書き出し、2.3 の記録も戻る。版 1（2.2 まで）のバックアップも読める', () => {
     const { data } = full()
     const back = parseBackup(JSON.stringify(toBackup(data)))
     expect(back.proofSuggestions).toEqual(data.proofSuggestions)
@@ -459,7 +459,7 @@ describe('タイトル・ゴミ箱・バックアップ・修復', () => {
     const parsed = parseBackup(old)
     expect(parsed.revisionIdeas).toEqual({})
     expect(Object.keys(parsed.titles)).toHaveLength(1)
-    expect(() => parseBackup(JSON.stringify({ app: 'novel-studio', schemaVersion: 3, exportedAt: '', data: {} }))).toThrow()
+    expect(() => parseBackup(JSON.stringify({ app: 'novel-studio', schemaVersion: 4, exportedAt: '', data: {} }))).toThrow()
   })
   it('修復: 足りない項目を補い、知らない項目・知らない種類は残し、タイトルの無い記録は見えなくする', () => {
     const { data, titleId } = full()

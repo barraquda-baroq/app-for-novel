@@ -1,8 +1,8 @@
 // Novel Studio の iPhone アプリの設定（Debug は ../debug.xcconfig から、Release は直接この設定を使う）。
 // 版は package.json の version と同じにする（src/platform/version.test.ts が確かめる。docs/MOBILE.md「版を上げる」）。
-// CURRENT_PROJECT_VERSION は 2.4.0 → 20400（Android の versionCode と同じ作り方）
-MARKETING_VERSION = 2.4.0
-CURRENT_PROJECT_VERSION = 20400
+// CURRENT_PROJECT_VERSION は 2.5.0 → 20500（Android の versionCode と同じ作り方）
+MARKETING_VERSION = 2.5.0
+CURRENT_PROJECT_VERSION = 20500
 // Web Locks・BroadcastChannel が確実に使える版から（project.pbxproj の IPHONEOS_DEPLOYMENT_TARGET も同じ値）
 IPHONEOS_DEPLOYMENT_TARGET = 16.0
 

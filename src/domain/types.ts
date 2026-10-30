@@ -32,6 +32,11 @@ export interface Title {
    * 無い = write（個人のアプリで、原稿を Claude に見てもらうのが前提のため。src/claude/visibility.ts）
    */
   claudeAccess?: ClaudeAccess
+  /**
+   * 比べるベンチ作品（ホームのベンチ作品の棚から選んだ作品。作品批評で比べる）。無い = 選んでいない。
+   * 並びとして同期する（LIST_FIELDS）。消えた作品は表示から外す（修復）
+   */
+  benchWorkIds?: ID[]
   createdAt: number
   updatedAt: number
 }
@@ -454,6 +459,54 @@ export interface CritiqueResult extends ClaudeRecordBase {
   model: string
   /** 利用者のメモ */
   note: string
+  /** 比べたベンチ作品（作品批評で比べた作品。無い = 比べていない・古い記録） */
+  benchWorkIds?: ID[]
+}
+
+// ---------- ベンチ作品（比べるために読む既存の作品と、その分析） ----------
+// 個人的に購入した既存作品の PDF は claude.ai のプロジェクトに置いたまま（Firebase の無料プランはファイルを置けない）、
+// Claude が多角的に分析した内容だけを、ホームの棚「ベンチ作品」に残す。どのタイトルにも属さず、すべてのタイトルで共有する。
+// 各タイトルは比べる作品を選べ（Title.benchWorkIds）、作品批評で Claude がその分析を読む。
+
+/** ベンチ作品（棚の1冊）。並びは order（ホームの棚の順） */
+export interface BenchWork {
+  id: ID
+  /** 作品名 */
+  name: string
+  author: string
+  publisher?: string
+  /** 刊行年（自由な書き方。「2019」「2019年」など） */
+  year?: string
+  genre?: string
+  /** PDF の置き場所（claude.ai のプロジェクト名など。自由に書く） */
+  pdfPlace: string
+  /** 自由メモ */
+  note: string
+  order: number
+  createdAt: number
+  updatedAt: number
+  /** 作ったもの（Claude のコネクタが分析と一緒に作った作品は claude。無い = アプリで手で作った） */
+  source?: ClaudeSource
+}
+
+/** ベンチ作品の分析（1つの観点の分析。1つの作品にいくつでも） */
+export interface BenchAnalysis {
+  id: ID
+  /** 分析した作品 */
+  workId: ID
+  /** 観点の名前（構成・文体・人物・冒頭の掴み…。40字まで） */
+  viewpoint: string
+  /** 分析の本文（Markdown。長さの上限なし） */
+  body: string
+  /** 分析した日（日本時間の YYYY-MM-DD） */
+  runDate: string
+  source: ClaudeSource
+  /** 分析したモデルの名前（分かれば） */
+  model?: string
+  /** 記録の形の版（いまは 1） */
+  v: number
+  createdAt: number
+  updatedAt: number
 }
 
 /** ゴミ箱に入れたものの種類（戻し方が変わる） */
@@ -472,6 +525,8 @@ export type TrashKind =
   | 'strategyNote'
   | 'critiquePrompt'
   | 'critiqueResult'
+  | 'benchWork'
+  | 'benchAnalysis'
 
 /** 削除した時点の場所。戻す時はここへ戻す（無くなっていれば近い所へ） */
 export interface TrashOrigin {
@@ -494,6 +549,10 @@ export interface TrashOrigin {
   prevId?: ID | null
   /** 稿: 採用中だった */
   wasActive?: boolean
+  /** ベンチ作品の分析: 属していた作品 */
+  workId?: ID
+  /** ベンチ作品: 比べる作品にしていたタイトル（戻すと、まだあるタイトルの比べる作品に戻す） */
+  titleIds?: ID[]
 }
 
 /**
@@ -557,6 +616,9 @@ export interface AppData {
   strategyNotes: Record<ID, StrategyNote>
   critiquePrompts: Record<ID, CritiquePrompt>
   critiqueResults: Record<ID, CritiqueResult>
+  // ベンチ作品（2.5）
+  benchWorks: Record<ID, BenchWork>
+  benchAnalyses: Record<ID, BenchAnalysis>
   trashEntries: Record<ID, TrashEntry>
   trashRecords: Record<ID, TrashRecord>
 }
@@ -583,12 +645,17 @@ export const TABLE_NAMES: TableName[] = [
   'strategyNotes',
   'critiquePrompts',
   'critiqueResults',
+  'benchWorks',
+  'benchAnalyses',
   'trashEntries',
   'trashRecords',
 ]
 
-/** 2.3（Claude 連携）の表。コネクタが作れるのはこの表のレコードだけ（firestore.rules） */
-export const CLAUDE_TABLES = [
+/**
+ * 2.3（Claude 連携）のタイトルの配下の表。タイトルを削除するといっしょにゴミ箱へ入る
+ * （共通の批評プロンプト titleId = null は除く）
+ */
+export const TITLE_CLAUDE_TABLES = [
   'proofSuggestions',
   'proofBatches',
   'revisionIdeas',
@@ -596,6 +663,12 @@ export const CLAUDE_TABLES = [
   'critiquePrompts',
   'critiqueResults',
 ] as const satisfies readonly TableName[]
+
+/** ベンチ作品の表（2.5。どのタイトルにも属さない） */
+export const BENCH_TABLES = ['benchWorks', 'benchAnalyses'] as const satisfies readonly TableName[]
+
+/** Claude（コネクタ・貼り付け）が作れる表。コネクタが作れるのはこの表のレコードだけ（firestore.rules） */
+export const CLAUDE_TABLES = [...TITLE_CLAUDE_TABLES, ...BENCH_TABLES] as const satisfies readonly TableName[]
 
 export type ClaudeTableName = (typeof CLAUDE_TABLES)[number]
 
@@ -617,6 +690,8 @@ export function emptyData(): AppData {
     strategyNotes: {},
     critiquePrompts: {},
     critiqueResults: {},
+    benchWorks: {},
+    benchAnalyses: {},
     trashEntries: {},
     trashRecords: {},
   }

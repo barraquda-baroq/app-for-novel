@@ -196,6 +196,9 @@ const SEND_ORDER: TableName[] = [
   'strategyNotes',
   'critiquePrompts',
   'critiqueResults',
+  // 2.5: ベンチ作品の分析を、作品より先に送る（作品はどのタイトルにも属さない。タイトルの比べる作品はタイトルと一緒に後で）
+  'benchAnalyses',
+  'benchWorks',
   'settingCategories',
   'pieces',
   'chapters',
@@ -233,6 +236,8 @@ const PARENT_OF: Partial<Record<TableName, { table: TableName; field: string }[]
   strategyNotes: [{ table: 'titles', field: 'titleId' }],
   critiquePrompts: [{ table: 'titles', field: 'titleId' }],
   critiqueResults: [{ table: 'titles', field: 'titleId' }],
+  // 2.5: ベンチ作品の分析の親は作品（作品はどのタイトルにも属さない。タイトルの比べる作品への参照は確かめない）
+  benchAnalyses: [{ table: 'benchWorks', field: 'workId' }],
 }
 
 /** 親が消えたら、子も消す（子にしか無い文章はゴミ箱に控える） */
@@ -259,6 +264,8 @@ const CHILDREN: Partial<Record<TableName, { table: TableName; field: string }[]>
     { table: 'pieces', field: 'parentId' },
   ],
   settingCategories: [{ table: 'settingEntries', field: 'categoryId' }],
+  // 2.5: ベンチ作品が別の端末で削除されたら、その分析も片付ける（この端末にしか無い分析はゴミ箱に控える）
+  benchWorks: [{ table: 'benchAnalyses', field: 'workId' }],
 }
 
 class NovelDB extends Dexie {
@@ -286,7 +293,22 @@ class NovelDB extends Dexie {
       _meta: 'key',
     })
     // v4（2.3）: 推敲案・改稿案・戦略メモ・作品批評の表を追加
+    const v4Tables = [
+      ...v3Tables,
+      'proofSuggestions',
+      'proofBatches',
+      'revisionIdeas',
+      'strategyNotes',
+      'critiquePrompts',
+      'critiqueResults',
+    ]
     this.version(4).stores({
+      ...Object.fromEntries(v4Tables.map((t) => [t, 'id'])),
+      _outbox: 'k',
+      _meta: 'key',
+    })
+    // v5（2.5）: ベンチ作品とその分析の表を追加
+    this.version(5).stores({
       ...Object.fromEntries(TABLE_NAMES.map((t) => [t, 'id'])),
       _outbox: 'k',
       _meta: 'key',

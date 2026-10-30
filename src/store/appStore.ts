@@ -544,6 +544,9 @@ const JOURNAL_DROP_ORDER: TableName[] = [
   'strategyNotes',
   'critiquePrompts',
   'revisionIdeas',
+  // 2.5: ベンチ作品の分析（Claude に作り直してもらえる）を作品より先に
+  'benchAnalyses',
+  'benchWorks',
   'submissions',
   'settingCategories',
   'settingEntries',

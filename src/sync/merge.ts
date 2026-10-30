@@ -45,7 +45,8 @@ const byNode: KeyOf = (x) => {
  * 相手が消したものを除き、相手が足したものを相手の並びでの直前の要素の後ろに入れる。
  */
 export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
-  titles: { structure: byNode },
+  // benchWorkIds: 比べるベンチ作品（2.5。2台で別々に足しても両方残り、片方で外せば外れる）
+  titles: { structure: byNode, benchWorkIds: asString },
   chapters: { pieceIds: asString },
   // actIds: 幕に分けた話の幕の並び（2.2）
   pieces: { versionIds: asString, actIds: asString },
@@ -55,6 +56,8 @@ export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
   // 2.3: 改稿案の関係する話、戦略メモのコンテストの候補（［応募計画にする］を2台で別々に押しても両方残る）
   revisionIdeas: { pieceIds: asString },
   strategyNotes: { contests: byId },
+  // 2.5: 批評で比べたベンチ作品
+  critiqueResults: { benchWorkIds: asString },
 }
 
 /**
@@ -72,6 +75,9 @@ export const TEXT_TABLES: ReadonlySet<TableName> = new Set<TableName>([
   'strategyNotes',
   'critiquePrompts',
   'critiqueResults',
+  // 2.5: ベンチ作品（メモ）とその分析（本文）
+  'benchWorks',
+  'benchAnalyses',
 ])
 
 const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
@@ -154,6 +160,9 @@ export const TEXT_FIELDS: Partial<Record<TableName, readonly string[]>> = {
   strategyNotes: ['body'],
   critiquePrompts: ['body'],
   critiqueResults: ['resultMarkdown', 'note'],
+  // 2.5（作品名・著者・観点などの短い項目は項目ごとに合わせる）
+  benchWorks: ['note'],
+  benchAnalyses: ['body'],
 }
 
 export function joinConflictText(theirs: string, mine: string, device: string): string {

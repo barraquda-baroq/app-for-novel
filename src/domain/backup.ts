@@ -4,10 +4,10 @@ import { DomainError, TABLE_NAMES, emptyData, type AppData } from './types'
 
 export const BACKUP_APP_ID = 'novel-studio'
 /**
- * バックアップの形の版。2 = 2.3（推敲案・改稿案・戦略メモ・作品批評の表を追加）。
+ * バックアップの形の版。2 = 2.3（推敲案・改稿案・戦略メモ・作品批評の表を追加）、3 = 2.5（ベンチ作品とその分析の表を追加）。
  * これ以下の版は読み込める（無い表は空として読む）。これより新しい版は読み込まない
  */
-export const BACKUP_SCHEMA_VERSION = 2
+export const BACKUP_SCHEMA_VERSION = 3
 
 export interface BackupFile {
   app: typeof BACKUP_APP_ID

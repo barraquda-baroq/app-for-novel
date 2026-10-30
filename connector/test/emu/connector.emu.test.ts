@@ -265,10 +265,10 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     const status = await tool(core, 'novel_status')
     expect(status.text).toContain('書き込み: 許可')
     expect((await tool(core, 'novel_add_revision_ideas', input)).text).toContain('追加 1件')
-    // アプリの版がコネクタより新しい（データの形 4）: 書き込まない（読むのは続く）
+    // アプリの版がコネクタより新しい（データの形 5）: 書き込まない（読むのは続く）
     owner.offline()
-    await setDoc(appModelRef(owner.fs, owner.uid), { model: 4, appVersion: '2.4', updatedAt: serverTimestamp() })
-    expect((await tool(core, 'novel_status')).text).toContain('コネクタは 3。書き込みは止まります')
+    await setDoc(appModelRef(owner.fs, owner.uid), { model: 5, appVersion: '2.6', updatedAt: serverTimestamp() })
+    expect((await tool(core, 'novel_status')).text).toContain('コネクタは 4。書き込みは止まります')
     const newer = await tool(core, 'novel_add_revision_ideas', { title_id: titleId, items: [{ heading: 'c', body: 'd' }] })
     expect(newer.isError).toBe(true)
     expect(newer.text).toContain('コネクタを更新')

@@ -22,6 +22,9 @@ export const SHORT_ID_LETTERS = {
   strategyNote: 'g',
   critiquePrompt: 'q',
   critiqueResult: 'a',
+  // 2.5: ベンチ作品（work）とその分析
+  benchWork: 'w',
+  benchAnalysis: 'n',
 } as const
 
 export type ShortIdKind = keyof typeof SHORT_ID_LETTERS

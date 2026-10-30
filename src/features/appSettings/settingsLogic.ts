@@ -28,6 +28,8 @@ export const TABLE_LABELS: Record<TableName, string> = {
   strategyNotes: '戦略メモ',
   critiquePrompts: '批評プロンプト',
   critiqueResults: '批評の結果',
+  benchWorks: 'ベンチ作品',
+  benchAnalyses: 'ベンチ作品の分析',
   trashEntries: 'ゴミ箱',
   trashRecords: 'ゴミ箱の中身',
 }
@@ -52,15 +54,19 @@ const DISPLAY_ORDER: TableName[] = [
   'strategyNotes',
   'critiquePrompts',
   'critiqueResults',
+  'benchWorks',
+  'benchAnalyses',
 ]
 
-/** 2.3（Claude 連携）の表は、1件以上ある時だけ出す（使っていない人の一覧・確認文を長くしない） */
+/** 2.3（Claude 連携）と 2.5（ベンチ作品）の表は、1件以上ある時だけ出す（使っていない人の一覧・確認文を長くしない） */
 const SHOWN_IF_ANY = new Set<TableName>([
   'revisionIdeas',
   'proofSuggestions',
   'strategyNotes',
   'critiquePrompts',
   'critiqueResults',
+  'benchWorks',
+  'benchAnalyses',
 ])
 
 export interface TableCount {

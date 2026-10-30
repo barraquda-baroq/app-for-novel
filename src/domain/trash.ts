@@ -8,6 +8,8 @@ import {
   DomainError,
   TABLE_NAMES,
   type AppData,
+  type BenchAnalysis,
+  type BenchWork,
   type Chapter,
   type ContentTableName,
   type CritiquePrompt,
@@ -78,6 +80,8 @@ export const TRASH_KINDS: readonly TrashKind[] = [
   'strategyNote',
   'critiquePrompt',
   'critiqueResult',
+  'benchWork',
+  'benchAnalysis',
 ]
 
 export function isTrashKind(v: unknown): v is TrashKind {
@@ -100,6 +104,8 @@ export const TRASH_KIND_TABLE: Record<TrashKind, ContentTableName> = {
   strategyNote: 'strategyNotes',
   critiquePrompt: 'critiquePrompts',
   critiqueResult: 'critiqueResults',
+  benchWork: 'benchWorks',
+  benchAnalysis: 'benchAnalyses',
 }
 
 export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
@@ -117,6 +123,8 @@ export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
   strategyNote: '戦略メモ',
   critiquePrompt: '批評プロンプト',
   critiqueResult: '批評の結果',
+  benchWork: 'ベンチ作品',
+  benchAnalysis: 'ベンチ作品の分析',
 }
 
 /** 長い文章の最初の行（見出しが無い時の名前。長ければ切る） */
@@ -164,6 +172,10 @@ export const trashLabel = {
   critiquePrompt: (p: Pick<CritiquePrompt, 'name'>) => p.name.trim() || '無題の批評プロンプト',
   critiqueResult: (r: Pick<CritiqueResult, 'promptName' | 'runDate'>) =>
     `${r.runDate ? `${r.runDate} ` : ''}${r.promptName.trim() || '作品批評'}の結果`,
+  benchWork: (w: Pick<BenchWork, 'name'>) => w.name.trim() || '無題のベンチ作品',
+  /** 「構成（2026-10-30）」 */
+  benchAnalysis: (a: Pick<BenchAnalysis, 'viewpoint' | 'runDate'>) =>
+    `${a.viewpoint.trim() || '観点なし'}${a.runDate ? `（${a.runDate}）` : ''}`,
 }
 
 /** 同じ id のものが残っていて複製として戻した稿の名前に付ける */
@@ -435,6 +447,15 @@ function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord, origin?:
       if (p.titleId !== null) titleOf(p.titleId)
       return
     }
+    // ベンチ作品はどのタイトルにも属さない（ホームの棚）
+    case 'benchWork':
+      return
+    case 'benchAnalysis': {
+      const a = record as BenchAnalysis
+      if (!tx.get('benchWorks', a.workId))
+        throw new DomainError('元のベンチ作品がないため戻せません。先にベンチ作品を戻してください。')
+      return
+    }
   }
 }
 
@@ -545,7 +566,22 @@ function rewriteRefs(table: ContentTableName, record: ContentRecord, ids: Map<ID
         r.scope && r.scope.kind === 'range'
           ? { ...r.scope, fromPieceId: m(r.scope.fromPieceId), toPieceId: m(r.scope.toPieceId) }
           : r.scope
-      return { ...r, id: m(r.id), titleId: m(r.titleId), promptId: mn(r.promptId ?? null), scope }
+      return {
+        ...r,
+        id: m(r.id),
+        titleId: m(r.titleId),
+        promptId: mn(r.promptId ?? null),
+        scope,
+        ...(Array.isArray(r.benchWorkIds) ? { benchWorkIds: list(r.benchWorkIds) } : {}),
+      }
+    }
+    case 'benchWorks': {
+      const r = record as BenchWork
+      return { ...r, id: m(r.id) }
+    }
+    case 'benchAnalyses': {
+      const r = record as BenchAnalysis
+      return { ...r, id: m(r.id), workId: m(r.workId) }
     }
   }
 }
@@ -615,6 +651,7 @@ type OrderedTable =
   | 'submissions'
   | 'revisionIdeas'
   | 'critiquePrompts'
+  | 'benchWorks'
 
 /**
  * order で並ぶ一覧へ戻す。先頭にあった（prevId = null）なら先頭、直前にあった要素がまだあればその直後、
@@ -644,6 +681,21 @@ function placeInOrder<T extends OrderedTable>(
   list.forEach((r, i) => {
     if (r.order !== i) tx.put(table, { ...r, order: i, updatedAt: ts } as AppData[T][string])
   })
+}
+
+/**
+ * ベンチ作品を、削除した時に比べる作品にしていたタイトル（origin.titleIds）の比べる作品へ戻す
+ * （まだあるタイトルだけ。もう入っていれば何もしない）
+ */
+function relinkBenchWork(tx: Tx, workId: ID, origin: TrashOrigin): void {
+  const ts = now()
+  for (const titleId of Array.isArray(origin.titleIds) ? origin.titleIds : []) {
+    const t = tx.get('titles', titleId)
+    if (!t) continue
+    const ids = Array.isArray(t.benchWorkIds) ? t.benchWorkIds : []
+    if (ids.includes(workId)) continue
+    tx.put('titles', { ...t, benchWorkIds: [...ids, workId], updatedAt: ts })
+  }
 }
 
 function touchTitle(tx: Tx, titleId: ID, patch: Partial<Title> = {}): void {
@@ -934,6 +986,14 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
       case 'strategyNote':
       case 'critiqueResult':
         titleId = (restored as { titleId: ID }).titleId
+        break
+      // ベンチ作品: 棚の元の位置へ（分析もいっしょに戻る）、比べる作品にしていたタイトルにも戻す
+      case 'benchWork':
+        placeInOrder(tx, 'benchWorks', mainId, () => true, origin)
+        relinkBenchWork(tx, mainId, origin)
+        break
+      // ベンチ作品の分析は日付で並ぶので、戻すだけ
+      case 'benchAnalysis':
         break
     }
 
