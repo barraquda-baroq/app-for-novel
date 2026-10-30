@@ -219,11 +219,22 @@ test.describe('起動アニメーション', () => {
   test('視差効果を減らす設定では動かさずにロゴだけを出し、描いてから0.5秒ほどで消える', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.addInitScript(() => {
-      const w = window as unknown as { __created?: number; __removed?: number; __drawn?: number; __fade?: number }
+      type Times = {
+        __created?: number
+        __removed?: number
+        __drawn?: number
+        __ready?: number
+        __fade?: number
+        __reason?: string
+      }
+      const w = window as unknown as Times
       new MutationObserver(() => {
         const el = document.getElementById('ns-launch')
         if (el && w.__created == null) w.__created = performance.now()
-        if (el && el.getAttribute('data-launch-end') && w.__fade == null) w.__fade = performance.now()
+        if (el && el.getAttribute('data-launch-end') && w.__fade == null) {
+          w.__fade = performance.now()
+          w.__reason = el.getAttribute('data-launch-end')!
+        }
         if (!el && w.__created != null && w.__removed == null) w.__removed = performance.now()
       }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-launch-end'] })
       // Worker がロゴを描いた時（描いてすぐ 'started' を送ってくる）
@@ -236,26 +247,42 @@ test.describe('起動アニメーション', () => {
           })
         }
       }
+      // アプリが最初の画面を出せた時（NovelStudioLaunch.appReady を呼んだ時）
+      let api: { appReady: () => void } | undefined
+      Object.defineProperty(window, 'NovelStudioLaunch', {
+        configurable: true,
+        get: () => api,
+        set(v: { appReady: () => void }) {
+          const appReady = v.appReady
+          v.appReady = () => {
+            if (w.__ready == null) w.__ready = performance.now()
+            appReady()
+          }
+          api = v
+        },
+      })
     })
     await page.goto('/?launch=1#/', { waitUntil: 'commit' })
     const el = overlay(page)
     await expect(el).toHaveAttribute('data-launch-mode', 'still')
     await expect(el).toHaveCount(0, { timeout: 6000 })
-    const times = await page.evaluate(() => {
-      const w = window as unknown as { __created: number; __removed: number; __drawn?: number; __fade: number }
-      return {
-        shown: w.__removed - w.__created,
-        drawn: w.__drawn == null ? null : w.__drawn - w.__created,
-        fade: w.__fade - w.__created,
+    const t = await page.evaluate(() => {
+      const w = window as unknown as Record<'__created' | '__removed' | '__drawn' | '__ready' | '__fade', number | undefined> & {
+        __reason?: string
       }
+      const at = (v: number | undefined) => (v == null ? null : v - w.__created!)
+      return { removed: at(w.__removed)!, drawn: at(w.__drawn), ready: at(w.__ready), fade: at(w.__fade)!, reason: w.__reason }
     })
-    // 0.5秒（とアプリの最初の画面）を待ち、0.25秒で消える。アニメーション（約1.75秒）は待たない
-    expect(times.shown).toBeGreaterThanOrEqual(700)
-    expect(times.shown).toBeLessThan(1750 + 250)
-    // 0.5秒は、重なりを出した時からではなく、ロゴを描いた時から数える（Worker の立ち上がりが遅い端末でもロゴを0.5秒は出す）
     // （Chromium は Worker で描く）
-    expect(times.drawn).not.toBeNull()
-    expect(times.fade - times.drawn!).toBeGreaterThanOrEqual(495)
+    expect(t.drawn).not.toBeNull()
+    expect(t.ready).not.toBeNull()
+    expect(t.reason).toBe('done')
+    // 0.5秒は、重なりを出した時からではなく、ロゴを描いた時から数える（Worker の立ち上がりが遅い端末でもロゴを0.5秒は出す）
+    expect(t.fade - t.drawn!).toBeGreaterThanOrEqual(495)
+    // ロゴを0.5秒出し、アプリの最初の画面もできたら、すぐ消え始める（アニメーションの長さ（約1.75秒）は待たない）。
+    // アプリの画面ができるまでの時間は開発サーバーの混み具合で変わるので、その時から数える
+    expect(t.fade).toBeLessThan(Math.max(t.drawn! + 500, t.ready!) + 250)
+    expect(t.removed - t.fade).toBeGreaterThanOrEqual(245)
   })
 
   test('ふだんは Worker（別のスレッド）で描き、絵が進む', async ({ page, browserName }) => {
