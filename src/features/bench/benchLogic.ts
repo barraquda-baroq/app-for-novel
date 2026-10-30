@@ -5,6 +5,7 @@ import { benchAnalysesOf, benchViewpointGroups } from '../../claude/benchOrder'
 import { benchWorkName } from '../../domain/benchOps'
 import { trashNotice } from '../../domain/trash'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../../domain/types'
+import { sourceLabel } from '../claude/claudeUi'
 
 /** 作品の書誌の1行（「山田・星の出版・2019・SF」。無い項目は飛ばす） */
 export function biblioLine(w: Pick<BenchWork, 'author' | 'publisher' | 'year' | 'genre'>): string {
@@ -12,6 +13,16 @@ export function biblioLine(w: Pick<BenchWork, 'author' | 'publisher' | 'year' | 
     .map((x) => (typeof x === 'string' ? x.trim() : ''))
     .filter(Boolean)
     .join('・')
+}
+
+/**
+ * 作品を作ったものの札（「Claude が作成」）。アプリのほかの表記（「Claude に頼む」など）と同じく英字のあとには空白を入れ、
+ * 全角の括弧のあとは詰める（「Claude（貼り付け）が作成」）。手で足した作品は null
+ */
+export function createdByLabel(source: BenchWork['source']): string | null {
+  const by = sourceLabel(source)
+  if (!by) return null
+  return `${by}${/[\x21-\x7e]$/.test(by) ? ' ' : ''}が作成`
 }
 
 /** 作品の最終更新（作品とその分析のいちばん新しい更新日時） */

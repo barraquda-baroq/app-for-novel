@@ -270,6 +270,23 @@ describe('作品の画面', () => {
     expect(screen.getByText('ベンチ作品が見つかりません。削除された可能性があります。')).toBeTruthy()
   })
 
+  it('Claude が作った作品には「Claude が作成」の札（アプリのほかの表記と同じく Claude のあとに空白）。手で足した作品には出さない', () => {
+    const { workId } = seedWork()
+    renderPage(workId)
+    expect(screen.queryByTestId('bench-work-source')).toBeNull()
+    cleanup()
+    for (const [source, label] of [
+      ['claude', 'Claude が作成'],
+      ['paste', 'Claude（貼り付け）が作成'],
+    ] as const) {
+      const data = getData()
+      data.benchWorks[workId] = { ...data.benchWorks[workId], source }
+      renderPage(workId)
+      expect(screen.getByTestId('bench-work-source').textContent).toBe(label)
+      cleanup()
+    }
+  })
+
   it('作品の情報を直す', async () => {
     const user = userEvent.setup()
     const { workId } = seedWork()

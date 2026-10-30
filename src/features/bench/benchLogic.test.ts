@@ -5,6 +5,7 @@ import {
   analysisPreview,
   biblioLine,
   comparingTitles,
+  createdByLabel,
   deleteWorkMessage,
   runDateLabel,
   viewpointChips,
@@ -23,6 +24,13 @@ const analysis = (id: string, workId: string, viewpoint: string, createdAt: numb
 })
 
 describe('ベンチ作品の表示の計算', () => {
+  it('作品を作ったものの札: 英字のあとは空白（「Claude が作成」）、全角の括弧のあとは詰める。手で足した作品は出さない', () => {
+    expect(createdByLabel('claude')).toBe('Claude が作成')
+    expect(createdByLabel('paste')).toBe('Claude（貼り付け）が作成')
+    expect(createdByLabel('manual')).toBeNull()
+    expect(createdByLabel(undefined)).toBeNull()
+  })
+
   it('作品ごとの分析は新しい日付から。中身が変わらない作品は前の配列をそのまま使う（カードの React.memo が効く）', () => {
     const a1 = analysis('a1', 'w1', '構成', 1, '2026-10-01')
     const a2 = analysis('a2', 'w1', '文体', 2, '2026-10-20')

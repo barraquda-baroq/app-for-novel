@@ -27,7 +27,15 @@ import { PasteResultDialog } from '../claude/PasteResultDialog'
 import { AnalysisDialog } from './AnalysisDialog'
 import { BenchManualDialog } from './BenchManualDialog'
 import { BenchWorkDialog } from './BenchWorkDialog'
-import { analysisPreview, biblioLine, deleteWorkMessage, runDateLabel, workLastUpdated, workName } from './benchLogic'
+import {
+  analysisPreview,
+  biblioLine,
+  createdByLabel,
+  deleteWorkMessage,
+  runDateLabel,
+  workLastUpdated,
+  workName,
+} from './benchLogic'
 import '../title/strategy/claudeSections.css'
 import './bench.css'
 
@@ -62,6 +70,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
   const [open, setOpen] = useState<ReadonlySet<ID>>(() => new Set())
   const [full, setFull] = useState<ReadonlySet<ID>>(() => new Set())
   const biblio = biblioLine(work)
+  const createdBy = createdByLabel(work.source)
   const updated = workLastUpdated(work, analyses)
   const totalChars = useMemo(() => analyses.reduce((n, a) => n + a.body.length, 0), [analyses])
 
@@ -102,10 +111,10 @@ function BenchWorkView({ work }: { work: BenchWork }) {
               <ShelfIcon />
               ベンチ作品
             </span>
-            {work.source && work.source !== 'manual' ? (
-              <span className="badge cl-badge">
+            {createdBy ? (
+              <span className="badge cl-badge" data-testid="bench-work-source">
                 <SparkIcon />
-                {sourceLabel(work.source)}が作成
+                {createdBy}
               </span>
             ) : null}
             <span className="grow" />
