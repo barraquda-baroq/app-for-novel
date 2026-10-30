@@ -69,6 +69,20 @@ test.describe('起動アニメーション', () => {
   test('指で押しても（タップ・押したまま）すぐ消え、下の画面は押されない', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'mobile', '指で押せる（hasTouch）スマホだけ')
     await recordLaunchEnd(page)
+    // 開発サーバーが混んでいてアプリの画面ができるのが遅くても、重なりが出ているうちに押せるよう、重なりを押すまで残す
+    // （アプリの知らせを受け取らず、5秒の期限を延ばす。消えるのは押した時だけになる）
+    await page.addInitScript(() => {
+      let api: { TIMING: { capMs: number }; appReady: () => void } | undefined
+      Object.defineProperty(window, 'NovelStudioLaunch', {
+        configurable: true,
+        get: () => api,
+        set(v: { TIMING: { capMs: number }; appReady: () => void }) {
+          v.TIMING.capMs = 60_000
+          v.appReady = () => {}
+          api = v
+        },
+      })
+    })
     const settings = page.getByRole('link', { name: 'アプリの設定・バックアップ' })
     /** 重なりを出し、その下に設定のボタンができて 0.4 秒たつまで待つ（ボタンの真ん中を返す） */
     let opened = 0
@@ -77,9 +91,8 @@ test.describe('起動アニメーション', () => {
       // 同じ URL（# だけ違う）だと読み込み直さないので、毎回 URL を変える
       await page.goto(`/?launch=1&n=${++opened}#/`, { waitUntil: 'commit' })
       await expect(overlay(page)).toBeVisible()
-      const shown = Date.now()
-      await expect(settings).toBeAttached({ timeout: 10_000 })
-      await page.waitForTimeout(Math.max(0, 400 - (Date.now() - shown)))
+      await expect(settings).toBeAttached({ timeout: 15_000 })
+      await page.waitForTimeout(400)
       await expect(overlay(page)).toBeVisible()
       expect(await overlay(page).getAttribute('data-launch-end')).toBeNull()
       const box = (await settings.boundingBox())!
