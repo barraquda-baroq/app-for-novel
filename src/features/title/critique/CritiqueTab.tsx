@@ -1,21 +1,25 @@
 // 作品批評タブ: 採用原稿でタイトル全体を、書き手が望む形で Claude に批評してもらうためのプロンプトの一覧
 // （このタイトルのものと、どのタイトルでも使う共通のもの）と、実行したプロンプトと批評結果（Markdown・アーティファクトの URL）の
 // 日付ごとの記録。結果は Claude（コネクタ）から書き込まれるほか、「Claude に頼む（手動）」と「結果を貼り付け」でも残せる。
+// 「比べるベンチ作品」（2.5）: ホームの棚から比べる作品を選ぶと、Claude がその分析を読んで比べる（結果に「比べた作品」が残る）。
 import { memo, useCallback, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { critiquePromptsOf, critiqueResultsOf } from '../../../claude/order'
 import { critiqueConnectorPrompt } from '../../../claude/prompts'
 import { isHttpsUrl } from '../../../claude/records'
 import { manuscriptLabel, manuscriptOf } from '../../../claude/snapshot'
 import { isNewerRecord, NEWER_RECORD_LABEL } from '../../../claude/visibility'
+import { benchWorkName, benchWorksOfTitle, sortedBenchWorks } from '../../../domain/benchOps'
 import { trashNotice } from '../../../domain/trash'
-import type { CritiqueManuscript, CritiquePrompt, CritiqueResult, ID, Title } from '../../../domain/types'
+import type { BenchWork, CritiqueManuscript, CritiquePrompt, CritiqueResult, ID, Title } from '../../../domain/types'
+import { paths } from '../../../routes'
 import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
 import { copyText } from '../../../ui/browser'
 import { confirmDialog } from '../../../ui/dialogs'
 import { DraftInput } from '../../../ui/DraftField'
-import { ChevronRightIcon, CopyIcon, LinkIcon, PlusIcon, TrashIcon } from '../../../ui/icons'
+import { ChevronRightIcon, CopyIcon, LinkIcon, PlusIcon, ShelfIcon, TrashIcon, XIcon } from '../../../ui/icons'
 import { useKeepInPlace } from '../../../ui/keepInPlace'
 import { AskIcon, PasteIcon, SparkIcon } from '../../claude/claudeIcons'
 import { sourceLabel } from '../../claude/claudeUi'
@@ -28,6 +32,7 @@ import { previewText } from '../strategy/proofLogic'
 import { dayHeading, groupByDate, resultHeading, scopeLabel } from './critiqueLogic'
 import '../strategy/claudeSections.css'
 import './critique.css'
+import '../../bench/bench.css'
 
 /** 閉じている時に見せる結果の長さ（これより長ければ「全文を表示」。閉じている間は頭だけを変換する。Markdown.tsx） */
 const LONG_RESULT = 900
@@ -49,6 +54,9 @@ export function CritiqueTab({ titleId }: { titleId: ID }) {
   const [paste, setPaste] = useState<{ promptId: ID | null } | null>(null)
   const [expanded, setExpanded] = useState<ReadonlySet<ID>>(() => new Set())
   const [focusId, setFocusId] = useState<ID | null>(null)
+  // 比べるベンチ作品（タイトルの選んだ順）と、棚の作品（作品の名前を出す）
+  const benchWorks = data.benchWorks
+  const comparing = useMemo(() => benchWorksOfTitle(data, titleId), [title?.benchWorkIds, benchWorks, titleId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = useCallback(
     (id: ID) =>
@@ -91,6 +99,8 @@ export function CritiqueTab({ titleId }: { titleId: ID }) {
           </button>
         </div>
       </div>
+
+      <CompareWorks titleId={titleId} comparing={comparing} benchWorks={benchWorks} />
 
       <section className="cq-section" aria-labelledby="cq-prompts-heading" data-testid="critique-prompts">
         <div className="cq-head">
@@ -143,7 +153,13 @@ export function CritiqueTab({ titleId }: { titleId: ID }) {
                 <h3 className="cq-day-head">{dayHeading(day.date)}</h3>
                 <ol className="cq-results">
                   {day.items.map((r) => (
-                    <ResultCard key={r.id} r={r} current={current} prompts={data.critiquePrompts} />
+                    <ResultCard
+                      key={r.id}
+                      r={r}
+                      current={current}
+                      prompts={data.critiquePrompts}
+                      benchWorks={r.benchWorkIds?.length ? benchWorks : undefined}
+                    />
                   ))}
                 </ol>
               </li>
@@ -272,9 +288,10 @@ const PromptCard = memo(function PromptCard({
     attempt(() => actions.updateCritiquePrompt(p.id, patch))
   }
   const copyForClaude = () => {
-    const cur = getData().critiquePrompts[p.id] ?? p
+    const now = getData()
+    const cur = now.critiquePrompts[p.id] ?? p
     void copyText(
-      critiqueConnectorPrompt(title, cur),
+      critiqueConnectorPrompt(title, cur, benchWorksOfTitle(now, title.id)),
       'Claude 用の依頼をコピーしました（コネクタを付けたチャットに貼り付けてください）',
     )
   }
@@ -400,10 +417,13 @@ const ResultCard = memo(function ResultCard({
   r,
   current,
   prompts,
+  benchWorks,
 }: {
   r: CritiqueResult
   current: CritiqueManuscript | null
   prompts: Record<ID, CritiquePrompt>
+  /** 比べた作品の名前を出すための棚（比べた作品のある結果だけに渡す。ほかの結果は棚が変わっても描き直さない） */
+  benchWorks?: Record<ID, BenchWork>
 }) {
   const [full, setFull] = useState(false)
   const badge = sourceLabel(r.source)
@@ -448,6 +468,7 @@ const ResultCard = memo(function ResultCard({
         ) : null}
         {r.model.trim() ? <span>{r.model}</span> : null}
       </p>
+      {benchWorks && r.benchWorkIds?.length ? <ComparedWorks ids={r.benchWorkIds} works={benchWorks} /> : null}
       {r.promptText.trim() ? (
         <details className="cq-snapshot">
           <summary data-testid="critique-result-prompt-toggle">
@@ -562,5 +583,104 @@ function ArtifactUrl({ r }: { r: CritiqueResult }) {
         </span>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * 「比べるベンチ作品」: ホームの棚から、このタイトルと比べる作品を選ぶ（作品の画面へのリンクと、外す ×）。
+ * Claude はコネクタでその分析を読み、手動の依頼には分析を入れられる
+ */
+function CompareWorks({
+  titleId,
+  comparing,
+  benchWorks,
+}: {
+  titleId: ID
+  comparing: readonly BenchWork[]
+  benchWorks: Record<ID, BenchWork>
+}) {
+  const shelf = useMemo(() => sortedBenchWorks({ benchWorks }), [benchWorks])
+  const chosen = new Set(comparing.map((w) => w.id))
+  const addable = shelf.filter((w) => !chosen.has(w.id))
+  const add = (workId: string) => {
+    if (!workId) return
+    if (attempt(() => (actions.addTitleBenchWork(titleId, workId), true)))
+      notify(`『${benchWorkName(benchWorks[workId])}』を比べる作品にしました`)
+  }
+  const remove = (w: BenchWork) => {
+    if (attempt(() => (actions.removeTitleBenchWork(titleId, w.id), true)))
+      notify(`『${benchWorkName(w)}』を比べる作品から外しました（作品はホームの棚に残ります）`)
+  }
+  return (
+    <section className="bw-compare" data-area="bench" aria-labelledby="cq-bench-heading" data-testid="critique-bench">
+      <div className="bw-compare-head">
+        <h3 id="cq-bench-heading">
+          <ShelfIcon />
+          比べるベンチ作品
+        </h3>
+        <span className="small muted">
+          {comparing.length
+            ? 'Claude はコネクタでこれらの作品の分析を読んで比べます。'
+            : 'ホームの「ベンチ作品」から、この作品と比べる既存の作品を選べます。'}
+        </span>
+      </div>
+      {comparing.length ? (
+        <ul className="bw-chips" style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+          {comparing.map((w) => (
+            <li key={w.id} className="bw-compare-chip" data-testid="critique-bench-chip">
+              <Link to={paths.bench(w.id)}>『{benchWorkName(w)}』</Link>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => remove(w)}
+                aria-label={`『${benchWorkName(w)}』を比べる作品から外す`}
+                title="比べる作品から外す"
+                data-testid="critique-bench-remove"
+              >
+                <XIcon />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {shelf.length === 0 ? (
+        <p className="small muted" style={{ margin: 0 }} data-testid="critique-bench-empty">
+          棚にまだ作品がありません。<Link to={paths.homeArea('bench')}>ホームの「ベンチ作品」</Link>で足してください。
+        </p>
+      ) : addable.length ? (
+        <select
+          className="select bw-compare-add"
+          value=""
+          onChange={(e) => add(e.target.value)}
+          aria-label="比べる作品を足す"
+          data-testid="critique-bench-add"
+        >
+          <option value="">＋ 比べる作品を足す…</option>
+          {addable.map((w) => (
+            <option key={w.id} value={w.id}>
+              {benchWorkName(w)}
+              {w.author.trim() ? `（${w.author.trim()}）` : ''}
+            </option>
+          ))}
+        </select>
+      ) : null}
+    </section>
+  )
+}
+
+/** 批評の結果の「比べた作品: 『…』」（作品の画面へのリンク。棚から消えた作品は数だけ） */
+function ComparedWorks({ ids, works }: { ids: readonly ID[]; works: Record<ID, BenchWork> }) {
+  const shown = ids.map((id) => works[id]).filter((w): w is BenchWork => Boolean(w))
+  const gone = ids.length - shown.length
+  return (
+    <p className="cq-result-bench" data-area="bench" data-testid="critique-result-bench">
+      <span>比べた作品:</span>
+      {shown.map((w) => (
+        <Link key={w.id} to={paths.bench(w.id)} className="bw-chip" data-testid="critique-result-bench-chip">
+          『{benchWorkName(w)}』
+        </Link>
+      ))}
+      {gone > 0 ? <span className="small muted">（ほか{gone}作品は棚から削除されています）</span> : null}
+    </p>
   )
 }

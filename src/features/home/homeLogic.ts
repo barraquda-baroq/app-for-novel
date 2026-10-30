@@ -1,14 +1,14 @@
-// ホーム画面（タイトル群・アイデア領域）で使う、表示用の純粋な計算。データは変更しない。
+// ホーム画面（タイトル群・アイデア領域・ベンチ作品の棚）で使う、表示用の純粋な計算。データは変更しない。
 import { missingActiveLabel, titleLastEdited, titleSummary, type TitleSummary } from '../../domain/entityOps'
 import { formatCount } from '../../domain/text'
 import { trashNotice } from '../../domain/trash'
 import type { AppData, ID } from '../../domain/types'
 
-export type HomeView = 'titles' | 'ideas'
+export type HomeView = 'titles' | 'ideas' | 'bench'
 
-/** リンクの ?view= の値（titles / ideas 以外は null） */
+/** リンクの ?view= の値（titles / ideas / bench 以外は null） */
 export function parseHomeView(raw: string | null | undefined): HomeView | null {
-  return raw === 'titles' || raw === 'ideas' ? raw : null
+  return raw === 'titles' || raw === 'ideas' || raw === 'bench' ? raw : null
 }
 
 /** あらすじの抜粋（改行・連続した空白は1つの空白に） */

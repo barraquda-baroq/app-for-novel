@@ -5,13 +5,11 @@
 // - 戦略メモ・作品批評の結果・推敲案の実行: 新しい日付から（同じ日なら新しく作った順）。戦略メモ・作品批評の結果を
 //   分けて記録したもの（大きすぎてコネクタが分けるように答えた時など。「（1/3）」「（2/3）」…）は、まとめて番号の順
 // - 批評プロンプト: このタイトルのもの（order の順）と、共通のもの（order の順）
-// - ベンチ作品の分析（2.5）: 観点ごとにまとめ、まとまりは観点を最初に分析した順（同じ時に作った分析は送った順）、
-//   まとまりの中は新しい日付から（分けて記録したものは番号の順）
+// - ベンチ作品の分析（2.5）は benchOrder.ts（ホームの棚から読むので、推敲案の場所を探す部品を読み込まないように分けている）
 import { adoptedText, isSplit } from '../domain/structure'
 import { hashJson } from '../domain/hash'
 import type {
   AppData,
-  BenchAnalysis,
   CritiquePrompt,
   CritiqueResult,
   ID,
@@ -21,7 +19,10 @@ import type {
   StrategyNote,
 } from '../domain/types'
 import { reanchor } from './anchor'
+import { newestFirst, newestFirstWithParts, partMarkOf, type PartOf } from './parts'
 import { readingOrder, type ReadingItem } from './refs'
+
+export { partMarkOf, type PartMark } from './parts'
 
 const byId = (a: { id: ID }, b: { id: ID }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
@@ -103,83 +104,6 @@ export function openProofSuggestionsFor(data: AppData, pieceId: ID): ProofSugges
   return sortProofSuggestions(list, piece ? proofStoryRank(data, piece.titleId) : undefined)
 }
 
-type Dated = { runDate: string; createdAt: number; id: ID }
-
-const newestFirst = <T extends Dated>(a: T, b: T) =>
-  (a.runDate < b.runDate ? 1 : a.runDate > b.runDate ? -1 : 0) || b.createdAt - a.createdAt || byId(a, b)
-
-// ---------- 分けて記録したもの（「（1/3）」「（2/3）」…） ----------
-
-/** 分けた部分の番号（「（2/3）」「(2/3)」「（前半 1/2）」など。番号の後ろは閉じかっこだけ。「（3/5点）」は番号ではない） */
-const PART_MARK = /[（(][^（）()\n]{0,6}?(\d{1,3})\s*[/／]\s*(\d{1,3})\s*[）)]/
-
-export interface PartMark {
-  /** 何番目か（1から） */
-  index: number
-  /** いくつに分けたか（2以上） */
-  count: number
-}
-
-/** 文の最初の行（空行は飛ばす。最初の200字）にある、分けた部分の番号。無ければ null */
-export function partMarkOf(text: string): PartMark | null {
-  const start = text.search(/\S/)
-  if (start < 0) return null
-  const nl = text.indexOf('\n', start)
-  const line = text
-    .slice(start, Math.min(nl < 0 ? text.length : nl, start + 200))
-    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
-  const m = PART_MARK.exec(line)
-  if (!m) return null
-  const index = Number(m[1])
-  const count = Number(m[2])
-  return count >= 2 && index >= 1 && index <= count ? { index, count } : null
-}
-
-/** 分けた部分の番号と、同じまとまりと見なす手がかり（同じ日・同じ分け方の数など） */
-type PartOf<T> = (x: T) => { key: string; mark: PartMark } | null
-
-/**
- * 新しい順（newestFirst）に並べる。分けて記録した部分（同じ key の「（1/k）」〜「（k/k）」）は、まとめていちばん新しい部分の
- * 位置に番号の順に置く（Claude は1つ目から順に送るので、新しい順のままだと最後の部分が上に来て、終わりから読むことになる）。
- * まとまりは作った順に見て、同じ番号がもう一度出たら（同じ日にもう一度分けて記録した）新しいまとまりにする
- */
-function newestFirstWithParts<T extends Dated>(list: readonly T[], partOf: PartOf<T>): T[] {
-  const sorted = [...list].sort(newestFirst)
-  const marks = new Map<ID, { key: string; mark: PartMark }>()
-  for (const x of sorted) {
-    const p = partOf(x)
-    if (p) marks.set(x.id, p)
-  }
-  if (marks.size < 2) return sorted
-  const groupOf = new Map<ID, T[]>()
-  const open = new Map<string, { items: T[]; seen: Set<number> }>()
-  for (let i = sorted.length - 1; i >= 0; i--) {
-    const x = sorted[i]
-    const p = marks.get(x.id)
-    if (!p) continue
-    let g = open.get(p.key)
-    if (!g || g.seen.has(p.mark.index) || g.items.length >= p.mark.count) {
-      g = { items: [], seen: new Set() }
-      open.set(p.key, g)
-    }
-    g.items.push(x)
-    g.seen.add(p.mark.index)
-    groupOf.set(x.id, g.items)
-  }
-  const out: T[] = []
-  const placed = new Set<T[]>()
-  for (const x of sorted) {
-    const g = groupOf.get(x.id)
-    if (!g || g.length < 2) out.push(x)
-    else if (!placed.has(g)) {
-      placed.add(g)
-      const index = (y: T) => marks.get(y.id)!.mark.index
-      out.push(...[...g].sort((a, b) => index(a) - index(b) || a.createdAt - b.createdAt || byId(a, b)))
-    }
-  }
-  return out
-}
-
 /** 戦略メモの分けた部分: 見出し（無ければ本文の最初の行）の番号。同じ日・同じ数に分けたものをまとめる */
 const notePart: PartOf<StrategyNote> = (n) => {
   const mark = partMarkOf(n.heading) ?? partMarkOf(n.body)
@@ -206,52 +130,6 @@ export function critiqueResultsOf(data: AppData, titleId: ID): CritiqueResult[] 
     Object.values(data.critiqueResults).filter((r) => r.titleId === titleId),
     resultPart,
   )
-}
-
-/** ベンチ作品の分析の分けた部分: 本文の最初の行の番号。同じ日・同じ観点・同じ数に分けたものをまとめる */
-const analysisPart: PartOf<BenchAnalysis> = (a) => {
-  const mark = partMarkOf(a.body)
-  return mark ? { key: [a.runDate, a.viewpoint.normalize('NFC').trim(), mark.count].join('\u0000'), mark } : null
-}
-
-/** 作品の分析（新しい日付から。分けて記録したものは番号の順） */
-export function benchAnalysesOf(data: Pick<AppData, 'benchAnalyses'>, workId: ID): BenchAnalysis[] {
-  return newestFirstWithParts(
-    Object.values(data.benchAnalyses).filter((a) => a.workId === workId),
-    analysisPart,
-  )
-}
-
-export interface ViewpointGroup {
-  /** 観点の名前（前後の空白を除いたもの。空なら「観点なし」） */
-  viewpoint: string
-  /** 新しい日付から */
-  items: BenchAnalysis[]
-}
-
-/**
- * 分析を観点ごとにまとめる（同じ名前の観点を1つに。前後の空白・Unicode の正規化の違いは同じとみなす）。
- * まとまりの順は、その観点を最初に分析した順（作った時刻。同じ時刻なら送った順に1ずつずらしてある）。
- * あいうえお順にしないのは、漢字の観点（構成・文体・人物…）は読みが分からず並びが意味を持たないのと、
- * 新しい分析を足しても既にあるまとまりが動かないように。新しい観点は後ろに増える
- */
-export function benchViewpointGroups(list: readonly BenchAnalysis[]): ViewpointGroup[] {
-  const sorted = newestFirstWithParts(list, analysisPart)
-  const groups = new Map<string, { group: ViewpointGroup; first: number; firstId: ID }>()
-  for (const a of sorted) {
-    const key = a.viewpoint.normalize('NFC').trim()
-    const g = groups.get(key)
-    if (g) {
-      g.group.items.push(a)
-      if (a.createdAt < g.first || (a.createdAt === g.first && a.id < g.firstId)) {
-        g.first = a.createdAt
-        g.firstId = a.id
-      }
-    } else groups.set(key, { group: { viewpoint: key || '観点なし', items: [a] }, first: a.createdAt, firstId: a.id })
-  }
-  return [...groups.values()]
-    .sort((a, b) => a.first - b.first || (a.firstId < b.firstId ? -1 : a.firstId > b.firstId ? 1 : 0))
-    .map((g) => g.group)
 }
 
 export function proofBatchesOf(data: AppData, titleId: ID): ProofBatch[] {

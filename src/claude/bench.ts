@@ -4,7 +4,7 @@
 import { benchWorkName, sortedBenchWorks, titlesComparing } from '../domain/benchOps'
 import { formatCount } from '../domain/text'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../domain/types'
-import { benchAnalysesOf, benchViewpointGroups } from './order'
+import { benchAnalysesOf, benchViewpointGroups } from './benchOrder'
 import { matchesId, shortId, type Resolved } from './refs'
 
 const norm = (s: string) => s.normalize('NFC').trim()

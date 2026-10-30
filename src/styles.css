@@ -72,6 +72,10 @@
   --area-critique: #7a56d0;
   --area-critique-text: #5e3fa8;
   --area-critique-soft: #efeafb;
+  /* ベンチ作品（ホームの棚。2.5）: 本棚の木の色 */
+  --area-bench: #8a5a2b;
+  --area-bench-text: #6b421c;
+  --area-bench-soft: #f6ece1;
 
   --radius: 10px;
   --radius-sm: 6px;
@@ -153,6 +157,9 @@
   --area-critique: #a98be8;
   --area-critique-text: #cbb8f6;
   --area-critique-soft: #241b37;
+  --area-bench: #d39b62;
+  --area-bench-text: #e9c49d;
+  --area-bench-soft: #2a1f15;
   color-scheme: dark;
 }
 
@@ -222,6 +229,9 @@
   --area-critique: #514b5c;
   --area-critique-text: #aeaca6;
   --area-critique-soft: #1d1b21;
+  --area-bench: #574c40;
+  --area-bench-text: #aeaca6;
+  --area-bench-soft: #1d1b18;
   color-scheme: dark;
 }
 
@@ -255,6 +265,12 @@
   --area: var(--area-critique);
   --area-text: var(--area-critique-text);
   --area-soft: var(--area-critique-soft);
+}
+
+[data-area='bench'] {
+  --area: var(--area-bench);
+  --area-text: var(--area-bench-text);
+  --area-soft: var(--area-bench-soft);
 }
 
 /* ===== ベース ===== */

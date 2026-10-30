@@ -109,6 +109,13 @@ export const BookIcon = (p: IconProps) => (
     <path d="M4 19a2 2 0 0 1 2-2h13" />
   </Svg>
 )
+/** 本棚（ベンチ作品） */
+export const ShelfIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 20h18M5 5h3v15H5zM10 7h3v13h-3zM15.2 6.4l2.9-.8 3 13.6-2.9.8z" />
+  </Svg>
+)
+
 export const BulbIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z" />

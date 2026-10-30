@@ -38,6 +38,7 @@ const ReadThroughPage = lazy(() =>
 const TitlePage = lazy(() => import('./features/title/TitlePage').then((m) => ({ default: m.TitlePage })))
 const TrashPage = lazy(() => import('./features/trash/TrashPage').then((m) => ({ default: m.TrashPage })))
 const ConnectPage = lazy(() => import('./features/claude/ConnectPage').then((m) => ({ default: m.ConnectPage })))
+const BenchWorkPage = lazy(() => import('./features/bench/BenchWorkPage').then((m) => ({ default: m.BenchWorkPage })))
 
 const TRASH_PURGE_INTERVAL_MS = 60 * 60 * 1000
 
@@ -145,6 +146,7 @@ export const routes: RouteObject[] = [
       { path: '/t/:titleId/m/:memoId', element: <MemoPage /> },
       { path: '/t/:titleId/read', element: <ReadThroughPage /> },
       { path: '/claude/connect', element: <ConnectPage /> },
+      { path: '/bench/:workId', element: <BenchWorkPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },

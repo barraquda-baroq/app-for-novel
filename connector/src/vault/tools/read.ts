@@ -12,8 +12,8 @@ import {
 import { proofCategoryLabel, isProofCategory } from '../../../../src/claude/categories'
 import { jstDate, shortDate } from '../../../../src/claude/dates'
 import { reanchor } from '../../../../src/claude/anchor'
+import { benchAnalysesOf } from '../../../../src/claude/benchOrder'
 import {
-  benchAnalysesOf,
   critiquePromptsOf,
   critiqueResultsOf,
   proofCoverage,
