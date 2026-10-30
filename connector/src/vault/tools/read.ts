@@ -1,9 +1,19 @@
-// 読むツール（R1〜R9）の結果の文字の形。目次・採用原稿・検索はアプリの手動連携と同じ src/claude/view.ts を使う。
+// 読むツール（R1〜R11）の結果の文字の形。目次・採用原稿・検索はアプリの手動連携と同じ src/claude/view.ts を使う。
 // ここで見るデータは、いつも見せる内容（claudeView: 見せないタイトル・ゴミ箱・応募時の原稿の控えなどを除いたもの）。
+import {
+  analysisText,
+  benchWorkLine,
+  benchWorkRef,
+  filterByViewpoints,
+  resolveBenchWork,
+  viewpointNames,
+  workAnalysesText,
+} from '../../../../src/claude/bench'
 import { proofCategoryLabel, isProofCategory } from '../../../../src/claude/categories'
 import { jstDate, shortDate } from '../../../../src/claude/dates'
 import { reanchor } from '../../../../src/claude/anchor'
 import {
+  benchAnalysesOf,
   critiquePromptsOf,
   critiqueResultsOf,
   proofCoverage,
@@ -36,6 +46,7 @@ import {
   titleLastEdited,
   titleSummary,
 } from '../../../../src/domain/entityOps'
+import { benchWorksOfTitle, sortedBenchWorks } from '../../../../src/domain/benchOps'
 import { actParts, adoptedMetrics, isSplit, pieceFullLabel, pieceLabel } from '../../../../src/domain/structure'
 import {
   SUBMISSION_TEXT,
@@ -426,13 +437,18 @@ function findBy<T extends { id: ID }>(list: readonly T[], kind: Parameters<typeo
 }
 
 /** 1つの項目を全文で読む（長ければ char_budget 字ずつ。続きは cursor に項目の id と位置を入れる） */
+/**
+ * 1つの項目を char_budget 字ずつ返す。k と t（タイトル・ベンチ作品の id）と extra（観点の絞り込みなど）を cursor に入れ、
+ * 続きの時に同じ項目を同じ形で作り直せるようにする
+ */
 function pagedItem(
   ctx: ReadContext,
   args: Args,
-  k: 'strategy' | 'critique',
+  k: 'strategy' | 'critique' | 'bench',
   titleId: ID,
   item: { which: string; id: ID; label: string; text: string },
   offset: number,
+  extra: Record<string, unknown> = {},
 ): ToolResult {
   const budget = itemBudget(args.char_budget, isClaudeCode(ctx.client))
   return ok(
@@ -440,19 +456,31 @@ function pagedItem(
       offset,
       budget,
       contHeader: (from) => `=== ${item.label}の続き（${formatCount(from)}字目から）===`,
-      cursor: (o) => encodeCursor({ k, t: titleId, which: item.which, id: item.id, o }),
+      cursor: (o) => encodeCursor({ k, t: titleId, which: item.which, id: item.id, o, ...extra }),
     }),
   )
 }
 
 /** 続きの cursor（1つの項目の続き）を読む。無ければ null、違う形なら 'bad' */
-function itemCursor(args: Args, k: 'strategy' | 'critique', titleId: ID): { which: string; id: string; o: number } | null | 'bad' {
+function itemCursor(
+  args: Args,
+  k: 'strategy' | 'critique' | 'bench',
+  titleId: ID | null,
+): { which: string; id: string; o: number; t: string; raw: Record<string, unknown> } | null | 'bad' {
   const raw = str(args.cursor)
   if (!raw) return null
   const c = decodeCursor(raw)
-  if (!c || c.k !== k || c.t !== titleId || typeof c.which !== 'string' || typeof c.id !== 'string' || typeof c.o !== 'number')
+  if (
+    !c ||
+    c.k !== k ||
+    typeof c.t !== 'string' ||
+    (titleId !== null && c.t !== titleId) ||
+    typeof c.which !== 'string' ||
+    typeof c.id !== 'string' ||
+    typeof c.o !== 'number'
+  )
     return 'bad'
-  return { which: c.which, id: c.id, o: c.o }
+  return { which: c.which, id: c.id, o: c.o, t: c.t, raw: c }
 }
 
 /** 戦略・作品批評の一覧に、中身の頭まで出す数（それより後は id と見出しだけ） */
@@ -693,8 +721,83 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
         .join(' / ')}`,
     )
   if (!results.length) lines.push('（ありません）')
+  // 比べるベンチ作品（2.5）: 作品と観点を出し、分析は novel_get_bench_analysis で読んでもらう
+  const bench = benchWorksOfTitle(view, title.id)
+  if (bench.length) {
+    lines.push(`--- 比べるベンチ作品（${bench.length}作品。作者が比べたい既存の作品）---`)
+    for (const w of bench) {
+      const analyses = benchAnalysesOf(view, w.id)
+      lines.push(
+        `${benchWorkRef(w)} 分析 ${analyses.length}件${analyses.length ? `: ${viewpointNames(analyses).join('・')}` : '（まだありません）'}`,
+      )
+    }
+    lines.push(
+      '批評の時は novel_get_bench_analysis でこれらの作品の分析を読んで比べ、novel_add_critique_result の bench_works に比べた作品を入れてください。',
+    )
+  }
   lines.push('1つを全文で読むには prompt_id・result_id を指定してください。')
   return ok(lines.join('\n'))
+}
+
+// ---------- R10 ベンチ作品の一覧 ----------
+
+export function listBenchWorks(ctx: ReadContext): ToolResult {
+  const works = sortedBenchWorks(ctx.view)
+  const lines: string[] = [`=== ベンチ作品（${works.length}作品。作者が比べるために読む既存の作品）===`]
+  if (!works.length)
+    lines.push(
+      '（まだありません。作品の PDF を読んで novel_add_bench_analysis の new_work を付けて分析を足すと、作品も棚に足されます）',
+    )
+  for (const w of works) lines.push(benchWorkLine(ctx.view, w))
+  if (works.length) lines.push('分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。')
+  return ok(lines.join('\n'))
+}
+
+// ---------- R11 ベンチ作品の分析 ----------
+
+export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
+  const view = ctx.view
+  const cont = itemCursor(args, 'bench', null)
+  if (cont === 'bad' || (cont && cont.which !== 'work' && cont.which !== 'analysis'))
+    return fail('cursor が読めません（novel_get_bench_analysis の続きの cursor をそのまま渡してください）')
+  const ref = cont ? cont.t : str(args.work)
+  if (!ref) return fail('work がありません（novel_list_bench_works で w:… を確かめてください）')
+  const r = resolveBenchWork(view, ref)
+  if (!r.ok) return fail(r.message, r.candidates)
+  const work = r.value
+  const viewpoints = cont ? strList(cont.raw.vp) : strList(args.viewpoints)
+  const vp = viewpoints?.length ? { vp: viewpoints } : {}
+  const page = (which: 'work' | 'analysis', id: ID, offset: number): ToolResult => {
+    if (which === 'analysis') {
+      const a = view.benchAnalyses[id]
+      if (!a || a.workId !== work.id)
+        return fail('続きを読む分析が見つかりません（削除された可能性があります。cursor なしで読み直してください）')
+      const text = `=== ベンチ作品 ${benchWorkRef(work)} の分析 ===\n${analysisText(a)}`
+      return pagedItem(ctx, args, 'bench', work.id, { which, id, label: `『${work.name}』の「${a.viewpoint}」`, text }, offset)
+    }
+    const text = workAnalysesText(view, work, viewpoints)
+    return pagedItem(ctx, args, 'bench', work.id, { which, id: work.id, label: `『${work.name}』の分析`, text }, offset, vp)
+  }
+  if (cont) return page(cont.which as 'work' | 'analysis', cont.id, cont.o)
+  const aid = str(args.analysis_id)
+  if (aid) {
+    const list = benchAnalysesOf(view, work.id)
+    const hits = list.filter((a) => matchesId('benchAnalysis', aid, a.id))
+    if (hits.length !== 1)
+      return fail(
+        `分析 '${aid}' が『${work.name}』に見つかりません`,
+        list.map((a) => `${shortId('benchAnalysis', a.id)}「${a.viewpoint}」${a.runDate}`),
+      )
+    return page('analysis', hits[0].id, 0)
+  }
+  if (viewpoints?.length && !filterByViewpoints(benchAnalysesOf(view, work.id), viewpoints).length) {
+    const names = viewpointNames(benchAnalysesOf(view, work.id))
+    return fail(
+      `『${work.name}』には観点「${viewpoints.join('」「')}」の分析がありません`,
+      names.length ? names.map((n) => `観点「${n}」`) : undefined,
+    )
+  }
+  return page('work', work.id, 0)
 }
 
 // ---------- R9 推敲案 ----------

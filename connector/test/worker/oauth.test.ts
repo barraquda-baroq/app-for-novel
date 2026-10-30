@@ -2,6 +2,7 @@
 import { SELF, abortAllDurableObjects, env, reset } from 'cloudflare:test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeFirebase } from '../support/fakeFirebase'
+import { CONNECTOR_MODEL } from '../../src/version'
 import { novel } from '../../../src/test/claudeFixture'
 import type { AppData, TableName } from '../../../src/domain/types'
 import type { Rec } from '../../../src/sync/merge'
@@ -155,7 +156,7 @@ async function connect(
   const { uid } = (await idRes.json()) as { uid: string }
   const k = opts.keyInApp ?? b64url(crypto.getRandomValues(new Uint8Array(32)))
   fake.setOwner(OWNER)
-  fake.setAppModel(OWNER, 3)
+  fake.setAppModel(OWNER, CONNECTOR_MODEL)
   fake.setConnector({ uid, pairing: await sha256hex(`${s}.${k}`), writes: true, pairedAt: opts.pairedAt ?? Date.now() })
   const cb = await SELF.fetch(`${H}/pair/callback?state=${encodeURIComponent(s)}&k=${opts.k ?? k}`, {
     redirect: 'manual',
@@ -330,7 +331,7 @@ describe('連携（アプリでの許可 → /pair/callback → トークン →
     // tools/list は Vault（Firebase）を呼ばない
     const calls = fake.calls.length
     const list = await rpcJson(await mcp(t.access_token, 'tools/list'))
-    expect(list.result.tools).toHaveLength(15)
+    expect(list.result.tools).toHaveLength(18)
     expect(fake.calls.length).toBe(calls)
     // 初回の取り込みが終わるまでは「取り込み中」（alarm が続ける）。何度か呼べば読める
     let text = ''
@@ -444,7 +445,7 @@ describe('/connect/identity（アプリの連携の画面が読む）', () => {
     expect(ok.status).toBe(200)
     expect(ok.headers.get('Access-Control-Allow-Origin')).toBe(APP)
     const body = (await ok.json()) as { uid: string; version: string; model: number }
-    expect(body.model).toBe(3)
+    expect(body.model).toBe(CONNECTOR_MODEL)
     expect(body.uid).toMatch(/^anon/)
     const evil = await SELF.fetch(`${H}/connect/identity`, { headers: { Origin: 'https://evil.example' } })
     expect(evil.status).toBe(403)

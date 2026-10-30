@@ -466,6 +466,10 @@ export class VaultCore {
         return R.getCritique(ctx, args)
       case 'novel_list_proofreading':
         return R.listProofreading(ctx, args)
+      case 'novel_list_bench_works':
+        return R.listBenchWorks(ctx)
+      case 'novel_get_bench_analysis':
+        return R.getBenchAnalysis(ctx, args)
       default:
         return fail(`知らないツールです: ${name}`)
     }

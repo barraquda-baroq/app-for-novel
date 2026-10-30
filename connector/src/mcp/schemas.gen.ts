@@ -17,6 +17,9 @@ export type ToolName =
   | 'novel_add_strategy_note'
   | 'novel_save_critique_prompt'
   | 'novel_add_critique_result'
+  | 'novel_list_bench_works'
+  | 'novel_get_bench_analysis'
+  | 'novel_add_bench_analysis'
 
 export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
   "novel_status": {
@@ -823,10 +826,159 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "type": "string",
         "maxLength": 60,
         "description": "使ったモデルの名前（任意）"
+      },
+      "bench_works": {
+        "description": "批評の中で比べたベンチ作品（w:… か作品名。20件まで）。アプリの批評の結果に「比べた作品」として出る",
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "ベンチ作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる"
+        }
       }
     },
     "required": [
       "title_id"
+    ]
+  },
+  "novel_list_bench_works": {
+    "type": "object",
+    "properties": {}
+  },
+  "novel_get_bench_analysis": {
+    "type": "object",
+    "properties": {
+      "work": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "ベンチ作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる"
+      },
+      "viewpoints": {
+        "description": "この観点の分析だけを読む（構成・文体など。省略時はすべての観点）",
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
+      },
+      "analysis_id": {
+        "description": "この分析（n:…）だけを読む",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "char_budget": {
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "type": "integer",
+        "minimum": 2000,
+        "maximum": 60000
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000,
+        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す"
+      }
+    },
+    "required": [
+      "work"
+    ]
+  },
+  "novel_add_bench_analysis": {
+    "type": "object",
+    "properties": {
+      "work": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "分析する作品（w:… か作品名）。棚にまだ無い作品は new_work も付ける"
+      },
+      "new_work": {
+        "description": "作品が棚に無い時だけ作る作品（付けた時だけ作る。同じ作品名の作品があればそれに足す）",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "作品名（80字以内）"
+          },
+          "author": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "著者（80字以内）"
+          },
+          "publisher": {
+            "description": "出版社",
+            "type": "string",
+            "maxLength": 80
+          },
+          "year": {
+            "description": "刊行年",
+            "type": "string",
+            "maxLength": 20
+          },
+          "genre": {
+            "description": "ジャンル",
+            "type": "string",
+            "maxLength": 40
+          },
+          "pdf_place": {
+            "description": "PDF の置き場所（claude.ai のプロジェクト名など）",
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "name",
+          "author"
+        ]
+      },
+      "items": {
+        "minItems": 1,
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "viewpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "観点の名前（構成・文体・人物・冒頭の掴みなど。40字以内）"
+            },
+            "body_markdown": {
+              "type": "string",
+              "minLength": 1,
+              "description": "その観点の分析（Markdown。長さの上限なし）"
+            },
+            "run_date": {
+              "type": "string",
+              "maxLength": 10,
+              "description": "YYYY-MM-DD（日本時間）。省略時は今日"
+            }
+          },
+          "required": [
+            "viewpoint",
+            "body_markdown"
+          ]
+        },
+        "description": "分析（観点ごとに1つ。1回20件まで）"
+      },
+      "model": {
+        "type": "string",
+        "maxLength": 60,
+        "description": "使ったモデルの名前（任意）"
+      }
+    },
+    "required": [
+      "work",
+      "items"
     ]
   }
 }

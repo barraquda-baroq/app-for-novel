@@ -5,6 +5,7 @@ import { emptyData } from '../../../src/domain/types'
 import { addSubmission, updateSubmission } from '../../../src/domain/entityOps'
 import { addPrologue, novel, splitEpisode } from '../../../src/test/claudeFixture'
 import { pairingHash } from '../../src/vault/crypto'
+import { CONNECTOR_MODEL } from '../../src/version'
 import { FakeFirebase } from '../support/fakeFirebase'
 import { OWNER, SECRET, call, makeCore, pairedCore } from '../support/harness'
 
@@ -14,7 +15,7 @@ describe('コネクタの身元（匿名のアカウント）', () => {
     const { core, sql } = makeCore(fake)
     const a = await core.connectIdentity()
     expect(a.uid).toMatch(/^anon/)
-    expect(a.model).toBe(3)
+    expect(a.model).toBe(CONNECTOR_MODEL)
     expect((await core.connectIdentity()).uid).toBe(a.uid)
     const rows = sql.all<{ k: string; v: string }>('SELECT k, v FROM meta')
     const all = rows.map((r) => r.v).join('\n')
@@ -55,7 +56,7 @@ describe('連携の確かめ（/pair/callback）', () => {
     const made = makeCore(fake)
     const { uid } = await made.core.connectIdentity()
     fake.setOwner(OWNER)
-    fake.setAppModel(OWNER, 3)
+    fake.setAppModel(OWNER, CONNECTOR_MODEL)
     return { fake, ...made, uid }
   }
 
@@ -459,7 +460,7 @@ describe('読むツール', () => {
     const text = await call(core, 'novel_status')
     expect(text).toContain('連携: 済み')
     expect(text).toContain('書き込み: 許可')
-    expect(text).toContain('アプリのデータの形: 3（一致）')
+    expect(text).toContain(`アプリのデータの形: ${CONNECTOR_MODEL}（一致）`)
     expect(text).toContain('取り込み: 完了')
   })
 })
@@ -588,7 +589,7 @@ describe('書き込み（作るだけ）', () => {
     expect(off.text).toContain('書き込みは停止中')
     expect((await core.callTool('novel_list_titles', {})).isError).toBeUndefined()
     fake.setConnector({ uid, pairing: 'x'.repeat(64), writes: true, pairedAt: clock.now })
-    fake.setAppModel(OWNER, 4)
+    fake.setAppModel(OWNER, CONNECTOR_MODEL + 1)
     clock.now += 61_000
     const model = await core.callTool('novel_add_revision_ideas', input)
     expect(model.isError).toBe(true)

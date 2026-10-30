@@ -2,6 +2,7 @@
 import type { AppData, TableName } from '../../../src/domain/types'
 import type { Rec } from '../../../src/sync/merge'
 import type { VaultConfig } from '../../src/config'
+import { CONNECTOR_MODEL } from '../../src/version'
 import { VaultCore } from '../../src/vault/core'
 import { pairingHash } from '../../src/vault/crypto'
 import { FakeFirebase } from './fakeFirebase'
@@ -68,7 +69,7 @@ export async function pairedCore(
   const made = makeCore(fake, opts)
   const { uid } = await made.core.connectIdentity()
   fake.setOwner(OWNER)
-  if (opts.model !== null) fake.setAppModel(OWNER, opts.model ?? 3)
+  if (opts.model !== null) fake.setAppModel(OWNER, opts.model ?? CONNECTOR_MODEL)
   if (data) seed(fake, data)
   const hash = await pairingHash('state-1', 'k'.repeat(43))
   fake.setConnector({ uid, pairing: hash, writes: opts.writes ?? true, pairedAt: made.clock.now })

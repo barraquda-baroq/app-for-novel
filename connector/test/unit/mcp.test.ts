@@ -23,11 +23,14 @@ const EXPECTED_ORDER = [
   'novel_get_strategy',
   'novel_get_critique',
   'novel_list_proofreading',
+  'novel_list_bench_works',
+  'novel_get_bench_analysis',
   'novel_add_proofreading',
   'novel_add_revision_ideas',
   'novel_add_strategy_note',
   'novel_save_critique_prompt',
   'novel_add_critique_result',
+  'novel_add_bench_analysis',
 ]
 
 describe('ツールの決まり', () => {
@@ -123,9 +126,19 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(tools.map((t) => t.name)).toEqual(EXPECTED_ORDER)
     expect(tools[3].title).toBe('採用原稿を読む')
     expect(tools[3].annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false })
-    expect(tools[10].annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
+    const write = tools.find((t) => t.name === 'novel_add_proofreading')!
+    expect(write.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
     expect(tools[3].inputSchema.properties.char_budget).toMatchObject({ default: 20_000, maximum: 60_000 })
-    expect(tools[10].outputSchema).toBeTruthy()
+    expect(write.outputSchema).toBeTruthy()
+    // ベンチ作品（2.5）: 読む2つと書き込み1つ
+    const bench = tools.filter((t) => t.name.includes('_bench_'))
+    expect(bench.map((t) => [t.name, t.title, t.annotations.readOnlyHint])).toEqual([
+      ['novel_list_bench_works', 'ベンチ作品の一覧を見る', true],
+      ['novel_get_bench_analysis', 'ベンチ作品の分析を読む', true],
+      ['novel_add_bench_analysis', 'ベンチ作品の分析を追加', false],
+    ])
+    expect(bench[2].outputSchema).toBeTruthy()
+    expect(init.json.result.instructions).toContain('ベンチ作品')
     expect(tools[2].outputSchema).toBeUndefined()
     expect(calls).toBe(0)
   })

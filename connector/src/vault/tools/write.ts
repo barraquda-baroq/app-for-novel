@@ -29,6 +29,7 @@ const WHERE: Record<WriteTool, string> = {
   novel_add_strategy_note: 'アプリのタイトルの「戦略 → 戦略メモ」',
   novel_save_critique_prompt: 'アプリのタイトルの「作品批評 → 批評プロンプト」',
   novel_add_critique_result: 'アプリのタイトルの「作品批評」の結果',
+  novel_add_bench_analysis: 'アプリのホームの「ベンチ作品」',
 }
 
 const STATUS_LABELS: Record<ItemStatus, string> = {

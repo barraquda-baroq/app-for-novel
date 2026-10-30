@@ -33,6 +33,11 @@ const itemBudgetSchema = z
   .optional()
   .describe('1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor="…"）')
 const runDate = z.string().max(10).describe('YYYY-MM-DD（日本時間）。省略時は今日')
+const benchWork = z
+  .string()
+  .min(1)
+  .max(200)
+  .describe('ベンチ作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる')
 const model = z.string().max(L.model).describe('使ったモデルの名前（任意）')
 
 export const SCHEMAS = {
@@ -221,6 +226,49 @@ export const SCHEMAS = {
       .object({ from: piece, to: piece })
       .optional()
       .describe('批評した範囲（省略時はタイトル全体）'),
+    model: model.optional(),
+    bench_works: z
+      .array(benchWork)
+      .max(L.benchRefs)
+      .optional()
+      .describe('批評の中で比べたベンチ作品（w:… か作品名。20件まで）。アプリの批評の結果に「比べた作品」として出る'),
+  }),
+  novel_list_bench_works: z.object({}),
+  novel_get_bench_analysis: z.object({
+    work: benchWork,
+    viewpoints: z
+      .array(z.string().min(1).max(L.viewpoint))
+      .max(20)
+      .optional()
+      .describe('この観点の分析だけを読む（構成・文体など。省略時はすべての観点）'),
+    analysis_id: z.string().min(1).max(200).optional().describe('この分析（n:…）だけを読む'),
+    char_budget: itemBudgetSchema,
+    cursor: cursor.optional(),
+  }),
+  novel_add_bench_analysis: z.object({
+    work: benchWork.describe('分析する作品（w:… か作品名）。棚にまだ無い作品は new_work も付ける'),
+    new_work: z
+      .object({
+        name: z.string().min(1).max(L.benchWorkName).describe('作品名（80字以内）'),
+        author: z.string().max(L.benchAuthor).describe('著者（80字以内）'),
+        publisher: z.string().max(L.benchPublisher).optional().describe('出版社'),
+        year: z.string().max(L.benchYear).optional().describe('刊行年'),
+        genre: z.string().max(L.benchGenre).optional().describe('ジャンル'),
+        pdf_place: z.string().max(L.pdfPlace).optional().describe('PDF の置き場所（claude.ai のプロジェクト名など）'),
+      })
+      .optional()
+      .describe('作品が棚に無い時だけ作る作品（付けた時だけ作る。同じ作品名の作品があればそれに足す）'),
+    items: z
+      .array(
+        z.object({
+          viewpoint: z.string().min(1).max(L.viewpoint).describe('観点の名前（構成・文体・人物・冒頭の掴みなど。40字以内）'),
+          body_markdown: z.string().min(1).describe('その観点の分析（Markdown。長さの上限なし）'),
+          run_date: runDate.optional(),
+        }),
+      )
+      .min(1)
+      .max(L.benchItems)
+      .describe('分析（観点ごとに1つ。1回20件まで）'),
     model: model.optional(),
   }),
 } as const
