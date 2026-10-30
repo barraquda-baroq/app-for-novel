@@ -4,6 +4,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import { App } from './App'
+import { afterNextPaint, notifyAppReady } from './launch/launchHook'
 import { setNativeKeyboardHeight } from './platform/keyboard'
 import { hideSplash, initNative } from './platform/nativeInit'
 import { isNative } from './platform/platform'
@@ -64,7 +65,11 @@ if (import.meta.env.DEV) {
 }
 
 // 端末内のデータを読み込んでから、ログインしたことのある端末なら同期を始める
-void initStore().then(() => initSync())
+const loaded = initStore()
+void loaded.then(() => initSync())
+// 起動アニメーション（index.html に埋め込んだ src/launch/launch.js）に、最初の画面（読み込み中…ではなく、読み込んだ後の画面）が
+// 出たことを知らせる。アニメーションも終わっていれば、それで消える
+void loaded.then(() => afterNextPaint(notifyAppReady))
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -72,5 +77,7 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 )
 
-// アプリの起動の画面は、最初の描画が画面に出てから消す（白い画面が一瞬出ないように）
-if (isNative()) requestAnimationFrame(() => requestAnimationFrame(hideSplash))
+// アプリの起動の画面は、最初の描画が画面に出てから消す（白い画面が一瞬出ないように。Android は起動の画面を消すまで描かず、
+// requestAnimationFrame が来ないことがあるので、0.5秒でも消す）。起動アニメーションを出している時は、アニメーションが最初の絵を
+// 描いた時にもう消している（もう一度消すことになるが、何も起きない）
+if (isNative()) afterNextPaint(hideSplash, 500)

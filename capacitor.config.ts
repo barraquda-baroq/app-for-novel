@@ -19,8 +19,11 @@ const config: CapacitorConfig = {
     // resizeOnFullScreen は付けない（SystemBars と合わない）
     Keyboard: { resize: KeyboardResize.None },
     SystemBars: { insetsHandling: 'css', initialViewportFitValueHint: 'cover' },
-    // 最初の描画の後に消す（src/main.tsx）。白い画面が一瞬出ないように
-    SplashScreen: { launchAutoHide: false, backgroundColor: '#2f3a4f', showSpinner: false, launchFadeOutDuration: 150 },
+    // 起動の画面: ロゴを出さない無地で、色は端末のライト／ダークに合わせる（Android は res/values・values-night の launch_background、
+    // iPhone は LaunchScreen.storyboard の LaunchBackground。起動アニメーションの最初の絵と同じ色）。backgroundColor は付けない
+    // （付けると1色になり、端末のライト／ダークに合わなくなる）。起動アニメーション（src/launch/launch.js）が最初の絵を描いたら消す。
+    // アニメーションを出さない時は、アプリの最初の描画の後（src/main.tsx）。どちらも白い画面が一瞬出ないように
+    SplashScreen: { launchAutoHide: false, showSpinner: false, launchFadeOutDuration: 150 },
     // 端末の Google のアカウント選択で ID トークンだけ受け取り、ログインは Web と同じ Firebase JS SDK で行う（src/sync/firebase.ts）
     FirebaseAuthentication: { skipNativeAuth: true, providers: ['google.com'] },
     // Firestore の常時接続には本物の fetch / XHR が要る

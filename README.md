@@ -26,6 +26,7 @@ Windows ではブラウザで動く PWA（Chrome・Edge の「アプリとして
 | Claude 連携（2.3） | claude.ai に Novel Studio のコネクタ（リモート MCP）を足すと、Claude が「Claude に見せる」タイトルの採用原稿を読み、推敲案・改稿案・戦略メモ・作品批評を足せる（本文は書き換えない）。コネクタが無くても「Claude に頼む（手動）」でコピーと貼り付けで使える |
 | 同期 | Google でログインすると、どの端末で書いた内容も自動で同じになる。オフラインでも書け、つながった時に送る。同時に同じ稿の本文を直していたら、片方を「（競合: ○○での編集）」の別の稿として残す |
 | バックアップ | 全データを JSON で書き出し・復元。しばらく書き出していないとホームでお知らせ |
+| 起動アニメーション | 開いた時に、レーザーが原稿用紙のマス目に揃い、点の「Novel Studio」が現れるアニメーション（約2秒。外観に合わせて白地に赤・黒地に緑）。押すとすぐ消える。Web 版はウインドウ・タブを開いた最初の1回、アプリは起動のたび。設定 → 表示 でオフにできる |
 
 ### データを失わないための仕組み
 
@@ -92,8 +93,9 @@ src/store/     状態管理（Zustand）と UI から呼ぶ actions
 src/ui/        共通部品（ダイアログ・分割ペイン・自動保存入力など）
 src/features/  各画面
 src/platform/  iPhone・Android のアプリだけの動き（ログイン・キーボード・ファイルの保存・更新のしかたなど。Web 版では何もしない）
+src/launch/    起動アニメーションと最初の描画の前の外観（launch.js。ビルドの時に index.html へ埋め込む）
 ios/ android/  iPhone・Android のアプリのプロジェクト（Capacitor。アイコンの元は assets/）
-scripts/       公開（deploy.mjs）・アプリの準備とインストール（mobile.mjs）のスクリプト
+scripts/       公開（deploy.mjs）・アプリの準備とインストール（mobile.mjs）・アイコン（icon-art.mjs・render-icons.mjs・render-native-assets.mjs）のスクリプト
 e2e/           Playwright の E2E テスト
 connector/     Claude 用のコネクタ（Cloudflare Worker。リモート MCP サーバー。src/domain・src/claude の純粋な部品を共有）
 ```
