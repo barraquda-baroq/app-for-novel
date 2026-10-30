@@ -17,7 +17,12 @@ export function resolveBenchWork(data: Pick<AppData, 'benchWorks'>, ref: string)
   if (hits.length === 1) return { ok: true, value: hits[0] }
   const candidates = (hits.length ? hits : works).slice(0, 30).map((w) => benchWorkRef(w))
   return hits.length
-    ? { ok: false, reason: 'ambiguous', message: `作品名「${ref}」のベンチ作品が${hits.length}件あります。w:… の短い id で指してください`, candidates }
+    ? {
+        ok: false,
+        reason: 'ambiguous',
+        message: `作品名「${ref}」のベンチ作品が${hits.length}件あります。w:… の短い id で指してください`,
+        candidates,
+      }
     : { ok: false, reason: 'not_found', message: `ベンチ作品 '${ref}' が見つかりません`, candidates }
 }
 
@@ -47,7 +52,10 @@ export function viewpointNames(analyses: readonly BenchAnalysis[]): string[] {
 }
 
 /** 観点で絞る（前後の空白・正規化の違いは問わない。空なら絞らない） */
-export function filterByViewpoints(analyses: readonly BenchAnalysis[], viewpoints: readonly string[] | undefined): BenchAnalysis[] {
+export function filterByViewpoints(
+  analyses: readonly BenchAnalysis[],
+  viewpoints: readonly string[] | undefined,
+): BenchAnalysis[] {
   const want = new Set((viewpoints ?? []).map(norm).filter(Boolean))
   return want.size ? analyses.filter((a) => want.has(norm(a.viewpoint))) : [...analyses]
 }

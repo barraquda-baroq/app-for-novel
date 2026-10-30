@@ -37,7 +37,13 @@ const LONG_ANALYSIS = 900
 export function BenchWorkPage() {
   const { workId = '' } = useParams()
   const work = useRecord('benchWorks', workId)
-  if (!work) return <NotFound message="ベンチ作品が見つかりません。削除された可能性があります。" action={{ to: paths.homeArea('bench'), label: 'ベンチ作品の一覧へ' }} />
+  if (!work)
+    return (
+      <NotFound
+        message="ベンチ作品が見つかりません。削除された可能性があります。"
+        action={{ to: paths.homeArea('bench'), label: 'ベンチ作品の一覧へ' }}
+      />
+    )
   return <BenchWorkView key={work.id} work={work} />
 }
 
@@ -194,7 +200,8 @@ function BenchWorkView({ work }: { work: BenchWork }) {
             <div className="empty bw-empty" data-testid="bench-analyses-empty">
               <p>まだ分析がありません。</p>
               <p className="small">
-                コネクタを付けた claude.ai のプロジェクト（PDF を置いたもの）で「この作品を構成・文体の観点で分析して、ベンチ作品に追加して」と頼むか、「Claude
+                コネクタを付けた claude.ai のプロジェクト（PDF
+                を置いたもの）で「この作品を構成・文体の観点で分析して、ベンチ作品に追加して」と頼むか、「Claude
                 に頼む（手動）」の依頼文を使ってください。手で書くこともできます。
               </p>
             </div>

@@ -128,7 +128,10 @@ export function BenchManualDialog({ work, onClose, onPaste }: BenchManualDialogP
           </button>
         </form>
         <ol className="cl-manual-steps small muted">
-          <li>claude.ai で、作品の PDF をナレッジに置いたプロジェクトを開き、新しいチャットを始めます{work.pdfPlace.trim() ? `（${work.pdfPlace.trim()}）` : ''}。</li>
+          <li>
+            claude.ai で、作品の PDF をナレッジに置いたプロジェクトを開き、新しいチャットを始めます
+            {work.pdfPlace.trim() ? `（${work.pdfPlace.trim()}）` : ''}。
+          </li>
           <li>依頼文をコピーして貼り付け、送ります。</li>
           <li>答えの最後のコードブロックまでコピーして、「結果を貼り付け」に貼ります。</li>
         </ol>

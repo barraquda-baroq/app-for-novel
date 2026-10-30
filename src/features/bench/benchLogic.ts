@@ -15,7 +15,10 @@ export function biblioLine(w: Pick<BenchWork, 'author' | 'publisher' | 'year' | 
 }
 
 /** 作品の最終更新（作品とその分析のいちばん新しい更新日時） */
-export function workLastUpdated(work: Pick<BenchWork, 'updatedAt'>, analyses: readonly Pick<BenchAnalysis, 'updatedAt'>[]): number {
+export function workLastUpdated(
+  work: Pick<BenchWork, 'updatedAt'>,
+  analyses: readonly Pick<BenchAnalysis, 'updatedAt'>[],
+): number {
   return analyses.reduce((m, a) => Math.max(m, a.updatedAt), work.updatedAt)
 }
 

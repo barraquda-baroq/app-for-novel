@@ -14,7 +14,11 @@ async function seedShelf(page: Page) {
     actions.updateVersion(getData().pieces[id].versionIds[0], { body: '冒頭の本文。' })
     const workId = actions.addBenchWork({ name: '銀河の果て', author: '山田', year: '2019', pdfPlace: 'プロジェクト「ベンチ」' })
     const long = Array.from({ length: 30 }, (_, i) => `段落${i + 1}。${'あ'.repeat(200)}`).join('\n\n')
-    actions.addBenchAnalysis(workId, { viewpoint: '構成', body: `## 構成\n三幕。\n\n${long}\n\n最後の一文。`, runDate: '2026-10-01' })
+    actions.addBenchAnalysis(workId, {
+      viewpoint: '構成',
+      body: `## 構成\n三幕。\n\n${long}\n\n最後の一文。`,
+      runDate: '2026-10-01',
+    })
     actions.addBenchAnalysis(workId, { viewpoint: '文体', body: '## 文体\n短い文を重ねる。', runDate: '2026-10-02' })
     actions.addTitleBenchWork(titleId, workId)
     return { titleId, workId }
@@ -34,7 +38,9 @@ test.describe('ベンチ作品', () => {
     await expect(card.getByTestId('bench-card-author')).toHaveText('山田・2019')
     await expect(card.getByTestId('bench-card-count')).toHaveText('分析 2件')
     // 観点のチップ（同じ時刻に作った分析なので、順は問わない）
-    await expect.poll(async () => (await card.getByTestId('bench-card-viewpoint').allTextContents()).sort()).toEqual(['文体', '構成'].sort())
+    await expect
+      .poll(async () => (await card.getByTestId('bench-card-viewpoint').allTextContents()).sort())
+      .toEqual(['文体', '構成'].sort())
     await expect(card.getByTestId('bench-card-comparing')).toHaveText('比べるタイトル: 『星の庭』')
     // スマホでは上の切り替えにもある
     if (await page.getByTestId('home-jump').isVisible()) {
@@ -258,7 +264,8 @@ test.describe('ベンチ作品', () => {
     await page.keyboard.press('Escape')
     await openApp(page, `/bench/${workId}`)
     await noHorizontalScroll(page)
-    for (const id of ['bench-work-edit', 'bench-add-analysis', 'bench-manual', 'bench-paste']) await tapSize(page.getByTestId(id), id, false)
+    for (const id of ['bench-work-edit', 'bench-add-analysis', 'bench-manual', 'bench-paste'])
+      await tapSize(page.getByTestId(id), id, false)
     await page.getByTestId('bench-analysis-toggle').first().click()
     for (const id of ['bench-analysis-copy', 'bench-analysis-edit', 'bench-analysis-delete'])
       await tapSize(page.getByTestId(id).first(), id, false)

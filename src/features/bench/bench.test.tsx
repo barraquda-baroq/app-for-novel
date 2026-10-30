@@ -88,7 +88,11 @@ describe('ホームの棚', () => {
     expect(within(card).getByTestId('bench-card-name').textContent).toBe('銀河の果て')
     expect(within(card).getByTestId('bench-card-author').textContent).toBe('山田・2019')
     expect(within(card).getByTestId('bench-card-count').textContent).toBe('分析 3件')
-    expect(within(card).getAllByTestId('bench-card-viewpoint').map((c) => c.textContent)).toEqual(['文体2', '構成'])
+    expect(
+      within(card)
+        .getAllByTestId('bench-card-viewpoint')
+        .map((c) => c.textContent),
+    ).toEqual(['文体2', '構成'])
     expect(within(card).getByTestId('bench-card-comparing').textContent).toBe('比べるタイトル: 『星の庭』')
 
     // 足す（作品名は必須）
@@ -179,7 +183,9 @@ describe('作品の画面', () => {
     await user.click(within(dialog).getByRole('button', { name: '冒頭の掴み' }))
     await user.type(within(dialog).getByTestId('bench-analysis-input'), '一文目で謎を置く。')
     await user.click(screen.getByTestId('bench-analysis-save'))
-    await waitFor(() => expect(screen.getAllByTestId('bench-group').map((g) => g.getAttribute('data-viewpoint'))).toContain('冒頭の掴み'))
+    await waitFor(() =>
+      expect(screen.getAllByTestId('bench-group').map((g) => g.getAttribute('data-viewpoint'))).toContain('冒頭の掴み'),
+    )
     // 足した分析は開いている
     const added = within(screen.getByText('冒頭の掴み', { selector: 'h3' }).closest('section')!).getByTestId('bench-analysis')
     expect(within(added).getByTestId('bench-analysis-toggle').getAttribute('aria-expanded')).toBe('true')
@@ -225,7 +231,10 @@ describe('作品の画面', () => {
       '```novel-studio-v1',
       JSON.stringify({
         tool: 'novel_add_bench_analysis',
-        input: { work: 'w:xxxx', items: [{ viewpoint: '会話の運び', body_markdown: '## 会話\n間が良い。', run_date: '2026-10-30' }] },
+        input: {
+          work: 'w:xxxx',
+          items: [{ viewpoint: '会話の運び', body_markdown: '## 会話\n間が良い。', run_date: '2026-10-30' }],
+        },
       }),
       '```',
     ].join('\n')
@@ -234,7 +243,9 @@ describe('作品の画面', () => {
     await user.paste(answer)
     await waitFor(() => expect(screen.getByTestId('paste-add').textContent).toBe('追加（1件）'))
     await user.click(screen.getByTestId('paste-add'))
-    await waitFor(() => expect(screen.getAllByTestId('bench-group').map((g) => g.getAttribute('data-viewpoint'))).toContain('会話の運び'))
+    await waitFor(() =>
+      expect(screen.getAllByTestId('bench-group').map((g) => g.getAttribute('data-viewpoint'))).toContain('会話の運び'),
+    )
     expect(Object.values(getData().benchAnalyses).find((a) => a.viewpoint === '会話の運び')?.source).toBe('paste')
     // 同じ答えをもう一度
     await user.click(screen.getByTestId('bench-paste'))
@@ -289,7 +300,11 @@ describe('作品批評タブ', () => {
     const other = actions.addBenchWork({ name: '海の記憶', author: '佐藤' })
     renderTab(titleId)
     const row = screen.getByTestId('critique-bench')
-    expect(within(row).getAllByTestId('critique-bench-chip').map((c) => c.textContent)).toEqual(['『銀河の果て』'])
+    expect(
+      within(row)
+        .getAllByTestId('critique-bench-chip')
+        .map((c) => c.textContent),
+    ).toEqual(['『銀河の果て』'])
     await user.selectOptions(within(row).getByTestId('critique-bench-add'), other)
     await waitFor(() => expect(getData().titles[titleId].benchWorkIds).toEqual([workId, other]))
     await user.click(within(screen.getAllByTestId('critique-bench-chip')[0]).getByTestId('critique-bench-remove'))
@@ -300,7 +315,10 @@ describe('作品批評タブ', () => {
 
     const resultId = actions.addCritiqueResult(titleId, { resultMarkdown: '## 比べると' })
     const added = actions.addClaudeRecords([
-      { table: 'critiqueResults', record: { ...getData().critiqueResults[resultId], id: 'cq-bench', benchWorkIds: [workId, 'gone'] } },
+      {
+        table: 'critiqueResults',
+        record: { ...getData().critiqueResults[resultId], id: 'cq-bench', benchWorkIds: [workId, 'gone'] },
+      },
     ])
     expect(added).toEqual(['cq-bench'])
     const chips = await screen.findAllByTestId('critique-result-bench-chip')

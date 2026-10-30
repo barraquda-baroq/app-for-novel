@@ -69,7 +69,9 @@ export function benchViewpointSuggestions(data: Pick<AppData, 'benchAnalyses'>):
       cur.first = Math.min(cur.first, a.createdAt)
     } else seen.set(key, { name: key, count: 1, first: a.createdAt })
   }
-  return [...seen.values()].sort((a, b) => b.count - a.count || a.first - b.first || (a.name < b.name ? -1 : 1)).map((x) => x.name)
+  return [...seen.values()]
+    .sort((a, b) => b.count - a.count || a.first - b.first || (a.name < b.name ? -1 : 1))
+    .map((x) => x.name)
 }
 
 // ---------- ベンチ作品 ----------
@@ -220,7 +222,8 @@ export function deleteBenchWork(data: AppData, id: ID): AppData {
       ],
     })
     const ts = now()
-    for (const t of comparing) tx.put('titles', { ...t, benchWorkIds: (t.benchWorkIds ?? []).filter((x) => x !== id), updatedAt: ts })
+    for (const t of comparing)
+      tx.put('titles', { ...t, benchWorkIds: (t.benchWorkIds ?? []).filter((x) => x !== id), updatedAt: ts })
   }).data
 }
 

@@ -41,7 +41,9 @@ describe('ゴミ箱の一覧の表記', () => {
     // 2.5: ベンチ作品はホームの棚（タイトルに属さない）。分析は「ベンチ作品 › 作品名」
     expect(trashPlace(entry({ kind: 'benchWork', titleName: '', origin: { titleId: null, index: 0 } }))).toBe('ベンチ作品')
     expect(
-      trashPlace(entry({ kind: 'benchAnalysis', titleName: '', parentLabel: '銀河の果て', origin: { titleId: null, index: -1 } })),
+      trashPlace(
+        entry({ kind: 'benchAnalysis', titleName: '', parentLabel: '銀河の果て', origin: { titleId: null, index: -1 } }),
+      ),
     ).toBe('ベンチ作品 › 銀河の果て')
     expect(trashPlace(entry({ kind: 'idea', titleName: '', origin: { titleId: null, index: 0 } }))).toBe(
       'どのタイトルにも属さない',

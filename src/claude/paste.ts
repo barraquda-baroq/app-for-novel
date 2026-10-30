@@ -191,9 +191,7 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
     let result: BuildResult
     if (call.tool === 'novel_add_bench_analysis') {
       // ベンチ作品の画面ではその作品に書く（棚に無い作品を作る new_work は使わない）
-      const input = opts.benchWorkId
-        ? { ...call.input, work: opts.benchWorkId, new_work: undefined }
-        : call.input
+      const input = opts.benchWorkId ? { ...call.input, work: opts.benchWorkId, new_work: undefined } : call.input
       result = buildToolCall(data, { tool: call.tool, input } as WriteToolCall, ctx)
     } else if (opts.titleId) {
       // 貼り付けた画面のタイトルに書く（共通の批評プロンプトは title_id を使わない）

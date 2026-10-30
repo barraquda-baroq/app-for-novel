@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { AppData, BenchAnalysis, Title } from '../../domain/types'
-import { analysesByWork, analysisPreview, biblioLine, comparingTitles, deleteWorkMessage, runDateLabel, viewpointChips } from './benchLogic'
+import {
+  analysesByWork,
+  analysisPreview,
+  biblioLine,
+  comparingTitles,
+  deleteWorkMessage,
+  runDateLabel,
+  viewpointChips,
+} from './benchLogic'
 
 const analysis = (id: string, workId: string, viewpoint: string, createdAt: number, runDate = '2026-10-30'): BenchAnalysis => ({
   id,
@@ -33,10 +41,12 @@ describe('ベンチ作品の表示の計算', () => {
   })
 
   it('観点のチップは観点ごとの数つき（最初に分析した順）', () => {
-    expect(viewpointChips([analysis('x', 'w', '構成', 1), analysis('y', 'w', '文体', 2), analysis('z', 'w', '構成', 3)])).toEqual([
-      { viewpoint: '構成', count: 2 },
-      { viewpoint: '文体', count: 1 },
-    ])
+    expect(viewpointChips([analysis('x', 'w', '構成', 1), analysis('y', 'w', '文体', 2), analysis('z', 'w', '構成', 3)])).toEqual(
+      [
+        { viewpoint: '構成', count: 2 },
+        { viewpoint: '文体', count: 1 },
+      ],
+    )
   })
 
   it('比べるタイトル（タイトルの並び順）・書誌・削除の確認文・日付・見本', () => {

@@ -114,7 +114,13 @@ describe('ベンチ作品', () => {
     add(ids[0], '文体')
     add(ids[1], '文体')
     add(ids[1], ' 冒頭の掴み ')
-    expect(data.benchAnalyses[a1]).toMatchObject({ workId: ids[0], viewpoint: '構成', runDate: '2026-10-30', source: 'manual', v: 1 })
+    expect(data.benchAnalyses[a1]).toMatchObject({
+      workId: ids[0],
+      viewpoint: '構成',
+      runDate: '2026-10-30',
+      source: 'manual',
+      v: 1,
+    })
     expect(benchViewpointSuggestions(data)).toEqual(['文体', '構成', '冒頭の掴み'])
     expect(errorOf(() => addBenchAnalysis(data, ids[0], { viewpoint: '' }))).toBe('観点を入れてください（構成・文体・人物など）')
     expect(errorOf(() => addBenchAnalysis(data, ids[0], { viewpoint: 'あ'.repeat(41) }))).toBe('観点は40字までにしてください')
@@ -162,7 +168,11 @@ describe('ベンチ作品', () => {
     data = deleteTitle(data, titleB)
     const r = restoreTrashEntry(data, entry.id)
     expect(names(r.data)).toEqual(['作品A', '作品B', '作品C'])
-    expect(Object.values(r.data.benchAnalyses).map((a) => a.viewpoint).sort()).toEqual(['人物', '構成'].sort())
+    expect(
+      Object.values(r.data.benchAnalyses)
+        .map((a) => a.viewpoint)
+        .sort(),
+    ).toEqual(['人物', '構成'].sort())
     expect(r.data.titles[titleA].benchWorkIds).toEqual([ids[0], ids[1]])
     expect(r.result).toMatchObject({ kind: 'benchWork', titleId: null, copied: false })
   })
@@ -206,7 +216,17 @@ describe('修復・バックアップ・同期の設定', () => {
         broken: { id: 'broken', name: 1, extra: 'keep' } as unknown as BenchWork,
       },
       benchAnalyses: {
-        orphan: { id: 'orphan', workId: 'gone', viewpoint: '構成', body: '', runDate: '', source: 'claude', v: 1, createdAt: 1, updatedAt: 1 },
+        orphan: {
+          id: 'orphan',
+          workId: 'gone',
+          viewpoint: '構成',
+          body: '',
+          runDate: '',
+          source: 'claude',
+          v: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
         ok: { id: 'ok', workId: ids[0], viewpoint: '構成' } as never,
       },
       titles: {
@@ -236,7 +256,9 @@ describe('修復・バックアップ・同期の設定', () => {
     expect(back.benchAnalyses).toEqual(data.benchAnalyses)
     expect(back.titles[titleA].benchWorkIds).toEqual([ids[0]])
     for (const v of [1, 2]) {
-      const old = parseBackup(JSON.stringify({ app: 'novel-studio', schemaVersion: v, exportedAt: '', data: { titles: d0.titles } }))
+      const old = parseBackup(
+        JSON.stringify({ app: 'novel-studio', schemaVersion: v, exportedAt: '', data: { titles: d0.titles } }),
+      )
       expect(old.benchWorks).toEqual({})
       expect(old.benchAnalyses).toEqual({})
     }

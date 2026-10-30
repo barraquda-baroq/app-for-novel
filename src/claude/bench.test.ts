@@ -74,7 +74,14 @@ describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
     expect(none.candidates?.[0]).toContain('『銀河の果て』')
     const input = {
       work: '星を継ぐ',
-      new_work: { name: '星を継ぐ', author: '佐藤', publisher: '海出版', year: '1980', genre: 'SF', pdf_place: 'プロジェクト「SF」' },
+      new_work: {
+        name: '星を継ぐ',
+        author: '佐藤',
+        publisher: '海出版',
+        year: '1980',
+        genre: 'SF',
+        pdf_place: 'プロジェクト「SF」',
+      },
       items: [{ viewpoint: '冒頭の掴み', body_markdown: '最初の一文' }],
     }
     const r = buildBenchAnalysis(n.data, input, claude)
@@ -160,7 +167,11 @@ describe('作品批評の比べた作品（bench_works）', () => {
     const n = sample()
     const r = buildCritiqueResult(
       n.data,
-      { title_id: n.titleId, result_markdown: '## 総評', bench_works: [shortId('benchWork', n.workId), '銀河の果て', '無い作品'] },
+      {
+        title_id: n.titleId,
+        result_markdown: '## 総評',
+        bench_works: [shortId('benchWork', n.workId), '銀河の果て', '無い作品'],
+      },
       claude,
     )
     expect(r.records[0].record).toMatchObject({ benchWorkIds: [n.workId] })
@@ -213,7 +224,10 @@ describe('貼り付け（ベンチ作品の画面）', () => {
     expect(p.ok).toBe(false)
     const q = previewPaste(n.data, other, { benchWorkId: n.workId, now: NOW })
     expect(q.ok && q.calls[0].result.error).toContain('タイトルの画面の「結果を貼り付け」で')
-    expect(previewPaste(n.data, answer(), { benchWorkId: 'gone', now: NOW })).toEqual({ ok: false, error: 'ベンチ作品が見つかりません' })
+    expect(previewPaste(n.data, answer(), { benchWorkId: 'gone', now: NOW })).toEqual({
+      ok: false,
+      error: 'ベンチ作品が見つかりません',
+    })
   })
 
   it('作品批評の画面: 結果の bench_works を受け付ける', () => {
@@ -233,7 +247,10 @@ describe('並び・Claude に渡す形', () => {
     let data = n.data
     const at = (viewpoint: string, body: string, runDate: string, createdAt: number) => {
       const r = addBenchAnalysis(data, n.workId, { viewpoint, body, runDate })
-      data = { ...r.data, benchAnalyses: { ...r.data.benchAnalyses, [r.result]: { ...r.data.benchAnalyses[r.result], createdAt } } }
+      data = {
+        ...r.data,
+        benchAnalyses: { ...r.data.benchAnalyses, [r.result]: { ...r.data.benchAnalyses[r.result], createdAt } },
+      }
       return r.result
     }
     at('文体', '文体・古い', '2026-10-01', 1)

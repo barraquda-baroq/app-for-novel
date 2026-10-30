@@ -106,7 +106,9 @@ export function BenchShelf({ headingId }: { headingId: string }) {
           ))}
         </ul>
       )}
-      {adding ? <BenchWorkDialog work={null} onClose={() => setAdding(false)} onAdded={(id) => navigate(paths.bench(id))} /> : null}
+      {adding ? (
+        <BenchWorkDialog work={null} onClose={() => setAdding(false)} onAdded={(id) => navigate(paths.bench(id))} />
+      ) : null}
     </>
   )
 }
