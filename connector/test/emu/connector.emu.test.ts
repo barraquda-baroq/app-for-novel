@@ -4,6 +4,7 @@
 import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import { appModelRef } from '../../../src/sync/appModel'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import * as B from '../../../src/domain/benchOps'
 import * as C from '../../../src/domain/claudeOps'
 import * as E from '../../../src/domain/entityOps'
 import * as S from '../../../src/domain/storyOps'
@@ -278,6 +279,73 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     const gone = await tool(core, 'novel_list_titles')
     expect(gone.auth).toBe(true)
     expect(core.pairingState()).toBe('unpaired')
+  })
+
+  it('ベンチ作品: 端末で作った作品を読み、コネクタが作った分析（と新しい作品）が両方の端末に届く。比べた作品も批評に残る', async () => {
+    const { owner, who, titleId } = await ownerWithNovel(['本文の一話目。'])
+    const other = await makeDevice('other', who)
+    await other.online()
+    let workId = ''
+    await owner.edit((d) => {
+      const r = B.addBenchWork(d, { name: '銀河の果て', author: '山田', pdfPlace: 'プロジェクト「ベンチ」' })
+      workId = r.result
+      return B.addTitleBenchWork(r.data, titleId, workId)
+    })
+    await settle(owner, other)
+    // タイトルが「読むだけ」でも、ベンチ作品の分析は書ける（ベンチ作品はタイトルの設定と関係ない）
+    await owner.edit((d) => C.setTitleClaudeAccess(d, titleId, 'read'))
+    await settle(owner)
+    const { core } = makeConnector()
+    await pair(core, owner)
+    expect((await tool(core, 'novel_list_bench_works')).text).toContain('『銀河の果て』（山田）')
+    const r = await tool(core, 'novel_add_bench_analysis', {
+      work: '銀河の果て',
+      items: [
+        { viewpoint: '構成', body_markdown: '## 構成\n三幕', run_date: '2026-10-30' },
+        { viewpoint: '文体', body_markdown: '## 文体\n短文', run_date: '2026-10-30' },
+      ],
+    })
+    expect(r.text).toContain('追加 2件')
+    const made = await tool(core, 'novel_add_bench_analysis', {
+      work: '星を継ぐ',
+      new_work: { name: '星を継ぐ', author: '高橋' },
+      items: [{ viewpoint: '人物', body_markdown: '主人公の弧', run_date: '2026-10-30' }],
+    })
+    expect(made.text).toContain('を棚に足しました')
+    for (const d of [owner, other]) {
+      await waitFor(
+        async () => {
+          const x = await d.load()
+          return Object.keys(x.benchAnalyses).length === 3 && Object.keys(x.benchWorks).length === 2
+        },
+        `${d.name} にベンチ作品の分析が届く`,
+        30_000,
+      )
+      const local = await d.load()
+      expect(Object.values(local.benchAnalyses).filter((a) => a.workId === workId).map((a) => a.viewpoint).sort()).toEqual(
+        ['文体', '構成'].sort(),
+      )
+      expect(Object.values(local.benchAnalyses).every((a) => a.source === 'claude')).toBe(true)
+      expect(d.notes).toEqual([])
+    }
+    // 「読むだけ」のタイトルには批評を書けない。「読む＋書き込む」にすると、比べた作品と一緒に記録できる
+    await owner.edit((d) => C.setTitleClaudeAccess(d, titleId, 'write'))
+    await settle(owner)
+    await waitFor(async () => {
+      const t = await tool(core, 'novel_get_critique', { title_id: titleId })
+      return t.text.includes('比べるベンチ作品（1作品')
+    }, 'コネクタに比べるベンチ作品が見える', 30_000)
+    const result = await tool(core, 'novel_add_critique_result', {
+      title_id: titleId,
+      result_markdown: '## 比べると\n…',
+      bench_works: ['銀河の果て'],
+    })
+    expect(result.text).toContain('追加 1件')
+    await waitFor(
+      async () => Object.values((await other.load()).critiqueResults).find((x) => x.benchWorkIds?.[0] === workId),
+      '比べた作品つきの批評の結果が届く',
+      30_000,
+    )
   })
 
   it('コネクタが作った文書は、端末の decodeRecord で読め、device は claude-connector', async () => {
