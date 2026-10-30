@@ -53,7 +53,7 @@ export function AnalysisDialog({ workId, analysis, onClose, onAdded }: AnalysisD
 
   return (
     <Modal
-      title={analysis ? '分析を直す' : '分析を足す'}
+      title={analysis ? '分析を直す' : '分析を追加'}
       onClose={onClose}
       wide
       footer={

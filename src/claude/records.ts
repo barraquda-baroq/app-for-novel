@@ -1115,7 +1115,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       }
       if (fits.length > 1)
         return fail(
-          `作品名「${short(name, 30)}」の相対比較の作品が${fits.length}件あります。w:… の短い id で指してください`,
+          `相対比較に作品名「${short(name, 30)}」の作品が${fits.length}件あります。w:… の短い id で指してください`,
           fits.slice(0, 30).map((w) => benchWorkRef(w)),
         )
       nameTwin ??= hits[0]

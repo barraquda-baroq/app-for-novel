@@ -239,7 +239,7 @@ describe('相対比較の分析（novel_add_bench_analysis）', () => {
     expect((more.records[0].record as BenchAnalysis).workId).toBe(analysis.workId)
     const bare = buildBenchAnalysis(both, { work: '海', items }, claude)
     expect(bare.ok).toBe(false)
-    expect(bare.error).toContain('作品名「海」の相対比較の作品が2件あります')
+    expect(bare.error).toContain('相対比較に作品名「海」の作品が2件あります')
     expect(bare.candidates).toHaveLength(2)
 
     // 著者が同じ・new_work の著者が空・棚の作品の著者が空なら、棚の作品に足す
@@ -431,7 +431,7 @@ describe('並び・Claude に渡す形', () => {
     expect(resolveBenchWork(n.data, 'なし').ok).toBe(false)
   })
 
-  it('依頼文: 分析の依頼（観点・コードブロック）、手動の作品批評に分析を足す、コネクタへの批評の依頼', () => {
+  it('依頼文: 分析の依頼（観点・コードブロック）、手動の作品批評に分析を追加、コネクタへの批評の依頼', () => {
     const n = analysed()
     const work = n.data.benchWorks[n.workId]
     const p = benchAnalysisPrompt(work, ['構成', '人物'], '2026-10-30')
@@ -448,7 +448,7 @@ describe('並び・Claude に渡す形', () => {
     if (!parts.ok) return
     const all = parts.parts.join('\n')
     expect(all).toContain('## 相対比較する作品')
-    expect(all).toContain('作者が相対比較する既存の作品の分析を、依頼のすぐ後に送ります')
+    expect(all).toContain('相対比較する作品（作者が比べたい既存の作品）の分析を、依頼のすぐ後に送ります')
     expect(all).toContain('=== 相対比較する作品の分析（1作品）===')
     expect(all).not.toContain('ベンチ作品')
     expect(all).toContain('文体・新しい')

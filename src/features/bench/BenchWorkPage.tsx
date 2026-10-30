@@ -87,7 +87,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
 
   const remove = async () => {
     const ok = await confirmDialog({
-      title: `「${name}」を相対比較から削除しますか？`,
+      title: `「${name}」を削除しますか？`,
       message: deleteWorkMessage(analyses.length, comparing.length),
       danger: true,
       confirmLabel: '削除',
@@ -194,7 +194,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
               data-testid="bench-add-analysis"
             >
               <PlusIcon />
-              分析を足す
+              分析を追加
             </button>
             <button type="button" className="btn btn-sm" onClick={() => setManual(true)} data-testid="bench-manual">
               <AskIcon />

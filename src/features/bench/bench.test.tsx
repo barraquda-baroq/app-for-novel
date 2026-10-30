@@ -117,7 +117,7 @@ describe('ホームの棚「相対比較」', () => {
     // 削除（確かめてからゴミ箱へ。相対比較する作品にしているタイトルでは、ゴミ箱にある間は出ない）
     await user.click(within(screen.getAllByTestId('bench-card')[1]).getByTestId('bench-delete'))
     const dialog = await screen.findByRole('dialog')
-    expect(dialog.textContent).toContain('「銀河の果て」を相対比較から削除しますか？')
+    expect(dialog.textContent).toContain('「銀河の果て」を削除しますか？')
     expect(dialog.textContent).toContain('この作品を相対比較から削除し、分析（3件）もいっしょにゴミ箱に移します。')
     expect(dialog.textContent).toContain(
       '相対比較する作品にしているタイトル（1件）では、ゴミ箱にある間は相対比較する作品に出ません',
@@ -179,7 +179,7 @@ describe('作品の画面', () => {
     expect(screen.getAllByTestId('bench-analysis-body')).toHaveLength(3)
   })
 
-  it('分析を足す（観点の候補）・直す・削除（ゴミ箱へ）', async () => {
+  it('分析を追加（観点の候補）・直す・削除（ゴミ箱へ）', async () => {
     const user = userEvent.setup()
     const { workId } = seedWork()
     renderPage(workId)
@@ -218,7 +218,7 @@ describe('作品の画面', () => {
     expect(listTrash(getData().trashEntries)[0]).toMatchObject({ kind: 'benchAnalysis', parentLabel: '銀河の果て' })
   })
 
-  it('Claude に頼む（手動）: 観点を選んで依頼文をコピーし、貼り付けで分析を足す（2回目は増えない）', async () => {
+  it('Claude に頼む（手動）: 観点を選んで依頼文をコピーし、貼り付けで分析を追加（2回目は増えない）', async () => {
     const user = userEvent.setup()
     const { workId } = seedWork()
     renderPage(workId)
@@ -273,7 +273,7 @@ describe('作品の画面', () => {
     const router = renderPage(workId)
     await user.click(screen.getByTestId('bench-work-delete'))
     const dialog = await screen.findByRole('dialog')
-    expect(dialog.textContent).toContain('「銀河の果て」を相対比較から削除しますか？')
+    expect(dialog.textContent).toContain('「銀河の果て」を削除しますか？')
     expect(dialog.textContent).toContain('PDF そのものは claude.ai のプロジェクトにあるので、消えません。')
     await user.click(within(dialog).getByRole('button', { name: '削除' }))
     await waitFor(() => expect(router.state.location.search).toBe('?view=bench'))

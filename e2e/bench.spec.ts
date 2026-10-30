@@ -1,4 +1,4 @@
-// 相対比較（2.5。内部名は bench）の E2E テスト: ホームの棚（追加・並べ替え・削除して戻す）、作品の画面（分析を足す・開閉・
+// 相対比較（2.5。内部名は bench）の E2E テスト: ホームの棚（追加・並べ替え・削除して戻す）、作品の画面（分析を追加・開閉・
 // 全文・直す）、手動の依頼文のコピーと結果の貼り付け（2回目は増えない）、作品批評タブの「相対比較する作品」と手動の依頼の分析、
 // 360px の画面、ディープダーク。
 import { expect, test, type Page } from '@playwright/test'
@@ -92,7 +92,7 @@ test.describe('相対比較', () => {
 
     // 削除（分析ごと。相対比較する作品にしているタイトルは書き換えず、ゴミ箱にある間は出ない）→ ゴミ箱 → 戻す
     await shelf.getByTestId('bench-card').nth(0).getByTestId('bench-delete').click()
-    await expect(dialog(page)).toContainText('「銀河の果て」を相対比較から削除しますか？')
+    await expect(dialog(page)).toContainText('「銀河の果て」を削除しますか？')
     await expect(dialog(page)).toContainText('この作品を相対比較から削除し、分析（2件）もいっしょにゴミ箱に移します。')
     await expect(dialog(page)).toContainText(
       '相対比較する作品にしているタイトル（1件）では、ゴミ箱にある間は相対比較する作品に出ません',
@@ -115,7 +115,7 @@ test.describe('相対比較', () => {
     await noHorizontalScroll(page)
   })
 
-  test('作品の画面: 観点ごとの分析を開閉し、長い分析は「全文を表示」。分析を足す・直す・削除する', async ({ page }) => {
+  test('作品の画面: 観点ごとの分析を開閉し、長い分析は「全文を表示」。分析を追加・直す・削除する', async ({ page }) => {
     await openApp(page)
     const { workId } = await seedShelf(page)
     await openApp(page, `/bench/${workId}`)

@@ -1,4 +1,4 @@
-// 相対比較（2.5。内部名は bench）のツール: 一覧・分析を読む・分析を足す、作品批評の相対比較する作品・比べた作品（bench_works）。
+// 相対比較（2.5。内部名は bench）のツール: 一覧・分析を読む・分析を追加、作品批評の相対比較する作品・比べた作品（bench_works）。
 // 相対比較の作品はタイトルの「Claude に見せる」と関係なく見せ、書き込みは「書き込みを許可」の時だけ。
 import { describe, expect, it } from 'vitest'
 import { addBenchAnalysis, addBenchWork, addTitleBenchWork, deleteBenchWork } from '../../../src/domain/benchOps'

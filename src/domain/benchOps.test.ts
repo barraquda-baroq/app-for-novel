@@ -101,7 +101,7 @@ describe('相対比較の作品', () => {
     expect(names(moveBenchWorkStep(next, ids[2], -1))).toEqual(['作品C', '作品B', '作品A'])
   })
 
-  it('分析を足す・直す・削除（ゴミ箱へ。戻すと戻る）。観点の候補はすべての作品から、多い順', () => {
+  it('分析を追加・直す・削除（ゴミ箱へ。戻すと戻る）。観点の候補はすべての作品から、多い順', () => {
     const { data: d0, ids, tick } = shelf()
     let data = d0
     const add = (workId: string, viewpoint: string, body = '本文') => {

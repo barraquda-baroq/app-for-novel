@@ -22,7 +22,7 @@ export function resolveBenchWork(data: Pick<AppData, 'benchWorks'>, ref: string)
     ? {
         ok: false,
         reason: 'ambiguous',
-        message: `作品名「${ref}」の相対比較の作品が${hits.length}件あります。w:… の短い id で指してください`,
+        message: `相対比較に作品名「${ref}」の作品が${hits.length}件あります。w:… の短い id で指してください`,
         candidates,
       }
     : { ok: false, reason: 'not_found', message: `相対比較の作品 '${ref}' が見つかりません`, candidates }

@@ -147,7 +147,7 @@ const BenchCard = memo(function BenchCard({
 
   const remove = async () => {
     const ok = await confirmDialog({
-      title: `「${name}」を相対比較から削除しますか？`,
+      title: `「${name}」を削除しますか？`,
       message: deleteWorkMessage(analyses.length, comparingCount),
       danger: true,
       confirmLabel: '削除',

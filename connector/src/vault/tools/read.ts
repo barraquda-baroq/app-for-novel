@@ -754,7 +754,7 @@ export function listBenchWorks(ctx: ReadContext): ToolResult {
   const lines: string[] = [`=== 相対比較（${works.length}作品。作者が比べるために読む既存の作品）===`]
   if (!works.length)
     lines.push(
-      '（まだありません。作品の PDF を読んで novel_add_bench_analysis の new_work を付けて分析を足すと、作品も相対比較に追加されます）',
+      '（まだありません。作品の PDF を読んで novel_add_bench_analysis の new_work を付けて分析を追加すると、作品も相対比較に追加されます）',
     )
   for (const w of works) lines.push(benchWorkLine(ctx.view, w))
   if (works.length) lines.push('分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。')
