@@ -684,17 +684,34 @@ function placeInOrder<T extends OrderedTable>(
 }
 
 /**
- * ベンチ作品を、削除した時に比べる作品にしていたタイトル（origin.titleIds）の比べる作品へ戻す
- * （まだあるタイトルだけ。もう入っていれば何もしない）
+ * ベンチ作品を、削除した時に比べる作品にしていたタイトル（origin.titleIds）の比べる作品へ戻す。作品の削除ではタイトルを
+ * 書き換えないので、ふつうはタイトルに id が残っていて何も書かない。作品が無い間に表示用の内容（無い作品を外した印）から
+ * タイトルを保存・削除した時だけ id が抜けているので、末尾に足し直す。タイトルがゴミ箱にあれば、ゴミ箱の中のタイトルに足す
+ * （作品 → タイトルの順に削除して、作品 → タイトルの順に戻しても、比べる作品に戻るように）
  */
 function relinkBenchWork(tx: Tx, workId: ID, origin: TrashOrigin): void {
+  const titleIds = Array.isArray(origin.titleIds) ? origin.titleIds : []
+  if (!titleIds.length) return
   const ts = now()
-  for (const titleId of Array.isArray(origin.titleIds) ? origin.titleIds : []) {
+  /** 作品の id を足した並び（もう入っていれば null） */
+  const linked = (raw: unknown): ID[] | null => {
+    const ids = Array.isArray(raw) ? (raw as ID[]) : []
+    return ids.includes(workId) ? null : [...ids, workId]
+  }
+  for (const titleId of titleIds) {
     const t = tx.get('titles', titleId)
-    if (!t) continue
-    const ids = Array.isArray(t.benchWorkIds) ? t.benchWorkIds : []
-    if (ids.includes(workId)) continue
-    tx.put('titles', { ...t, benchWorkIds: [...ids, workId], updatedAt: ts })
+    if (t) {
+      const ids = linked(t.benchWorkIds)
+      if (ids) tx.put('titles', { ...t, benchWorkIds: ids, updatedAt: ts })
+      continue
+    }
+    for (const r of tx.all('trashRecords')) {
+      if (r.table !== 'titles') continue
+      const rec = r.record as Title
+      if (!rec || rec.id !== titleId) continue
+      const ids = linked(rec.benchWorkIds)
+      if (ids) tx.put('trashRecords', { ...r, record: { ...rec, benchWorkIds: ids }, updatedAt: ts })
+    }
   }
 }
 
@@ -987,7 +1004,7 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
       case 'critiqueResult':
         titleId = (restored as { titleId: ID }).titleId
         break
-      // ベンチ作品: 棚の元の位置へ（分析もいっしょに戻る）、比べる作品にしていたタイトルにも戻す
+      // ベンチ作品: 棚の元の位置へ（分析もいっしょに戻る）。比べる作品にしていたタイトルから id が抜けていれば足し直す
       case 'benchWork':
         placeInOrder(tx, 'benchWorks', mainId, () => true, origin)
         relinkBenchWork(tx, mainId, origin)

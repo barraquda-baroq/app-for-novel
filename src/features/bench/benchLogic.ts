@@ -85,11 +85,13 @@ export function comparingTitles(data: Pick<AppData, 'titles'>): Map<ID, Comparin
   return new Map([...out].map(([id, names]) => [id, { label: names.map((n) => `『${n}』`).join(''), count: names.length }]))
 }
 
-/** 作品の削除の確認文（分析の数と、比べる作品にしているタイトルから外れることを書く） */
+/** 作品の削除の確認文（分析の数と、比べる作品にしているタイトルでは、ゴミ箱にある間は出ないことを書く） */
 export function deleteWorkMessage(analyses: number, comparing: number): string {
   const lines = [trashNotice(analyses > 0 ? `この作品の分析（${analyses}件）もいっしょに` : 'この作品を')]
   if (comparing > 0)
-    lines.push(`比べる作品にしているタイトル（${comparing}件）からも外れます（ゴミ箱から戻すと、また比べる作品に戻ります）。`)
+    lines.push(
+      `比べる作品にしているタイトル（${comparing}件）では、ゴミ箱にある間は比べる作品に出ません（ゴミ箱から戻すと、また出ます）。`,
+    )
   lines.push('PDF そのものは claude.ai のプロジェクトにあるので、消えません。')
   return lines.join('\n\n')
 }

@@ -75,13 +75,14 @@ test.describe('ベンチ作品', () => {
     await page.getByTestId('bench-move-submit').click()
     await expect.poll(() => cardNames(page)).toEqual(['銀河の果て', '海の記憶'])
 
-    // 削除（分析ごと・比べる作品からも外れる）→ ゴミ箱 → 戻す
+    // 削除（分析ごと。比べる作品にしているタイトルは書き換えず、ゴミ箱にある間は出ない）→ ゴミ箱 → 戻す
     await shelf.getByTestId('bench-card').nth(0).getByTestId('bench-delete').click()
     await expect(dialog(page)).toContainText('この作品の分析（2件）もいっしょに')
-    await expect(dialog(page)).toContainText('比べる作品にしているタイトル（1件）からも外れます')
+    await expect(dialog(page)).toContainText('比べる作品にしているタイトル（1件）では、ゴミ箱にある間は比べる作品に出ません')
     await dialog(page).getByRole('button', { name: '削除' }).click()
     await expect.poll(() => cardNames(page)).toEqual(['海の記憶'])
-    expect(await page.evaluate((t) => window.__ns.getData().titles[t].benchWorkIds, titleId)).toEqual([])
+    // タイトルは書き換えない（id は残り、作品が無い間は表示から外れる）
+    expect(await page.evaluate((t) => window.__ns.getData().titles[t].benchWorkIds, titleId)).toEqual([workId])
     await openApp(page, '/trash')
     const row = page.getByTestId('trash-row').first()
     await expect(row.getByTestId('trash-kind')).toHaveText('ベンチ作品')

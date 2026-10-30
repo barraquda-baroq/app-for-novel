@@ -66,6 +66,9 @@ describe('ベンチ作品の表示の計算', () => {
     expect(c.get('w2')).toEqual({ label: '『星の庭』', count: 1 })
     expect(biblioLine({ author: '山田', publisher: '', year: '2019', genre: undefined })).toBe('山田・2019')
     expect(deleteWorkMessage(3, 2)).toContain('この作品の分析（3件）もいっしょに')
+    expect(deleteWorkMessage(3, 2)).toContain(
+      '比べる作品にしているタイトル（2件）では、ゴミ箱にある間は比べる作品に出ません（ゴミ箱から戻すと、また出ます）。',
+    )
     expect(deleteWorkMessage(0, 0)).not.toContain('比べる作品')
     expect(runDateLabel('2026-10-30')).toBe('2026/10/30')
     expect(runDateLabel('')).toBe('日付なし')

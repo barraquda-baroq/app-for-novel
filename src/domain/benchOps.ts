@@ -199,8 +199,11 @@ function analysesOf(tx: Tx, workId: ID): BenchAnalysis[] {
 }
 
 /**
- * ベンチ作品を、その分析といっしょにゴミ箱の1件へ移す。比べる作品にしていたタイトルからは外し、そのタイトルを控える
- * （戻すと、まだあるタイトルの比べる作品に戻る）。作品批評の結果の「比べた作品」の記録はそのまま（戻せば、また名前が出る）
+ * ベンチ作品を、その分析といっしょにゴミ箱の1件へ移す。比べる作品にしていたタイトルは書き換えない（タイトルには作品の id が
+ * 残り、作品が無い間は表示から外れて（修復・benchWorksOfTitle）、戻すとまた比べる作品に出る。ほかの端末で同じタイトルが削除されても、
+ * 触っていないタイトルの「削除と編集が重なった」控えができないように）。比べる作品にしていたタイトルは控えておき（origin.titleIds）、
+ * 戻す時に、その後で作品の id が抜けたタイトル（ゴミ箱の中のものも）に足し直す（trash.ts の relinkBenchWork）。
+ * 作品批評の結果の「比べた作品」の記録はそのまま（戻せば、また名前が出る）
  */
 export function deleteBenchWork(data: AppData, id: ID): AppData {
   return transact(data, (tx) => {
@@ -221,9 +224,6 @@ export function deleteBenchWork(data: AppData, id: ID): AppData {
         ...analysesOf(tx, id).map((record) => ({ table: 'benchAnalyses' as const, record })),
       ],
     })
-    const ts = now()
-    for (const t of comparing)
-      tx.put('titles', { ...t, benchWorkIds: (t.benchWorkIds ?? []).filter((x) => x !== id), updatedAt: ts })
   }).data
 }
 

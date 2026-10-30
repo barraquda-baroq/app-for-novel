@@ -110,11 +110,11 @@ describe('ホームの棚', () => {
     await user.click(within(screen.getAllByTestId('bench-card')[1]).getByTestId('bench-up'))
     expect(cards()).toEqual(['海の記憶', '銀河の果て'])
 
-    // 削除（確かめてからゴミ箱へ。比べる作品にしているタイトルからも外れる）
+    // 削除（確かめてからゴミ箱へ。比べる作品にしているタイトルでは、ゴミ箱にある間は出ない）
     await user.click(within(screen.getAllByTestId('bench-card')[1]).getByTestId('bench-delete'))
     const dialog = await screen.findByRole('dialog')
     expect(dialog.textContent).toContain('この作品の分析（3件）もいっしょに')
-    expect(dialog.textContent).toContain('比べる作品にしているタイトル（1件）からも外れます')
+    expect(dialog.textContent).toContain('比べる作品にしているタイトル（1件）では、ゴミ箱にある間は比べる作品に出ません')
     await user.click(within(dialog).getByRole('button', { name: '削除' }))
     await waitFor(() => expect(cards()).toEqual(['海の記憶']))
     expect(getData().benchWorks[workId]).toBeUndefined()

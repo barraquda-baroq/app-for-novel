@@ -1408,7 +1408,9 @@ describe('ベンチ作品の同期（エミュレーター）', () => {
     const data = await a.load()
     expect(data.benchWorks[workA]).toBeUndefined()
     expect(data.benchAnalyses[analysisId]).toBeUndefined()
-    expect(data.titles[titleId].benchWorkIds).toEqual([workB])
+    // タイトルは書き換えない（id は残り、作品が無い間は比べる作品に出ない）
+    expect([...(data.titles[titleId].benchWorkIds ?? [])].sort()).toEqual([workA, workB].sort())
+    expect(B.benchWorksOfTitle(data, titleId).map((w) => w.id)).toEqual([workB])
     const kept = Object.values(data.trashRecords).find(
       (r) => r.table === 'benchAnalyses' && (r.record as { body: string }).body.includes('B で足した'),
     )
@@ -1421,6 +1423,53 @@ describe('ベンチ作品の同期（エミュレーター）', () => {
     const back = await b.load()
     expect(back.benchWorks[workA].name).toBe('銀河の果て')
     expect([...(back.titles[titleId].benchWorkIds ?? [])].sort()).toEqual([workA, workB].sort())
+  })
+
+  it('作品の削除はタイトルを書き換えない: 比べていたタイトルが別の端末で削除されても「削除と編集が重なった」控えは無く、両方戻せば比べる作品に戻る', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    let workId = ''
+    await a.edit((d) => {
+      const r = withTitle(d, '作品')
+      titleId = r.titleId
+      const w = B.addBenchWork(r.data, { name: '銀河の果て', author: '山田' })
+      workId = w.result
+      return B.addTitleBenchWork(w.data, titleId, workId)
+    })
+    await settle(a, b)
+    // A がオフラインの間に、B はタイトルを削除し、A は比べていた作品を削除する
+    a.offline()
+    await b.edit((d) => E.deleteTitle(d, titleId))
+    await settle(b)
+    await a.edit((d) => B.deleteBenchWork(d, workId))
+    await a.online()
+    await settle(a, b)
+    expect(a.notes).toEqual([])
+    expect(b.notes).toEqual([])
+    for (const dev of [a, b]) {
+      const data = await dev.load()
+      expect(data.titles[titleId]).toBeUndefined()
+      expect(Object.values(data.trashEntries).filter((e) => e.reason === 'conflict')).toEqual([])
+      expect(
+        Object.values(data.trashEntries)
+          .map((e) => e.kind)
+          .sort(),
+      ).toEqual(['benchWork', 'title'])
+    }
+    // A で作品 → タイトルの順に戻すと、B でも比べる作品に戻る
+    const entryOf = async (kind: string) => Object.values((await a.load()).trashEntries).find((e) => e.kind === kind)!.id
+    const workEntry = await entryOf('benchWork')
+    await a.edit((d) => T.restoreTrashEntry(d, workEntry).data)
+    const titleEntry = await entryOf('title')
+    await a.edit((d) => T.restoreTrashEntry(d, titleEntry).data)
+    await settle(a, b)
+    await waitFor(async () => (await b.load()).titles[titleId], 'タイトルが戻る')
+    const back = repairData(await b.load()).data
+    expect(B.benchWorksOfTitle(back, titleId).map((w) => w.id)).toEqual([workId])
   })
 
   it('コネクタが作った作品と分析（device: claude-connector）が、送信待ちのある端末に届く', async () => {

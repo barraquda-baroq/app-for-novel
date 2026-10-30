@@ -140,7 +140,7 @@ describe('ベンチ作品', () => {
     expect(back.result.titleId).toBeNull()
   })
 
-  it('作品の削除は分析といっしょに1件。比べる作品にしていたタイトルからも外れ、戻すと戻る（消えたタイトルには戻さない）', () => {
+  it('作品の削除は分析といっしょに1件。タイトルは書き換えず（無い間は比べる作品に出ない）、戻すとまた出る', () => {
     const { data: d0, ids, titleA, titleB, tick } = shelf()
     let data = d0
     tick()
@@ -154,17 +154,22 @@ describe('ベンチ作品', () => {
     expect(benchWorksOfTitle(data, titleA).map((w) => w.name)).toEqual(['作品B', '作品A'])
     expect(titlesComparing(data, ids[1]).map((t) => t.name)).toEqual(['星の庭', '風の街'])
 
+    const before = data
     data = deleteBenchWork(data, ids[1])
     expect(data.benchWorks[ids[1]]).toBeUndefined()
     expect(Object.values(data.benchAnalyses)).toHaveLength(0)
-    expect(data.titles[titleA].benchWorkIds).toEqual([ids[0]])
-    expect(data.titles[titleB].benchWorkIds).toEqual([])
+    // タイトルは書き換えない（ほかの端末でタイトルが削除されても「削除と編集が重なった」控えができないように）
+    expect(data.titles).toBe(before.titles)
+    // 作品が無い間は、比べる作品に出ない（表示用の修復でも外れる）
+    expect(benchWorksOfTitle(data, titleA).map((w) => w.name)).toEqual(['作品A'])
+    expect(benchWorksOfTitle(data, titleB)).toEqual([])
+    expect(repairData(data).data.titles[titleA].benchWorkIds).toEqual([ids[0]])
     const entry = listTrash(data.trashEntries)[0]
     expect(entry).toMatchObject({ kind: 'benchWork', label: '作品B', titleName: '' })
     expect(entry.origin.titleIds).toEqual([titleA, titleB])
     expect(trashContents(data, entry).map((r) => r.table)).toEqual(['benchWorks', 'benchAnalyses', 'benchAnalyses'])
 
-    // 風の街を削除してから戻す: 星の庭にだけ戻る。棚の元の位置へ
+    // 風の街を削除してから戻す: 棚の元の位置へ。タイトルには id が残っているので書き換えない
     data = deleteTitle(data, titleB)
     const r = restoreTrashEntry(data, entry.id)
     expect(names(r.data)).toEqual(['作品A', '作品B', '作品C'])
@@ -173,8 +178,41 @@ describe('ベンチ作品', () => {
         .map((a) => a.viewpoint)
         .sort(),
     ).toEqual(['人物', '構成'].sort())
-    expect(r.data.titles[titleA].benchWorkIds).toEqual([ids[0], ids[1]])
+    expect(r.data.titles).toBe(data.titles)
+    expect(benchWorksOfTitle(r.data, titleA).map((w) => w.name)).toEqual(['作品B', '作品A'])
     expect(r.result).toMatchObject({ kind: 'benchWork', titleId: null, copied: false })
+    // 風の街も戻すと、比べる作品に作品B
+    const t = listTrash(r.data.trashEntries).find((e) => e.kind === 'title')!
+    expect(benchWorksOfTitle(restoreTrashEntry(r.data, t.id).data, titleB).map((w) => w.name)).toEqual(['作品B'])
+  })
+
+  it('作品 → タイトルの順に削除しても、どちらの順に戻しても比べる作品に戻る（間に読み込み直して、表示用の内容から削除しても）', () => {
+    const { data: d0, ids, titleA, tick } = shelf()
+    const work = ids[1]
+    const seeded = addTitleBenchWork(d0, titleA, work)
+    const entryOf = (data: AppData, kind: 'benchWork' | 'title') => listTrash(data.trashEntries).find((e) => e.kind === kind)!.id
+    const comparing = (data: AppData) => benchWorksOfTitle(data, titleA).map((w) => w.id)
+    // reload: 作品を削除した後に読み込み直す（画面の内容は修復を通したもので、無い作品の id は外れている）
+    for (const reload of [false, true]) {
+      tick()
+      let data = deleteBenchWork(seeded, work)
+      if (reload) data = repairData(data).data
+      tick()
+      data = deleteTitle(data, titleA)
+      // 作品 → タイトル
+      const workFirst = restoreTrashEntry(data, entryOf(data, 'benchWork')).data
+      expect(comparing(restoreTrashEntry(workFirst, entryOf(workFirst, 'title')).data)).toEqual([work])
+      // タイトル → 作品
+      const titleFirst = restoreTrashEntry(data, entryOf(data, 'title')).data
+      expect(comparing(titleFirst)).toEqual([])
+      expect(comparing(restoreTrashEntry(titleFirst, entryOf(titleFirst, 'benchWork')).data)).toEqual([work])
+    }
+    // 読み込み直した画面の内容（タイトルから id が抜けている）で作品を戻すと、タイトルに足し直す
+    tick()
+    const gone = repairData(deleteBenchWork(seeded, work)).data
+    expect(gone.titles[titleA].benchWorkIds).toEqual([])
+    const back = restoreTrashEntry(gone, entryOf(gone, 'benchWork')).data
+    expect(back.titles[titleA].benchWorkIds).toEqual([work])
   })
 
   it('作品が無い分析はゴミ箱から戻せない（先に作品を戻す）', () => {
