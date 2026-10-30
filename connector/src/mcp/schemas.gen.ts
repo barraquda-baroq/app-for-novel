@@ -899,7 +899,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "description": "分析する作品（w:… か作品名）。棚にまだ無い作品は new_work も付ける"
       },
       "new_work": {
-        "description": "作品が棚に無い時だけ作る作品（付けた時だけ作る。同じ作品名の作品があればそれに足す）",
+        "description": "作品が棚に無い時だけ作る作品（付けた時だけ作る。同じ作品名・著者の作品があればそれに足す（著者が違えば別の作品として作る））",
         "type": "object",
         "properties": {
           "name": {

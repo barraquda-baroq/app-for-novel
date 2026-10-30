@@ -186,7 +186,7 @@ Novel Studio のホームの「ベンチ作品」に残します。後で作品�
 | `novel_add_strategy_note` | 戦略メモを追加 | 戦略メモ（コンテストの候補つき） |
 | `novel_save_critique_prompt` | 批評プロンプトを保存 | 批評プロンプト（タイトル・共通） |
 | `novel_add_critique_result` | 作品批評の結果を記録 | 批評の結果（比べた作品 `bench_works` も残せる） |
-| `novel_add_bench_analysis` | ベンチ作品の分析を追加 | 観点ごとの分析（1回20件まで。棚に無い作品は `new_work` を付けた時だけ作る） |
+| `novel_add_bench_analysis` | ベンチ作品の分析を追加 | 観点ごとの分析（1回20件まで。棚に無い作品は `new_work` を付けた時だけ作る。作品名が同じでも著者が違えば別の作品） |
 
 ---
 

@@ -1074,17 +1074,52 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
   if (!ref && !newWork) return fail('work がありません（ベンチ作品の w:… か作品名。棚に無い作品は new_work も付ける）')
   const notes: string[] = []
   const records: NewRecord[] = []
-  // 作品: work → new_work の作品名の順に探し、無ければ new_work がある時だけ作る
+  // 作品: work → new_work の作品名の順に探し、無ければ new_work がある時だけ作る。
+  // 作品名で見つけた作品は、new_work の著者と作品の著者が両方あって違えば、同じ作品名の別の作品とみなす（短い作品名はよく重なる）。
+  // w:… の短い id・id で指した作品には、著者が違っても足す（違うことを notes で知らせる）
+  const works = sortedBenchWorks(data)
+  const wantAuthor = newWork ? refKey(newWork.author ?? '') : ''
+  const otherAuthor = (w: BenchWork) => Boolean(wantAuthor && refKey(w.author) && refKey(w.author) !== wantAuthor)
   let work: BenchWork | null = null
   let created: BenchWork | null = null
-  const found = ref ? resolveBenchWork(data, ref) : null
-  if (found?.ok) work = found.value
-  else if (found && found.reason === 'ambiguous') return fail(found.message, found.candidates)
-  else if (newWork) {
-    const byName = resolveBenchWork(data, newWork.name)
-    if (byName.ok) work = byName.value
-    else if (byName.reason === 'ambiguous') return fail(byName.message, byName.candidates)
-    else {
+  /** 作品名は同じで著者の違う作品（別の作品として作った時に知らせる） */
+  let nameTwin: BenchWork | null = null
+  const byIdRef = ref ? works.some((w) => matchesId('benchWork', ref, w.id)) : false
+  if (byIdRef || !newWork) {
+    const found = ref ? resolveBenchWork(data, ref) : null
+    if (found?.ok) {
+      work = found.value
+      if (otherAuthor(work))
+        notes.push(
+          `new_work の著者（${short(wantAuthor, 20)}）は、指した作品 ${benchWorkRef(work)} と違います（指した作品に足しました）`,
+        )
+    } else if (found?.reason === 'ambiguous') return fail(found.message, found.candidates)
+    else
+      return fail(
+        `${found?.message ?? 'ベンチ作品が見つかりません'}。棚に無い作品は new_work（name・author など）を付けると、作品も作ります`,
+        found?.candidates,
+      )
+  } else {
+    // 作品名で探す（work → new_work.name。同じ書き方は1回だけ）
+    const names = [ref, newWork.name].filter((n, i, all) => n && all.findIndex((m) => refKey(m) === refKey(n)) === i)
+    for (const name of names) {
+      const hits = works.filter((w) => refKey(w.name) === refKey(name))
+      if (!hits.length) continue
+      const fits = hits.filter((w) => !otherAuthor(w))
+      // 同じ作品名がいくつかあっても、著者まで同じものが1つならそれ（Claude が別の作品として作った後の呼び出しなど）
+      const exact = fits.length > 1 && wantAuthor ? fits.filter((w) => refKey(w.author) === wantAuthor) : fits
+      if (exact.length === 1) {
+        work = exact[0]
+        break
+      }
+      if (fits.length > 1)
+        return fail(
+          `作品名「${short(name, 30)}」のベンチ作品が${fits.length}件あります。w:… の短い id で指してください`,
+          fits.slice(0, 30).map((w) => benchWorkRef(w)),
+        )
+      nameTwin ??= hits[0]
+    }
+    if (!work) {
       const id = benchWorkId(newWork.name, newWork.author ?? '')
       const same = data.benchWorks[id]
       if (same) work = same
@@ -1107,7 +1142,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
           ...(genre ? { genre } : {}),
           pdfPlace: (newWork.pdf_place ?? '').trim(),
           note: '',
-          order: sortedBenchWorks(data).reduce((m, w) => Math.max(m, w.order), -1) + 1,
+          order: works.reduce((m, w) => Math.max(m, w.order), -1) + 1,
           createdAt: ctx.now,
           updatedAt: ctx.now,
           source: ctx.source,
@@ -1115,11 +1150,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
         work = created
       }
     }
-  } else
-    return fail(
-      `${found?.message ?? 'ベンチ作品が見つかりません'}。棚に無い作品は new_work（name・author など）を付けると、作品も作ります`,
-      found?.candidates,
-    )
+  }
 
   const model = modelOf(input.model)
   const seen = new Set<string>()
@@ -1173,6 +1204,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
   if (created && records.length) {
     records.unshift({ table: 'benchWorks', record: created })
     notes.push(`ベンチ作品 ${benchWorkRef(created)} を棚に足しました`)
+    if (nameTwin) notes.push(`著者の違う同名の作品 ${benchWorkRef(nameTwin)} があるため、別の作品として足しました`)
   }
   return { ok: true, records, items, notes }
 }

@@ -214,6 +214,55 @@ describe('ベンチ作品の分析（novel_add_bench_analysis）', () => {
     expect(again.error).toContain('以前に削除されています')
   })
 
+  it('new_work の著者が作品名で見つけた作品の著者と違えば、同じ作品名の別の作品として作る（短い id で指した時はその作品に足す）', () => {
+    const n = sample()
+    const sato = addBenchWork(n.data, { name: '海', author: '佐藤' })
+    const items = [{ viewpoint: '構成', body_markdown: '田中の『海』の構成', run_date: '2026-10-30' }]
+    const tanaka = { work: '海', new_work: { name: '海', author: '田中' }, items }
+    const r = buildBenchAnalysis(sato.data, tanaka, claude)
+    expect(r.ok).toBe(true)
+    expect(r.records.map((x) => x.table)).toEqual(['benchWorks', 'benchAnalyses'])
+    expect(r.records[0].record).toMatchObject({ name: '海', author: '田中' })
+    const analysis = r.records[1].record as BenchAnalysis
+    expect(analysis.workId).toBe(r.records[0].record.id)
+    expect(analysis.workId).not.toBe(sato.result)
+    expect(r.notes.join('\n')).toContain(
+      `著者の違う同名の作品 ${shortId('benchWork', sato.result)}『海』（佐藤） があるため、別の作品として足しました`,
+    )
+
+    // 作った後: 同じ作品名・著者で呼べばその作品に足す。著者を付けずに作品名だけなら、短い id で指してもらう
+    const both = add(sato.data, r.records)
+    const more = buildBenchAnalysis(both, { ...tanaka, items: [{ viewpoint: '文体', body_markdown: '短文' }] }, claude)
+    expect(more.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+    expect((more.records[0].record as BenchAnalysis).workId).toBe(analysis.workId)
+    const bare = buildBenchAnalysis(both, { work: '海', items }, claude)
+    expect(bare.ok).toBe(false)
+    expect(bare.error).toContain('作品名「海」のベンチ作品が2件あります')
+    expect(bare.candidates).toHaveLength(2)
+
+    // 著者が同じ・new_work の著者が空・棚の作品の著者が空なら、棚の作品に足す
+    for (const author of ['佐藤', ' 佐藤 ', '']) {
+      const same = buildBenchAnalysis(sato.data, { work: '海', new_work: { name: '海', author }, items }, claude)
+      expect(same.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+      expect((same.records[0].record as BenchAnalysis).workId).toBe(sato.result)
+      expect(same.notes.join()).not.toContain('別の作品')
+    }
+    const noAuthor = addBenchWork(n.data, { name: '海', author: '' })
+    const filled = buildBenchAnalysis(noAuthor.data, tanaka, claude)
+    expect(filled.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+    expect((filled.records[0].record as BenchAnalysis).workId).toBe(noAuthor.result)
+
+    // 短い id・id で指した時は、著者が違ってもその作品に足し、違うことを知らせる
+    for (const work of [shortId('benchWork', sato.result), sato.result]) {
+      const byId = buildBenchAnalysis(sato.data, { ...tanaka, work }, claude)
+      expect(byId.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+      expect((byId.records[0].record as BenchAnalysis).workId).toBe(sato.result)
+      expect(byId.notes.join()).toContain(
+        `new_work の著者（田中）は、指した作品 ${shortId('benchWork', sato.result)}『海』（佐藤） と違います（指した作品に足しました）`,
+      )
+    }
+  })
+
   it('同じ作品名が2つあれば短い id で指してもらう。入力の形・件数・観点の長さ・日付', () => {
     const n = sample()
     const twin = addBenchWork(n.data, { name: '銀河の果て', author: '別人' }).data

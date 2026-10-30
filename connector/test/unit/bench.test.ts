@@ -211,6 +211,37 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     expect(list).not.toContain('『SF傑作選』')
   })
 
+  it('作品名が同じでも new_work の著者が違えば別の作品として作り、同じ作品名・著者ならその作品に足す', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core, clock } = await pairedCore(fake, s.data)
+    // 棚の『海の記憶』は佐藤。田中の同名の作品は別の作品
+    const input = {
+      work: '海の記憶',
+      new_work: { name: '海の記憶', author: '田中' },
+      items: [{ viewpoint: '構成', body_markdown: '## 構成\n田中の『海の記憶』', run_date: '2026-10-30' }],
+    }
+    const r = await core.callTool('novel_add_bench_analysis', input)
+    expect(r.text).toContain('追加 1件')
+    expect(r.text).toContain('『海の記憶』（田中） を棚に足しました')
+    expect(r.text).toContain(`著者の違う同名の作品 ${shortId('benchWork', s.workB)}『海の記憶』（佐藤） があるため、別の作品として足しました`)
+    expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
+    clock.now += 20_000
+    const again = await core.callTool('novel_add_bench_analysis', {
+      ...input,
+      items: [{ viewpoint: '文体', body_markdown: '## 文体\n短文', run_date: '2026-10-30' }],
+    })
+    expect(again.text).toContain('追加 1件')
+    expect(again.text).not.toContain('を棚に足しました')
+    expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
+    // 佐藤の作品には何も足していない
+    const sato = await call(core, 'novel_get_bench_analysis', { work: shortId('benchWork', s.workB) })
+    expect(sato).not.toContain('田中')
+    const list = await call(core, 'novel_list_bench_works')
+    expect(list).toContain('『海の記憶』（田中）')
+    expect(list).toContain('『海の記憶』（佐藤）')
+  })
+
   it('手で足して削除した作品（ゴミ箱に同じ作品名）は new_work で作り直さない', async () => {
     const fake = new FakeFirebase()
     const s = shelf()

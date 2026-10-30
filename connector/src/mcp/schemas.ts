@@ -257,7 +257,7 @@ export const SCHEMAS = {
         pdf_place: z.string().max(L.pdfPlace).optional().describe('PDF の置き場所（claude.ai のプロジェクト名など）'),
       })
       .optional()
-      .describe('作品が棚に無い時だけ作る作品（付けた時だけ作る。同じ作品名の作品があればそれに足す）'),
+      .describe('作品が棚に無い時だけ作る作品（付けた時だけ作る。同じ作品名・著者の作品があればそれに足す（著者が違えば別の作品として作る））'),
     items: z
       .array(
         z.object({
