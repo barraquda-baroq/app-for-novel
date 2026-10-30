@@ -40,7 +40,8 @@ service cloud.firestore {
       return get(connectorPath()).data.writes == true
         && d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
-        && d.table in ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults']
+        && d.table in ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults',
+          'benchWorks', 'benchAnalyses']
         && d.id is string && d.id.size() > 0 && d.id.size() <= 64
         && docId == d.table + ':' + d.id
         && d.device == 'claude-connector'

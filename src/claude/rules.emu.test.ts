@@ -301,7 +301,7 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       ['知らない項目', { ...ok('ci-extra'), extra: { note: 'x' } }],
     ]
     for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
-    // 6つの表はどれも作れる
+    // 8つの表（2.3 の6つと、2.5 のベンチ作品・その分析）はどれも作れる
     for (const table of [
       'proofSuggestions',
       'proofBatches',
@@ -309,8 +309,32 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       'strategyNotes',
       'critiquePrompts',
       'critiqueResults',
+      'benchWorks',
+      'benchAnalyses',
     ])
       expect([table, await connectorCommit(anon, owner.uid, [connectorRecord(table, `c-${table}`)])]).toEqual([table, 200])
+  })
+
+  it('ベンチ作品とその分析: 作れるのは新しい記録だけ（書き換え・削除・決まった形でない作成は拒む）', async () => {
+    const work = connectorRecord('benchWorks', 'cw-1', { name: '銀河の果て', author: '山田' })
+    const analysis = connectorRecord('benchAnalyses', 'ca-1', { workId: 'cw-1', viewpoint: '構成', body: '## 構成' })
+    expect(await connectorCommit(anon, owner.uid, [work, analysis])).toBe(200)
+    expect(await connectorCommit(anon, owner.uid, [work])).not.toBe(200)
+    expect(await connectorCommit(anon, owner.uid, [{ ...analysis, noPrecondition: true }])).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'benchAnalyses:ca-1')).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'benchWorks:cw-1')).toBe(403)
+    const denied: [string, ConnectorWrite][] = [
+      ['分割（chunks）', { ...connectorRecord('benchAnalyses', 'ca-chunks'), extra: { chunks: 1 } }],
+      ['端末の名前が違う', { ...connectorRecord('benchWorks', 'cw-dev'), extra: { device: 'owner-device' } }],
+      ['表の名前が違う', { ...connectorRecord('benchAnalyses', 'ca-table'), docId: 'benchWorks:ca-table' }],
+      ['json が長すぎる', { ...connectorRecord('benchAnalyses', 'ca-long'), json: 'x'.repeat(200_001) }],
+    ]
+    for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
+    // 持ち主は今までどおり書き換え・削除できる
+    const ref = doc(owner.fs, 'users', owner.uid, 'records', 'benchAnalyses:ca-1')
+    await updateDoc(ref, { ...recordDoc('benchAnalyses', 'ca-1', { workId: 'cw-1', viewpoint: '構成', body: '直した' }) })
+    await deleteDoc(ref)
+    expect((await getDoc(ref)).exists()).toBe(false)
   })
 
   it('100件を1回の書き込みで作れる（ルールの読み取りは同じ文書なので数が増えない）', async () => {
