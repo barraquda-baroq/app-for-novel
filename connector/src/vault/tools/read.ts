@@ -22,7 +22,7 @@ import {
   revisionIdeasOf,
   strategyNotesOf,
 } from '../../../../src/claude/order'
-import { matchesId, pieceRefLabel, readingOrder, resolvePiece, shortId, type ReadingItem } from '../../../../src/claude/refs'
+import { matchesId, pieceRefLabel, readingOrder, refKey, resolvePiece, shortId, type ReadingItem } from '../../../../src/claude/refs'
 import { manuscriptLabel, manuscriptOf } from '../../../../src/claude/snapshot'
 import {
   cutPoint,
@@ -46,7 +46,8 @@ import {
   titleLastEdited,
   titleSummary,
 } from '../../../../src/domain/entityOps'
-import { benchWorksOfTitle, sortedBenchWorks } from '../../../../src/domain/benchOps'
+import { benchWorkName, benchWorksOfTitle, sortedBenchWorks } from '../../../../src/domain/benchOps'
+import { byOrder } from '../../../../src/domain/util'
 import { actParts, adoptedMetrics, isSplit, pieceFullLabel, pieceLabel } from '../../../../src/domain/structure'
 import {
   SUBMISSION_TEXT,
@@ -57,7 +58,21 @@ import {
 } from '../../../../src/domain/submissionTexts'
 import { bodyMetrics, formatCount } from '../../../../src/domain/text'
 import type { AppData, BenchWork, ID, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
-import { bool, fail, head, itemBudget, length, num, ok, pageBody, str, strList, titleArg, type ToolResult } from './common'
+import {
+  bool,
+  fail,
+  head,
+  itemBudget,
+  length,
+  num,
+  ok,
+  pageBody,
+  RESULT_LIMIT,
+  str,
+  strList,
+  titleArg,
+  type ToolResult,
+} from './common'
 
 export type { ToolResult }
 
@@ -749,15 +764,111 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
 
 // ---------- R10 相対比較の作品一覧 ----------
 
-export function listBenchWorks(ctx: ReadContext): ToolResult {
-  const works = sortedBenchWorks(ctx.view)
-  const lines: string[] = [`=== 相対比較（${works.length}作品。作者が比べるために読む既存の作品）===`]
-  if (!works.length)
+/**
+ * 一覧の1回の文字数（省略時）。結果の上限いっぱいにして、今までどおり棚が収まれば1回で全部を返す。
+ * 作品の途中では切らず、残りは 続き: cursor="…" で読む（cursor に絞り込みと最後に出した作品を入れる）
+ */
+export const BENCH_LIST_BUDGET = 99_000
+/** names・exclude_names の数と1つの長さの上限（schemas.ts と同じ。長さは作品名の上限と同じ） */
+export const BENCH_LIST_FILTERS = { count: 10, length: 80 } as const
+
+/** 作品名の絞り込み（refKey にして重複を除く）。形が違えば 'bad' */
+function benchNameFilters(v: unknown): string[] | 'bad' {
+  if (v === undefined || v === null) return []
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) return 'bad'
+  const keys = [...new Set((v as string[]).map(refKey).filter(Boolean))]
+  if (keys.length > BENCH_LIST_FILTERS.count || keys.some((k) => Array.from(k).length > BENCH_LIST_FILTERS.length)) return 'bad'
+  return keys
+}
+
+const sameKeys = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n')
+
+/** 「作品名に「【原稿】星の庭」を含む・「【横断】」を含まない」（絞り込みが無ければ空） */
+function benchFilterLabel(names: readonly string[], excludes: readonly string[]): string {
+  const q = (list: readonly string[]) => list.map((k) => `「${k}」`).join('')
+  const parts = [
+    names.length ? `${q(names)}${names.length > 1 ? 'のどれかを' : 'を'}含む` : '',
+    excludes.length ? `${q(excludes)}${excludes.length > 1 ? 'のどれも' : 'を'}含まない` : '',
+  ].filter(Boolean)
+  return parts.length ? `作品名に${parts.join('・')}` : ''
+}
+
+export function listBenchWorks(ctx: ReadContext, args: Args = {}): ToolResult {
+  const all = sortedBenchWorks(ctx.view)
+  let names = benchNameFilters(args.names)
+  let excludes = benchNameFilters(args.exclude_names)
+  if (names === 'bad' || excludes === 'bad')
+    return fail(
+      `names・exclude_names は文字列の配列にしてください（それぞれ${BENCH_LIST_FILTERS.count}個まで・1つ${BENCH_LIST_FILTERS.length}字まで）`,
+    )
+  let budget = num(args.char_budget)
+  /** 前のページで最後に出した作品（並び順と id。消えていても、その次から続けられる） */
+  let after: { order: number; id: string } | null = null
+  const cursorArg = str(args.cursor)
+  if (cursorArg) {
+    const c = decodeCursor(cursorArg)
+    const cn = c ? benchNameFilters(c.n) : 'bad'
+    const cx = c ? benchNameFilters(c.x) : 'bad'
+    if (!c || c.k !== 'benchList' || typeof c.a !== 'string' || typeof c.o !== 'number' || cn === 'bad' || cx === 'bad')
+      return fail('cursor が読めません（novel_list_bench_works の続きの cursor をそのまま渡してください）')
+    if ((args.names !== undefined && !sameKeys(names, cn)) || (args.exclude_names !== undefined && !sameKeys(excludes, cx)))
+      return fail('cursor が別の条件のものです（cursor だけを渡すか、同じ names・exclude_names で渡してください）')
+    names = cn
+    excludes = cx
+    after = { order: c.o, id: c.a }
+    budget ??= num(c.b)
+  }
+  const inc = names
+  const exc = excludes
+  const filter = benchFilterLabel(inc, exc)
+  const works = all.filter((w) => {
+    const k = refKey(benchWorkName(w))
+    return (!inc.length || inc.some((n) => k.includes(n))) && !exc.some((n) => k.includes(n))
+  })
+  const last = after
+  const start = last ? works.findIndex((w) => byOrder(w, last) > 0) : 0
+  const from = start < 0 ? works.length : start
+  const cursorOf = (w: BenchWork) =>
+    encodeCursor({ k: 'benchList', n: inc, x: exc, a: w.id, o: w.order, ...(budget !== undefined ? { b: budget } : {}) })
+  const footerOf = (next: string, rest: number) =>
+    `続き: cursor="${next}"（結果が長いため、ここで切りました。残り${rest}作品は、この cursor で読めます）`
+  // 続きの行の分を空けておく（絞り込みが長いと cursor も長い）。結果の上限（RESULT_LIMIT）を超えて最後の行が切られないように
+  const footerRoom = footerOf(cursorOf({ id: 'x'.repeat(40), order: Number.MAX_SAFE_INTEGER } as BenchWork), 99_999).length + 2
+  const want = Math.min(BENCH_LIST_BUDGET, Math.max(2_000, budget ?? BENCH_LIST_BUDGET))
+  const limit = Math.max(1_000, Math.min(want, RESULT_LIMIT - 200) - footerRoom)
+  const lines: string[] = [
+    after
+      ? `=== 相対比較の続き（${filter ? `${filter}作品 ` : ''}${works.length}作品のうち${from + 1}作品目から／全${all.length}作品）===`
+      : filter
+        ? `=== 相対比較（${filter}作品 ${works.length}作品／全${all.length}作品。作者が比べるために読む既存の作品）===`
+        : `=== 相対比較（${all.length}作品。作者が比べるために読む既存の作品）===`,
+  ]
+  if (!all.length && !filter)
     lines.push(
       '（まだありません。作品の PDF を読んで novel_add_bench_analysis の new_work を付けて分析を追加すると、作品も相対比較に追加されます）',
     )
-  for (const w of works) lines.push(benchWorkLine(ctx.view, w))
-  if (works.length) lines.push('分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。')
+  else if (!works.length) lines.push(`（${filter}作品はありません）`)
+  else if (from >= works.length) lines.push('（この後の作品はありません）')
+  let used = lines[0].length + 1
+  let i = from
+  for (; i < works.length; i++) {
+    let line = benchWorkLine(ctx.view, works[i])
+    if (i > from && used + line.length + 1 > limit) break
+    // 1つの作品の行だけで長すぎる時（観点がとても多い）は、行の切れ目で切る（続きの行を残すため）
+    if (line.length > limit) {
+      const room = limit - 40
+      let cut = line.lastIndexOf('\n', room)
+      if (cut <= 0) cut = room
+      const c = line.charCodeAt(cut - 1)
+      if (c >= 0xd800 && c <= 0xdbff) cut -= 1
+      line = `${line.slice(0, cut)}\n  （この作品の行は長いため、ここまで）`
+    }
+    lines.push(line)
+    used += line.length + 1
+  }
+  if (i < works.length) lines.push(footerOf(cursorOf(works[i - 1]), works.length - i))
+  else if (works.length) lines.push('分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。')
   return ok(lines.join('\n'))
 }
 

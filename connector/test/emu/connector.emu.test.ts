@@ -312,6 +312,11 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
       items: [{ viewpoint: '人物', body_markdown: '主人公の弧', run_date: '2026-10-30' }],
     })
     expect(made.text).toContain('『星を継ぐ』（高橋） を相対比較に追加しました')
+    // 一覧を作品名で絞る（書いた作品も、すぐに一覧に出る）
+    const only = (await tool(core, 'novel_list_bench_works', { names: ['星を継ぐ'] })).text
+    expect(only).toContain('=== 相対比較（作品名に「星を継ぐ」を含む作品 1作品／全2作品。')
+    expect(only).toContain('『星を継ぐ』（高橋）')
+    expect(only).not.toContain('『銀河の果て』')
     for (const d of [owner, other]) {
       await waitFor(
         async () => {

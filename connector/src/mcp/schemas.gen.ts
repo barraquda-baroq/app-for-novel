@@ -845,7 +845,42 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
   },
   "novel_list_bench_works": {
     "type": "object",
-    "properties": {}
+    "properties": {
+      "names": {
+        "description": "作品名にこのどれかを含む作品だけを出す（全角と半角・空白の違いは問わない。例: [\"【原稿】星の庭\"] でその原稿の回だけ、[\"【横断】\"] でジャンルのプロファイルだけ。10個まで）",
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "exclude_names": {
+        "description": "作品名にこのどれかを含む作品を出さない（例: [\"【原稿】\", \"【横断】\", \"【対照】\", \"【監査】\"] で既存の作品だけ。10個まで）",
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "char_budget": {
+        "description": "1回に返す文字数（2,000〜99,000。省略時は 99,000）。作品の途中では切らず、残りは 続き: cursor=\"…\"",
+        "type": "integer",
+        "minimum": 2000,
+        "maximum": 99000
+      },
+      "cursor": {
+        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す（絞り込みは cursor に入っているので、cursor だけでよい）",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16000
+      }
+    }
   },
   "novel_get_bench_analysis": {
     "type": "object",

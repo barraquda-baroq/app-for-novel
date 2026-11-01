@@ -467,7 +467,7 @@ export class VaultCore {
       case 'novel_list_proofreading':
         return R.listProofreading(ctx, args)
       case 'novel_list_bench_works':
-        return R.listBenchWorks(ctx)
+        return R.listBenchWorks(ctx, args)
       case 'novel_get_bench_analysis':
         return R.getBenchAnalysis(ctx, args)
       default:

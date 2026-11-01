@@ -76,6 +76,21 @@ describe('ツールの決まり', () => {
       items: [{ piece: '#1', excerpt: 'あ'.repeat(101), category: 'typo', reason: 'r' }],
     })
     expect('issues' in longExcerpt && longExcerpt.issues?.length).toBeTruthy()
+    // 相対比較の一覧: 作品名の絞り込み（10個・80字まで）・char_budget（2,000〜99,000）・長い cursor（絞り込みが入る）
+    const list = fromJsonSchema(TOOL_SCHEMAS.novel_list_bench_works as never, v)
+    const valid = async (x: Record<string, unknown>) => {
+      const r = await list['~standard'].validate(x)
+      return !('issues' in r && r.issues?.length)
+    }
+    expect(await valid({})).toBe(true)
+    expect(
+      await valid({ names: ['【原稿】星の庭'], exclude_names: ['【横断】', '【対照】'], char_budget: 2_000, cursor: 'x'.repeat(12_000) }),
+    ).toBe(true)
+    expect(await valid({ names: [] })).toBe(false)
+    expect(await valid({ names: ['あ'.repeat(81)] })).toBe(false)
+    expect(await valid({ exclude_names: Array.from({ length: 11 }, (_, i) => `x${i}`) })).toBe(false)
+    expect(await valid({ char_budget: 100_000 })).toBe(false)
+    expect(await valid({ char_budget: 1_999 })).toBe(false)
   })
 })
 

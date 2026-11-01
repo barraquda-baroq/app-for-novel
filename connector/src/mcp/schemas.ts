@@ -32,6 +32,8 @@ const itemBudgetSchema = z
   .max(60_000)
   .optional()
   .describe('1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor="…"）')
+/** 一覧の作品名の絞り込み（src/vault/tools/read.ts の BENCH_LIST_FILTERS と同じ上限。1つの長さは作品名の上限と同じ） */
+const benchNameFilter = z.array(z.string().min(1).max(L.benchWorkName)).min(1).max(10)
 const runDate = z.string().max(10).describe('YYYY-MM-DD（日本時間）。省略時は今日')
 const benchWork = z
   .string()
@@ -233,7 +235,29 @@ export const SCHEMAS = {
       .optional()
       .describe('批評の中で比べた相対比較の作品（w:… か作品名。20件まで）。アプリの批評の結果に「比べた作品」として出る'),
   }),
-  novel_list_bench_works: z.object({}),
+  novel_list_bench_works: z.object({
+    names: benchNameFilter
+      .optional()
+      .describe(
+        '作品名にこのどれかを含む作品だけを出す（全角と半角・空白の違いは問わない。例: ["【原稿】星の庭"] でその原稿の回だけ、["【横断】"] でジャンルのプロファイルだけ。10個まで）',
+      ),
+    exclude_names: benchNameFilter
+      .optional()
+      .describe('作品名にこのどれかを含む作品を出さない（例: ["【原稿】", "【横断】", "【対照】", "【監査】"] で既存の作品だけ。10個まで）'),
+    char_budget: z
+      .number()
+      .int()
+      .min(2_000)
+      .max(99_000)
+      .optional()
+      .describe('1回に返す文字数（2,000〜99,000。省略時は 99,000）。作品の途中では切らず、残りは 続き: cursor="…"'),
+    cursor: z
+      .string()
+      .min(1)
+      .max(16_000)
+      .optional()
+      .describe('前の結果の最後にある 続き: cursor="…" の値をそのまま渡す（絞り込みは cursor に入っているので、cursor だけでよい）'),
+  }),
   novel_get_bench_analysis: z.object({
     work: benchWork,
     viewpoints: z

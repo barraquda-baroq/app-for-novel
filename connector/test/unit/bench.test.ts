@@ -6,7 +6,8 @@ import { addClaudeRecords, setTitleClaudeAccess } from '../../../src/domain/clau
 import { buildCritiqueResult } from '../../../src/claude/records'
 import { createTitle } from '../../../src/domain/entityOps'
 import { shortId } from '../../../src/claude/refs'
-import type { AppData } from '../../../src/domain/types'
+import type { AppData, ID } from '../../../src/domain/types'
+import { encodeCursor } from '../../../src/claude/view'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import { novel } from '../../../src/test/claudeFixture'
 import { FakeFirebase } from '../support/fakeFirebase'
@@ -107,6 +108,138 @@ describe('読む（novel_list_bench_works・novel_get_bench_analysis）', () => 
     expect(next).toBeUndefined()
     expect(text).toContain('段落80。')
     expect((await core.callTool('novel_get_bench_analysis', { cursor: 'xyz' })).isError).toBe(true)
+  })
+})
+
+/** 棚に n 作品（作品ごとに観点 k 個の分析）。作品名は names(i) */
+function bigShelf(n: number, k: number, name: (i: number) => string = (i) => `作品${String(i + 1).padStart(3, '0')}`) {
+  let data: AppData = novel(['冒頭の本文。'], { name: '星の庭' }).data
+  const ids: ID[] = []
+  for (let i = 0; i < n; i++) {
+    const w = addBenchWork(data, { name: name(i), author: '著者' })
+    data = w.data
+    ids.push(w.result)
+    for (let j = 0; j < k; j++)
+      data = addBenchAnalysis(data, w.result, { viewpoint: `観点${j + 1}・とても長い観点の名前`, body: '本文', runDate: '2026-10-30' }).data
+  }
+  return { data, ids }
+}
+
+/** 一覧の w:… を出てきた順に */
+const listedIds = (text: string) => [...text.matchAll(/^(w:[0-9a-f]+)『/gm)].map((m) => m[1])
+const nextCursor = (text: string) => /続き: cursor="([^"]+)"/.exec(text)?.[1]
+
+describe('一覧の絞り込みと続き（novel_list_bench_works の names・exclude_names・char_budget・cursor）', () => {
+  it('names で作品名に含む作品だけ、exclude_names で除く（全角と半角・空白の違いは問わない）', async () => {
+    const fake = new FakeFirebase()
+    const names = ['【原稿】星の庭（第1稿）', '【原稿】星の庭（第1稿・2回目）', '【原稿】海の庭（第1稿）', '【横断】SF', '【対照】星の庭（名前あり）', '銀河の果て']
+    const s = bigShelf(names.length, 1, (i) => names[i])
+    const { core } = await pairedCore(fake, s.data)
+    const runs = await call(core, 'novel_list_bench_works', { names: ['【原稿】星の庭'] })
+    expect(runs).toContain('=== 相対比較（作品名に「【原稿】星の庭」を含む作品 2作品／全6作品。作者が比べるために読む既存の作品）===')
+    expect(listedIds(runs)).toEqual([s.ids[0], s.ids[1]].map((id) => shortId('benchWork', id)))
+    expect(runs).toContain('分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。')
+    expect(runs).not.toContain('続き: cursor=')
+    // 全角の英字・続く空白でも同じ（NFKC・空白をまとめて照らす）
+    const genre = await call(core, 'novel_list_bench_works', { names: ['【横断】ＳＦ', '【原稿】海の庭 '] })
+    expect(listedIds(genre)).toEqual([s.ids[2], s.ids[3]].map((id) => shortId('benchWork', id)))
+    expect(genre).toContain('作品名に「【横断】SF」「【原稿】海の庭」のどれかを含む作品 2作品／全6作品')
+    const books = await call(core, 'novel_list_bench_works', { exclude_names: ['【原稿】', '【横断】', '【対照】', '【監査】'] })
+    expect(listedIds(books)).toEqual([shortId('benchWork', s.ids[5])])
+    expect(books).toContain('作品名に「【原稿】」「【横断】」「【対照】」「【監査】」のどれも含まない作品 1作品／全6作品')
+    const both = await call(core, 'novel_list_bench_works', { names: ['星の庭'], exclude_names: ['【対照】'] })
+    expect(listedIds(both)).toEqual([s.ids[0], s.ids[1]].map((id) => shortId('benchWork', id)))
+    expect(both).toContain('作品名に「星の庭」を含む・「【対照】」を含まない作品 2作品／全6作品')
+    const none = await call(core, 'novel_list_bench_works', { names: ['【監査】基準測定'] })
+    expect(none).toContain('（作品名に「【監査】基準測定」を含む作品はありません）')
+    expect(listedIds(none)).toEqual([])
+    // 絞り込まなければ今までどおり
+    const all = await call(core, 'novel_list_bench_works')
+    expect(all).toContain('=== 相対比較（6作品。作者が比べるために読む既存の作品）===')
+    expect(listedIds(all)).toHaveLength(6)
+  })
+
+  it('長い棚は作品の途中で切らずに返し、cursor だけで続きを読む（重なり・抜けなし。絞り込みは cursor に入る）', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(24, 10)
+    const { core } = await pairedCore(fake, s.data)
+    const seen: string[] = []
+    let text = await call(core, 'novel_list_bench_works', { char_budget: 2_000 })
+    expect(text).toContain('=== 相対比較（24作品。作者が比べるために読む既存の作品）===')
+    let pages = 1
+    for (;;) {
+      expect(text.length).toBeLessThanOrEqual(2_000)
+      seen.push(...listedIds(text))
+      const next = nextCursor(text)
+      if (!next) break
+      // 最後の行が続きの行（前の版のプロンプトも「結果が長いため、ここで切りました」で切れたと分かる）
+      expect(text.trimEnd().split('\n').at(-1)).toMatch(/^続き: cursor="[^"]+"（結果が長いため、ここで切りました。残り\d+作品は、この cursor で読めます）$/)
+      // 作品の行の途中では切らない（最後の作品の「分析」の行まである）
+      expect(text.split('\n').at(-2)).toMatch(/^ {2}分析 10件/)
+      text = await call(core, 'novel_list_bench_works', { cursor: next })
+      pages++
+      expect(text).toMatch(/^=== 相対比較の続き（24作品のうち\d+作品目から／全24作品）===/)
+    }
+    expect(pages).toBeGreaterThan(2)
+    expect(seen).toEqual(s.ids.map((id) => shortId('benchWork', id)))
+    expect(text).toContain('分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。')
+  })
+
+  it('絞り込みの続き: cursor だけで同じ条件。違う条件を一緒に渡すと断る。読めない cursor も断る', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(12, 10, (i) => (i % 2 ? `【原稿】星の庭（第1稿・${i + 1}回目）` : `既存の作品${i + 1}`))
+    const { core } = await pairedCore(fake, s.data)
+    const first = await call(core, 'novel_list_bench_works', { names: ['【原稿】星の庭'], char_budget: 2_000 })
+    const next = nextCursor(first)!
+    expect(next).toBeTruthy()
+    const second = await call(core, 'novel_list_bench_works', { cursor: next })
+    expect(second).toContain('=== 相対比較の続き（作品名に「【原稿】星の庭」を含む作品 6作品のうち')
+    const ids = [...listedIds(first), ...listedIds(second)]
+    expect(ids.every((id) => s.ids.filter((_, i) => i % 2).map((x) => shortId('benchWork', x)).includes(id))).toBe(true)
+    // 同じ条件を一緒に渡すのはよい・違う条件は断る
+    expect(await call(core, 'novel_list_bench_works', { cursor: next, names: ['【原稿】星の庭'] })).toBe(second)
+    const other = await core.callTool('novel_list_bench_works', { cursor: next, names: ['既存'] })
+    expect(other.isError).toBe(true)
+    expect(other.text).toContain('cursor が別の条件のものです')
+    const bad = await core.callTool('novel_list_bench_works', { cursor: 'abc' })
+    expect(bad.isError).toBe(true)
+    expect(bad.text).toContain('cursor が読めません')
+    const wrongKind = await core.callTool('novel_list_bench_works', { cursor: encodeCursor({ k: 'bench', t: 'x', which: 'work', id: 'x', o: 0 }) })
+    expect(wrongKind.isError).toBe(true)
+    const badNames = await core.callTool('novel_list_bench_works', { names: 'abc' })
+    expect(badNames.isError).toBe(true)
+  })
+
+  it('前のページの最後の作品が消えていても、その次の作品から続ける', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(5, 1)
+    const { core } = await pairedCore(fake, s.data)
+    const third = s.data.benchWorks[s.ids[2]]
+    // 3作品目まで読んだ後に3作品目が消えた（cursor の id はもう無い）
+    const cursor = encodeCursor({ k: 'benchList', n: [], x: [], a: 'gone-id', o: third.order })
+    const rest = await call(core, 'novel_list_bench_works', { cursor })
+    expect(listedIds(rest)).toEqual([s.ids[3], s.ids[4]].map((id) => shortId('benchWork', id)))
+    expect(rest).toContain('=== 相対比較の続き（5作品のうち4作品目から／全5作品）===')
+    const end = await call(core, 'novel_list_bench_works', {
+      cursor: encodeCursor({ k: 'benchList', n: [], x: [], a: s.ids[4], o: s.data.benchWorks[s.ids[4]].order }),
+    })
+    expect(end).toContain('（この後の作品はありません）')
+    expect(listedIds(end)).toEqual([])
+  })
+
+  it('省略時は結果の上限まで1回で返し、超える棚は作品の切れ目で続きにする（途中で切れた印は出ない）', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(110, 30)
+    const { core } = await pairedCore(fake, s.data)
+    const first = await call(core, 'novel_list_bench_works')
+    expect(first.length).toBeGreaterThan(90_000)
+    expect(first.length).toBeLessThanOrEqual(100_000)
+    expect(first).not.toContain('[...]')
+    expect(first).toContain('結果が長いため、ここで切りました')
+    const next = nextCursor(first)!
+    const second = await call(core, 'novel_list_bench_works', { cursor: next })
+    expect([...listedIds(first), ...listedIds(second)]).toEqual(s.ids.map((id) => shortId('benchWork', id)))
+    expect(nextCursor(second)).toBeUndefined()
   })
 })
 
