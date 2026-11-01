@@ -327,7 +327,12 @@ describe('同期（エミュレーター）', () => {
       return S.updateVersion(r.data, vid, { body: 'Aで書いた本文' })
     })
     await b.edit((d) => E.addIdea(d, null, 'Bのアイデア', '本文').data)
+    // a が送り終えてから b をつなぐ。エミュレーターは serverTimestamp を「リクエストを受けた時刻」にし、見えるようになるのは
+    // ルールを確かめてコミットした後（数十ミリ秒あと）なので、2台が同時に最初の送信をすると、時刻の早い a の記録が、時刻の遅い
+    // b の記録より後に届くことがある。b は受け取った位置（b の記録の時刻）から購読し直すので、a の記録を取りこぼす
+    // （本番の Firestore は serverTimestamp がコミットの時刻で、それより前の書き込みはいつも先に見えるので起きない）
     await a.online()
+    await settle(a)
     await b.online()
     await settle(a, b)
     const db = await b.load()
