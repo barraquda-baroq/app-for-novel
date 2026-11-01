@@ -14,7 +14,7 @@ import {
 } from '../domain/pieceEdits'
 import * as S from '../domain/storyOps'
 import * as T from '../domain/trash'
-import type { AppData, ClaudeAccess, ID, NumberingMode, SettingEntry, Slot } from '../domain/types'
+import type { AppData, ClaudeAccess, ID, NumberingMode, PageSetup, SettingEntry, Slot } from '../domain/types'
 import { commit, getData } from './appStore'
 
 function apply(fn: (d: AppData) => AppData): void {
@@ -34,6 +34,8 @@ export const actions = {
   moveTitleStep: (titleId: ID, dir: -1 | 1) => apply((d) => E.moveTitleStep(d, titleId, dir)),
   moveTitleTo: (titleId: ID, index: number) => apply((d) => E.moveTitleTo(d, titleId, index)),
   deleteTitle: (titleId: ID) => apply((d) => E.deleteTitle(d, titleId)),
+  // 通し読みの縦書きのページ表示の字数×行数（null = 既定の 40×32 に戻す）
+  setTitlePageSetup: (titleId: ID, setup: PageSetup | null) => apply((d) => E.setTitlePageSetup(d, titleId, setup)),
 
   // アイデア
   addIdea: (titleId: ID | null, heading = '', body = '') => run((d) => E.addIdea(d, titleId, heading, body)),

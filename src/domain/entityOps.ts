@@ -1,6 +1,7 @@
 // タイトル・アイデア・メモ・設定項目・戦略（応募計画）の更新操作。
 import { actsOf, adoptedMetrics, adoptedText, episodeNumbers, flatten, isSplit, missingActs, pieceLabel } from './structure'
 import { bodyMetrics, textHash } from './text'
+import { isValidPageSetup, PAGE_CHARS_MAX, PAGE_CHARS_MIN, PAGE_LINES_MAX, PAGE_LINES_MIN, samePageSetup } from './pageSetup'
 
 export { textHash }
 import { orderOrigin, putInTrash, trashLabel, type TrashSpec } from './trash'
@@ -12,6 +13,7 @@ import {
   type ID,
   type Idea,
   type Memo,
+  type PageSetup,
   type SettingCategory,
   type SettingEntry,
   type SettingField,
@@ -85,6 +87,27 @@ export function updateTitle(
     const t = tx.get('titles', titleId)
     if (!t) throw new DomainError('タイトルが見つかりません')
     tx.put('titles', { ...t, ...patch, updatedAt: now() })
+  }).data
+}
+
+/**
+ * 通し読みの縦書きのページ表示の字数×行数（Title.pageSetup）。null = 決めない（既定の 40×32 に戻す）。
+ * 範囲の外（字数 10〜60・行数 5〜60 の整数でない）は DomainError。同じ値なら何もしない
+ */
+export function setTitlePageSetup(data: AppData, titleId: ID, setup: PageSetup | null): AppData {
+  if (setup !== null && !isValidPageSetup(setup)) {
+    throw new DomainError(
+      `字数×行数は、1行 ${PAGE_CHARS_MIN}〜${PAGE_CHARS_MAX}字・1ページ ${PAGE_LINES_MIN}〜${PAGE_LINES_MAX}行で決めてください`,
+    )
+  }
+  const t = data.titles[titleId]
+  if (!t) throw new DomainError('タイトルが見つかりません')
+  if (setup === null ? t.pageSetup === undefined : isValidPageSetup(t.pageSetup) && samePageSetup(t.pageSetup, setup)) return data
+  return transact(data, (tx) => {
+    const next: Title = { ...t, updatedAt: now() }
+    if (setup === null) delete next.pageSetup
+    else next.pageSetup = { chars: setup.chars, lines: setup.lines }
+    tx.put('titles', next)
   }).data
 }
 

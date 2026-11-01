@@ -400,6 +400,9 @@ describe('長さ: 長い文章には上限が無い（短い項目と件数だ�
     expect(hint).toMatch(/いま 2\d\d,\d{3}字/)
     expect(hint).toContain('result_markdown を2つ以上に分け')
     expect(hint).toContain('novel_add_critique_result を分けて呼んでください')
+    // 番号は1行目の先頭（見出しで始める時は # の後ろ）。コネクタの読み方（parts.ts）と合う書き方を言う
+    expect(hint).toContain('1行目の先頭に「（1/2）」')
+    expect(hint).toContain('「## （1/2）総評」のように # の後ろに')
     // 分けた数のとおりに分ければ、どの部分も入る
     const k = Number(/result_markdown を(\d+)つ以上/.exec(hint)![1])
     const size = Math.ceil(markdown.length / k)
@@ -423,6 +426,8 @@ describe('長さ: 長い文章には上限が無い（短い項目と件数だ�
     expect(idea.items[0].hint).toContain('別々の改稿案にして送ってください')
     const note = buildStrategyNote(n.data, { title_id: n.titleId, heading: '戦略', body: markdown }, claude)
     expect(note.items[0].hint).toContain('novel_add_strategy_note を分けて呼んでください')
+    // 戦略メモの見出しは先頭か末尾だけを番号と読むので、末尾に付けるよう言う
+    expect(note.items[0].hint).toContain('見出しの末尾に「（1/2）」「（2/2）」…と番号を付ける（「応募戦略（1/2）」のように）')
     const p = buildCritiquePrompt(n.data, { scope: 'shared', name: '依頼', body: markdown }, claude)
     expect(p.records).toEqual([])
     expect(p.items[0].hint).toContain('批評プロンプトに分けて保存してください')

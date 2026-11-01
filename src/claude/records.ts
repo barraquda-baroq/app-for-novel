@@ -9,7 +9,7 @@
 //   超える時は、分け方を書いた理由を返す。貼り付け（source = paste）は端末が大きな記録を分割文書に分けて送るので上限なし
 // - 相対比較の分析（2.5。W6。内部名は bench）は、どのタイトルにも属さない。作品が無ければ new_work を付けた時だけ作品も作る
 // 作るだけで、データには入れない（アプリはストアの addClaudeRecords、コネクタは Firestore への作成で入れる）。
-import { BENCH_LIMITS, sortedBenchWorks } from '../domain/benchOps'
+import { BENCH_LIMITS, benchWorkName, sortedBenchWorks } from '../domain/benchOps'
 import { hashJson } from '../domain/hash'
 import { adoptedText, isSplit, pieceFullLabel, pieceLabel } from '../domain/structure'
 import type {
@@ -361,7 +361,7 @@ export function recordFits(record: ClaudeRecord): boolean {
   return stableStringify(record).length <= RECORD_LIMITS.recordJson
 }
 
-/** 分けた各部の見出し（「（1/2）」など。番号の順に並べる。order.ts の partMarkOf）の分の余裕 */
+/** 分けた各部の番号（「（1/2）」など。番号の順に並べる。parts.ts の partMarkOf）の分の余裕 */
 const SPLIT_MARGIN = 2_000
 
 /**
@@ -852,7 +852,7 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
     '戦略メモ',
     rec.body,
     (k) =>
-      `body を${k}つ以上に分け、novel_add_strategy_note を分けて呼んでください（同じ run_date で、見出しに「（1/${k}）」「（2/${k}）」…と番号を付ける。アプリと一覧はこの番号の順に並べます。contests は1つ目にだけ入れる）`,
+      `body を${k}つ以上に分け、novel_add_strategy_note を分けて呼んでください（同じ run_date で、見出しの末尾に「（1/${k}）」「（2/${k}）」…と番号を付ける（「応募戦略（1/${k}）」のように）。アプリと一覧はこの番号の順に並べます。contests は1つ目にだけ入れる）`,
     'contests の相性（fit）・方針（plan）を短くするか、コンテストの候補を別の戦略メモに分けてください',
   )
   if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes }
@@ -1017,7 +1017,7 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
     '批評の結果',
     markdown,
     (k) =>
-      `result_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、novel_add_critique_result を分けて呼んでください（同じ prompt_id・scope・run_date で、各部の result_markdown の1行目に「（1/${k}）」「（2/${k}）」…と番号を書く。アプリと一覧はこの番号の順に並べます）`,
+      `result_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、novel_add_critique_result を分けて呼んでください（同じ prompt_id・scope・run_date で、各部の result_markdown の1行目の先頭に「（1/${k}）」「（2/${k}）」…と番号を書く（見出しで始める時は「## （1/${k}）総評」のように # の後ろに。番号だけの行を1行目にしてもよい）。アプリと一覧はこの番号の順に並べます）`,
     'プロンプトの控え（prompt_text。省いた時は prompt_id の本文）が長すぎて、結果と一緒に入りません。prompt_text に依頼の要約（短いもの）を入れてください',
   )
   if (tooBig) return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: tooBig }], notes }
@@ -1092,7 +1092,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       work = found.value
       if (otherAuthor(work))
         notes.push(
-          `new_work の著者（${short(wantAuthor, 20)}）は、指した作品 ${benchWorkRef(work)} と違います（指した作品に足しました）`,
+          `new_work の著者（${short(wantAuthor, 20)}）は、指した作品 ${benchWorkRef(work)} と違います（指した作品を使います）`,
         )
     } else if (found?.reason === 'ambiguous') return fail(found.message, found.candidates)
     else
@@ -1193,7 +1193,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       '相対比較の分析',
       rec.body,
       (k) =>
-        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ viewpoint・run_date の別々の items にして送ってください（各部の body_markdown の1行目に「（1/${k}）」「（2/${k}）」…と番号を書く。アプリと一覧はこの番号の順に並べます。items が多くなる時は novel_add_bench_analysis を分けて呼ぶ）`,
+        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ viewpoint・run_date の別々の items にして送ってください（各部の body_markdown の1行目の先頭に「（1/${k}）」「（2/${k}）」…と番号を書く（見出しで始める時は「## （1/${k}）総評」のように # の後ろに。番号だけの行を1行目にしてもよい）。アプリと一覧はこの番号の順に並べます。items が多くなる時は novel_add_bench_analysis を分けて呼ぶ）`,
       'viewpoint を短くしてください',
     )
     if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
@@ -1206,6 +1206,19 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
     records.unshift({ table: 'benchWorks', record: created })
     notes.push(`作品 ${benchWorkRef(created)} を相対比較に追加しました`)
     if (nameTwin) notes.push(`著者の違う同名の作品 ${benchWorkRef(nameTwin)} があるため、別の作品として足しました`)
+  } else if (ctx.source === 'claude') {
+    // コネクタの答えには、足す先の作品をいつも w:… で出す（Claude が作品の一覧で id を探し直さなくてよいように）。
+    // 貼り付けには出さない（［追加］を押す前の確かめに出るので「追加しました」は合わない。作品は各分析の『作品名』で分かる）
+    if (!created)
+      notes.push(
+        records.length
+          ? `相対比較の作品 ${benchWorkRef(work!)} に追加しました`
+          : `相対比較の作品 ${benchWorkRef(work!)} には何も追加していません`,
+      )
+    else
+      notes.push(
+        `分析を1つも追加しなかったため、作品『${benchWorkName(created)}』${created.author ? `（${created.author}）` : ''}は相対比較に追加していません`,
+      )
   }
   return { ok: true, records, items, notes }
 }

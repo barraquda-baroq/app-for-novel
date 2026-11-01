@@ -97,6 +97,7 @@ describe('改稿案', () => {
     actions.addRevisionIdea(titleId, { heading: '案' })
     renderTab(titleId)
     await user.click(screen.getByTestId('revision-toggle'))
+    await user.click(screen.getByTestId('revision-edit'))
     await user.selectOptions(screen.getByTestId('revision-piece-add'), pieceIds[1])
     expect(Object.values(getData().revisionIdeas)[0].pieceIds).toEqual([pieceIds[1]])
     await user.click(screen.getByTestId('revision-toggle'))
@@ -104,6 +105,84 @@ describe('改稿案', () => {
     expect(chip.textContent).toBe('第2話')
     await user.click(chip)
     expect(screen.getByTestId('where').textContent).toBe(`/t/${titleId}/p/${pieceIds[1]}`)
+  })
+
+  it('開くと中身を Markdown で表示し、［直す］で入力欄、［閉じる］で表示に戻る。閉じたカードの抜粋は記号を除く', async () => {
+    const user = userEvent.setup()
+    const { titleId, pieceIds } = seedTitle(['一'])
+    const id = actions.addRevisionIdea(titleId, {
+      heading: '冒頭',
+      body: '## 狙い\n\n**景色**から始める\n- 手紙を前に',
+      pieceIds: [pieceIds[0]],
+    })
+    renderTab(titleId)
+    const card = screen.getByTestId('revision-idea')
+    expect(within(card).getByTestId('revision-preview').textContent).toBe('狙い 景色から始める 手紙を前に')
+    await user.click(within(card).getByTestId('revision-toggle'))
+    expect(within(card).queryByTestId('revision-preview')).toBeNull()
+    expect(within(card).queryByTestId('revision-body-input')).toBeNull()
+    expect(within(card).queryByTestId('revision-heading-input')).toBeNull()
+    await waitFor(() => expect(within(card).getByTestId('revision-body').innerHTML).toContain('<h2>狙い</h2>'))
+    expect(within(card).getByTestId('revision-body').innerHTML).toContain('<strong>景色</strong>')
+    // 関係する話のチップは表示のままでも押せる
+    expect(within(card).getByTestId('revision-piece-chip').textContent).toBe('第1話')
+
+    // 直す → 入力欄（フォーカスを外すと保存）→ 閉じる → 表示に戻る
+    await user.click(within(card).getByTestId('revision-edit'))
+    expect(within(card).queryByTestId('revision-body')).toBeNull()
+    const body = within(card).getByTestId('revision-body-input')
+    await user.clear(body)
+    await user.type(body, '*語り手*を変える')
+    await user.click(within(card).getByTestId('revision-edit-done'))
+    await waitFor(() => expect(getData().revisionIdeas[id].body).toBe('*語り手*を変える'))
+    expect(within(card).queryByTestId('revision-body-input')).toBeNull()
+    await waitFor(() => expect(within(card).getByTestId('revision-body').innerHTML).toContain('<em>語り手</em>'))
+
+    // 中身が空なら「（中身がありません）」と［直す］
+    act(() => actions.updateRevisionIdea(id, { body: '  ' }))
+    expect(within(card).getByTestId('revision-body-empty').textContent).toBe('（中身がありません）')
+    expect(within(card).getByTestId('revision-edit')).toBeTruthy()
+
+    // 閉じて開き直すと表示から
+    await user.click(within(card).getByTestId('revision-edit'))
+    expect(within(card).getByTestId('revision-body-input')).toBeTruthy()
+    await user.click(within(card).getByTestId('revision-toggle'))
+    await user.click(within(card).getByTestId('revision-toggle'))
+    expect(within(card).queryByTestId('revision-body-input')).toBeNull()
+    expect(within(card).getByTestId('revision-body-empty')).toBeTruthy()
+  })
+
+  it('長い中身は頭だけ（「全文を表示」）。チェックした案も表示で開け、Claude の札・削除が使える', async () => {
+    const user = userEvent.setup()
+    const { titleId } = seedTitle(['一'])
+    const long = Array.from({ length: 40 }, (_, i) => `段落${i + 1}。${'あ'.repeat(40)}`).join('\n\n')
+    paste(titleId, {
+      tool: 'novel_add_revision_ideas',
+      input: { title_id: 'x', items: [{ heading: '長い案', body: long }] },
+    })
+    const [id] = Object.keys(getData().revisionIdeas)
+    actions.setRevisionIdeaChecked(id, true)
+    renderTab(titleId)
+    const card = screen.getByTestId('revision-idea')
+    expect(card.className).toContain('is-checked')
+    expect(within(card).getByTestId('revision-source').textContent).toContain('Claude')
+    await user.click(within(card).getByTestId('revision-toggle'))
+    await waitFor(() => expect(within(card).getByTestId('revision-body').innerHTML).toContain('段落1。'))
+    expect(within(card).getByTestId('revision-body').parentElement?.className).toContain('is-clamped')
+    expect(within(card).getByTestId('revision-source')).toBeTruthy()
+    const more = within(card).getByTestId('revision-more')
+    expect(more.textContent).toBe('全文を表示')
+    await user.click(more)
+    expect(more.textContent).toBe('折りたたむ')
+    expect(within(card).getByTestId('revision-body').parentElement?.className).not.toContain('is-clamped')
+    await waitFor(() => expect(within(card).getByTestId('revision-body').textContent).toContain('段落40。'))
+
+    await user.click(within(card).getByTestId('revision-delete'))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('「長い案」を削除しますか？')
+    await user.click(within(dialog).getByRole('button', { name: '削除' }))
+    await waitFor(() => expect(getData().revisionIdeas[id]).toBeUndefined())
+    expect(listTrash(getData().trashEntries).some((t) => t.label.includes('長い案'))).toBe(true)
   })
 })
 

@@ -983,14 +983,15 @@ test.describe('通し読み', () => {
     await page.getByTestId('vertical-toggle').click()
     await expect(page.getByTestId('vertical-toggle')).toHaveAttribute('aria-pressed', 'true')
     await expect(body).toHaveCSS('writing-mode', 'vertical-rl')
-    // ページではなく本文の枠の中で横にスクロールする
+    // ページではなく本文の枠の中で横にスクロールする（縦書きはページ表示。スクロールバーはいつも出しておく）
     const box = await body.evaluate((el) => ({
       sw: el.scrollWidth,
       cw: el.clientWidth,
       overflowX: getComputedStyle(el).overflowX,
     }))
-    expect(box.overflowX).toBe('auto')
+    expect(box.overflowX).toBe('scroll')
     expect(box.sw).toBeGreaterThan(box.cw)
+    await expect(page.getByTestId('read-page-sheet').first()).toBeVisible()
     await expectNoHorizontalScroll(page)
     // 設定は保存される
     await page.reload()
@@ -1050,8 +1051,13 @@ test.describe('通し読み', () => {
       await page.getByTestId('vertical-toggle').click()
       await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'vertical-rl')
       await jump(100)
-      await page.getByTestId('font-larger').click()
-      await expect(page.getByTestId('read-body')).toHaveCSS('font-size', '18px')
+      // 縦書きはページ表示。スマホでは 40字×32行のページはもう画面の高さいっぱいなので、20字×20行にしてから小さくする
+      await page.getByTestId('page-setup-button').click()
+      await page.getByTestId('page-setup-20x20').click()
+      await expect(page.getByTestId('page-setup-value')).toHaveText('20字×20行')
+      await expect.poll(async () => Math.abs(await offset(100))).toBeLessThanOrEqual(2)
+      await page.getByTestId('font-smaller').click()
+      await expect(page.getByTestId('read-body')).toHaveCSS('font-size', '16px')
       await expect.poll(async () => Math.abs(await offset(100))).toBeLessThanOrEqual(2)
     } else {
       await page.getByTestId('font-larger').click()
@@ -1062,8 +1068,14 @@ test.describe('通し読み', () => {
       await expect.poll(async () => Math.abs(await offset(100))).toBeLessThanOrEqual(2)
     }
 
-    // 縦書きでも目次から移動でき、横書きに戻しても同じ話が出る
+    // 縦書きでも目次から移動でき、字数×行数を変えても・横書きに戻しても同じ話が出る
     await jump(20)
+    await page.getByTestId('page-setup-button').click()
+    await page.getByTestId('page-setup-40x40').click()
+    await expect(page.getByTestId('page-setup-value')).toHaveText('40字×40行')
+    await expect.poll(async () => Math.abs(await offset(20))).toBeLessThanOrEqual(2)
+    // 遠くの話のページはまだ行を組んでいない
+    await expect(pieces.nth(119).getByTestId('read-page-sheet').last()).not.toHaveAttribute('data-near', 'true')
     await page.getByTestId('vertical-toggle').click()
     await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'horizontal-tb')
     await expect.poll(async () => Math.abs(await offset(20))).toBeLessThanOrEqual(2)

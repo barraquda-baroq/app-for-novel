@@ -93,7 +93,9 @@ async function pasteAnswer(page: Page, opener: string, text: string, expectCreat
 }
 
 test.describe('Claude 連携（2.3）', () => {
-  test('改稿案: 書いてチェックすると斜線で下へ沈み、外すと戻る', async ({ page }) => {
+  test('改稿案: 書いてチェックすると斜線で下へ沈み、外すと戻る。開くと中身を Markdown で表示し、［直す］で書き直す', async ({
+    page,
+  }) => {
     await openApp(page)
     const { titleId } = await seedNovel(page)
     await openApp(page, `/t/${titleId}?tab=strategy`)
@@ -118,6 +120,48 @@ test.describe('Claude 連携（2.3）', () => {
     // 再読み込みしても残る
     await page.reload()
     await expect(page.getByTestId('revision-heading')).toHaveText(['終盤の伏線を回収する', '冒頭の場面を削る'])
+    // 開くと中身を表示（Markdown）。［直す］で入力欄、［閉じる］で表示に戻る
+    const first = page.getByTestId('revision-idea').first()
+    await first.getByTestId('revision-toggle').click()
+    await expect(first.getByTestId('revision-body')).toContainText('終盤の伏線を回収する理由。')
+    await expect(first.getByTestId('revision-body-input')).toHaveCount(0)
+    await first.getByTestId('revision-edit').click()
+    await first.getByTestId('revision-body-input').fill('## 理由\n\n**伏線**を回収する')
+    await first.getByTestId('revision-edit-done').click()
+    await expect(first.getByTestId('revision-body').locator('h2')).toHaveText('理由')
+    await expect(first.getByTestId('revision-body').locator('strong')).toHaveText('伏線')
+    await expect(first.getByTestId('revision-body-input')).toHaveCount(0)
+
+    // 長い案を［閉じる］・［折りたたむ］で縮めても、押したボタンは画面の同じ位置に残る（スクロールの位置を合わせない
+    // ブラウザ（Safari・iPhone のアプリ）と同じにするため、overflow-anchor を切って確かめる）
+    await page.addStyleTag({ content: '* { overflow-anchor: none !important }' })
+    await seed(
+      page,
+      ({ actions }, t) => {
+        const body = Array.from({ length: 200 }, (_, i) => `${i + 1}行目の書き直し案。`).join('\n\n')
+        actions.addRevisionIdea(t, { heading: '長い改稿案', body })
+        for (let i = 1; i <= 3; i++) actions.addRevisionIdea(t, { heading: `後ろの案${i}`, body: '後ろの案の中身。'.repeat(80) })
+      },
+      titleId,
+    )
+    const long = page.getByTestId('revision-idea').filter({ hasText: '長い改稿案' })
+    await long.getByTestId('revision-toggle').click()
+    await long.getByTestId('revision-edit').click()
+    const done = long.getByTestId('revision-edit-done')
+    await done.scrollIntoViewIfNeeded()
+    const doneY = (await done.boundingBox())!.y
+    await done.click()
+    await expect(long.getByTestId('revision-body-input')).toHaveCount(0)
+    expect(Math.abs((await long.getByTestId('revision-edit').boundingBox())!.y - doneY)).toBeLessThanOrEqual(2)
+    await expect(long.getByTestId('revision-edit')).toBeFocused()
+    const more = long.getByTestId('revision-more')
+    await more.click()
+    await expect(more).toHaveText('折りたたむ')
+    await more.scrollIntoViewIfNeeded()
+    const moreY = (await more.boundingBox())!.y
+    await more.click()
+    await expect(more).toHaveText('全文を表示')
+    expect(Math.abs((await more.boundingBox())!.y - moreY)).toBeLessThanOrEqual(2)
   })
 
   test('推敲案: 貼り付け → フラグが一番上・チェックで下へ・押すと本文の箇所を選ぶ。2回貼り付けても増えない', async ({
@@ -448,8 +492,11 @@ test.describe('Claude 連携（2.3）', () => {
     // 改稿案の関係する話のチップと「外す」
     await tapSize(page.getByTestId('revision-piece-chip').first(), 'revision-piece-chip', false)
     await page.getByTestId('revision-toggle').first().click()
+    await tapSize(page.getByTestId('revision-edit').first(), 'revision-edit')
+    await page.getByTestId('revision-edit').first().click()
     await tapSize(page.getByTestId('revision-piece-chip').first(), 'revision-piece-chip（編集中）', false)
     await tapSize(page.getByTestId('revision-piece-remove').first(), 'revision-piece-remove')
+    await tapSize(page.getByTestId('revision-edit-done').first(), 'revision-edit-done')
     await noHorizontalScroll(page)
     await page.getByTestId('proof-claude-manual').click()
     await noHorizontalScroll(page)

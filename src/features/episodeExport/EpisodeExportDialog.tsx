@@ -132,7 +132,7 @@ export function EpisodeExportDialog({
         </p>
         {scopedToChapter ? (
           <p className="ex-scope-note" data-testid="export-scope-note">
-            通し読みの範囲で章を選んでいても、タイトル全体の各話を書き出します。
+            通し読みの範囲で章・話を選んでいても、タイトル全体の各話を書き出します。
           </p>
         ) : null}
 

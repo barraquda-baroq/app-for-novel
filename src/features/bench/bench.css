@@ -91,6 +91,93 @@
   overflow-wrap: anywhere;
 }
 
+/* 同じ原稿の分析（自分の原稿を何回も分析した時の、ほかの回への一覧） */
+.bw-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.bw-runs-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bw-runs-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -8px;
+  padding: 0;
+  list-style: none;
+}
+
+.bw-run-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+a.bw-run-row:hover {
+  background: var(--surface-2);
+}
+
+.bw-run.is-current .bw-run-row {
+  background: var(--area-bench-soft);
+}
+
+.bw-run-main {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  min-width: 0;
+}
+
+.bw-run-label {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.bw-run-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge.bw-run-here {
+  flex: none;
+  border-color: color-mix(in srgb, var(--area-bench) 35%, var(--border));
+  background: var(--surface);
+  color: var(--area-bench-text);
+}
+
+.bw-run-chevron {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.bw-runs-more {
+  align-self: flex-start;
+}
+
 /* 観点・タイトルのチップ */
 .bw-chips {
   display: flex;

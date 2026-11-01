@@ -123,3 +123,27 @@ export function previewText(text: string, maxChars = 140): string {
   const chars = Array.from(one)
   return chars.length > maxChars ? `${chars.slice(0, maxChars).join('')}…` : one
 }
+
+/** 抜粋を作る時に見る、Markdown の本文の最初の字数（場面を丸ごと書いた長い案でも、全文は見ない） */
+const MARKDOWN_PREVIEW_SOURCE = 2_000
+
+/**
+ * Markdown の本文の最初の数行（閉じた改稿案のカードに出す、ただの文）。見出し・引用・箇条書き・区切り線・コードブロックの
+ * 記号と、強調・打ち消し・コードの記号を除き、リンクは文字だけにする
+ */
+export function markdownPreview(text: string, maxChars = 140): string {
+  const flat = text
+    .slice(0, MARKDOWN_PREVIEW_SOURCE)
+    // 切った所で絵文字などが半分に割れたら、その半分は捨てる
+    .replace(/[\uD800-\uDBFF]$/, '')
+    .replace(/^ {0,3}(?:`{3,}|~{3,}).*$/gm, '')
+    .replace(/^ {0,3}(?:[-*_][ \t]*){3,}$/gm, '')
+    .replace(/^[ \t]*(?:>[ \t]?)+/gm, '')
+    .replace(/^ {0,3}#{1,6}(?=[ \t]|$)/gm, '')
+    .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/gm, '')
+    // URL の中の括弧（「…/星_(小説)」）は1段まで
+    .replace(/!?\[([^\]\n]*)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, '$1')
+    .replace(/[*_`]|~~/g, '')
+  const out = previewText(flat, maxChars)
+  return text.length > MARKDOWN_PREVIEW_SOURCE && !out.endsWith('…') ? `${out}…` : out
+}

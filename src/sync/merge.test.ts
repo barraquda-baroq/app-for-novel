@@ -71,6 +71,23 @@ describe('レコードのマージ', () => {
     const r = mergeFields('titles', base, mine, theirs, D).record as typeof base
     expect(r.structure.map((n) => n.id)).toEqual(['t', 'p1', 'm'])
   })
+  it('縦書きのページ表示の字数×行数は2つの値をまとめて1つの短い項目として合わせる（字数と行数が混ざらない）', () => {
+    const t = { ...base, pageSetup: { chars: 40, lines: 32 } }
+    const mine = { ...t, pageSetup: { chars: 20, lines: 20 } }
+    const theirs = { ...t, pageSetup: { chars: 40, lines: 40 }, name: 'あちら' }
+    const r = mergeFields('titles', t, mine, theirs, D).record as typeof t
+    expect(r.pageSetup).toEqual({ chars: 20, lines: 20 })
+    expect(r.name).toBe('あちら')
+    // 片方だけが変えたらその値。この端末で既定に戻した（項目を消した）時は消える
+    expect((mergeFields('titles', t, t, theirs, D).record as typeof t).pageSetup).toEqual({ chars: 40, lines: 40 })
+    const cleared: Partial<typeof t> = { ...t }
+    delete cleared.pageSetup
+    const renamed = { ...t, name: 'あちら' }
+    expect('pageSetup' in mergeFields('titles', t, cleared as typeof t, renamed, D).record).toBe(false)
+    // 字数×行数を決める前の内容から、別の端末が名前だけを変えても、クラウドの字数×行数は残る
+    const old: Partial<typeof t> = { ...base, name: '古い端末' }
+    expect((mergeFields('titles', base, old as typeof t, t, D).record as typeof t).pageSetup).toEqual({ chars: 40, lines: 32 })
+  })
   it('稿の本文が両方で変わっていたら、クラウド側を採って競合を知らせる', () => {
     const v = { id: 'v', body: '元', note: '', updatedAt: 1 }
     const mine = { ...v, body: 'こちら', note: 'メモ' }

@@ -9,7 +9,8 @@ interface Pending {
   focus: string[]
 }
 
-function scrollByInstant(dy: number): void {
+/** ページを dy だけ、なめらかにせずにスクロールする */
+export function scrollByInstant(dy: number): void {
   try {
     window.scrollTo({ top: window.scrollY + dy, left: window.scrollX, behavior: 'instant' as ScrollBehavior })
   } catch {

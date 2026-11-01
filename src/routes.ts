@@ -27,6 +27,8 @@ export const paths = {
   separate: (titleId: ID, pieceId: ID) => `/t/${titleId}/p/${pieceId}/separate`,
   memo: (titleId: ID, memoId: ID) => `/t/${titleId}/m/${memoId}`,
   read: (titleId: ID, chapterId?: ID) => `/t/${titleId}/read${chapterId ? `?chapter=${chapterId}` : ''}`,
+  /** 1話だけの通し読み（幕なら属する話。src/features/read/readLogic.ts の resolvePieceScope） */
+  readEpisode: (titleId: ID, pieceId: ID) => `/t/${titleId}/read?piece=${pieceId}`,
   /** Claude 用のコネクタとの連携（コネクタの画面から開かれる。s はコネクタが渡す連携の印） */
   claudeConnect: () => '/claude/connect',
 }

@@ -600,7 +600,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
             "body": {
               "type": "string",
               "minLength": 1,
-              "description": "改稿案の本文（ワンシーン丸ごとでもよい。長さの上限なし）"
+              "description": "改稿案の本文（Markdown。ワンシーン丸ごとでもよい。長さの上限なし）"
             },
             "pieces": {
               "description": "関係する話（#12・p:…）",

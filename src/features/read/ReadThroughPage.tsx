@@ -3,6 +3,8 @@
 // 幕に分けた話は、話の見出しの下に幕の見出し（第1幕…）と各幕の採用稿を並べる（目次にも幕を出す）。
 // 本文のルビ・傍点の記法は読むための表示にする（コピー・テキストの書き出しは記法のまま）。
 // 長編（数百話・数百万字）でも軽く開けるよう、画面の外の話は組版せず、見積もった大きさで場所だけ取る（lineEstimate.ts）。
+// 縦書きでは、タイトルの字数×行数（Title.pageSetup）のページに組んで本のように並べる（PagedBody.tsx・verticalPages.ts）。
+// 話の画面の「この話を通し読み」からは、その話だけ（?piece=）。
 import {
   memo,
   useCallback,
@@ -16,14 +18,16 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { Link, useHref, useLocation, useParams, useSearchParams } from 'react-router-dom'
-import { buildReadThrough, NO_ACTIVE_MESSAGE, readThroughText, type ReadBlock } from '../../domain/readthrough'
+import { pageSetupOf, samePageSetup } from '../../domain/pageSetup'
+import { buildReadThrough, NO_ACTIVE_MESSAGE, readBlocksText, readThroughText, type ReadBlock } from '../../domain/readthrough'
 import { strippedBody } from '../../domain/ruby'
 import { chaptersOf, flatten } from '../../domain/structure'
 import { formatCount } from '../../domain/text'
-import type { ID } from '../../domain/types'
+import type { ID, PageSetup } from '../../domain/types'
 import { paths } from '../../routes'
+import { actions } from '../../store/actions'
 import { getData, useData } from '../../store/appStore'
-import { usePrefs } from '../../store/uiStore'
+import { attempt, usePrefs } from '../../store/uiStore'
 import { saveTextFile } from '../../platform/saveFile'
 import { copyText, safeFileName } from '../../ui/browser'
 import { useDocumentTitle } from '../../ui/hooks'
@@ -34,42 +38,33 @@ import { NearViewportContext, useNearViewportWatcher } from '../../ui/nearViewpo
 import { LazyRubyText } from '../../ui/RubyText'
 import { EpisodeExportDialog } from '../episodeExport/EpisodeExportDialog'
 import { FilesIcon } from '../episodeExport/exportIcons'
-import { lineShape, lineShapeStyle, useCharsPerLine, type LineShape } from './lineEstimate'
+import { applyCharsPerLine, lineShape, lineShapeStyle, useCharsPerLine, type LineShape } from './lineEstimate'
+import { PagedContent, usePageFit } from './PagedBody'
+import { PageSetupControl } from './PageSetupControl'
 import { VerticalTextIcon } from './readIcons'
 import {
   actAnchorId,
   actVersion,
   clampFontSize,
+  episodeBlocks,
   FONT_MAX,
   FONT_MIN,
+  pageAnchorId,
+  pagedFontSize,
   pieceAnchorId,
   pieceVersion,
   readMissingLabel,
   readStats,
   resolveChapterScope,
-  splitTcy,
+  resolvePieceScope,
   tocGroups,
   type PieceBlock,
   type TocGroup,
 } from './readLogic'
 import { readingAnchor, settleScrollTo, type ReadingAnchor } from './scrollAnchor'
+import { Tcy } from './Tcy'
+import { createPageCache, layoutVerticalPages } from './verticalPages'
 import './read.css'
-
-function Tcy({ text }: { text: string }) {
-  return (
-    <>
-      {splitTcy(text).map((part, i) =>
-        typeof part === 'string' ? (
-          <span key={i}>{part}</span>
-        ) : (
-          <span key={i} className="rt-tcy">
-            {part.tcy}
-          </span>
-        ),
-      )}
-    </>
-  )
-}
 
 function fullLabel(b: PieceBlock): string {
   return b.subtitle.trim() ? `${b.label}　${b.subtitle.trim()}` : b.label
@@ -83,8 +78,17 @@ interface PieceLayout {
   actPlain?: Map<ID, string>
 }
 
+/** 範囲の選択欄で「1話だけ」を表す値（章の id と重ならない） */
+const SCOPE_PIECE = ':piece'
+
 /** 幕の見出しの分の見積もり（空行の数で数える） */
 const ACT_HEAD_LINES = 3
+
+/**
+ * 目次が本文の上に縦に並ぶ画面（read.css: 1100px 未満の幅で、高さが 500px を超える時。広い画面は横の列、低い画面
+ * （スマホの横置き）は本文の横に出す）。read.css の @media (min-width: 1100px)・(max-height: 500px) と合わせる
+ */
+const TOC_ABOVE_BODY = '(max-width: 1099.98px) and (min-height: 500.02px)'
 
 /** 本文の字間（read.css の .rt-text の letter-spacing と合わせる） */
 const TEXT_LETTER_SPACING = 0.02
@@ -232,8 +236,11 @@ const DocContent = memo(function DocContent({
   )
 })
 
-/** 目次から移動する（anchorId は話・幕の見出しの要素の id） */
-type JumpHandler = (e: MouseEvent<HTMLAnchorElement>, anchorId: string) => void
+/**
+ * 目次から移動する（anchorId は話・幕の見出しの要素の id）。page は縦書きのページ表示で幕の見出しのあるページ
+ * （幕の見出しは、そのページが画面の近くに来るまで作らないので、ページへ移動する）
+ */
+type JumpHandler = (e: MouseEvent<HTMLAnchorElement>, anchorId: string, page?: number) => void
 
 /** 目次（スマホでは開閉できる） */
 function ReadToc({
@@ -243,6 +250,7 @@ function ReadToc({
   onToggle,
   onJump,
   href,
+  pages,
 }: {
   groups: TocGroup[]
   pieceCount: number
@@ -250,6 +258,8 @@ function ReadToc({
   onToggle: () => void
   onJump: JumpHandler
   href: string
+  /** 縦書きのページ表示: 話・幕の最初のページの番号（横書きでは null） */
+  pages: ReadonlyMap<ID, number> | null
 }) {
   return (
     <nav className={`rt-toc${open ? ' is-open' : ''}`} aria-label="目次" data-testid="read-toc">
@@ -262,13 +272,31 @@ function ReadToc({
       <h2 className="rt-toc-title">
         目次<span className="rt-toc-count">{pieceCount}</span>
       </h2>
-      <TocBody groups={groups} onJump={onJump} href={href} />
+      <TocBody groups={groups} onJump={onJump} href={href} pages={pages} />
     </nav>
   )
 }
 
 /** 目次の中身。開閉や表示の切り替えでは描き直さない（数百話あっても目次を開く・閉じるのを軽くする） */
-const TocBody = memo(function TocBody({ groups, onJump, href }: { groups: TocGroup[]; onJump: JumpHandler; href: string }) {
+const TocBody = memo(function TocBody({
+  groups,
+  onJump,
+  href,
+  pages,
+}: {
+  groups: TocGroup[]
+  onJump: JumpHandler
+  href: string
+  pages: ReadonlyMap<ID, number> | null
+}) {
+  const pageOf = (id: ID) => {
+    const n = pages?.get(id)
+    return n === undefined ? null : (
+      <span className="rt-toc-page" aria-label={`${n}ページ`} data-testid="toc-page">
+        p.{n}
+      </span>
+    )
+  }
   return (
     <div className="rt-toc-body">
       {groups.map((g, gi) => (
@@ -290,6 +318,7 @@ const TocBody = memo(function TocBody({ groups, onJump, href }: { groups: TocGro
                       採用原稿なし
                     </span>
                   ) : null}
+                  {pageOf(b.pieceId)}
                 </a>
                 {b.acts ? (
                   <ol className="rt-toc-acts" aria-label={`${b.label}の幕`}>
@@ -298,7 +327,7 @@ const TocBody = memo(function TocBody({ groups, onJump, href }: { groups: TocGro
                         <a
                           href={href}
                           className="rt-toc-link rt-toc-act"
-                          onClick={(e) => onJump(e, actAnchorId(a.pieceId))}
+                          onClick={(e) => onJump(e, actAnchorId(a.pieceId), pages?.get(a.pieceId))}
                           data-testid="toc-act-link"
                         >
                           <span className="rt-toc-label">{a.label}</span>
@@ -307,6 +336,7 @@ const TocBody = memo(function TocBody({ groups, onJump, href }: { groups: TocGro
                               採用原稿なし
                             </span>
                           ) : null}
+                          {pageOf(a.pieceId)}
                         </a>
                       </li>
                     ))}
@@ -328,9 +358,17 @@ export function ReadThroughPage() {
   const location = useLocation()
   const selfHref = useHref(location)
   const title = data.titles[titleId]
-  const chapterId = useMemo(() => resolveChapterScope(data, titleId, params.get('chapter')), [data, titleId, params])
+  // 1話だけ（話の画面の「この話を通し読み」。?piece=）。その間は章の範囲を使わない
+  const pieceScope = useMemo(() => resolvePieceScope(data, titleId, params.get('piece')), [data, titleId, params])
+  const chapterId = useMemo(
+    () => (pieceScope ? undefined : resolveChapterScope(data, titleId, params.get('chapter'))),
+    [data, titleId, params, pieceScope],
+  )
   const chapters = useMemo(() => chaptersOf(data, titleId), [data, titleId])
-  const blocks = useMemo(() => buildReadThrough(data, titleId, chapterId), [data, titleId, chapterId])
+  const blocks = useMemo(
+    () => (pieceScope ? episodeBlocks(buildReadThrough(data, titleId), pieceScope) : buildReadThrough(data, titleId, chapterId)),
+    [data, titleId, chapterId, pieceScope],
+  )
   const groups = useMemo(() => tocGroups(blocks), [blocks])
   const stats = useMemo(() => readStats(data, blocks), [data, blocks])
   // 各話テキスト書き出しは範囲に関係なくタイトル全体を書き出すので、タイトル全体に話があるかで判断する
@@ -366,6 +404,23 @@ export function ReadThroughPage() {
   const vertical = usePrefs((s) => s.verticalReading)
   const fontSize = clampFontSize(usePrefs((s) => s.editorFontSize))
   const setPrefs = usePrefs((s) => s.setPrefs)
+  // 縦書きのページ表示: タイトルの字数×行数のページに組む（話ごとの覚えで、本文・字数が変わらない話は組み直さない）
+  const setup = pageSetupOf(title)
+  const [pageCache] = useState(createPageCache)
+  const layout = useMemo(
+    () => (vertical ? layoutVerticalPages(blocks, { chars: setup.chars, lines: setup.lines }, pageCache) : null),
+    [vertical, blocks, setup.chars, setup.lines, pageCache],
+  )
+  // 目次のページ番号（話・幕の最初のページ）
+  const tocPages = useMemo(() => {
+    if (!layout) return null
+    const m = new Map<ID, number>()
+    for (const ep of layout.episodes) {
+      m.set(ep.pieceId, ep.startPage)
+      for (const a of ep.acts ?? []) m.set(a.pieceId, a.page)
+    }
+    return m
+  }, [layout])
   const [tocOpen, setTocOpen] = useState(false)
   const [exportingEpisodes, setExportingEpisodes] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -378,7 +433,15 @@ export function ReadThroughPage() {
   const titleName = title ? title.name.trim() || '無題のタイトル' : ''
   const chapter = chapterId ? data.chapters[chapterId] : undefined
   const chapterName = chapter ? chapter.name.trim() || '無題の章' : ''
-  useDocumentTitle(title ? `通し読み: ${chapter ? `${chapterName}（${titleName}）` : titleName}` : undefined)
+  // 1話だけの時の話（見出し・パンくず）
+  const scopeBlock = pieceScope ? blocks.find((b): b is PieceBlock => b.type === 'piece') : undefined
+  const scopeLabel = scopeBlock ? fullLabel(scopeBlock) : ''
+  const scopeChapter = title?.chaptersEnabled && scopeBlock?.chapterId ? data.chapters[scopeBlock.chapterId] : undefined
+  useDocumentTitle(
+    title
+      ? `通し読み: ${scopeBlock ? `${scopeLabel}（${titleName}）` : chapter ? `${chapterName}（${titleName}）` : titleName}`
+      : undefined,
+  )
 
   // 見出しへ移動した時にヘッダー・ツールバーの下に隠れないよう、ツールバーの高さを CSS 変数に入れる
   useLayoutEffect(() => {
@@ -398,7 +461,7 @@ export function ReadThroughPage() {
   useLayoutEffect(() => {
     window.scrollTo?.(0, 0)
     if (docRef.current) docRef.current.scrollLeft = 0
-  }, [titleId, chapterId])
+  }, [titleId, chapterId, pieceScope])
 
   // 1行（縦書きでは1列）に入る字数。画面の外の話の大きさの見積もりに使う
   useCharsPerLine(docRef, TEXT_LETTER_SPACING, [vertical, fontSize, stats.pieces === 0])
@@ -407,18 +470,36 @@ export function ReadThroughPage() {
   const near = useNearViewportWatcher(() => (vertical ? docRef.current : null), [vertical, stats.pieces === 0])
   const { check: checkNear, scheduleCheck: scheduleNearCheck } = near
 
-  // 縦書き・文字の大きさを切り替えたら、切り替える前に読んでいた所を出す
+  // 縦書きのページ表示: ページが本文の枠の高さに収まる1マスの大きさ（文字の大きさはそれより大きくしない）
+  const editorFont = usePrefs((s) => s.editorFont)
+  // 目次を本文の上に開いている間（スマホ・狭い画面の縦置き）は、ページを縮めない（閉じればまた同じ高さ）。
+  // 目次を本文の横に出す画面（広い画面・スマホの横置き）では、開いたまま読むこともあるので、いつも合わせる
+  const tocOpenRef = useRef(tocOpen)
+  useLayoutEffect(() => {
+    tocOpenRef.current = tocOpen
+  }, [tocOpen])
+  const [pageFitOptions] = useState(() => ({
+    cancelSettle,
+    hold: () => tocOpenRef.current && Boolean(window.matchMedia?.(TOC_ABOVE_BODY).matches),
+  }))
+  const [pageFit, refitPages] = usePageFit(docRef, setup.chars, vertical && stats.pieces > 0, editorFont, pageFitOptions)
+  const shownSize = vertical ? pagedFontSize(fontSize, pageFit) : fontSize
+  const pageFull = vertical && pageFit !== null && shownSize + 1 > pageFit
+
+  // 縦書き・文字の大きさ・字数×行数を切り替えたら、切り替える前に読んでいた所を出す
   useLayoutEffect(() => {
     const anchor = anchorRef.current
     anchorRef.current = null
     if (!anchor) return
     const target = document.getElementById(anchor.id)
     if (!target) return
+    // 横書き（話の大きさは見積もり）では、1行の字数を先に合わせてから移動する
+    if (!vertical && docRef.current) applyCharsPerLine(docRef.current, TEXT_LETTER_SPACING)
     cancelSettle.current?.()
     cancelSettle.current = settleScrollTo(target, docRef.current, vertical, anchor.fraction)
     // 出した所の近くの話は、描く前にルビ・傍点の表示にする（コミットの途中なので、終わってから）
     scheduleNearCheck()
-  }, [vertical, fontSize, scheduleNearCheck])
+  }, [vertical, fontSize, setup.chars, setup.lines, scheduleNearCheck])
 
   useEffect(() => () => cancelSettle.current?.(), [])
 
@@ -446,32 +527,44 @@ export function ReadThroughPage() {
   }, [vertical])
   const toggleToc = useCallback(() => setTocOpen((v) => !v), [])
   const jumpTo = useCallback(
-    (e: MouseEvent<HTMLAnchorElement>, anchorId: string) => {
+    (e: MouseEvent<HTMLAnchorElement>, anchorId: string, page?: number) => {
       e.preventDefault()
-      // スマホでは目次を先に閉じる（閉じて本文の位置が動いてから移動する）
+      // スマホでは目次を先に閉じる（閉じて本文の位置が動いてから移動する。縦書きのページは、広がった枠に合わせてから）
       flushSync(() => setTocOpen(false))
-      const target = document.getElementById(anchorId)
+      if (verticalRef.current) refitPages()
+      // 縦書きのページ表示の幕は、幕の見出しのあるページへ（見出しはページが画面の近くに来てから作る）
+      const target =
+        (page !== undefined && verticalRef.current ? document.getElementById(pageAnchorId(page)) : null) ??
+        document.getElementById(anchorId)
       if (!target) return
       // 途中の話はまだ組んでいない（見積もりの大きさ）ので、すぐに移動し、組み上がってずれたら合わせ直す
       cancelSettle.current?.()
       cancelSettle.current = settleScrollTo(target, docRef.current, verticalRef.current, 0)
       // 移動した先とその近くの話は、描く前にルビ・傍点の表示にする（読みが後から現れないように）
       checkNear()
-      target.querySelector<HTMLElement>('[data-heading]')?.focus({ preventScroll: true })
+      const anchor = document.getElementById(anchorId)
+      const heading = anchor?.matches('[data-heading]') ? anchor : anchor?.querySelector<HTMLElement>('[data-heading]')
+      heading?.focus({ preventScroll: true })
     },
-    [checkNear],
+    [checkNear, refitPages],
   )
 
   if (!title) return <NotFound message="タイトルが見つかりません。" />
 
   const crumbs: Crumb[] = [{ label: titleName, to: paths.title(titleId) }]
-  if (chapter) crumbs.push({ label: chapterName, to: paths.chapter(titleId, chapter.id) })
+  if (scopeBlock) {
+    if (scopeChapter) crumbs.push({ label: scopeChapter.name.trim() || '無題の章', to: paths.chapter(titleId, scopeChapter.id) })
+    crumbs.push({ label: scopeLabel, to: paths.piece(titleId, scopeBlock.pieceId) })
+  } else if (chapter) crumbs.push({ label: chapterName, to: paths.chapter(titleId, chapter.id) })
   crumbs.push({ label: '通し読み' })
 
   const setScope = (next: string) => {
+    if (next === SCOPE_PIECE) return
     setParams(
       (prev) => {
         const p = new URLSearchParams(prev)
+        // 1話だけの通し読みから全体・章へ広げる
+        p.delete('piece')
         if (next) p.set('chapter', next)
         else p.delete('chapter')
         return p
@@ -480,19 +573,39 @@ export function ReadThroughPage() {
     )
   }
 
-  const text = () => readThroughText(getData(), titleId, chapterId)
-  const fileName = chapter ? `${safeFileName(`${titleName}_${chapterName}`)}.txt` : `${safeFileName(title.name)}.txt`
+  const text = () => {
+    if (!pieceScope) return readThroughText(getData(), titleId, chapterId)
+    return readBlocksText(episodeBlocks(buildReadThrough(getData(), titleId), pieceScope))
+  }
+  const fileName = scopeBlock
+    ? `${safeFileName(`${titleName}_${scopeLabel}`)}.txt`
+    : chapter
+      ? `${safeFileName(`${titleName}_${chapterName}`)}.txt`
+      : `${safeFileName(title.name)}.txt`
 
-  /** 表示の切り替え。今読んでいる所を覚えておき、切り替えた後に同じ所を出す */
-  const changeView = (patch: { verticalReading?: boolean; editorFontSize?: number }) => {
+  /** 今読んでいる所を覚えておく（表示を切り替えた後に同じ所を出す） */
+  const keepPlace = () => {
     const doc = docRef.current
     anchorRef.current = doc ? readingAnchor(doc, vertical) : null
+  }
+  /** 表示の切り替え。今読んでいる所を覚えておき、切り替えた後に同じ所を出す */
+  const changeView = (patch: { verticalReading?: boolean; editorFontSize?: number }) => {
+    keepPlace()
     setPrefs(patch)
+  }
+  /** 縦書きのページの字数×行数（タイトルの設定。同期する） */
+  const changeSetup = (next: PageSetup) => {
+    if (!samePageSetup(next, setup)) keepPlace()
+    attempt(() => actions.setTitlePageSetup(titleId, next))
   }
 
   const pieceCount = stats.pieces
   const isEmpty = pieceCount === 0
   const style = { '--rt-size': `${fontSize}px` } as CSSProperties
+  const docStyle = layout
+    ? ({ '--pg-font': `${fontSize}px`, '--pg-chars': setup.chars, '--pg-lines': setup.lines } as CSSProperties)
+    : undefined
+  const showScope = scopeBlock !== undefined || (title.chaptersEnabled && chapters.length > 0)
 
   return (
     <div ref={rootRef} className={`rt-root${vertical ? ' is-vertical' : ''}`} style={style} data-testid="read-page">
@@ -501,21 +614,24 @@ export function ReadThroughPage() {
       <div className="rt-toolbar" ref={toolbarRef} data-testid="read-toolbar">
         <div className="rt-toolbar-inner">
           <div className="rt-tools">
-            {title.chaptersEnabled && chapters.length > 0 ? (
+            {showScope ? (
               <label className="rt-scope">
                 <span className="rt-tool-label">範囲</span>
                 <select
                   className="select rt-scope-select"
-                  value={chapterId ?? ''}
+                  value={scopeBlock ? SCOPE_PIECE : (chapterId ?? '')}
                   onChange={(e) => setScope(e.target.value)}
                   data-testid="read-scope"
                 >
                   <option value="">全体</option>
-                  {chapters.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name.trim() || '無題の章'}
-                    </option>
-                  ))}
+                  {title.chaptersEnabled
+                    ? chapters.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name.trim() || '無題の章'}
+                        </option>
+                      ))
+                    : null}
+                  {scopeBlock ? <option value={SCOPE_PIECE}>{scopeLabel}</option> : null}
                 </select>
               </label>
             ) : null}
@@ -533,8 +649,8 @@ export function ReadThroughPage() {
               <button
                 type="button"
                 className="rt-size-btn"
-                onClick={() => changeView({ editorFontSize: clampFontSize(fontSize - 1) })}
-                disabled={fontSize <= FONT_MIN}
+                onClick={() => changeView({ editorFontSize: clampFontSize(shownSize - 1) })}
+                disabled={shownSize <= FONT_MIN}
                 aria-label="文字を小さく"
                 title="文字を小さく"
                 data-testid="font-smaller"
@@ -545,16 +661,16 @@ export function ReadThroughPage() {
                 </span>
               </button>
               <span className="rt-size-value" aria-live="polite" data-testid="font-size">
-                {fontSize}
+                {shownSize}
                 <span className="visually-hidden">ピクセル</span>
               </span>
               <button
                 type="button"
                 className="rt-size-btn"
-                onClick={() => changeView({ editorFontSize: clampFontSize(fontSize + 1) })}
-                disabled={fontSize >= FONT_MAX}
+                onClick={() => changeView({ editorFontSize: clampFontSize(shownSize + 1) })}
+                disabled={fontSize >= FONT_MAX || pageFull}
                 aria-label="文字を大きく"
-                title="文字を大きく"
+                title={pageFull ? 'ページが本文の枠の高さいっぱいです' : '文字を大きく'}
                 data-testid="font-larger"
               >
                 <span aria-hidden="true" className="rt-size-big">
@@ -565,11 +681,19 @@ export function ReadThroughPage() {
                 </span>
               </button>
             </div>
+            {layout ? <PageSetupControl setup={setup} onChange={changeSetup} /> : null}
           </div>
 
           <div className="rt-summary">
-            <span className="rt-total" data-testid="read-total">
-              採用原稿 <strong>{formatCount(stats.chars)}</strong>字
+            <span className="rt-counts">
+              <span className="rt-total" data-testid="read-total">
+                採用原稿 <strong>{formatCount(stats.chars)}</strong>字
+              </span>
+              {layout && !isEmpty ? (
+                <span className="rt-pages" data-testid="read-pages">
+                  ・全<strong>{formatCount(layout.totalPages)}</strong>ページ<span className="rt-pages-note">（目安）</span>
+                </span>
+              ) : null}
             </span>
             {stats.missing + stats.missingActs > 0 ? (
               <span className="badge badge-missing" data-testid="read-missing">
@@ -637,23 +761,36 @@ export function ReadThroughPage() {
               onToggle={toggleToc}
               onJump={jumpTo}
               href={selfHref}
+              pages={tocPages}
             />
 
             <article
               ref={docRef}
-              className="rt-doc"
-              aria-label={chapter ? `${chapterName}の本文` : `${titleName}の本文`}
+              className={`rt-doc${layout ? ' is-paged' : ''}`}
+              style={docStyle}
+              aria-label={scopeBlock ? `${scopeLabel}の本文` : chapter ? `${chapterName}の本文` : `${titleName}の本文`}
               tabIndex={vertical ? 0 : undefined}
               data-testid="read-body"
+              data-pages={layout ? layout.totalPages : undefined}
             >
               <NearViewportContext.Provider value={near.register}>
-                <DocContent
-                  blocks={blocks}
-                  layouts={layouts}
-                  titleId={titleId}
-                  titleName={titleName}
-                  chapterName={chapter ? chapterName : null}
-                />
+                {layout ? (
+                  <PagedContent
+                    blocks={blocks}
+                    layout={layout}
+                    titleId={titleId}
+                    titleName={titleName}
+                    chapterName={chapter ? chapterName : null}
+                  />
+                ) : (
+                  <DocContent
+                    blocks={blocks}
+                    layouts={layouts}
+                    titleId={titleId}
+                    titleName={titleName}
+                    chapterName={chapter ? chapterName : null}
+                  />
+                )}
               </NearViewportContext.Provider>
             </article>
           </div>
@@ -662,7 +799,7 @@ export function ReadThroughPage() {
       {exportingEpisodes ? (
         <EpisodeExportDialog
           titleId={titleId}
-          scopedToChapter={chapter !== undefined}
+          scopedToChapter={chapter !== undefined || scopeBlock !== undefined}
           onClose={() => setExportingEpisodes(false)}
         />
       ) : null}

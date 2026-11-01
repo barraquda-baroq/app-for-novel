@@ -2,6 +2,7 @@
 // 棚の作品が多くても重くならないように、作品ごとの分析の並びは、中身が変わらない限り同じ配列を使い続ける
 // （カードは React.memo でレコード単位の props にしている）。
 import { benchAnalysesOf, benchViewpointGroups } from '../../claude/benchOrder'
+import { refKey } from '../../claude/refs'
 import { benchWorkName } from '../../domain/benchOps'
 import { trashNotice } from '../../domain/trash'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../../domain/types'
@@ -114,4 +115,148 @@ export function analysisPreview(body: string, max = 120): string {
     .trim()
   const chars = Array.from(flat)
   return chars.length > max ? `${chars.slice(0, max).join('')}…` : flat
+}
+
+// ---------- 自分の原稿の分析（【原稿】…（第n稿…）） ----------
+// 自分の原稿は何回も分析するので、1回の分析を1つの作品にして（データの形は変えない）、作品名
+// 「【原稿】原稿名（第2稿・2回目）」の原稿名ごとにまとめて、新しい回から並べる。
+
+/** 原稿の分析の作品名の頭 */
+const MANUSCRIPT_PREFIX = '【原稿】'
+/** 回の札の頭（「第2稿」「第２稿」「第二稿」。後ろに「・2回目」などが続いてよい） */
+const RUN_LABEL = /^第\s*(?:[0-9０-９]+|[〇零一二三四五六七八九十百千]+)\s*稿/
+const OPEN = new Set(['（', '('])
+const CLOSE = new Set(['）', ')'])
+
+export interface ManuscriptRunName {
+  /** 原稿名（「【原稿】」と回の札を除いたもの。書いたとおり） */
+  base: string
+  /** 回の札（最後の括弧の中。「第2稿・2回目」） */
+  run: string
+}
+
+/**
+ * 作品名を原稿名と回の札に分ける。「【原稿】」で始まり、最後が「（第…稿…）」の括弧で終わる名前だけ（ほかは null）。
+ * 原稿名に括弧があってもよい（回の札は最後の括弧だけ。括弧の中の括弧もそのまま札に入れる）
+ */
+export function manuscriptRunOf(name: string): ManuscriptRunName | null {
+  const s = benchWorkName({ name }).normalize('NFC')
+  if (!s.startsWith(MANUSCRIPT_PREFIX)) return null
+  const chars = Array.from(s)
+  if (!CLOSE.has(chars[chars.length - 1])) return null
+  // 最後の閉じ括弧と対になる開き括弧
+  let depth = 0
+  let open = -1
+  for (let i = chars.length - 1; i >= 0; i--) {
+    if (CLOSE.has(chars[i])) depth++
+    else if (OPEN.has(chars[i]) && --depth === 0) {
+      open = i
+      break
+    }
+  }
+  if (open < 0) return null
+  const run = chars
+    .slice(open + 1, -1)
+    .join('')
+    .trim()
+  const base = chars.slice(Array.from(MANUSCRIPT_PREFIX).length, open).join('').trim()
+  return base && RUN_LABEL.test(run) ? { base, run } : null
+}
+
+/** 同じ原稿とみなす形（全角と半角・全角の空白・続く空白・前後の空白の違いを問わない。コネクタが作品名で探す時と同じ） */
+export const manuscriptKey = (base: string): string => refKey(base)
+
+export interface ManuscriptRun {
+  work: BenchWork
+  /** 回の札（「第2稿・2回目」） */
+  run: string
+}
+
+export interface Manuscript {
+  key: string
+  /** 原稿名（いちばん新しい回の書き方） */
+  base: string
+  /** 新しい回から（作った時刻の新しい順。同じなら id の順） */
+  runs: ManuscriptRun[]
+}
+
+const newestRunFirst = (a: ManuscriptRun, b: ManuscriptRun) =>
+  b.work.createdAt - a.work.createdAt || (a.work.id < b.work.id ? -1 : a.work.id > b.work.id ? 1 : 0)
+
+/** 原稿ごとの分析（key → 原稿）。【原稿】の作品名でない作品は入らない。1回だけの原稿も入る */
+export function manuscriptsOf(works: Iterable<BenchWork>): Map<string, Manuscript> {
+  const out = new Map<string, Manuscript>()
+  const bases = new Map<ID, string>()
+  for (const work of works) {
+    const parsed = manuscriptRunOf(work.name)
+    if (!parsed) continue
+    bases.set(work.id, parsed.base)
+    const key = manuscriptKey(parsed.base)
+    const run = { work, run: parsed.run }
+    const m = out.get(key)
+    if (m) m.runs.push(run)
+    else out.set(key, { key, base: parsed.base, runs: [run] })
+  }
+  for (const m of out.values()) {
+    m.runs.sort(newestRunFirst)
+    m.base = bases.get(m.runs[0].work.id)!
+  }
+  return out
+}
+
+/** 作品と同じ原稿の分析（作品も含めて新しい回から）。【原稿】の作品でない・ほかに回が無ければ null */
+export function sameManuscriptOf(data: Pick<AppData, 'benchWorks'>, workId: ID): Manuscript | null {
+  const work = data.benchWorks[workId]
+  const parsed = work ? manuscriptRunOf(work.name) : null
+  if (!parsed) return null
+  const m = manuscriptsOf(Object.values(data.benchWorks)).get(manuscriptKey(parsed.base))
+  return m && m.runs.length > 1 ? m : null
+}
+
+/** 棚に並べる1枚（作品のカードか、2回以上分析した原稿をまとめたカード） */
+export type ShelfEntry =
+  | { kind: 'work'; work: BenchWork }
+  | { kind: 'manuscript'; key: string; base: string; runs: readonly ShelfRun[] }
+
+export interface ShelfRun extends ManuscriptRun {
+  analyses: readonly BenchAnalysis[]
+}
+
+/** 分析の無い作品の分析（いつも同じ配列） */
+export const NO_ANALYSES: readonly BenchAnalysis[] = []
+
+/**
+ * 棚の並び（works は棚の順）。2回以上分析した原稿は1枚にまとめ、その原稿の作品のうち棚でいちばん前の作品の位置に置く。
+ * 前に作った並び prev と中身（作品・分析の配列）が同じ原稿は、前の回の配列をそのまま使う（カードの React.memo が効くように）
+ */
+export function benchShelfEntries(
+  works: readonly BenchWork[],
+  analyses: ReadonlyMap<ID, readonly BenchAnalysis[]>,
+  prev: readonly ShelfEntry[] = [],
+): ShelfEntry[] {
+  const manuscripts = manuscriptsOf(works)
+  const keyOf = new Map<ID, string>()
+  for (const m of manuscripts.values()) if (m.runs.length > 1) for (const r of m.runs) keyOf.set(r.work.id, m.key)
+  const old = new Map<string, readonly ShelfRun[]>()
+  for (const e of prev) if (e.kind === 'manuscript') old.set(e.key, e.runs)
+  const placed = new Set<string>()
+  const out: ShelfEntry[] = []
+  for (const work of works) {
+    const key = keyOf.get(work.id)
+    if (key === undefined) {
+      out.push({ kind: 'work', work })
+      continue
+    }
+    if (placed.has(key)) continue
+    placed.add(key)
+    const m = manuscripts.get(key)!
+    const runs = m.runs.map((r) => ({ ...r, analyses: analyses.get(r.work.id) ?? NO_ANALYSES }))
+    const before = old.get(key)
+    const same =
+      before &&
+      before.length === runs.length &&
+      before.every((r, i) => r.work === runs[i].work && r.run === runs[i].run && r.analyses === runs[i].analyses)
+    out.push({ kind: 'manuscript', key, base: m.base, runs: same ? before : runs })
+  }
+  return out
 }

@@ -25,6 +25,7 @@ import { useStoryData } from '../title/story/useStoryData'
 import '../title/story/story.css'
 import '../title/title.css'
 import '../chapter/chapter.css'
+import { EpisodeReadIcon } from '../read/readIcons'
 import { confirmUnseparate } from './actFlows'
 import { ActsIcon, UnsplitIcon } from './actIcons'
 import './acts.css'
@@ -89,14 +90,26 @@ export function EpisodeFolder({ title, piece }: { title: Title; piece: Piece }) 
       <AppHeader
         crumbs={crumbs}
         actions={
-          <Link
-            to={paths.read(title.id)}
-            className="icon-btn"
-            aria-label="通し読み（採用原稿のみ）"
-            title="通し読み（採用原稿のみ）"
-          >
-            <BookIcon />
-          </Link>
+          <>
+            <Link
+              to={paths.readEpisode(title.id, piece.id)}
+              className="icon-btn"
+              aria-label={`この話を通し読み（${label}・採用原稿のみ）`}
+              title="この話を通し読み（採用原稿のみ）"
+              data-testid="read-episode-link"
+            >
+              <EpisodeReadIcon />
+            </Link>
+            <Link
+              to={paths.read(title.id)}
+              className="icon-btn"
+              aria-label="タイトル全体を通し読み（採用原稿のみ）"
+              title="タイトル全体を通し読み（採用原稿のみ）"
+              data-testid="read-title-link"
+            >
+              <BookIcon />
+            </Link>
+          </>
         }
       />
       <main className="page page-narrow" data-testid="episode-folder">

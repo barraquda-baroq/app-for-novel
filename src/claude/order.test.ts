@@ -85,16 +85,62 @@ describe('分けて記録した批評の結果・戦略メモ（「（1/3）」�
   const heads = (n: { data: AppData; titleId: ID }) =>
     critiqueResultsOf(n.data, n.titleId).map((r) => r.resultMarkdown.split('\n')[0])
 
-  it('番号の読み方: 1行目の「（i/k）」（半角・全角・前置きの字も）。「（3/5点）」や2行目以降は番号ではない', () => {
-    expect(partMarkOf('（1/3）\n## 総評')).toEqual({ index: 1, count: 3 })
-    expect(partMarkOf('\n\n## 総評（2／3）')).toEqual({ index: 2, count: 3 })
-    expect(partMarkOf('# 批評 (前半 1/2)')).toEqual({ index: 1, count: 2 })
-    expect(partMarkOf('（２/２）続き')).toEqual({ index: 2, count: 2 })
-    expect(partMarkOf('## 総評（3/5点）')).toBeNull()
-    expect(partMarkOf('## 総評\n（1/2）')).toBeNull()
-    expect(partMarkOf('（3/2）')).toBeNull()
-    expect(partMarkOf('（1/1）')).toBeNull()
-    expect(partMarkOf('')).toBeNull()
+  it('番号の読み方（本文）: 1行目の先頭の「（i/k）」だけ（半角・全角・前置きの字・Markdown の記号・「**結論**：」の後ろも）', () => {
+    // 先頭
+    expect(partMarkOf('（1/3）\n## 総評', 'body')).toEqual({ index: 1, count: 3 })
+    expect(partMarkOf('\n\n（2／3）', 'body')).toEqual({ index: 2, count: 3 })
+    expect(partMarkOf('(前半 1/2) 批評', 'body')).toEqual({ index: 1, count: 2 })
+    expect(partMarkOf('（２/２）続き', 'body')).toEqual({ index: 2, count: 2 })
+    expect(partMarkOf('## （1/2）総評', 'body')).toEqual({ index: 1, count: 2 })
+    expect(partMarkOf('> （2/2）', 'body')).toEqual({ index: 2, count: 2 })
+    expect(partMarkOf('**（1/2）** 構成', 'body')).toEqual({ index: 1, count: 2 })
+    // 見出し語とコロン1つの後ろ
+    expect(partMarkOf('**結論**：（1/2）前半の要点', 'body')).toEqual({ index: 1, count: 2 })
+    expect(partMarkOf('**要点：** （2/2）', 'body')).toEqual({ index: 2, count: 2 })
+    expect(partMarkOf('結論:（１/２）', 'body')).toEqual({ index: 1, count: 2 })
+    // 行の途中・末尾は番号ではない（「12項目中（7/12）」や日付の「（3/5）」で並べ替えないように）
+    expect(partMarkOf('**結論**：12項目中（7/12）が届き、残りは弱い', 'body')).toBeNull()
+    expect(partMarkOf('3月の打ち合わせ（3/5）で決めたこと', 'body')).toBeNull()
+    expect(partMarkOf('## 総評（2／3）', 'body')).toBeNull()
+    expect(partMarkOf('# 批評 (前半 1/2)', 'body')).toBeNull()
+    expect(partMarkOf('**結論**：**要点**：（1/2）', 'body')).toBeNull()
+    // 番号でないもの・2行目以降
+    expect(partMarkOf('（3/5点）の評価', 'body')).toBeNull()
+    expect(partMarkOf('**結論**：（3/5点）', 'body')).toBeNull()
+    expect(partMarkOf('## 総評\n（1/2）', 'body')).toBeNull()
+    expect(partMarkOf('（3/2）', 'body')).toBeNull()
+    expect(partMarkOf('（1/1）', 'body')).toBeNull()
+    expect(partMarkOf('', 'body')).toBeNull()
+  })
+
+  it('番号の読み方（見出し・名前）: 先頭か末尾の「（i/k）」。途中や「（3/5点）」は番号ではない', () => {
+    expect(partMarkOf('応募戦略（1/3）', 'heading')).toEqual({ index: 1, count: 3 })
+    expect(partMarkOf('応募戦略 (２／３) ', 'heading')).toEqual({ index: 2, count: 3 })
+    expect(partMarkOf('## 総評（2／3）', 'heading')).toEqual({ index: 2, count: 3 })
+    expect(partMarkOf('# 批評 (前半 1/2)', 'heading')).toEqual({ index: 1, count: 2 })
+    expect(partMarkOf('（3/3）応募戦略', 'heading')).toEqual({ index: 3, count: 3 })
+    expect(partMarkOf('応募戦略（1/3）の続き', 'heading')).toBeNull()
+    expect(partMarkOf('12項目中（7/12）が届く', 'heading')).toBeNull()
+    expect(partMarkOf('総評（3/5点）', 'heading')).toBeNull()
+    expect(partMarkOf('総評（1/1）', 'heading')).toBeNull()
+    // 200字を超える行は、末尾を見ない（途中で切った所を末尾と読まないように）
+    expect(partMarkOf(`${'あ'.repeat(195)}（1/2）の続き`, 'heading')).toBeNull()
+    expect(partMarkOf(`${'あ'.repeat(190)}（1/2）`, 'heading')).toEqual({ index: 1, count: 2 })
+    expect(partMarkOf('', 'heading')).toBeNull()
+  })
+
+  it('同じ日の結果の1行目の途中にある「（7/12）」「（3/12）」では並べ替えない（新しい順のまま）', () => {
+    const n = novel(['本文'])
+    addResult(n, '**結論**：12項目中（3/12）が届いていない\n本文', DAY + 1_000)
+    addResult(n, '**結論**：12項目中（7/12）が届き、残りは弱い\n本文', DAY + 2_000)
+    addResult(n, '**結論**：（2/2）後半\n本文', DAY + 4_000)
+    addResult(n, '**結論**：（1/2）前半\n本文', DAY + 3_000)
+    expect(heads(n)).toEqual([
+      '**結論**：（1/2）前半',
+      '**結論**：（2/2）後半',
+      '**結論**：12項目中（7/12）が届き、残りは弱い',
+      '**結論**：12項目中（3/12）が届いていない',
+    ])
   })
 
   it('Claude が1つ目から順に送った部分は、新しい順の中でも（1/3）→（3/3）の順。前後の結果の並びはそのまま', () => {
@@ -162,8 +208,8 @@ describe('分けて記録した批評の結果・戦略メモ（「（1/3）」�
 
   it('戦略メモも、見出しの番号の順', () => {
     const n = novel(['本文'])
-    const add = (heading: string, now: number) => {
-      const r = buildStrategyNote(n.data, { title_id: n.titleId, heading, body: `${heading}の本文` }, { source: 'claude', now })
+    const add = (heading: string, now: number, body = `${heading}の本文`) => {
+      const r = buildStrategyNote(n.data, { title_id: n.titleId, heading, body }, { source: 'claude', now })
       n.data = addClaudeRecords(n.data, r.records).data
     }
     add('前のメモ', DAY)
@@ -176,5 +222,16 @@ describe('分けて記録した批評の結果・戦略メモ（「（1/3）」�
       '応募戦略（3/3）',
       '前のメモ',
     ])
+    // 見出しに番号が無ければ本文の1行目の先頭の番号。本文の行の途中の「（7/12）」は番号ではない
+    const NEXT = DAY + 86_400_000
+    add('公募の候補', NEXT + 1_000, '（1/2）前半')
+    add('公募の候補', NEXT + 2_000, '（2/2）後半')
+    add('振り返り', NEXT + 3_000, '**結論**：12項目中（3/12）が届いていない')
+    add('振り返り', NEXT + 4_000, '**結論**：12項目中（7/12）が届いた')
+    expect(
+      strategyNotesOf(n.data, n.titleId)
+        .slice(0, 4)
+        .map((x) => x.body),
+    ).toEqual(['**結論**：12項目中（7/12）が届いた', '**結論**：12項目中（3/12）が届いていない', '（1/2）前半', '（2/2）後半'])
   })
 })

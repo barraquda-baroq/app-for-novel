@@ -22,10 +22,13 @@ function startLine(doc: HTMLElement, vertical: boolean, piece: HTMLElement): num
   return parseFloat(margin.scrollMarginTop || '0')
 }
 
-/** 今読んでいる話と、その中の位置。先頭にいる（まだスクロールしていない）ときは null */
+/**
+ * 今読んでいる話と、その中の位置。先頭にいる（まだスクロールしていない）ときは null。
+ * 話は .rt-piece（縦書きのページ表示では、話のページのまとまり .pg-episode。どちらも id は pieceAnchorId）
+ */
 export function readingAnchor(doc: HTMLElement, vertical: boolean): ReadingAnchor | null {
   if (vertical ? doc.scrollLeft > -1 : window.scrollY < 1) return null
-  const pieces = doc.querySelectorAll<HTMLElement>('.rt-piece')
+  const pieces = doc.querySelectorAll<HTMLElement>('.rt-piece, .pg-episode')
   if (pieces.length === 0) return null
   const line = startLine(doc, vertical, pieces[0])
   // 読み始めの線にかかっている（または線より後ろで最初の）話を二分探索で探す

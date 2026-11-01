@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { separatePiece } from '../../domain/acts'
 import { createTitle } from '../../domain/entityOps'
-import { buildReadThrough, readThroughText } from '../../domain/readthrough'
+import { buildReadThrough, readBlocksText, readThroughText } from '../../domain/readthrough'
 import { strippedBody } from '../../domain/ruby'
 import {
   addChapter,
   addEpisode,
   addSpecial,
+  deletePiece,
   movePiece,
   setActiveVersion,
   setChaptersEnabled,
@@ -14,7 +15,20 @@ import {
 } from '../../domain/storyOps'
 import { emptyData, type AppData } from '../../domain/types'
 import { lineShape, lineShapeOf } from './lineEstimate'
-import { clampFontSize, readMissingLabel, readStats, resolveChapterScope, splitTcy, tocGroups } from './readLogic'
+import {
+  clampFontSize,
+  episodeBlocks,
+  pageCellSize,
+  pagedFontSize,
+  pageFitCell,
+  pageHeightCells,
+  readMissingLabel,
+  readStats,
+  resolveChapterScope,
+  resolvePieceScope,
+  splitTcy,
+  tocGroups,
+} from './readLogic'
 
 function setup(): { data: AppData; titleId: string; pieces: string[] } {
   let data = emptyData()
@@ -44,6 +58,60 @@ describe('通し読みの範囲', () => {
     expect(resolveChapterScope(oc.data, titleId, oc.result)).toBeUndefined()
     // 章管理をオフにすると全体
     expect(resolveChapterScope(setChaptersEnabled(data, titleId, false), titleId, c.result)).toBeUndefined()
+  })
+})
+
+describe('1話だけの通し読み（?piece=）', () => {
+  it('その話（幕なら属する話）だけ。別タイトル・ない話・ゴミ箱の話は undefined', () => {
+    let { data, titleId, pieces } = setup()
+    expect(resolvePieceScope(data, titleId, null)).toBeUndefined()
+    expect(resolvePieceScope(data, titleId, pieces[1])).toBe(pieces[1])
+    expect(resolvePieceScope(data, titleId, 'nothing')).toBeUndefined()
+    const s = separatePiece(data, pieces[0], [2])
+    data = s.data
+    expect(resolvePieceScope(data, titleId, s.result[1])).toBe(pieces[0])
+    const other = createTitle(data, '別作品')
+    const op = addEpisode(other.data, other.result)
+    data = op.data
+    expect(resolvePieceScope(data, titleId, op.result)).toBeUndefined()
+    data = deletePiece(data, pieces[2])
+    expect(resolvePieceScope(data, titleId, pieces[2])).toBeUndefined()
+
+    const blocks = episodeBlocks(buildReadThrough(data, titleId), pieces[1])
+    expect(blocks.map((b) => (b.type === 'piece' ? b.label : b.type))).toEqual(['第2話'])
+    // テキストはその話だけ（タイトル名を付けない）
+    expect(readBlocksText(blocks)).toBe('第2話\n\n二話です\n')
+    expect(readBlocksText(blocks, '作品')).toBe('作品\n\n第2話\n\n二話です\n')
+    expect(readThroughText(data, titleId)).toBe(readBlocksText(buildReadThrough(data, titleId), '作品'))
+  })
+
+  it('章の中の話でも章の見出しは入れない', () => {
+    let { data, titleId, pieces } = setup()
+    data = setChaptersEnabled(data, titleId, true)
+    expect(buildReadThrough(data, titleId)[0].type).toBe('chapter')
+    expect(episodeBlocks(buildReadThrough(data, titleId), pieces[0]).map((b) => b.type)).toEqual(['piece'])
+  })
+})
+
+describe('縦書きのページの大きさ', () => {
+  it('ページは 字数 + 天 2 + 地 4.25 マスの高さ。枠に収まる1マスの大きさは 0.01px 単位で切り捨て', () => {
+    expect(pageHeightCells(40)).toBe(46.25)
+    expect(pageHeightCells(20)).toBe(26.25)
+    expect(pageFitCell(743, 40)).toBe(16.05)
+    expect(pageFitCell(743, 40)! * pageHeightCells(40)).toBeLessThanOrEqual(743)
+    expect(pageFitCell(0, 40)).toBeNull()
+    expect(pageFitCell(500, 0)).toBeNull()
+  })
+
+  it('1マスは文字の大きさのまま、枠の高さに収まる大きさまで。ツールバーの数字は見えている大きさ', () => {
+    expect(pageCellSize(17, null)).toBe(17)
+    expect(pageCellSize(17, 22.4)).toBe(17)
+    expect(pageCellSize(24, 16.32)).toBe(16.32)
+    expect(pagedFontSize(17, null)).toBe(17)
+    expect(pagedFontSize(17, 22.4)).toBe(17)
+    // 文字の大きさを枠より大きくしていても、収まる大きさを出す（［−］ですぐ小さくなる）
+    expect(pagedFontSize(24, 16.32)).toBe(16)
+    expect(pagedFontSize(17, 11.5)).toBe(11)
   })
 })
 

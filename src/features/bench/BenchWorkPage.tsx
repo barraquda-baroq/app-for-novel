@@ -2,7 +2,8 @@
 // 中は新しい日付から）。分析は開閉でき、長い分析は閉じている間は頭だけを変換して出す（「全文を表示」で全部）。
 // 分析は手で足す・直す・削除でき、「Claude に頼む（手動）」で PDF を置いた claude.ai のプロジェクトに渡す依頼文をコピーし、
 // 「結果を貼り付け」で取り込む（2回貼り付けても増えない）。
-import { memo, useCallback, useMemo, useState } from 'react'
+// 自分の原稿を何回も分析した作品（「【原稿】原稿名（第2稿・2回目）」）には、同じ原稿のほかの回への一覧も出す。
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { benchAnalysesOf, benchViewpointGroups } from '../../claude/benchOrder'
 import { isNewerRecord, NEWER_RECORD_LABEL } from '../../claude/visibility'
@@ -33,14 +34,18 @@ import {
   createdByLabel,
   deleteWorkMessage,
   runDateLabel,
+  sameManuscriptOf,
   workLastUpdated,
   workName,
+  type ManuscriptRun,
 } from './benchLogic'
 import '../title/strategy/claudeSections.css'
 import './bench.css'
 
 /** 開いた分析で、これより長ければ頭だけを出して「全文を表示」（閉じている間は頭だけを変換する。Markdown.tsx） */
 const LONG_ANALYSIS = 900
+/** 同じ原稿の分析の一覧で、はじめに出す回の数（それより多ければ「ほか n回も表示」） */
+const RUNS_SHOWN = 5
 
 export function BenchWorkPage() {
   const { workId = '' } = useParams()
@@ -63,6 +68,14 @@ function BenchWorkView({ work }: { work: BenchWork }) {
   const analyses = useMemo(() => benchAnalysesOf(data, work.id), [data.benchAnalyses, work.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const groups = useMemo(() => benchViewpointGroups(analyses), [analyses])
   const comparing = useMemo(() => titlesComparing(data, work.id), [data.titles, work.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const manuscript = useMemo(() => sameManuscriptOf(data, work.id), [data.benchWorks, work.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const runCounts = useMemo(() => {
+    const ids = new Set(manuscript?.runs.map((r) => r.work.id))
+    const counts = new Map<ID, number>()
+    for (const a of Object.values(data.benchAnalyses))
+      if (ids.has(a.workId)) counts.set(a.workId, (counts.get(a.workId) ?? 0) + 1)
+    return counts
+  }, [manuscript, data.benchAnalyses]) // eslint-disable-line react-hooks/exhaustive-deps
   const [editWork, setEditWork] = useState(false)
   const [editing, setEditing] = useState<{ analysis: BenchAnalysis | null } | null>(null)
   const [manual, setManual] = useState(false)
@@ -166,6 +179,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
               {work.note}
             </p>
           ) : null}
+          {manuscript ? <SameManuscript runs={manuscript.runs} counts={runCounts} currentId={work.id} /> : null}
         </section>
 
         <section className="bw-analyses" aria-labelledby="bw-analyses-heading" data-testid="bench-analyses">
@@ -251,6 +265,90 @@ function BenchWorkView({ work }: { work: BenchWork }) {
       {manual ? <BenchManualDialog work={work} onClose={() => setManual(false)} onPaste={() => setPaste(true)} /> : null}
       {paste ? <PasteResultDialog benchWorkId={work.id} onClose={() => setPaste(false)} /> : null}
     </>
+  )
+}
+
+/** 同じ原稿の分析（すべての回。新しい回から。いま見ている回には印、ほかの回はその作品の画面へ） */
+function SameManuscript({
+  runs,
+  counts,
+  currentId,
+}: {
+  runs: readonly ManuscriptRun[]
+  counts: ReadonlyMap<ID, number>
+  currentId: ID
+}) {
+  const current = runs.findIndex((r) => r.work.id === currentId)
+  // 回が多ければ頭だけ（いま見ている回が後ろの方にあれば、はじめから全部）。開いている間に同期で回が増えた・減った時も、
+  // その時の数と位置で決め直す（いま見ている回が「ほか n回」に隠れないように）
+  const [expanded, setExpanded] = useState(false)
+  const all = expanded || runs.length <= RUNS_SHOWN + 1 || current >= RUNS_SHOWN
+  const shown = all ? runs : runs.slice(0, RUNS_SHOWN)
+  const listRef = useRef<HTMLOListElement>(null)
+  const focusShown = useRef(false)
+  // 「ほか n回も表示」を押すと、押したボタンが消えるので、新しく出た最初の回へ移す（畳んでいる間、いま見ている回は頭の
+  // RUNS_SHOWN 件の中にあるので、RUNS_SHOWN 番目はいつもリンク）
+  useEffect(() => {
+    if (!expanded || !focusShown.current) return
+    focusShown.current = false
+    listRef.current?.children[RUNS_SHOWN]?.querySelector('a')?.focus()
+  }, [expanded])
+  return (
+    <nav className="bw-runs" aria-labelledby="bw-runs-heading" data-testid="bench-work-runs">
+      <h2 id="bw-runs-heading" className="bw-runs-head">
+        同じ原稿の分析<span className="sx-count">{runs.length}</span>
+      </h2>
+      <ol className="bw-runs-list" ref={listRef}>
+        {shown.map((r) => {
+          const here = r.work.id === currentId
+          const main = (
+            <span className="bw-run-main">
+              <span className="bw-run-label" data-testid="bench-work-run-label">
+                {r.run}
+              </span>
+              <span className="bw-run-meta">
+                <span data-testid="bench-work-run-date">{formatDateTime(r.work.createdAt)}</span>
+                <span>分析 {counts.get(r.work.id) ?? 0}件</span>
+              </span>
+            </span>
+          )
+          return (
+            <li
+              key={r.work.id}
+              className={`bw-run${here ? ' is-current' : ''}`}
+              data-testid="bench-work-run"
+              data-work-id={r.work.id}
+              data-current={here || undefined}
+            >
+              {here ? (
+                <span className="bw-run-row" aria-current="page">
+                  {main}
+                  <span className="badge bw-run-here">表示中</span>
+                </span>
+              ) : (
+                <Link to={paths.bench(r.work.id)} className="bw-run-row" data-testid="bench-work-run-link">
+                  {main}
+                  <ChevronRightIcon className="icon bw-run-chevron" />
+                </Link>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+      {!all ? (
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm bw-runs-more"
+          onClick={() => {
+            focusShown.current = true
+            setExpanded(true)
+          }}
+          data-testid="bench-work-runs-more"
+        >
+          ほか {runs.length - shown.length}回も表示
+        </button>
+      ) : null}
+    </nav>
   )
 }
 

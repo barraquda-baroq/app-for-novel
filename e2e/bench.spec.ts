@@ -1,6 +1,6 @@
 // 相対比較（2.5。内部名は bench）の E2E テスト: ホームの棚（追加・並べ替え・削除して戻す）、作品の画面（分析を追加・開閉・
 // 全文・直す）、手動の依頼文のコピーと結果の貼り付け（2回目は増えない）、作品批評タブの「相対比較する作品」と手動の依頼の分析、
-// 360px の画面、ディープダーク。
+// 自分の原稿の分析（原稿ごとにまとめたカード・同じ原稿の分析）、360px の画面、ディープダーク。
 import { expect, test, type Page } from '@playwright/test'
 import { darkSurfaces, noHorizontalScroll, openApp, seed, tapSize } from './helpers'
 
@@ -31,6 +31,29 @@ async function seedShelf(page: Page) {
 }
 
 const cardNames = (page: Page) => page.getByTestId('bench-card').getByTestId('bench-card-name').allTextContents()
+
+/** 自分の原稿を3回分析した作品（Claude が作った時と同じく、1回の分析を1つの作品に。作った時刻を決める）と、ほかの作品 */
+async function seedManuscript(page: Page) {
+  return seed(page, ({ actions }) => {
+    const other = actions.addBenchWork({ name: '銀河の果て', author: '山田' })
+    const run = (id: string, name: string, order: number, createdAt: number, analyses: number) => {
+      actions.addClaudeRecords([
+        {
+          table: 'benchWorks',
+          record: { id, name, author: '自分', pdfPlace: '', note: '', order, createdAt, updatedAt: createdAt, source: 'claude' },
+        },
+      ])
+      for (let i = 0; i < analyses; i++)
+        actions.addBenchAnalysis(id, { viewpoint: `観点${i + 1}`, body: `## 観点${i + 1}\n本文。`, runDate: '2026-11-02' })
+      return id
+    }
+    const at = (day: number, h: number, m: number) => new Date(2026, 10, day, h, m).getTime()
+    const r1 = run('e2e-run-1', '【原稿】星の庭（第1稿）', 10, at(1, 9, 0), 2)
+    const r3 = run('e2e-run-3', '【原稿】星の庭（第2稿・2回目）', 11, at(2, 14, 5), 1)
+    const r2 = run('e2e-run-2', '【原稿】星の庭（第2稿）', 12, at(2, 8, 30), 3)
+    return { other, r1, r2, r3 }
+  })
+}
 
 test.describe('相対比較', () => {
   test('ホームの「相対比較」: 作品を追加・並べ替え・削除するとゴミ箱へ。戻すと相対比較と相対比較する作品に戻る', async ({
@@ -276,6 +299,67 @@ test.describe('相対比較', () => {
     await expect(page.getByTestId('critique-result').getByTestId('critique-result-bench')).toContainText('比べた作品:')
     await chip.click()
     await expect(page).toHaveURL(new RegExp(`#/bench/${workId}$`))
+  })
+
+  test('自分の原稿の分析: 原稿ごとに1枚にまとめ、開くと新しい回から。回の画面の「同じ原稿の分析」でほかの回へ', async ({
+    page,
+  }) => {
+    await openApp(page)
+    const { r1, r2, r3 } = await seedManuscript(page)
+    await openApp(page)
+    const shelf = page.getByTestId('bench-shelf')
+    await expect(shelf.getByTestId('bench-count')).toHaveText('4')
+    await expect(shelf.getByTestId('bench-list').locator(':scope > li')).toHaveCount(2)
+    await expect(shelf.getByTestId('bench-card').getByTestId('bench-card-name')).toHaveText(['銀河の果て'])
+    const card = shelf.getByTestId('bench-manuscript')
+    await expect(card.getByTestId('bench-manuscript-name')).toHaveText('【原稿】星の庭')
+    await expect(card.getByTestId('bench-manuscript-runs')).toHaveText('3回の分析')
+    await expect(card.getByTestId('bench-manuscript-latest')).toHaveText('最新 2026/11/02 14:05')
+    await expect(card.getByTestId('bench-run')).toHaveCount(0)
+
+    // 開くと新しい回から（回の札・作った日時・分析の数）
+    await card.getByTestId('bench-manuscript-toggle').click()
+    await expect(card.getByTestId('bench-manuscript-toggle')).toHaveAttribute('aria-expanded', 'true')
+    await expect(card.getByTestId('bench-run-label')).toHaveText(['第2稿・2回目', '第2稿', '第1稿'])
+    await expect(card.getByTestId('bench-run-date')).toHaveText(['2026/11/02 14:05', '2026/11/02 08:30', '2026/11/01 09:00'])
+    await expect(card.getByTestId('bench-run-count')).toHaveText(['分析 1件', '分析 3件', '分析 2件'])
+    await tapSize(card.getByTestId('bench-run-link').first(), 'bench-run-link', false)
+    await noHorizontalScroll(page)
+
+    // 回の画面: 「同じ原稿の分析」（いまの回に印、ほかの回へ）
+    await card.getByTestId('bench-run-link').nth(1).click()
+    await expect(page).toHaveURL(new RegExp(`#/bench/${r2}$`))
+    await expect(page.getByTestId('bench-work-title')).toHaveText('【原稿】星の庭（第2稿）')
+    const runs = page.getByTestId('bench-work-runs')
+    await expect(runs.getByRole('heading', { name: '同じ原稿の分析' })).toBeVisible()
+    await expect(runs.getByTestId('bench-work-run-label')).toHaveText(['第2稿・2回目', '第2稿', '第1稿'])
+    await expect(runs.locator('[data-current="true"]')).toHaveAttribute('data-work-id', r2)
+    await expect(runs.locator('[data-current="true"]')).toContainText('表示中')
+    await expect(runs.getByTestId('bench-work-run-link')).toHaveCount(2)
+    await expect(page.getByTestId('bench-analysis')).toHaveCount(3)
+    await noHorizontalScroll(page)
+    await runs.getByTestId('bench-work-run-link').last().click()
+    await expect(page).toHaveURL(new RegExp(`#/bench/${r1}$`))
+    await expect(page.getByTestId('bench-work-title')).toHaveText('【原稿】星の庭（第1稿）')
+    await expect(page.getByTestId('bench-work-runs').locator('[data-current="true"]')).toHaveAttribute('data-work-id', r1)
+    await expect(page.getByTestId('bench-analysis')).toHaveCount(2)
+
+    // 棚へ戻ると、開いたまま
+    await page.getByRole('navigation', { name: '現在地' }).getByRole('link', { name: '相対比較', exact: true }).click()
+    await expect(card.getByTestId('bench-run')).toHaveCount(3)
+    // 並べ替え・編集の間は1つずつ（回ごとに動かす・削除できる）
+    await page.getByTestId('bench-edit-toggle').click()
+    await expect(shelf.getByTestId('bench-manuscript')).toHaveCount(0)
+    await expect
+      .poll(() => cardNames(page))
+      .toEqual(['銀河の果て', '【原稿】星の庭（第1稿）', '【原稿】星の庭（第2稿・2回目）', '【原稿】星の庭（第2稿）'])
+    await shelf.locator(`[data-work-id="${r3}"]`).getByTestId('bench-delete').click()
+    await dialog(page).getByRole('button', { name: '削除' }).click()
+    await expect.poll(() => cardNames(page)).toEqual(['銀河の果て', '【原稿】星の庭（第1稿）', '【原稿】星の庭（第2稿）'])
+    await page.getByTestId('bench-edit-toggle').click()
+    await expect(card.getByTestId('bench-manuscript-runs')).toHaveText('2回の分析')
+    await expect(card.getByTestId('bench-manuscript-latest')).toHaveText('最新 2026/11/02 08:30')
+    await expect(card.getByTestId('bench-run-label')).toHaveText(['第2稿', '第1稿'])
   })
 
   test('幅 360px でも横にはみ出さず、ボタンは押しやすい大きさ', async ({ page }, info) => {

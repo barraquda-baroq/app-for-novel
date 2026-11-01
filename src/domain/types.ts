@@ -37,8 +37,21 @@ export interface Title {
    * 並びとして同期する（LIST_FIELDS）。消えた作品は表示から外す（修復）
    */
   benchWorkIds?: ID[]
+  /**
+   * 通し読みの縦書きのページ表示の字数×行数（1行の字数・1ページの行数）。無い = 40字×32行（src/domain/pageSetup.ts）。
+   * 短い項目として、2つの値をまとめて同期する（両方で変えたらこの端末。字数だけ・行数だけが混ざらないように）
+   */
+  pageSetup?: PageSetup
   createdAt: number
   updatedAt: number
+}
+
+/** 縦書きのページ表示の字数×行数（Title.pageSetup） */
+export interface PageSetup {
+  /** 1行の字数（10〜60） */
+  chars: number
+  /** 1ページの行数（5〜60） */
+  lines: number
 }
 
 /** タイトルを Claude に見せるか（Title.claudeAccess） */

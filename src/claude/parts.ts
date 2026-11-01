@@ -12,7 +12,18 @@ export const newestFirst = <T extends Dated>(a: T, b: T) =>
 // ---------- 分けて記録したもの（「（1/3）」「（2/3）」…） ----------
 
 /** 分けた部分の番号（「（2/3）」「(2/3)」「（前半 1/2）」など。番号の後ろは閉じかっこだけ。「（3/5点）」は番号ではない） */
-const PART_MARK = /[（(][^（）()\n]{0,6}?(\d{1,3})\s*[/／]\s*(\d{1,3})\s*[）)]/
+const MARK = String.raw`[（(][^（）()\n]{0,6}?(\d{1,3})\s*[/／]\s*(\d{1,3})\s*[）)]`
+
+/**
+ * 行の先頭の番号。前に置いてよいのは、Markdown の「#」「>」と空白、その後ろに見出し語とコロン1つ
+ * （「**結論**：」「**結論：**」「結論：」）だけ。番号を太字にしたもの（「**（1/2）**」）も読む
+ */
+const HEAD_MARK = new RegExp(
+  String.raw`^[#>\s]*(?:(?:\*\*[^*\n：:]{1,20}\*\*\s*[：:]|\*\*[^*\n：:]{1,20}[：:]\*\*|[^\s*#>（）()：:]{1,20}[：:])\s*)?\*{0,2}${MARK}`,
+)
+
+/** 行の末尾の番号（見出し・名前の「応募戦略（1/2）」。太字の閉じ「**」と空白は後ろにあってよい） */
+const TAIL_MARK = new RegExp(String.raw`${MARK}\*{0,2}\s*$`)
 
 export interface PartMark {
   /** 何番目か（1から） */
@@ -21,15 +32,25 @@ export interface PartMark {
   count: number
 }
 
-/** 文の最初の行（空行は飛ばす。最初の200字）にある、分けた部分の番号。無ければ null */
-export function partMarkOf(text: string): PartMark | null {
+/**
+ * どこの番号を読むか。
+ * - body: 本文（相対比較の分析・批評の結果・戦略メモの本文）。1行目の先頭だけ（「**結論**：12項目中（7/12）が…」や
+ *   日付の「（3/5）」を、行の途中にあるだけで番号と読まないように）
+ * - heading: 見出し・名前（戦略メモの見出しなど）。先頭か末尾（「応募戦略（1/2）」のように末尾に付けることが多い）
+ */
+export type PartMarkPlace = 'body' | 'heading'
+
+/** 文の最初の行（空行は飛ばす。最初の200字。末尾は200字までの行だけ）にある、分けた部分の番号。無ければ null */
+export function partMarkOf(text: string, place: PartMarkPlace): PartMark | null {
   const start = text.search(/\S/)
   if (start < 0) return null
   const nl = text.indexOf('\n', start)
+  const end = nl < 0 ? text.length : nl
+  const cut = end - start > 200
   const line = text
-    .slice(start, Math.min(nl < 0 ? text.length : nl, start + 200))
+    .slice(start, cut ? start + 200 : end)
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
-  const m = PART_MARK.exec(line)
+  const m = HEAD_MARK.exec(line) ?? (place === 'heading' && !cut ? TAIL_MARK.exec(line) : null)
   if (!m) return null
   const index = Number(m[1])
   const count = Number(m[2])

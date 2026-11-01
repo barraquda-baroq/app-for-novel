@@ -1,7 +1,9 @@
 // ホームの棚「相対比較」（内部名は bench）: 比べるために読む既存の作品（PDF は claude.ai のプロジェクトに置いたまま、分析だけをここに残す）。
 // どのタイトルにも属さず、すべてのタイトルで共有する。カードを押すと作品の画面へ。「並べ替え・編集」で並べ替え・削除ができる。
+// 自分の原稿を何回も分析した作品（「【原稿】原稿名（第2稿・2回目）」）は、2回以上あれば原稿ごとに1枚にまとめ、開くと回の一覧
+// （新しい回から）。「並べ替え・編集」の間は、回を1つずつ並べ替え・削除できるように、まとめずに並べる。
 // カードはレコード単位の props の React.memo（作品が多くても、変わったカードだけを描き直す）。
-import { memo, useMemo, useRef, useState } from 'react'
+import { memo, useId, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { sortedBenchWorks } from '../../domain/benchOps'
 import type { BenchAnalysis, BenchWork, ID } from '../../domain/types'
@@ -16,18 +18,23 @@ import { useKeepInPlace } from '../../ui/keepInPlace'
 import { BenchWorkDialog } from '../bench/BenchWorkDialog'
 import {
   analysesByWork,
+  benchShelfEntries,
   biblioLine,
   comparingTitles,
   deleteWorkMessage,
+  NO_ANALYSES,
   viewpointChips,
   workLastUpdated,
   workName,
+  type ShelfEntry,
+  type ShelfRun,
 } from '../bench/benchLogic'
 import { BenchMoveDialog } from './BenchMoveDialog'
 
 /** カードに出す観点のチップの数（それより多ければ「ほか n」） */
 const CHIPS_SHOWN = 6
-const NO_ANALYSES: readonly BenchAnalysis[] = []
+/** 開いている原稿のカード（作品の画面から戻ってきても開いたままにする。この端末のこの起動の間だけ） */
+const openManuscripts = new Set<string>()
 
 export function BenchShelf({ headingId }: { headingId: string }) {
   const data = useData()
@@ -43,6 +50,13 @@ export function BenchShelf({ headingId }: { headingId: string }) {
     return next
   }, [data.benchAnalyses]) // eslint-disable-line react-hooks/exhaustive-deps
   const comparing = useMemo(() => comparingTitles(data), [data.titles]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 棚の並び（2回以上分析した原稿は1枚に。中身が変わらない原稿は前の配列のまま）
+  const prevEntries = useRef<readonly ShelfEntry[]>([])
+  const entries = useMemo(() => {
+    const next = benchShelfEntries(works, groups, prevEntries.current)
+    prevEntries.current = next
+    return next
+  }, [works, groups])
   const editing = edit && works.length > 0
 
   return (
@@ -92,18 +106,35 @@ export function BenchShelf({ headingId }: { headingId: string }) {
         </div>
       ) : (
         <ul className="home-bench-list" aria-labelledby={headingId} data-testid="bench-list">
-          {works.map((w, i) => (
-            <BenchCard
-              key={w.id}
-              work={w}
-              analyses={groups.get(w.id) ?? NO_ANALYSES}
-              comparing={comparing.get(w.id)?.label ?? ''}
-              comparingCount={comparing.get(w.id)?.count ?? 0}
-              edit={editing}
-              first={i === 0}
-              last={i === works.length - 1}
-            />
-          ))}
+          {editing
+            ? works.map((w, i) => (
+                <BenchCard
+                  key={w.id}
+                  work={w}
+                  analyses={groups.get(w.id) ?? NO_ANALYSES}
+                  comparing={comparing.get(w.id)?.label ?? ''}
+                  comparingCount={comparing.get(w.id)?.count ?? 0}
+                  edit
+                  first={i === 0}
+                  last={i === works.length - 1}
+                />
+              ))
+            : entries.map((e) =>
+                e.kind === 'manuscript' ? (
+                  <ManuscriptCard key={`m:${e.key}`} manuscriptKey={e.key} base={e.base} runs={e.runs} />
+                ) : (
+                  <BenchCard
+                    key={e.work.id}
+                    work={e.work}
+                    analyses={groups.get(e.work.id) ?? NO_ANALYSES}
+                    comparing={comparing.get(e.work.id)?.label ?? ''}
+                    comparingCount={comparing.get(e.work.id)?.count ?? 0}
+                    edit={false}
+                    first={false}
+                    last={false}
+                  />
+                ),
+              )}
         </ul>
       )}
       {adding ? (
@@ -237,6 +268,82 @@ const BenchCard = memo(function BenchCard({
         </div>
       ) : null}
       {moving ? <BenchMoveDialog workId={work.id} onClose={() => setMoving(false)} /> : null}
+    </li>
+  )
+})
+
+/** 2回以上分析した自分の原稿をまとめたカード。開くと回の一覧（新しい回から。押すとその回の作品の画面へ） */
+const ManuscriptCard = memo(function ManuscriptCard({
+  manuscriptKey,
+  base,
+  runs,
+}: {
+  manuscriptKey: string
+  /** 原稿名（いちばん新しい回の書き方） */
+  base: string
+  /** 新しい回から */
+  runs: readonly ShelfRun[]
+}) {
+  const [open, setOpen] = useState(() => openManuscripts.has(manuscriptKey))
+  const listId = useId()
+  const name = `【原稿】${base}`
+  const latest = runs[0].work.createdAt
+  const toggle = () => {
+    setOpen(!open)
+    if (open) openManuscripts.delete(manuscriptKey)
+    else openManuscripts.add(manuscriptKey)
+  }
+  return (
+    <li
+      className={`home-bench-card home-bench-manuscript${open ? ' is-open' : ''}`}
+      data-testid="bench-manuscript"
+      data-manuscript={base}
+    >
+      <button
+        type="button"
+        className="home-bench-link home-bench-toggle"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        onClick={toggle}
+        data-testid="bench-manuscript-toggle"
+      >
+        <span className="home-bench-top">
+          <span className="home-bench-name" data-testid="bench-manuscript-name">
+            {name}
+          </span>
+          <ChevronRightIcon className="icon home-title-chevron home-bench-chevron" />
+        </span>
+        <span className="home-bench-stats">
+          <span className="badge" data-testid="bench-manuscript-runs">
+            {runs.length}回の分析
+          </span>
+        </span>
+        <span className="home-title-foot">
+          <span data-testid="bench-manuscript-latest">最新 {formatDateTime(latest)}</span>
+        </span>
+      </button>
+      {open ? (
+        <ol id={listId} className="home-bench-runs" aria-label={`「${name}」の分析`} data-testid="bench-runs">
+          {runs.map((r) => (
+            <li key={r.work.id} data-testid="bench-run" data-work-id={r.work.id}>
+              <Link to={paths.bench(r.work.id)} className="home-bench-run" data-testid="bench-run-link">
+                <span className="home-bench-run-main">
+                  <span className="home-bench-run-label" data-testid="bench-run-label">
+                    {r.run}
+                  </span>
+                  <span className="home-bench-run-meta">
+                    <span data-testid="bench-run-date">{formatDateTime(r.work.createdAt)}</span>
+                    <span className="badge" data-testid="bench-run-count">
+                      分析 {r.analyses.length}件
+                    </span>
+                  </span>
+                </span>
+                <ChevronRightIcon className="icon home-title-chevron" />
+              </Link>
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </li>
   )
 })

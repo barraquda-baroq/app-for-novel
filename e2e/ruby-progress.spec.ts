@@ -79,14 +79,29 @@ test.describe('ルビ・傍点', () => {
     expect(rt.right).toBeLessThanOrEqual(base.right + 2)
     await page.screenshot({ path: `e2e/artifacts/screens/ruby-${test.info().project.name}-horizontal.png` })
 
-    // 縦書き: 読みは親文字の右
+    // 縦書き（ページ表示）: 読みは親文字の右に小さく置き、マスを取らない（e2e/read-pages.spec.ts）。傍点も右
     await page.getByTestId('vertical-toggle').click()
     await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'vertical-rl')
-    ;({ base, rt } = await rubyBoxes(rubies.first()))
-    expect(rt.left).toBeGreaterThanOrEqual(base.right - 2)
-    expect(rt.top).toBeGreaterThanOrEqual(base.top - 2)
-    expect(rt.bottom).toBeLessThanOrEqual(base.bottom + 2)
-    expect(await bouten.evaluate((el) => getComputedStyle(el).textEmphasisPosition)).toMatch(/^over( right)?$/)
+    const pageRubies = page.locator('.pg-page .pg-ruby')
+    await expect(pageRubies.locator('.pg-rt')).toHaveText(['ウィザード', 'とうきょう'])
+    const vertical = await pageRubies.first().evaluate((el) => {
+      const range = document.createRange()
+      range.selectNodeContents(el.firstChild!)
+      const b = range.getBoundingClientRect()
+      const r = el.querySelector('.pg-rt')!.getBoundingClientRect()
+      return { baseRight: b.right, baseTop: b.top, baseBottom: b.bottom, rtLeft: r.left, rtMid: (r.top + r.bottom) / 2 }
+    })
+    expect(vertical.rtLeft).toBeGreaterThanOrEqual(vertical.baseRight - 2)
+    // 読みは親文字の中ほど
+    expect(vertical.rtMid).toBeGreaterThanOrEqual(vertical.baseTop - 2)
+    expect(vertical.rtMid).toBeLessThanOrEqual(vertical.baseBottom + 2)
+    const pageBouten = page.locator('.pg-page em.rb-bouten')
+    await expect(pageBouten).toHaveText('星')
+    expect(await pageBouten.evaluate((el) => getComputedStyle(el).textEmphasisPosition)).toMatch(/^over( right)?$/)
+    // ページの行には記号を出さない。｜《 は《そのもの
+    const pageText = (await page.locator('.pg-page').first().innerText()).replace(/ウィザード|とうきょう/g, '')
+    expect(pageText).not.toContain('｜')
+    expect(pageText).toContain('作品名は《銀河》です。')
     await page.screenshot({ path: `e2e/artifacts/screens/ruby-${test.info().project.name}-vertical.png` })
     await page.getByTestId('vertical-toggle').click()
 
@@ -181,15 +196,21 @@ test.describe('ルビ・傍点', () => {
     const offset = () => far.evaluate((el) => el.getBoundingClientRect().top - parseFloat(getComputedStyle(el).scrollMarginTop))
     await expect.poll(async () => Math.abs(await offset())).toBeLessThanOrEqual(2)
 
-    // 縦書き（本文の枠の中を横にスクロールする）でも、移動した先の話は表示する
+    // 縦書き（ページ表示。本文の枠の中を横にスクロールする）でも、移動した先の話のページはルビ・傍点で表示する。
+    // 遠いページは記号と読みを除いた文字だけ
     const other = pieces.nth(30)
     expect(await other.locator('ruby').count()).toBe(0)
     await page.getByTestId('vertical-toggle').click()
     await expect(page.getByTestId('read-body')).toHaveCSS('writing-mode', 'vertical-rl')
+    const farPage = pieces.nth(40).getByTestId('read-page-sheet').first()
+    expect(await farPage.locator('.pg-ruby, em').count()).toBe(0)
+    const farPageText = await farPage.evaluate((el) => el.textContent ?? '')
+    expect(farPageText).toContain('彼女は振り返らずに、')
+    expect(farPageText).not.toMatch(/[｜《》]|かのじょ/)
     if (!(await page.getByTestId('toc-link').first().isVisible())) await page.getByTestId('toc-toggle').click()
     await page.getByTestId('toc-link').nth(30).click()
     await expect(other.locator('h3')).toBeFocused()
-    await expect.poll(() => other.locator('ruby rt').count()).toBe(120)
+    await expect.poll(() => other.getByTestId('read-page-sheet').first().locator('.pg-rt').count()).toBeGreaterThan(0)
     await page.getByTestId('vertical-toggle').click()
 
     // 印刷する前には、すべての話をルビ・傍点で表示する

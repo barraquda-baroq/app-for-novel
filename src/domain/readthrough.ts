@@ -91,9 +91,17 @@ export function buildReadThrough(data: AppData, titleId: ID, chapterId?: ID): Re
 export function readThroughText(data: AppData, titleId: ID, chapterId?: ID): string {
   const title = data.titles[titleId]
   if (!title) return ''
+  return readBlocksText(buildReadThrough(data, titleId, chapterId), chapterId === undefined ? title.name : undefined)
+}
+
+/**
+ * 通し読みのブロック（1話だけ・章だけでもよい）のテキスト。heading を渡すと先頭に置く（タイトル全体ならタイトル名）。
+ * 採用原稿がない話は「採用原稿がありません。」
+ */
+export function readBlocksText(blocks: readonly ReadBlock[], heading?: string): string {
   const parts: string[] = []
-  if (chapterId === undefined) parts.push(title.name, '')
-  for (const b of buildReadThrough(data, titleId, chapterId)) {
+  if (heading !== undefined) parts.push(heading, '')
+  for (const b of blocks) {
     if (b.type === 'chapter') {
       parts.push(`■ ${b.name}`, '')
       continue

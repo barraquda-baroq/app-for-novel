@@ -61,6 +61,46 @@ describe('相対比較の分析（novel_add_bench_analysis）', () => {
     }
   })
 
+  it('コネクタの答え（notes）には、足す先の作品をいつも w:… で出す（既にある作品・何も足さなかった時も。貼り付けには出さない）', () => {
+    const n = sample()
+    const ref = `${shortId('benchWork', n.workId)}『銀河の果て』（山田）`
+    const items = [{ viewpoint: '構成', body_markdown: '## 構成\n三幕', run_date: '2026-10-29' }]
+    // 既にある作品（id・短い id・作品名で指す）に足した
+    for (const work of [n.workId, shortId('benchWork', n.workId), '銀河の果て']) {
+      const r = buildBenchAnalysis(n.data, { work, items }, claude)
+      expect(r.notes).toEqual([`相対比較の作品 ${ref} に追加しました`])
+    }
+    // new_work を付けても、相対比較にある作品に足した時は同じ
+    const named = buildBenchAnalysis(
+      n.data,
+      { work: '銀河の果て', new_work: { name: '銀河の果て', author: '山田' }, items },
+      claude,
+    )
+    expect(named.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+    expect(named.notes).toEqual([`相対比較の作品 ${ref} に追加しました`])
+    // 重複・形が違うだけで何も足さなかった
+    const data = add(n.data, buildBenchAnalysis(n.data, { work: n.workId, items }, claude).records)
+    const dup = buildBenchAnalysis(data, { work: n.workId, items: [...items, { viewpoint: '', body_markdown: 'x' }] }, claude)
+    expect(dup.items.map((i) => i.status)).toEqual(['duplicate', 'invalid'])
+    expect(dup.notes).toEqual([`相対比較の作品 ${ref} には何も追加していません`])
+    // 新しく作った作品は、これまでの1行だけ
+    const made = buildBenchAnalysis(n.data, { work: '星を継ぐ', new_work: { name: '星を継ぐ', author: '佐藤' }, items }, claude)
+    expect(made.notes).toEqual([
+      `作品 ${shortId('benchWork', made.records[0].record.id)}『星を継ぐ』（佐藤） を相対比較に追加しました`,
+    ])
+    // 相対比較に無い作品で、分析を1つも作れなかった時は作品も作らない（w:… はまだ無いので出さない）
+    const none = buildBenchAnalysis(
+      n.data,
+      { work: '星を継ぐ', new_work: { name: '星を継ぐ', author: '佐藤' }, items: [{ viewpoint: '', body_markdown: 'x' }] },
+      claude,
+    )
+    expect(none.records).toHaveLength(0)
+    expect(none.notes).toEqual(['分析を1つも追加しなかったため、作品『星を継ぐ』（佐藤）は相対比較に追加していません'])
+    // 貼り付けの確かめには出さない
+    expect(buildBenchAnalysis(n.data, { work: n.workId, items }, paste).notes).toEqual([])
+    expect(buildBenchAnalysis(data, { work: n.workId, items }, paste).notes).toEqual([])
+  })
+
   it('同じ内容をもう一度送っても作らない（duplicate）。削除した分析は previously_deleted', () => {
     const n = sample()
     const input = { work: n.workId, items: [{ viewpoint: '人物', body_markdown: '主人公の弧', run_date: '2026-10-30' }] }
@@ -260,7 +300,7 @@ describe('相対比較の分析（novel_add_bench_analysis）', () => {
       expect(byId.records.map((x) => x.table)).toEqual(['benchAnalyses'])
       expect((byId.records[0].record as BenchAnalysis).workId).toBe(sato.result)
       expect(byId.notes.join()).toContain(
-        `new_work の著者（田中）は、指した作品 ${shortId('benchWork', sato.result)}『海』（佐藤） と違います（指した作品に足しました）`,
+        `new_work の著者（田中）は、指した作品 ${shortId('benchWork', sato.result)}『海』（佐藤） と違います（指した作品を使います）`,
       )
     }
   })
@@ -418,6 +458,30 @@ describe('並び・Claude に渡す形', () => {
     expect(groups.map((g) => g.viewpoint)).toEqual(['文体', '構成', '冒頭の掴み'])
     expect(groups[0].items.map((a) => a.body)).toEqual(['文体・新しい', '文体・古い'])
     expect(groups[1].items.map((a) => a.body)).toEqual(['（1/2）構成・前半', '（2/2）構成・後半', '構成・古い'])
+  })
+
+  it('分けた番号は本文の1行目の先頭だけ（「**結論**：」の後ろも可）。行の途中の「（7/12）」では並べ替えない', () => {
+    const n = sample()
+    let data = n.data
+    const at = (body: string, createdAt: number) => {
+      const r = addBenchAnalysis(data, n.workId, { viewpoint: '構成', body, runDate: '2026-10-25' })
+      data = {
+        ...r.data,
+        benchAnalyses: { ...r.data.benchAnalyses, [r.result]: { ...r.data.benchAnalyses[r.result], createdAt } },
+      }
+    }
+    // 同じ日の2つの分析。1行目の途中の数（「12項目中（7/12）」「（3/12）」）は番号ではないので、新しい順のまま
+    at('**結論**：12項目中（3/12）が届いていない\n本文', 1)
+    at('**結論**：12項目中（7/12）が届き、残りは弱い\n本文', 2)
+    // 1行目の先頭の番号（「**要点**：」の後ろ・見出しの「#」の後ろ）は、番号の順
+    at('## （2/2）後半\n本文', 4)
+    at('**要点**：（1/2）前半\n本文', 3)
+    expect(benchAnalysesOf(data, n.workId).map((a) => a.body.split('\n')[0])).toEqual([
+      '**要点**：（1/2）前半',
+      '## （2/2）後半',
+      '**結論**：12項目中（7/12）が届き、残りは弱い',
+      '**結論**：12項目中（3/12）が届いていない',
+    ])
   })
 
   it('分析の文・相対比較する作品の材料・作品の指し方', () => {

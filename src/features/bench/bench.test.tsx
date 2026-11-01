@@ -1,5 +1,6 @@
-// 相対比較（内部名は bench）の画面: ホームの棚（カード・追加・並べ替え・削除）、作品の画面（観点ごとの分析・開閉・全文・足す・
-// 直す・削除・手動の依頼文・貼り付け）、作品批評タブの「相対比較する作品」（選ぶ・外す・結果の比べた作品）と手動の依頼の分析
+// 相対比較（内部名は bench）の画面: ホームの棚（カード・追加・並べ替え・削除・自分の原稿の分析を原稿ごとにまとめたカード）、
+// 作品の画面（観点ごとの分析・開閉・全文・足す・直す・削除・手動の依頼文・貼り付け・同じ原稿の分析）、作品批評タブの
+// 「相対比較する作品」（選ぶ・外す・結果の比べた作品）と手動の依頼の分析
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom'
@@ -139,6 +140,99 @@ describe('ホームの棚「相対比較」', () => {
     expect(screen.getByTestId('bench-empty').textContent).toContain('PDF は claude.ai のプロジェクトに置いたまま')
     expect(within(screen.getByTestId('bench-empty')).getByRole('button').textContent).toBe('作品を追加')
     expect(screen.getByTestId('bench-count').textContent).toBe('0')
+  })
+})
+
+/** 自分の原稿の分析の回（作った時刻を決める。分析を n 件） */
+function addRun(name: string, createdAt: number, analyses = 0): ID {
+  const id = actions.addBenchWork({ name, author: '自分' })
+  const data = getData()
+  data.benchWorks[id] = { ...data.benchWorks[id], createdAt }
+  for (let i = 0; i < analyses; i++)
+    actions.addBenchAnalysis(id, { viewpoint: `観点${i}`, body: `本文${i}`, runDate: '2026-11-01' })
+  return id
+}
+
+const at = (day: number, h: number, m: number) => new Date(2026, 10, day, h, m).getTime()
+
+describe('ホームの棚: 自分の原稿の分析（【原稿】…（第n稿…））', () => {
+  it('2回以上の原稿は1枚にまとめ（いちばん前の回の位置）、開くと新しい回から。「並べ替え・編集」の間はまとめない', async () => {
+    const user = userEvent.setup()
+    const other = actions.addBenchWork({ name: '銀河の果て', author: '山田' })
+    const r1 = addRun('【原稿】星の庭（第1稿）', at(1, 9, 0), 2)
+    const audit = addRun('【監査】星の庭（第1稿）', at(1, 10, 0))
+    const r3 = addRun('【原稿】星の庭（第2稿・2回目）', at(2, 14, 5), 1)
+    const r2 = addRun('【原稿】星の庭（第2稿）', at(2, 8, 30), 3)
+    const single = addRun('【原稿】海の記憶（第1稿）', at(3, 12, 0))
+    render(
+      <MemoryRouter>
+        <AppFrame>
+          <BenchShelf headingId="h" />
+        </AppFrame>
+      </MemoryRouter>,
+    )
+    // 数は作品の数のまま
+    expect(screen.getByTestId('bench-count').textContent).toBe('6')
+    const items = () =>
+      Array.from(screen.getByTestId('bench-list').children).map((li) =>
+        li.getAttribute('data-testid') === 'bench-manuscript'
+          ? `原稿:${within(li as HTMLElement).getByTestId('bench-manuscript-name').textContent}`
+          : within(li as HTMLElement).getByTestId('bench-card-name').textContent,
+      )
+    expect(items()).toEqual(['銀河の果て', '原稿:【原稿】星の庭', '【監査】星の庭（第1稿）', '【原稿】海の記憶（第1稿）'])
+    const card = screen.getByTestId('bench-manuscript')
+    expect(within(card).getByTestId('bench-manuscript-runs').textContent).toBe('3回の分析')
+    expect(within(card).getByTestId('bench-manuscript-latest').textContent).toBe('最新 2026/11/02 14:05')
+    const toggle = within(card).getByTestId('bench-manuscript-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(within(card).queryByTestId('bench-runs')).toBeNull()
+
+    // 開くと回の一覧（新しい回から。回の札・作った日時・分析の数。押すとその回の作品の画面へ）
+    await user.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    const runs = within(card).getAllByTestId('bench-run')
+    expect(runs.map((r) => r.getAttribute('data-work-id'))).toEqual([r3, r2, r1])
+    expect(runs.map((r) => within(r).getByTestId('bench-run-label').textContent)).toEqual(['第2稿・2回目', '第2稿', '第1稿'])
+    expect(runs.map((r) => within(r).getByTestId('bench-run-date').textContent)).toEqual([
+      '2026/11/02 14:05',
+      '2026/11/02 08:30',
+      '2026/11/01 09:00',
+    ])
+    expect(runs.map((r) => within(r).getByTestId('bench-run-count').textContent)).toEqual(['分析 1件', '分析 3件', '分析 2件'])
+    expect(runs.map((r) => within(r).getByTestId('bench-run-link').getAttribute('href'))).toEqual([
+      `/bench/${r3}`,
+      `/bench/${r2}`,
+      `/bench/${r1}`,
+    ])
+
+    // 並べ替え・編集の間は1つずつ（回ごとに並べ替え・削除できる）
+    await user.click(screen.getByTestId('bench-edit-toggle'))
+    expect(screen.queryByTestId('bench-manuscript')).toBeNull()
+    expect(screen.getAllByTestId('bench-card').map((c) => c.getAttribute('data-work-id'))).toEqual([
+      other,
+      r1,
+      audit,
+      r3,
+      r2,
+      single,
+    ])
+    // 2回目を先頭へ動かすと、まとめたカードも先頭に
+    await user.click(within(screen.getAllByTestId('bench-card')[3]).getByTestId('bench-move'))
+    await user.selectOptions(screen.getByTestId('bench-move-target'), '0')
+    await user.click(screen.getByTestId('bench-move-submit'))
+    await waitFor(() => expect(screen.getAllByTestId('bench-card')[0].getAttribute('data-work-id')).toBe(r3))
+    await user.click(screen.getByTestId('bench-edit-toggle'))
+    expect(items()).toEqual(['原稿:【原稿】星の庭', '銀河の果て', '【監査】星の庭（第1稿）', '【原稿】海の記憶（第1稿）'])
+    // 開いていたカードは開いたまま（作品の画面から戻ってきた時も）
+    expect(within(screen.getByTestId('bench-manuscript')).getAllByTestId('bench-run')).toHaveLength(3)
+    await user.click(screen.getByTestId('bench-manuscript-toggle'))
+    expect(screen.queryByTestId('bench-runs')).toBeNull()
+
+    // 1回だけになれば、ふつうのカード
+    actions.deleteBenchWork(r2)
+    actions.deleteBenchWork(r3)
+    await waitFor(() => expect(screen.queryByTestId('bench-manuscript')).toBeNull())
+    expect(items()).toEqual(['銀河の果て', '【原稿】星の庭（第1稿）', '【監査】星の庭（第1稿）', '【原稿】海の記憶（第1稿）'])
   })
 })
 
@@ -298,6 +392,98 @@ describe('作品の画面', () => {
       expect(screen.getByTestId('bench-work-source').textContent).toBe(label)
       cleanup()
     }
+  })
+
+  it('自分の原稿の分析には「同じ原稿の分析」（すべての回。新しい回から。いまの回に印、ほかの回へのリンク）', async () => {
+    const user = userEvent.setup()
+    const r1 = addRun('【原稿】星の庭（第1稿）', at(1, 9, 0), 2)
+    const r3 = addRun('【原稿】星の庭（第2稿・2回目）', at(2, 14, 5), 1)
+    const r2 = addRun('【原稿】星の庭（第2稿）', at(2, 8, 30))
+    const single = addRun('【原稿】海の記憶（第1稿）', at(3, 12, 0))
+    const router = renderPage(r2)
+    const list = screen.getByTestId('bench-work-runs')
+    expect(within(list).getByRole('heading').textContent).toBe('同じ原稿の分析3')
+    const rows = within(list).getAllByTestId('bench-work-run')
+    expect(rows.map((r) => r.getAttribute('data-work-id'))).toEqual([r3, r2, r1])
+    expect(rows.map((r) => within(r).getByTestId('bench-work-run-label').textContent)).toEqual(['第2稿・2回目', '第2稿', '第1稿'])
+    expect(rows.map((r) => within(r).getByTestId('bench-work-run-date').textContent)).toEqual([
+      '2026/11/02 14:05',
+      '2026/11/02 08:30',
+      '2026/11/01 09:00',
+    ])
+    expect(rows[2].textContent).toContain('分析 2件')
+    // いまの回はリンクにせず「表示中」
+    expect(rows[1].getAttribute('data-current')).toBe('true')
+    expect(rows[1].textContent).toContain('表示中')
+    expect(within(rows[1]).queryByRole('link')).toBeNull()
+    expect(rows.map((r) => within(r).queryByTestId('bench-work-run-link')?.getAttribute('href') ?? null)).toEqual([
+      `/bench/${r3}`,
+      null,
+      `/bench/${r1}`,
+    ])
+    // ほかの回へ
+    await user.click(within(rows[2]).getByTestId('bench-work-run-link'))
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/bench/${r1}`))
+    expect(screen.getByTestId('bench-work-title').textContent).toBe('【原稿】星の庭（第1稿）')
+    expect(
+      within(screen.getByTestId('bench-work-runs'))
+        .getAllByTestId('bench-work-run')
+        .map((r) => r.getAttribute('data-current')),
+    ).toEqual([null, null, 'true'])
+    // 1回だけの原稿・ほかの作品には出さない
+    cleanup()
+    renderPage(single)
+    expect(screen.queryByTestId('bench-work-runs')).toBeNull()
+  })
+
+  it('同じ原稿の回が多ければ、新しい5回と「ほか n回も表示」（いまの回が後ろなら、はじめから全部）', async () => {
+    const user = userEvent.setup()
+    const ids = Array.from({ length: 8 }, (_, i) => addRun(`【原稿】星の庭（第${i + 1}稿）`, at(1, 9 + i, 0)))
+    renderPage(ids[7])
+    expect(screen.getAllByTestId('bench-work-run')).toHaveLength(5)
+    await user.click(screen.getByTestId('bench-work-runs-more'))
+    expect(screen.getAllByTestId('bench-work-run')).toHaveLength(8)
+    expect(screen.queryByTestId('bench-work-runs-more')).toBeNull()
+    // 押したボタンは消えるので、新しく出た最初の回（6番目）へ移る
+    const sixth = screen.getAllByTestId('bench-work-run')[5]
+    expect(sixth.getAttribute('data-work-id')).toBe(ids[2])
+    expect(document.activeElement).toBe(within(sixth).getByTestId('bench-work-run-link'))
+    cleanup()
+    renderPage(ids[0])
+    expect(screen.getAllByTestId('bench-work-run')).toHaveLength(8)
+    expect(screen.getAllByTestId('bench-work-run')[7].getAttribute('data-current')).toBe('true')
+  })
+
+  it('開いている間に回が増えた・減った時は、その時の数と位置で頭だけにするか決め直す', async () => {
+    const ids = Array.from({ length: 7 }, (_, i) => addRun(`【原稿】星の庭（第${i + 1}稿）`, at(1, 9 + i, 0)))
+    // 7回のうち5番目に新しい回: 頭の5回といまの回、「ほか 2回」
+    renderPage(ids[2])
+    const rows = () => screen.getAllByTestId('bench-work-run')
+    expect(rows()).toHaveLength(5)
+    expect(rows()[4].getAttribute('data-current')).toBe('true')
+    expect(screen.getByTestId('bench-work-runs-more').textContent).toBe('ほか 2回も表示')
+    // 新しい回が同期で2つ届くと、いまの回は7番目になる。隠さずに全部を出す
+    const arrive = (name: string, day: number) => {
+      const id = actions.addBenchWork({ name, author: '自分' })
+      getData().benchWorks[id] = { ...getData().benchWorks[id], createdAt: at(day, 9, 0) }
+      actions.updateBenchWork(id, { note: '届いた回' }) // 書き換えた作った時刻のまま、もう一度描かせる
+      return id
+    }
+    const n8 = arrive('【原稿】星の庭（第8稿）', 20)
+    arrive('【原稿】星の庭（第9稿）', 21)
+    await waitFor(() => expect(rows()).toHaveLength(9))
+    expect(rows()[6].getAttribute('data-current')).toBe('true')
+    expect(screen.queryByTestId('bench-work-runs-more')).toBeNull()
+    cleanup()
+    // 7回で頭だけを出している時に1回消えて6回になると、全部を出す（7回以上の時だけ頭だけにする）
+    actions.deleteBenchWork(n8)
+    actions.deleteBenchWork(ids[0])
+    renderPage(ids[6])
+    expect(rows()).toHaveLength(5)
+    expect(screen.getByTestId('bench-work-runs-more').textContent).toBe('ほか 2回も表示')
+    actions.deleteBenchWork(ids[2])
+    await waitFor(() => expect(rows()).toHaveLength(6))
+    expect(screen.queryByTestId('bench-work-runs-more')).toBeNull()
   })
 
   it('作品の情報を直す', async () => {

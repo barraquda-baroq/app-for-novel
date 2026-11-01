@@ -85,6 +85,20 @@ export function charsPerLine(inlineSize: number, fontSize: number, letterSpacing
 }
 
 /**
+ * 本文の枠の1行の字数を今すぐ測って --cpl に入れる（表示を切り替えた直後に、大きさの知らせを待たずに見積もりを合わせる時。
+ * 知らせを待つと、合わせる前の見積もりの大きさで画面の近くに来た話まで組んでしまう）
+ */
+export function applyCharsPerLine(el: HTMLElement, letterSpacingEm: number): void {
+  const cs = getComputedStyle(el)
+  const vertical = cs.writingMode.startsWith('vertical') || cs.writingMode.startsWith('sideways')
+  const pad = vertical
+    ? parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+    : parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+  const inline = (vertical ? el.clientHeight : el.clientWidth) - pad
+  el.style.setProperty('--cpl', String(charsPerLine(inline, parseFloat(cs.fontSize), letterSpacingEm)))
+}
+
+/**
  * 本文の枠（ref）の内側の行の長さ（横書きは幅、縦書きは高さ）から1行の字数を求め、枠に --cpl として入れる。
  * React の再描画は起こさない。deps（文字の大きさ・書字方向など）が変わった時も入れ直す。
  * 本文の文字の大きさが枠と違う時は fontSizePx で渡す（省くと枠の文字の大きさ）。

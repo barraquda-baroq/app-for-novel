@@ -36,6 +36,7 @@ import { confirmJoin, confirmUnseparate } from '../acts/actFlows'
 import { ActsIcon, JoinActsIcon, ScissorsIcon, SplitActsIcon, UnsplitIcon } from '../acts/actIcons'
 import { SEPARATE_FROM_PIECE } from '../acts/separateLogic'
 import { EpisodeFolder } from '../acts/EpisodeFolder'
+import { EpisodeReadIcon } from '../read/readIcons'
 import { ActivePane } from './ActivePane'
 import { isTypingWithin, useHeldWhile, useLocalFlag, useScrollSync, useTypingFocus } from './editing'
 import { useIosEditorKeyboard } from '../../platform/keyboard'
@@ -436,10 +437,20 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
           <>
             <SaveControls dirty={dirty} onSave={refocusAfter(save)} onDiscard={refocusAfter(discard)} />
             <Link
+              to={paths.readEpisode(title.id, piece.id)}
+              className="icon-btn"
+              aria-label={`この話を通し読み（${label}・採用原稿のみ）`}
+              title="この話を通し読み（採用原稿のみ）"
+              data-testid="read-episode-link"
+            >
+              <EpisodeReadIcon />
+            </Link>
+            <Link
               to={paths.read(title.id)}
               className="icon-btn"
-              aria-label="通し読み（採用原稿のみ）"
-              title="通し読み（採用原稿のみ）"
+              aria-label="タイトル全体を通し読み（採用原稿のみ）"
+              title="タイトル全体を通し読み（採用原稿のみ）"
+              data-testid="read-title-link"
             >
               <BookIcon />
             </Link>

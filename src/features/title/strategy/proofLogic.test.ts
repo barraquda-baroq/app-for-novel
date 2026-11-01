@@ -13,6 +13,7 @@ import {
   filterProofSuggestions,
   linkedPieces,
   MANUAL_RUN,
+  markdownPreview,
   previewText,
   proofPlace,
   runLine,
@@ -146,5 +147,34 @@ describe('改稿案の話のチップと抜粋', () => {
     ])
     expect(previewText('  あ\n\nい  ', 10)).toBe('あ い')
     expect(previewText('あ'.repeat(12), 10)).toBe(`${'あ'.repeat(10)}…`)
+  })
+
+  it('閉じたカードの抜粋は Markdown の記号を除いたただの文', () => {
+    const body = [
+      '## 狙い',
+      '',
+      '> **冒頭**を_削る_。`第1話`の',
+      '- [x] 景色から始める',
+      '* 2つ目',
+      '1. [手紙](https://example.com/a)を前に',
+      '---',
+      '```',
+      'コード',
+      '```',
+      '~~古い案~~ #3 と 5*2',
+    ].join('\n')
+    expect(markdownPreview(body)).toBe('狙い 冒頭を削る。第1話の 景色から始める 2つ目 手紙を前に コード 古い案 #3 と 52')
+    expect(markdownPreview('# '.padEnd(40, 'あ'), 10)).toBe(`${'あ'.repeat(10)}…`)
+    expect(markdownPreview('  \n\n')).toBe('')
+    // 長い本文は頭だけを見る（切ったことは「…」で分かる）
+    expect(markdownPreview(`${'```\n'.repeat(1_000)}本文`)).toBe('…')
+    expect(markdownPreview(`短い${'\n'.repeat(3_000)}後ろ`)).toBe('短い…')
+    // 切る所の絵文字（2つの UTF-16 の単位）は半分にしない
+    const cut = markdownPreview(`あ${'\n'.repeat(1_998)}😀の後ろ`)
+    expect(cut).toBe('あ…')
+    expect(cut).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+    expect(markdownPreview(`あ${'\n'.repeat(1_997)}😀の後ろ`)).toBe('あ 😀…')
+    // URL に括弧があるリンクも、文字だけにする
+    expect(markdownPreview('[星の庭](https://ja.wikipedia.org/wiki/星_(小説))の冒頭')).toBe('星の庭の冒頭')
   })
 })

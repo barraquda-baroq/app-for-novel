@@ -297,6 +297,16 @@
   opacity: 0.7;
 }
 
+/* 開いた時の中身（Markdown）。チェックしたものはグレーで、長ければ頭だけ（カードの地の色へ薄れる） */
+.ri-card.is-checked .ri-body,
+.ri-card.is-checked .ri-body .md :is(blockquote, a) {
+  color: var(--text-faint);
+}
+
+.ri-card.is-checked .ri-body.is-clamped::after {
+  background: linear-gradient(to bottom, transparent, var(--surface-2));
+}
+
 /* ---------- 戦略メモ ---------- */
 .sn-card {
   display: flex;
@@ -326,19 +336,22 @@
 }
 
 .sn-body,
-.cq-result-body {
+.cq-result-body,
+.ri-body {
   position: relative;
   min-width: 0;
 }
 
 .sn-body.is-clamped,
-.cq-result-body.is-clamped {
+.cq-result-body.is-clamped,
+.ri-body.is-clamped {
   max-height: 14em;
   overflow: hidden;
 }
 
 .sn-body.is-clamped::after,
-.cq-result-body.is-clamped::after {
+.cq-result-body.is-clamped::after,
+.ri-body.is-clamped::after {
   content: '';
   position: absolute;
   inset: auto 0 0;

@@ -170,7 +170,7 @@ export const SCHEMAS = {
       .array(
         z.object({
           heading: z.string().min(1).max(L.revisionHeading).describe('改稿案の見出し（80字以内）'),
-          body: z.string().min(1).describe('改稿案の本文（ワンシーン丸ごとでもよい。長さの上限なし）'),
+          body: z.string().min(1).describe('改稿案の本文（Markdown。ワンシーン丸ごとでもよい。長さの上限なし）'),
           pieces: z.array(piece).max(L.revisionPieces).optional().describe('関係する話（#12・p:…）'),
         }),
       )

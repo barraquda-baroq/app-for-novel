@@ -681,6 +681,82 @@
   overflow-wrap: anywhere;
 }
 
+/* 自分の原稿を何回も分析した作品をまとめたカード（開くと回の一覧） */
+button.home-bench-toggle {
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-bench-chevron {
+  transition: transform 0.15s;
+}
+
+.home-bench-manuscript.is-open .home-bench-chevron {
+  transform: rotate(90deg);
+}
+
+.home-bench-runs {
+  margin: 0;
+  padding: 0 0 4px;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+
+.home-bench-runs > li + li {
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.home-bench-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 12px 6px 14px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.home-bench-run:hover {
+  background: var(--surface-2);
+}
+
+.home-bench-run:focus-visible {
+  outline-offset: -2px;
+}
+
+.home-bench-run-main {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  min-width: 0;
+}
+
+.home-bench-run-label {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.home-bench-run-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.home-bench-run .home-title-chevron {
+  margin-top: 0;
+}
+
 .empty.home-bench-empty {
   padding: 22px 16px;
 }

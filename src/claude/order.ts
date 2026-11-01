@@ -4,6 +4,7 @@
 //   チェックした案も同じ順で、その後ろ
 // - 戦略メモ・作品批評の結果・推敲案の実行: 新しい日付から（同じ日なら新しく作った順）。戦略メモ・作品批評の結果を
 //   分けて記録したもの（大きすぎてコネクタが分けるように答えた時など。「（1/3）」「（2/3）」…）は、まとめて番号の順
+//   （番号は、本文なら1行目の先頭、見出しなら先頭か末尾。parts.ts の partMarkOf）
 // - 批評プロンプト: このタイトルのもの（order の順）と、共通のもの（order の順）
 // - ベンチ作品の分析（2.5）は benchOrder.ts（ホームの棚から読むので、推敲案の場所を探す部品を読み込まないように分けている）
 import { adoptedText, isSplit } from '../domain/structure'
@@ -22,7 +23,7 @@ import { reanchor } from './anchor'
 import { newestFirst, newestFirstWithParts, partMarkOf, type PartOf } from './parts'
 import { readingOrder, type ReadingItem } from './refs'
 
-export { partMarkOf, type PartMark } from './parts'
+export { partMarkOf, type PartMark, type PartMarkPlace } from './parts'
 
 const byId = (a: { id: ID }, b: { id: ID }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
@@ -104,15 +105,17 @@ export function openProofSuggestionsFor(data: AppData, pieceId: ID): ProofSugges
   return sortProofSuggestions(list, piece ? proofStoryRank(data, piece.titleId) : undefined)
 }
 
-/** 戦略メモの分けた部分: 見出し（無ければ本文の最初の行）の番号。同じ日・同じ数に分けたものをまとめる */
+/**
+ * 戦略メモの分けた部分: 見出しの先頭か末尾（見出しに無ければ本文の最初の行の先頭）の番号。同じ日・同じ数に分けたものをまとめる
+ */
 const notePart: PartOf<StrategyNote> = (n) => {
-  const mark = partMarkOf(n.heading) ?? partMarkOf(n.body)
+  const mark = partMarkOf(n.heading, 'heading') ?? partMarkOf(n.body, 'body')
   return mark ? { key: `${n.runDate}\u0000${mark.count}`, mark } : null
 }
 
-/** 批評の結果の分けた部分: 結果の最初の行の番号。同じ日・同じプロンプト・同じ範囲・同じ数に分けたものをまとめる */
+/** 批評の結果の分けた部分: 結果の最初の行の先頭の番号。同じ日・同じプロンプト・同じ範囲・同じ数に分けたものをまとめる */
 const resultPart: PartOf<CritiqueResult> = (r) => {
-  const mark = partMarkOf(r.resultMarkdown)
+  const mark = partMarkOf(r.resultMarkdown, 'body')
   if (!mark) return null
   const scope = r.scope?.kind === 'range' ? `${r.scope.fromPieceId}-${r.scope.toPieceId}` : 'whole'
   return { key: [r.runDate, r.promptId ?? '', r.promptId ? '' : r.promptName, scope, mark.count].join('\u0000'), mark }

@@ -148,10 +148,85 @@
   white-space: nowrap;
 }
 
-.rt-total strong {
+.rt-total strong,
+.rt-pages strong {
   color: var(--text);
   font-size: 15px;
   font-variant-numeric: tabular-nums;
+}
+
+/* 「採用原稿 n字・全n ページ（目安）」。狭い画面ではページ数だけ次の行へ */
+.rt-counts {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.rt-pages {
+  white-space: nowrap;
+}
+
+.rt-pages-note {
+  font-size: 11px;
+}
+
+/* 縦書きのページの字数×行数「40字×32行 ▾」（PageSetupControl.tsx） */
+.btn.rt-grid-btn {
+  gap: 4px;
+  min-height: 34px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rt-grid-caret {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.rt-grid-blank {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+}
+
+.rt-grid-note {
+  margin: 0;
+}
+
+.rt-grid-fields {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rt-grid-fields .field {
+  flex: 1 1 130px;
+}
+
+.field > .rt-grid-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.rt-grid-input .input {
+  width: 6em;
+}
+
+.rt-grid-times {
+  padding-bottom: 9px;
+  color: var(--text-muted);
+}
+
+.rt-grid-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
 }
 
 .rt-actions {
@@ -332,6 +407,16 @@
   font-weight: 700;
   color: var(--warn);
   white-space: nowrap;
+}
+
+/* 縦書きのページ表示: 話・幕の最初のページ（右に寄せる） */
+.rt-toc-page {
+  margin-inline-start: auto;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (min-width: 1100px) {
@@ -703,6 +788,177 @@
   }
 }
 
+/* ---------- 縦書きのページ表示（PagedBody.tsx） ---------- */
+/*
+ * 字数×行数（--pg-chars × --pg-lines）のページを、本のように右から左へ並べる（縦書きの本文の枠の中を横にスクロール）。
+ * 1マス（--pg-cell）は文字の大きさ（--pg-font）で、ページが本文の枠の高さに収まる大きさ（--pg-fit。PagedBody.tsx の usePageFit）まで。
+ * ページの中の大きさはマス（em）で決める: 天 2・地 4.25（追い込んだ字（3マスまで）とページ番号）・左右 2、行の送り 1.75
+ * （readLogic.ts の PAGE_HEAD・PAGE_FOOT・LINE_PITCH と合わせる）。ページの外の余白は px（高さの計算に入れない）。
+ */
+.rt-root.is-vertical .rt-doc.is-paged {
+  --pg-cell: min(var(--pg-font, 17px), var(--pg-fit, var(--pg-font, 17px)));
+  padding: 12px 16px;
+  background: var(--surface-2);
+  /* スクロールバーの有無で高さ（ページの大きさ）が変わり続けないよう、いつも出しておく */
+  overflow-x: scroll;
+}
+
+.rt-doc.is-paged .rt-doc-head {
+  margin-block-end: 1.6em;
+}
+
+.pg-episode {
+  scroll-margin: 0;
+  scroll-margin-block-start: 12px;
+}
+
+/* 話の頭の「編集」（最初のページの右） */
+.pg-tab {
+  margin-block-end: 8px;
+}
+
+.pg-page {
+  position: relative;
+  box-sizing: content-box;
+  font-size: var(--pg-cell);
+  inline-size: calc(var(--pg-chars, 40) * 1em);
+  block-size: calc(var(--pg-lines, 32) * 1.75em);
+  padding-inline: 2em 4.25em;
+  padding-block: 2em;
+  margin-inline: auto;
+  margin-block-end: 10px;
+  border-radius: 2px;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--border),
+    var(--shadow);
+  color: var(--text);
+  font-family: var(--editor-font);
+  line-height: 1.75;
+  letter-spacing: 0;
+  font-feature-settings: 'palt' 0;
+  /*
+   * 1字 = 1マス（verticalPages.ts の数え方と合わせる）。Chromium（Chrome・Edge・Android のアプリ）は既定で「。」」「、「」のように
+   * 続く全角の約物の間を詰める（text-spacing-trim: normal）ので、詰めずに全角のまま置く（'palt' 0 では止まらない）
+   */
+  text-spacing-trim: space-all;
+  text-autospace: no-autospace;
+  /* 行は組んだとおり（ブラウザで折り返さない）。追い込んだ字は地に出る */
+  white-space: pre;
+  scroll-margin: 0;
+  scroll-margin-block-start: 12px;
+  /* 大きさが決まっているので、画面の外のページは組版しない */
+  content-visibility: auto;
+}
+
+/*
+ * 行。字の送りがちょうど1マスになるよう、縦書きの字の送りが 1em でない書体（--pg-adv。PagedBody.tsx が測る）では字を小さくする
+ * （行の送りは 1.75マスのまま）
+ */
+.pg-line,
+.pg-plain {
+  display: block;
+  font-size: calc(1em / var(--pg-adv, 1));
+  line-height: calc(1.75 * var(--pg-adv, 1));
+}
+
+.pg-line {
+  block-size: calc(1.75em * var(--pg-adv, 1));
+}
+
+/* 字の送りを測る（PagedBody.tsx。測ったらすぐに消す） */
+.pg-probe {
+  position: absolute;
+  visibility: hidden;
+  writing-mode: vertical-rl;
+  font-family: var(--editor-font);
+  font-size: 100px;
+  line-height: 1;
+  letter-spacing: 0;
+  font-feature-settings: 'palt' 0;
+  /* .pg-page と同じく詰めない */
+  text-spacing-trim: space-all;
+  text-autospace: no-autospace;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.pg-heading {
+  display: block;
+  margin: 0;
+  font: inherit;
+  font-weight: 700;
+}
+
+.pg-heading:focus {
+  outline: none;
+}
+
+.pg-heading:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pg-heading.is-act {
+  color: var(--accent);
+}
+
+.pg-episode.is-special .pg-heading:not(.is-act) {
+  color: var(--special);
+}
+
+.pg-line.is-missing {
+  color: var(--text-muted);
+}
+
+/* ルビ: 読みは親文字の右に小さく置き、マスを取らない（親文字より長い読みは前後にはみ出す） */
+.pg-ruby {
+  position: relative;
+}
+
+.pg-rt {
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  transform: translateY(-50%);
+  font-size: 0.5em;
+  font-weight: normal;
+  line-height: 1;
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ページ番号（地の下の方。行の末尾に3マスまで追い込んだ字とも重ならない: 地 4.25マスのうち下から 0.3〜0.9マス） */
+.pg-num {
+  position: absolute;
+  right: 0;
+  bottom: 0.5em;
+  left: 0;
+  writing-mode: horizontal-tb;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 0.6em;
+  line-height: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 縦書きのページ表示ではツールバーに字数×行数が増えるので、広すぎない画面では書き出しなどのボタンを絵だけにして1行に収める
+ * （ツールバーが2行になると、ページの高さが低くなる） */
+@media (min-width: 721px) and (max-width: 1500px) {
+  .rt-root.is-vertical .rt-actions .hide-mobile {
+    display: none;
+  }
+
+  .rt-root.is-vertical .rt-actions .btn-sm {
+    min-width: 40px;
+    padding: 4px 10px;
+  }
+}
+
 /* ---------- スマホ ---------- */
 @media (max-width: 720px) {
   /* スマホでは読む面積を広く取るため、ツールバーは画面上部に固定しない */
@@ -910,9 +1166,10 @@
     box-shadow: none;
   }
 
-  /* 印刷では全部の話を組む */
+  /* 印刷では全部の話・ページを組む */
   .rt-piece,
-  .rt-act {
+  .rt-act,
+  .pg-page {
     content-visibility: visible;
   }
 }

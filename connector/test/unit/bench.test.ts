@@ -215,17 +215,46 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     expect(docsOf(fake, 'benchWorks')[0].fields.device).toEqual({ stringValue: 'claude-connector' })
     // 一覧にもすぐ出る（自分の書き込みを写しに入れる）
     expect(await call(core, 'novel_list_bench_works')).toContain('『星を継ぐ』（高橋）')
+    // 答えの作品の w:… で、そのまま次の分析を足せる（一覧で探し直さなくてよい）
+    const workRef = /作品 (w:[0-9A-Za-z]+)『星を継ぐ』（高橋） を相対比較に追加しました/.exec(r.text)![1]
+    expect(r.text).not.toContain('相対比較の作品 w:')
     clock.now += 20_000
     const again = await core.callTool('novel_add_bench_analysis', input)
     expect(again.text).toContain('重複 2件')
+    // 何も足さなかった時も、どの作品かを出す
+    expect(again.text).toContain(`補足: 相対比較の作品 ${workRef}『星を継ぐ』（高橋） には何も追加していません`)
+    expect(again.text).not.toContain('を相対比較に追加しました')
     expect(docsOf(fake, 'benchAnalyses')).toHaveLength(2)
-    // 作品名で指せば、作品はもう作らない
+    // 作品名で指せば、作品はもう作らない。既にある作品に足した時も、答えに作品の w:… を出す
     const more = await core.callTool('novel_add_bench_analysis', {
       work: '星を継ぐ',
       items: [{ viewpoint: '人物', body_markdown: '主人公の弧' }],
     })
     expect(more.text).toContain('追加 1件')
+    expect(more.text).toContain(`補足: 相対比較の作品 ${workRef}『星を継ぐ』（高橋） に追加しました`)
     expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
+    const byRef = await core.callTool('novel_add_bench_analysis', {
+      work: workRef,
+      items: [{ viewpoint: '文体', body_markdown: '短い文' }],
+    })
+    expect(byRef.text).toContain('追加 1件')
+    expect(byRef.text).toContain(`相対比較の作品 ${workRef}『星を継ぐ』（高橋） に追加しました`)
+  })
+
+  it('相対比較に無い作品で分析を1つも作れなければ、作品も作らず、作っていないことを答える', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core } = await pairedCore(fake, s.data)
+    const r = await core.callTool('novel_add_bench_analysis', {
+      work: '星を継ぐ',
+      new_work: { name: '星を継ぐ', author: '高橋' },
+      items: [{ viewpoint: '', body_markdown: 'x' }],
+    })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('形が違う 1件')
+    expect(r.text).toContain('補足: 分析を1つも追加しなかったため、作品『星を継ぐ』（高橋）は相対比較に追加していません')
+    expect(r.text).not.toContain('w:')
+    expect(docsOf(fake, 'benchWorks')).toHaveLength(0)
   })
 
   it('作品名の全角と半角・全角の空白の違いでは、別の作品を作らない（相対比較の作品に足す）', async () => {
@@ -242,6 +271,8 @@ describe('書き込み（novel_add_bench_analysis）', () => {
       })
       expect(r.text).toContain('追加 1件')
       expect(r.text).not.toContain('を相対比較に追加しました')
+      const work = name === 'SF傑作選' ? `${shortId('benchWork', sf.result)}『ＳＦ傑作選』` : `${shortId('benchWork', up.result)}『銀河の果て　上』（山田）`
+      expect(r.text).toContain(`相対比較の作品 ${work} に追加しました`)
     }
     expect(docsOf(fake, 'benchWorks')).toHaveLength(0)
     const list = await call(core, 'novel_list_bench_works')
@@ -302,6 +333,7 @@ describe('書き込み（novel_add_bench_analysis）', () => {
       items: [{ viewpoint: '人物', body_markdown: '主人公の弧' }],
     })
     expect(ok.text).toContain('追加 1件')
+    expect(ok.text).toContain(`相対比較の作品 ${shortId('benchWork', s.workA)}『銀河の果て』（山田） に追加しました`)
   })
 
   it('大きすぎる分析は作らず、番号を付けて分けるよう返す。「書き込みを許可」が外れていれば書かない', async () => {
@@ -314,6 +346,8 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     })
     expect(big.isError).toBe(true)
     expect(big.text).toContain('body_markdown を2つ以上に分け')
+    expect(big.text).toContain('各部の body_markdown の1行目の先頭に「（1/2）」')
+    expect(big.text).toContain(`相対比較の作品 ${shortId('benchWork', s.workA)}『銀河の果て』（山田） には何も追加していません`)
     expect(docsOf(fake, 'benchAnalyses')).toHaveLength(0)
 
     const fake2 = new FakeFirebase()

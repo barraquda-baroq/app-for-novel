@@ -1,13 +1,13 @@
 // ベンチ作品の分析の並び（2.5。アプリの画面とコネクタで同じ並びにする）。
-// - 作品の分析: 新しい日付から（同じ日なら新しく作った順）。分けて記録したもの（本文の1行目の「（1/3）」…）は番号の順
+// - 作品の分析: 新しい日付から（同じ日なら新しく作った順）。分けて記録したもの（本文の1行目の先頭の「（1/3）」…）は番号の順
 // - 観点ごとのまとまり: 観点を最初に分析した順（同じ時に作った分析は送った順）、まとまりの中は新しい日付から
 // ホームの棚からも読むので、推敲案の場所を探す部品（anchor.ts）などを読み込まない
 import type { AppData, BenchAnalysis, ID } from '../domain/types'
 import { newestFirstWithParts, partMarkOf, type PartOf } from './parts'
 
-/** ベンチ作品の分析の分けた部分: 本文の最初の行の番号。同じ日・同じ観点・同じ数に分けたものをまとめる */
+/** ベンチ作品の分析の分けた部分: 本文の最初の行の先頭の番号。同じ日・同じ観点・同じ数に分けたものをまとめる */
 const analysisPart: PartOf<BenchAnalysis> = (a) => {
-  const mark = partMarkOf(a.body)
+  const mark = partMarkOf(a.body, 'body')
   return mark ? { key: [a.runDate, a.viewpoint.normalize('NFC').trim(), mark.count].join('\u0000'), mark } : null
 }
 
