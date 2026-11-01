@@ -1331,7 +1331,11 @@ describe('2.3 の推敲案・改稿案などの同期（エミュレーター）
     })
     await a.online()
     await settle(a)
-    const data = await a.load()
+    // 1台の settle は送り終えるまでしか待たない（受け取りは待たない）。コネクタの記録が届くまで待つ
+    const data = await waitFor(async () => {
+      const d = await a.load()
+      return d.strategyNotes[note.id] ? d : null
+    }, 'コネクタの戦略メモが届く')
     expect(data.strategyNotes[note.id]).toEqual(note)
     expect(data.titles[titleId].strategyNote).toBe('この端末で書いた全体戦略')
     expect(a.notes).toEqual([])
@@ -1530,7 +1534,11 @@ describe('相対比較の同期（エミュレーター）', () => {
     }
     await a.online()
     await settle(a)
-    const data = await a.load()
+    // 1台の settle は送り終えるまでしか待たない（受け取りは待たない）。コネクタの作品と分析が届くまで待つ
+    const data = await waitFor(async () => {
+      const d = await a.load()
+      return d.benchWorks[work.id] && d.benchAnalyses[analysis.id] ? d : null
+    }, 'コネクタの作品と分析が届く')
     expect(data.benchWorks[work.id]).toEqual(work)
     expect(data.benchAnalyses[analysis.id]).toEqual(analysis)
     expect(data.titles[titleId].synopsis).toBe('この端末で書いたあらすじ')
