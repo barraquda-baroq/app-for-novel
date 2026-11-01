@@ -8,6 +8,7 @@ import { createTitle } from '../../../src/domain/entityOps'
 import { shortId } from '../../../src/claude/refs'
 import type { AppData, ID } from '../../../src/domain/types'
 import { encodeCursor } from '../../../src/claude/view'
+import { benchWorkLine } from '../../../src/claude/bench'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import { novel } from '../../../src/test/claudeFixture'
 import { FakeFirebase } from '../support/fakeFirebase'
@@ -143,7 +144,7 @@ describe('一覧の絞り込みと続き（novel_list_bench_works の names・ex
     // 全角の英字・続く空白でも同じ（NFKC・空白をまとめて照らす）
     const genre = await call(core, 'novel_list_bench_works', { names: ['【横断】ＳＦ', '【原稿】海の庭 '] })
     expect(listedIds(genre)).toEqual([s.ids[2], s.ids[3]].map((id) => shortId('benchWork', id)))
-    expect(genre).toContain('作品名に「【横断】SF」「【原稿】海の庭」のどれかを含む作品 2作品／全6作品')
+    expect(genre).toContain('作品名に「【横断】ＳＦ」「【原稿】海の庭」のどれかを含む作品 2作品／全6作品')
     const books = await call(core, 'novel_list_bench_works', { exclude_names: ['【原稿】', '【横断】', '【対照】', '【監査】'] })
     expect(listedIds(books)).toEqual([shortId('benchWork', s.ids[5])])
     expect(books).toContain('作品名に「【原稿】」「【横断】」「【対照】」「【監査】」のどれも含まない作品 1作品／全6作品')
@@ -225,6 +226,106 @@ describe('一覧の絞り込みと続き（novel_list_bench_works の names・ex
     })
     expect(end).toContain('（この後の作品はありません）')
     expect(listedIds(end)).toEqual([])
+  })
+
+  it('部分一致なので、1つの原稿の回だけは「【原稿】{原稿名}（」と【対照】を除く組み合わせで見る（見出しの条件は入力のまま）', async () => {
+    const fake = new FakeFirebase()
+    const names = [
+      '【原稿】星の庭（第1稿）',
+      '【原稿】星の庭（第1稿・2回目）',
+      '【対照】【原稿】星の庭（第1稿）（置換）',
+      '【対照】【原稿】星の庭（第1稿）（名前あり）',
+      '【原稿】星の庭園（第1稿）',
+    ]
+    const s = bigShelf(names.length, 1, (i) => names[i])
+    const { core } = await pairedCore(fake, s.data)
+    expect(listedIds(await call(core, 'novel_list_bench_works', { names: ['【原稿】星の庭'] }))).toHaveLength(5)
+    const runs = await call(core, 'novel_list_bench_works', { names: ['【原稿】星の庭（'], exclude_names: ['【対照】'] })
+    expect(listedIds(runs)).toEqual([s.ids[0], s.ids[1]].map((id) => shortId('benchWork', id)))
+    expect(runs).toContain('作品名に「【原稿】星の庭（」を含む・「【対照】」を含まない作品 2作品／全5作品')
+  })
+
+  it('残りが char_budget に収まれば1回で全部（続きの行の分を空けて切らない）', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(5, 10)
+    const { core } = await pairedCore(fake, s.data)
+    const whole = await call(core, 'novel_list_bench_works')
+    const budget = whole.length
+    expect(budget).toBeGreaterThan(1_500)
+    expect(budget).toBeLessThan(2_500)
+    const one = await call(core, 'novel_list_bench_works', { char_budget: Math.max(2_000, budget) })
+    expect(one).toBe(whole)
+    expect(nextCursor(one)).toBeUndefined()
+  })
+
+  it('続きは最後に出した作品の今の位置の次から（アプリで並べ替えて並び順の数が振り直されても抜けない）', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(5, 1)
+    const { core } = await pairedCore(fake, s.data)
+    // 2作品目まで読んだ後に並び順の数が振り直された（cursor の並び順は今のどの作品より大きい）
+    const cursor = encodeCursor({ k: 'benchList', n: [], x: [], a: s.ids[1], o: 1_000 })
+    const rest = await call(core, 'novel_list_bench_works', { cursor })
+    expect(listedIds(rest)).toEqual([s.ids[2], s.ids[3], s.ids[4]].map((id) => shortId('benchWork', id)))
+  })
+
+  it('1つの作品の行だけで char_budget に収まらない時は、その行を切って印を付け、分析の数は残す', async () => {
+    const fake = new FakeFirebase()
+    let data = bigShelf(1, 1).data
+    const big = addBenchWork(data, { name: '観点の多い作品', author: '著者' })
+    data = big.data
+    for (let j = 0; j < 80; j++)
+      data = addBenchAnalysis(data, big.result, { viewpoint: `観点${j + 1}・とても長い観点の名前`, body: '本文', runDate: '2026-10-30' }).data
+    const after = addBenchWork(data, { name: '後の作品', author: '著者' })
+    data = after.data
+    const { core } = await pairedCore(fake, data)
+    const seen: string[] = []
+    let text = await call(core, 'novel_list_bench_works', { char_budget: 2_000 })
+    let clipped = ''
+    for (let n = 0; n < 10; n++) {
+      expect(text.length).toBeLessThanOrEqual(2_000)
+      seen.push(...listedIds(text))
+      if (text.includes('『観点の多い作品』')) clipped = text
+      const next = nextCursor(text)
+      if (!next) break
+      text = await call(core, 'novel_list_bench_works', { cursor: next })
+    }
+    expect(clipped).toContain('  分析 80件')
+    expect(clipped).toContain('（この作品の行は長いため、ここまで）')
+    expect(seen).toHaveLength(3)
+    expect(seen).toContain(shortId('benchWork', after.result))
+  })
+
+  it('除くだけの絞り込みも cursor で続き、違う exclude_names は断り、char_budget は渡せばそちらを使う', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(16, 10, (i) => (i % 2 ? `【原稿】星の庭（第1稿・${i + 1}回目）` : `既存の作品${i + 1}`))
+    const { core } = await pairedCore(fake, s.data)
+    const first = await call(core, 'novel_list_bench_works', { exclude_names: ['【原稿】'], char_budget: 2_000 })
+    const next = nextCursor(first)!
+    expect(next).toBeTruthy()
+    const refused = await core.callTool('novel_list_bench_works', { cursor: next, exclude_names: ['【横断】'] })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain('cursor が別の条件のものです')
+    const rest = await call(core, 'novel_list_bench_works', { cursor: next, char_budget: 100_000 })
+    expect(rest).toContain('作品名に「【原稿】」を含まない作品 8作品のうち')
+    expect(nextCursor(rest)).toBeUndefined()
+    const ids = [...listedIds(first), ...listedIds(rest)]
+    expect(ids).toEqual(s.ids.filter((_, i) => i % 2 === 0).map((id) => shortId('benchWork', id)))
+  })
+
+  it('引数なしで、今まで1回で返っていた長さ（99,000〜100,000字）の棚は、今までと同じ答え', async () => {
+    const fake = new FakeFirebase()
+    const s = bigShelf(95, 30)
+    const { core } = await pairedCore(fake, s.data)
+    // 今までの答え（見出し・作品ごとの行・終わりの行）。結果の上限（100,000字）を超えなければ切られなかった
+    const works = Object.values(s.data.benchWorks).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+    const old = [
+      `=== 相対比較（${works.length}作品。作者が比べるために読む既存の作品）===`,
+      ...works.map((w) => benchWorkLine(s.data, w)),
+      '分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。',
+    ].join('\n')
+    expect(old.length).toBeGreaterThan(99_000)
+    expect(old.length).toBeLessThanOrEqual(100_000)
+    expect(await call(core, 'novel_list_bench_works')).toBe(old)
   })
 
   it('省略時は結果の上限まで1回で返し、超える棚は作品の切れ目で続きにする（途中で切れた印は出ない）', async () => {

@@ -847,7 +847,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
     "type": "object",
     "properties": {
       "names": {
-        "description": "作品名にこのどれかを含む作品だけを出す（全角と半角・空白の違いは問わない。例: [\"【原稿】星の庭\"] でその原稿の回だけ、[\"【横断】\"] でジャンルのプロファイルだけ。10個まで）",
+        "description": "作品名のどこかにこのどれかを含む作品だけを出す（部分一致。全角と半角・空白の違いは問わない。10個まで）。例: [\"【横断】\"] でジャンルのプロファイル。1つの原稿の回だけを見る時は names [\"【原稿】星の庭（\"] と exclude_names [\"【対照】\"]（「（」まで入れると「星の庭園」などの別の原稿が出ず、【対照】を除くと「【対照】【原稿】…」が出ない）",
         "minItems": 1,
         "maxItems": 10,
         "type": "array",
@@ -858,7 +858,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         }
       },
       "exclude_names": {
-        "description": "作品名にこのどれかを含む作品を出さない（例: [\"【原稿】\", \"【横断】\", \"【対照】\", \"【監査】\"] で既存の作品だけ。10個まで）",
+        "description": "作品名のどこかにこのどれかを含む作品を出さない（部分一致。例: [\"【原稿】\", \"【横断】\", \"【対照】\", \"【監査】\"] で既存の作品だけ。10個まで）",
         "minItems": 1,
         "maxItems": 10,
         "type": "array",
@@ -869,10 +869,10 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         }
       },
       "char_budget": {
-        "description": "1回に返す文字数（2,000〜99,000。省略時は 99,000）。作品の途中では切らず、残りは 続き: cursor=\"…\"",
+        "description": "1回に返す文字数（2,000〜100,000。省略時は結果の上限の 100,000）。収まれば全部、収まらなければ作品の途中では切らずに返し、残りは 続き: cursor=\"…\"",
         "type": "integer",
         "minimum": 2000,
-        "maximum": 99000
+        "maximum": 100000
       },
       "cursor": {
         "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す（絞り込みは cursor に入っているので、cursor だけでよい）",
