@@ -1,4 +1,4 @@
-// 書き込みツール（W1〜W5）の結果の形。テキストに加えて structuredContent に
+// 書き込みツール（W1〜W7）の結果の形。テキストに加えて structuredContent に
 // { created: [{ id, label }], skipped: [{ index, reason, hint }] } を返す（原稿は入れない）。
 import {
   summarizeItems,
@@ -21,6 +21,8 @@ const KIND: Record<ClaudeTableName, ShortIdKind> = {
   critiqueResults: 'critiqueResult',
   benchWorks: 'benchWork',
   benchAnalyses: 'benchAnalysis',
+  materials: 'material',
+  materialNotes: 'materialNote',
 }
 
 const WHERE: Record<WriteTool, string> = {
@@ -30,6 +32,7 @@ const WHERE: Record<WriteTool, string> = {
   novel_save_critique_prompt: 'アプリのタイトルの「作品批評 → 批評プロンプト」',
   novel_add_critique_result: 'アプリのタイトルの「作品批評」の結果',
   novel_add_bench_analysis: 'アプリのホームの「相対比較」',
+  novel_add_material_notes: 'アプリのホームの「資料」',
 }
 
 const STATUS_LABELS: Record<ItemStatus, string> = {

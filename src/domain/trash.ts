@@ -16,6 +16,8 @@ import {
   type CritiqueResult,
   type ID,
   type Idea,
+  type Material,
+  type MaterialNote,
   type Memo,
   type NodeRef,
   type Piece,
@@ -82,6 +84,8 @@ export const TRASH_KINDS: readonly TrashKind[] = [
   'critiqueResult',
   'benchWork',
   'benchAnalysis',
+  'material',
+  'materialNote',
 ]
 
 export function isTrashKind(v: unknown): v is TrashKind {
@@ -106,6 +110,8 @@ export const TRASH_KIND_TABLE: Record<TrashKind, ContentTableName> = {
   critiqueResult: 'critiqueResults',
   benchWork: 'benchWorks',
   benchAnalysis: 'benchAnalyses',
+  material: 'materials',
+  materialNote: 'materialNotes',
 }
 
 export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
@@ -125,6 +131,8 @@ export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
   critiqueResult: '批評の結果',
   benchWork: '相対比較の作品',
   benchAnalysis: '相対比較の分析',
+  material: '資料',
+  materialNote: '資料の記録',
 }
 
 /** 長い文章の最初の行（見出しが無い時の名前。長ければ切る） */
@@ -176,6 +184,10 @@ export const trashLabel = {
   /** 「構成（2026-10-30）」 */
   benchAnalysis: (a: Pick<BenchAnalysis, 'viewpoint' | 'runDate'>) =>
     `${a.viewpoint.trim() || '観点なし'}${a.runDate ? `（${a.runDate}）` : ''}`,
+  material: (m: Pick<Material, 'name'>) => m.name.trim() || '無題の資料',
+  /** 「要約（2026-11-02）」 */
+  materialNote: (n: Pick<MaterialNote, 'section' | 'runDate'>) =>
+    `${n.section.trim() || '項目なし'}${n.runDate ? `（${n.runDate}）` : ''}`,
 }
 
 /** 同じ id のものが残っていて複製として戻した稿の名前に付ける */
@@ -456,6 +468,14 @@ function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord, origin?:
         throw new DomainError('元の作品がないため戻せません。先に相対比較の作品を戻してください。')
       return
     }
+    // 資料はどのタイトルにも属さない（ホームの棚）
+    case 'material':
+      return
+    case 'materialNote': {
+      const n = record as MaterialNote
+      if (!tx.get('materials', n.materialId)) throw new DomainError('元の資料がないため戻せません。先に資料を戻してください。')
+      return
+    }
   }
 }
 
@@ -583,6 +603,14 @@ function rewriteRefs(table: ContentTableName, record: ContentRecord, ids: Map<ID
       const r = record as BenchAnalysis
       return { ...r, id: m(r.id), workId: m(r.workId) }
     }
+    case 'materials': {
+      const r = record as Material
+      return { ...r, id: m(r.id) }
+    }
+    case 'materialNotes': {
+      const r = record as MaterialNote
+      return { ...r, id: m(r.id), materialId: m(r.materialId) }
+    }
   }
 }
 
@@ -652,6 +680,7 @@ type OrderedTable =
   | 'revisionIdeas'
   | 'critiquePrompts'
   | 'benchWorks'
+  | 'materials'
 
 /**
  * order で並ぶ一覧へ戻す。先頭にあった（prevId = null）なら先頭、直前にあった要素がまだあればその直後、
@@ -1011,6 +1040,13 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
         break
       // ベンチ作品の分析は日付で並ぶので、戻すだけ
       case 'benchAnalysis':
+        break
+      // 資料: 棚の元の位置へ（記録もいっしょに戻る）
+      case 'material':
+        placeInOrder(tx, 'materials', mainId, () => true, origin)
+        break
+      // 資料の記録は項目・日付で並ぶので、戻すだけ
+      case 'materialNote':
         break
     }
 

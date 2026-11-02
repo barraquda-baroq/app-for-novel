@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import * as B from '../../../src/domain/benchOps'
 import * as C from '../../../src/domain/claudeOps'
 import * as E from '../../../src/domain/entityOps'
+import * as M from '../../../src/domain/materialOps'
 import * as S from '../../../src/domain/storyOps'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import { stableStringify } from '../../../src/sync/merge'
@@ -266,10 +267,10 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     const status = await tool(core, 'novel_status')
     expect(status.text).toContain('書き込み: 許可')
     expect((await tool(core, 'novel_add_revision_ideas', input)).text).toContain('追加 1件')
-    // アプリの版がコネクタより新しい（データの形 5）: 書き込まない（読むのは続く）
+    // アプリの版がコネクタより新しい（データの形 6）: 書き込まない（読むのは続く）
     owner.offline()
-    await setDoc(appModelRef(owner.fs, owner.uid), { model: 5, appVersion: '2.6', updatedAt: serverTimestamp() })
-    expect((await tool(core, 'novel_status')).text).toContain('コネクタは 4。書き込みは止まります')
+    await setDoc(appModelRef(owner.fs, owner.uid), { model: 6, appVersion: '2.7', updatedAt: serverTimestamp() })
+    expect((await tool(core, 'novel_status')).text).toContain('コネクタは 5。書き込みは止まります')
     const newer = await tool(core, 'novel_add_revision_ideas', { title_id: titleId, items: [{ heading: 'c', body: 'd' }] })
     expect(newer.isError).toBe(true)
     expect(newer.text).toContain('コネクタを更新')
@@ -350,6 +351,87 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
       async () => Object.values((await other.load()).critiqueResults).find((x) => x.benchWorkIds?.[0] === workId),
       '比べた作品つきの批評の結果が届く',
       30_000,
+    )
+  })
+
+  it('資料: 端末で作った資料を読み、コネクタが作った資料と記録が両方の端末に届く（タイトルを見せなくても）。タグは作者が付ける', async () => {
+    const { owner, who, titleId } = await ownerWithNovel(['本文の一話目。'])
+    const other = await makeDevice('other', who)
+    await other.online()
+    let handMade = ''
+    await owner.edit((d) => {
+      const r = M.addMaterial(d, { name: '江戸の暮らし', author: '山田', tags: ['歴史', '江戸'], pdfPlace: 'プロジェクト「資料」' })
+      handMade = r.result
+      return r.data
+    })
+    // 資料はタイトルの設定と関係ない（タイトルを見せなくても読み書きできる）
+    await owner.edit((d) => C.setTitleClaudeAccess(d, titleId, 'none'))
+    await settle(owner, other)
+    const { core } = makeConnector()
+    await pair(core, owner)
+    expect((await tool(core, 'novel_list_materials')).text).toContain('『江戸の暮らし』（山田） 山田\n  タグ: 歴史・江戸')
+    const r = await tool(core, 'novel_add_material_notes', {
+      material: '江戸の暮らし',
+      items: [
+        { section: '要約', body_markdown: '## 要約\n第1章 町の成り立ち。', run_date: '2026-11-02' },
+        { section: '描写に使える部分', body_markdown: '- 物売りの声（第2章）', run_date: '2026-11-02' },
+      ],
+    })
+    expect(r.text).toContain('追加 2件')
+    const made = await tool(core, 'novel_add_material_notes', {
+      material: '外科の歴史',
+      new_material: { name: '外科の歴史', author: '高橋' },
+      items: [
+        { section: '創作に役立つ知識', body_markdown: '- 麻酔の普及は19世紀（第4章）', run_date: '2026-11-02' },
+        { section: 'サンプルシーン', body_markdown: '場面: 野戦病院。\n灯りが揺れた。', run_date: '2026-11-02' },
+      ],
+    })
+    expect(made.text).toContain('『外科の歴史』（高橋） を資料に追加しました')
+    // 書いた資料も、すぐに一覧に出る（タグは付けない。タグで絞れば、作者がタグを付けた資料だけ）
+    const only = (await tool(core, 'novel_list_materials', { names: ['外科'] })).text
+    expect(only).toContain('=== 資料（資料名に「外科」を含む資料 1件／全2件。')
+    expect(only).toContain('『外科の歴史』（高橋） 高橋\n  記録 2件')
+    const tagged = (await tool(core, 'novel_list_materials', { tags: ['歴史'] })).text
+    expect(tagged).toContain('=== 資料（タグ「歴史」を持つ資料 1件／全2件。')
+    expect(tagged).toContain('『江戸の暮らし』')
+    expect(tagged).not.toContain('『外科の歴史』')
+    for (const d of [owner, other]) {
+      await waitFor(
+        async () => {
+          const x = await d.load()
+          return Object.keys(x.materialNotes).length === 4 && Object.keys(x.materials).length === 2
+        },
+        `${d.name} に資料の記録が届く`,
+        30_000,
+      )
+      const local = await d.load()
+      expect(Object.values(local.materialNotes).filter((n) => n.materialId === handMade).map((n) => n.section).sort()).toEqual(
+        ['描写に使える部分', '要約'].sort(),
+      )
+      const surgery = Object.values(local.materials).find((m) => m.id !== handMade)!
+      expect(surgery).toMatchObject({ name: '外科の歴史', author: '高橋', source: 'claude' })
+      expect(surgery.tags).toBeUndefined()
+      expect(local.materials[handMade].tags).toEqual(['歴史', '江戸'])
+      expect(Object.values(local.materialNotes).filter((n) => n.materialId === surgery.id)).toHaveLength(2)
+      expect(Object.values(local.materialNotes).every((n) => n.source === 'claude')).toBe(true)
+      expect(d.notes).toEqual([])
+    }
+    // Claude が書いた資料に、作者がタグを付ける（もう一方の端末とコネクタにも届く）
+    const surgeryId = Object.keys((await owner.load()).materials).find((id) => id !== handMade)!
+    await owner.edit((d) => M.setMaterialTags(d, surgeryId, ['医療', '歴史']))
+    await settle(owner, other)
+    await waitFor(
+      async () => (await other.load()).materials[surgeryId]?.tags?.join('・') === '医療・歴史',
+      'もう一方の端末に作者のタグが届く',
+      30_000,
+    )
+    await waitFor(
+      async () => (await tool(core, 'novel_list_materials', { tags: ['歴史'] })).text.includes('タグ「歴史」を持つ資料 2件／全2件'),
+      'コネクタの一覧に作者のタグが出る',
+      30_000,
+    )
+    expect((await tool(core, 'novel_list_materials', { tags: ['医療', '歴史'] })).text).toContain(
+      '『外科の歴史』（高橋） 高橋\n  タグ: 医療・歴史',
     )
   })
 

@@ -1,0 +1,527 @@
+/* ===== 資料（mt-。2.6。内部名は materials）: 資料の画面・ダイアログ。相対比較（bench.css）と同じ見た目 ===== */
+/* ホームの棚のカード・検索の欄・タグのチップは home.css（home-mat-） */
+
+/* ---------- 資料の画面 ---------- */
+.page.mt-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 920px;
+}
+
+.mt-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border-top: 3px solid var(--area);
+}
+
+.mt-head-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.badge.mt-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--area-soft);
+  color: var(--area-text);
+  border-color: color-mix(in srgb, var(--area) 35%, var(--border));
+}
+
+.badge.mt-kind .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.mt-name {
+  margin: 0;
+  font-family: var(--editor-font);
+  font-size: 24px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.mt-biblio {
+  margin: -4px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.mt-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+.mt-facts > div {
+  display: contents;
+}
+
+.mt-facts dt {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 30px;
+}
+
+.mt-facts dd {
+  margin: 0;
+  min-width: 0;
+  line-height: 30px;
+  overflow-wrap: anywhere;
+}
+
+.mt-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 作者が付けたタグ（資料の画面の頭） */
+.mt-tags-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.mt-tags-row .icon.mt-tags-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
+.mt-tags-row .btn {
+  min-height: 32px;
+}
+
+/* ---------- 記録の一覧 ---------- */
+.mt-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mt-notes-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 2px 0 2px 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--area-soft), transparent 70%);
+  box-shadow: inset 3px 0 0 var(--area);
+  min-height: 40px;
+}
+
+.mt-notes-head h2 {
+  display: flex;
+  align-items: baseline;
+  font-size: 18px;
+}
+
+.mt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mt-actions .btn {
+  min-height: 36px;
+}
+
+.empty.mt-empty {
+  padding: 22px 16px;
+}
+
+.empty.mt-empty p {
+  margin: 0;
+}
+
+.empty.mt-empty p + p {
+  margin-top: 6px;
+}
+
+.mt-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mt-group-head {
+  display: flex;
+  align-items: baseline;
+  margin: 6px 0 0;
+  color: var(--area-text);
+  font-size: 15px;
+}
+
+/* まだ記録の無い決まった項目 */
+.mt-group-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 0;
+  padding: 4px 4px 4px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.mt-group-empty .btn {
+  min-height: 34px;
+}
+
+.mt-note-card .sx-card-toggle {
+  align-items: flex-start;
+}
+
+.mt-note-card .sx-chevron {
+  margin-top: 4px;
+}
+
+.mt-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.mt-note-date {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- ダイアログ（後ろの画面の外に出るので、資料の色は --area-materials-* を直に使う） ---------- */
+.mt-form {
+  min-width: 0;
+}
+
+.mt-lead {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.mt-required {
+  margin-left: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.mt-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 12px;
+}
+
+.mt-form-row .field {
+  min-width: 0;
+}
+
+.textarea.mt-body-input {
+  min-height: 220px;
+  font-family: var(--editor-font);
+  line-height: 1.8;
+}
+
+.mt-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mt-suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mt-suggest-chip:hover {
+  border-color: var(--area-materials);
+}
+
+.mt-suggest-chip.is-on {
+  border-color: color-mix(in srgb, var(--area-materials) 60%, var(--border));
+  background: var(--area-materials-soft);
+  color: var(--area-materials-text);
+}
+
+.mt-suggest-chip .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.mt-add-section {
+  display: flex;
+  gap: 6px;
+}
+
+.mt-add-section .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn.mt-copy {
+  align-self: flex-start;
+  min-height: 40px;
+}
+
+.btn.mt-copy.is-copied {
+  border-color: color-mix(in srgb, var(--active) 50%, var(--border));
+  color: var(--active);
+}
+
+.mt-prompt-preview summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.mt-prompt-preview pre {
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- タグ（チップ・編集・管理） ---------- */
+.mt-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.mt-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--area-materials) 40%, var(--border));
+  border-radius: 999px;
+  background: var(--area-materials-soft);
+  color: var(--area-materials-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mt-tag-chip.is-static {
+  min-height: 26px;
+  padding: 1px 10px;
+  overflow-wrap: anywhere;
+}
+
+.mt-tag-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mt-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mt-tag-remove:hover {
+  background: color-mix(in srgb, var(--area-materials) 20%, transparent);
+}
+
+.mt-tag-remove .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.mt-tags-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mt-tags-label .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--text-faint);
+}
+
+.mt-tags-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mt-tags-hint {
+  line-height: 1.5;
+}
+
+.mt-tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mt-tag-suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 3px 10px 3px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.mt-tag-suggestion:hover {
+  border-color: var(--area-materials);
+}
+
+.mt-tag-suggestion .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.mt-manage-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mt-manage-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.mt-manage-row:last-child {
+  border-bottom: 0;
+}
+
+.mt-manage-row .icon.mt-manage-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--text-faint);
+}
+
+.mt-manage-name {
+  min-width: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.mt-manage-count {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- スマホ ---------- */
+@media (max-width: 720px) {
+  .mt-head {
+    padding: 14px;
+  }
+
+  .mt-name {
+    font-size: 20px;
+  }
+
+  .mt-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .mt-facts dt {
+    line-height: 1.6;
+    margin-top: 6px;
+  }
+
+  .mt-facts dd {
+    line-height: 1.6;
+  }
+
+  .mt-head-top .btn-sm,
+  .mt-actions .btn,
+  .mt-tags-row .btn {
+    min-height: 38px;
+  }
+
+  .mt-tag-remove {
+    width: 34px;
+    height: 34px;
+  }
+
+  /* タグの候補も指で押しやすい大きさに */
+  .mt-tag-suggestion {
+    min-height: 36px;
+  }
+
+  .mt-manage-row .btn-sm {
+    min-height: 38px;
+  }
+}

@@ -20,6 +20,9 @@ export type ToolName =
   | 'novel_list_bench_works'
   | 'novel_get_bench_analysis'
   | 'novel_add_bench_analysis'
+  | 'novel_list_materials'
+  | 'novel_get_material'
+  | 'novel_add_material_notes'
 
 export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
   "novel_status": {
@@ -1013,6 +1016,185 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
     },
     "required": [
       "work",
+      "items"
+    ]
+  },
+  "novel_list_materials": {
+    "type": "object",
+    "properties": {
+      "names": {
+        "description": "資料名のどこかにこのどれかを含む資料だけを出す（部分一致。全角と半角・空白の違いは問わない。10個まで）",
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "exclude_names": {
+        "description": "資料名のどこかにこのどれかを含む資料を出さない（部分一致。10個まで）",
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "tags": {
+        "description": "このタグをすべて持つ資料だけを出す（作者が付けたタグ。タグの名前そのもので照らし、全角と半角・空白の違いは問わない。例: [\"ミリタリ\", \"現代\"]。10個まで）",
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        }
+      },
+      "char_budget": {
+        "description": "1回に返す文字数（2,000〜100,000。省略時は結果の上限の 100,000）。収まれば全部、収まらなければ資料の途中では切らずに返し、残りは 続き: cursor=\"…\"",
+        "type": "integer",
+        "minimum": 2000,
+        "maximum": 100000
+      },
+      "cursor": {
+        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す（絞り込みは cursor に入っているので、cursor だけでよい）",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16000
+      }
+    }
+  },
+  "novel_get_material": {
+    "type": "object",
+    "properties": {
+      "material": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "資料の指し方（d:3f2a9c1b のような短い id・id・資料名そのもの）。novel_list_materials で確かめられる"
+      },
+      "sections": {
+        "description": "この項目の記録だけを読む（要約・創作に役立つ知識・描写に使える部分・サンプルシーンなど。省略時はすべての項目）",
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
+      },
+      "note_id": {
+        "description": "この記録（k:…）だけを読む",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "char_budget": {
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "type": "integer",
+        "minimum": 2000,
+        "maximum": 60000
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000,
+        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す"
+      }
+    },
+    "required": [
+      "material"
+    ]
+  },
+  "novel_add_material_notes": {
+    "type": "object",
+    "properties": {
+      "material": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "記録を足す資料（d:… か資料名）。資料の棚にまだ無い資料は new_material も付ける"
+      },
+      "new_material": {
+        "description": "資料が資料の棚に無い時だけ作る資料（付けた時だけ作る。同じ資料名・著者の資料があればそれに足す（著者が違えば別の資料として作る））",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "資料名（書名など。80字以内）"
+          },
+          "author": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "著者（80字以内）"
+          },
+          "publisher": {
+            "description": "出版社",
+            "type": "string",
+            "maxLength": 80
+          },
+          "year": {
+            "description": "刊行年",
+            "type": "string",
+            "maxLength": 20
+          },
+          "pdf_place": {
+            "description": "PDF の置き場所（claude.ai のプロジェクト名など）",
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "name",
+          "author"
+        ]
+      },
+      "items": {
+        "minItems": 1,
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "section": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "項目の名前（要約・創作に役立つ知識・描写に使える部分・サンプルシーン。ほかの名前も作れる。40字以内）"
+            },
+            "body_markdown": {
+              "type": "string",
+              "minLength": 1,
+              "description": "その項目の記録（Markdown。長さの上限なし）"
+            },
+            "run_date": {
+              "type": "string",
+              "maxLength": 10,
+              "description": "YYYY-MM-DD（日本時間）。省略時は今日"
+            }
+          },
+          "required": [
+            "section",
+            "body_markdown"
+          ]
+        },
+        "description": "記録（項目ごとに1つ。1回20件まで）"
+      },
+      "model": {
+        "type": "string",
+        "maxLength": 60,
+        "description": "使ったモデルの名前（任意）"
+      }
+    },
+    "required": [
+      "material",
       "items"
     ]
   }

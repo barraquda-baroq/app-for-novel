@@ -18,10 +18,12 @@ import {
 } from './homeLogic'
 
 describe('ホームの表示の保存値', () => {
-  it('titles / ideas / bench 以外は null', () => {
+  it('titles / ideas / bench / materials 以外は null', () => {
     expect(parseHomeView('titles')).toBe('titles')
     expect(parseHomeView('ideas')).toBe('ideas')
     expect(parseHomeView('bench')).toBe('bench')
+    expect(parseHomeView('materials')).toBe('materials')
+    expect(parseHomeView('material')).toBeNull()
     expect(parseHomeView('other')).toBeNull()
     expect(parseHomeView(null)).toBeNull()
     expect(parseHomeView(undefined)).toBeNull()

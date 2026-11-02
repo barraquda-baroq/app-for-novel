@@ -1,6 +1,7 @@
-// ホーム: 起動するとタイトル群とアイデア領域が表示される。その後に、比べるために読む既存の作品の棚「相対比較」（2.5。内部名は bench）。
-// 広い画面（721px〜）では左右に並べ（左にタイトルとその下の相対比較、右にアイデア）、スマホでは上下に積む
-// （タイトル → アイデア → 相対比較）。スマホでは上部の切り替えで、どの先頭へも1タップで移れる（どれかを隠すことはしない）。
+// ホーム: 起動するとタイトル群とアイデア領域が表示される。その後に、比べるために読む既存の作品の棚「相対比較」（2.5。内部名は bench）と、
+// 創作のために読む資料の棚「資料」（2.6。内部名は materials）。
+// 広い画面（721px〜）では左右に並べ（左にタイトルとその下の相対比較・資料、右にアイデア）、スマホでは上下に積む
+// （タイトル → アイデア → 相対比較 → 資料）。スマホでは上部の切り替えで、どの先頭へも1タップで移れる（どれかを隠すことはしない）。
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useData } from '../../store/appStore'
@@ -11,6 +12,7 @@ import { BackupReminder } from './BackupReminder'
 import { parseHomeView, type HomeView } from './homeLogic'
 import { BenchShelf } from './BenchShelf'
 import { IdeaArea } from './IdeaArea'
+import { MaterialShelf } from './MaterialShelf'
 import { useHomeScrollMemory } from './scrollMemory'
 import { TitleGroup } from './TitleGroup'
 import './home.css'
@@ -19,6 +21,7 @@ const AREAS: { id: HomeView; label: string }[] = [
   { id: 'titles', label: 'タイトル' },
   { id: 'ideas', label: 'アイデア' },
   { id: 'bench', label: '相対比較' },
+  { id: 'materials', label: '資料' },
 ]
 
 /** スマホの上下表示で、領域の先頭が画面のこの割合より上に来たら、その領域を表示中とみなす */
@@ -39,6 +42,7 @@ export function HomePage() {
     titles: `${baseId}-titles-heading`,
     ideas: `${baseId}-ideas-heading`,
     bench: `${baseId}-bench-heading`,
+    materials: `${baseId}-materials-heading`,
   }
   const titleHeadingId = headingIds.titles
   const ideaHeadingId = headingIds.ideas
@@ -46,15 +50,23 @@ export function HomePage() {
     titles: `${baseId}-pane-titles`,
     ideas: `${baseId}-pane-ideas`,
     bench: `${baseId}-pane-bench`,
+    materials: `${baseId}-pane-materials`,
   }
   const ideasPane = useRef<HTMLElement>(null)
   const benchPane = useRef<HTMLElement>(null)
+  const materialsPane = useRef<HTMLElement>(null)
   // 切り替え（またはリンク）で移った領域。自分でスクロールし始めるまでは、位置ではなくこれを表示中とする
   const pinned = useRef<HomeView | null>(null)
   const titleCount = Object.keys(data.titles).length
   const ideaCount = useMemo(() => Object.keys(data.ideas).length, [data.ideas])
   const benchCount = Object.keys(data.benchWorks).length
-  const counts: Record<HomeView, number> = { titles: titleCount, ideas: ideaCount, bench: benchCount }
+  const materialCount = Object.keys(data.materials).length
+  const counts: Record<HomeView, number> = {
+    titles: titleCount,
+    ideas: ideaCount,
+    bench: benchCount,
+    materials: materialCount,
+  }
 
   // リンクの指定を反映したら URL からは消す（再読み込みや「戻る」で同じ場所へ飛ばし直さないように）
   useEffect(() => {
@@ -73,12 +85,20 @@ export function HomePage() {
     return () => cancelAnimationFrame(raf)
   }, [linkedView, focus, twoColumns])
 
-  // ?view=bench（相対比較の作品の画面のパンくずから）: 棚の先頭を見せ、見出しにフォーカスを移す（どの幅でも）
+  // ?view=bench（相対比較の作品の画面のパンくずから）・?view=materials（資料の画面のパンくずから）: 棚の先頭を見せ、
+  // 見出しにフォーカスを移す（どの幅でも）。上下に積んでいる時は、その棚を表示中にする（相対比較の下に資料の棚があるので、
+  // 位置から決めると、短い相対比較の棚へ移った時に「資料」になってしまう）
   useEffect(() => {
-    if (linkedView !== 'bench') return
+    if (linkedView !== 'bench' && linkedView !== 'materials') return
+    const view = linkedView
+    const pane = view === 'bench' ? benchPane : materialsPane
+    if (!twoColumns) {
+      pinned.current = view
+      setCurrent(view)
+    }
     const raf = requestAnimationFrame(() => {
-      benchPane.current?.scrollIntoView({ block: 'start' })
-      document.getElementById(headingIds.bench)?.focus({ preventScroll: true })
+      pane.current?.scrollIntoView({ block: 'start' })
+      document.getElementById(headingIds[view])?.focus({ preventScroll: true })
     })
     return () => cancelAnimationFrame(raf)
   }, [linkedView]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -96,13 +116,24 @@ export function HomePage() {
           return
         }
         // 一番上にいる時は「タイトル」。下へ進んでアイデア領域が画面の上半分に来たら「アイデア」、相対比較の棚が来たら
-        // （または最後まで来たら）「相対比較」
+        // 「相対比較」、資料の棚が来たら（または最後まで来たら）「資料」
         const line = window.innerHeight * SPY_RATIO
         const ideasTop = ideasPane.current?.getBoundingClientRect().top ?? Infinity
         const benchTop = benchPane.current?.getBoundingClientRect().top ?? Infinity
+        const materialsTop = materialsPane.current?.getBoundingClientRect().top ?? Infinity
         const scrolled = window.scrollY > 0
         const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2
-        setCurrent(!scrolled ? 'titles' : benchTop <= line || atBottom ? 'bench' : ideasTop <= line ? 'ideas' : 'titles')
+        setCurrent(
+          !scrolled
+            ? 'titles'
+            : materialsTop <= line || atBottom
+              ? 'materials'
+              : benchTop <= line
+                ? 'bench'
+                : ideasTop <= line
+                  ? 'ideas'
+                  : 'titles',
+        )
       })
     }
     // 自分でスクロールし始めたら、また位置から決める（切り替えのボタンでも pointerdown・keydown が click より先に来るので、
@@ -193,6 +224,16 @@ export function HomePage() {
             data-testid="bench-shelf"
           >
             <BenchShelf headingId={headingIds.bench} />
+          </section>
+          <section
+            ref={materialsPane}
+            id={paneIds.materials}
+            className="home-pane home-materials"
+            aria-labelledby={headingIds.materials}
+            data-area="materials"
+            data-testid="material-shelf"
+          >
+            <MaterialShelf headingId={headingIds.materials} />
           </section>
         </div>
       </main>

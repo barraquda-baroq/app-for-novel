@@ -5,8 +5,8 @@ rules_version = '2';
 //   持ち主を変えたい時は、Firebase コンソールの Firestore で config/owner を消してから、新しい持ち主でログインする。
 // - 持ち主のデータは users/{uid}/records と、データの形の版 users/{uid}/meta/app だけ。ほかの場所は誰も読み書きできない。
 // - 2.3: Claude 用のコネクタ（Cloudflare Worker）は、持ち主がアプリで許可した匿名のアカウント（config/connector の uid）として、
-//   持ち主の記録を読み、Claude の8つの表（推敲案など。2.5 のベンチ作品とその分析も）に新しい記録を作ることだけができる
-//   （書き換え・削除・原稿の表は不可）。
+//   持ち主の記録を読み、Claude の10の表（推敲案など。2.5 のベンチ作品とその分析、2.6 の資料とその記録も）に新しい記録を
+//   作ることだけができる（書き換え・削除・原稿の表は不可）。
 //   持ち主の読み書きは今までどおり（|| の左で決まるので、コネクタのための読み取りは増えない）。
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -45,8 +45,10 @@ service cloud.firestore {
         && d.updated == request.time;
     }
 
-    // コネクタが作れる記録: Claude の8つの表だけ（2.3 の6つと、2.5 のベンチ作品・その分析）。決まった項目だけで、
-    // 分割・削除の印・復元の印は無く、文書の名前は {表名}:{id}。
+    // コネクタが作れる記録: Claude の10の表だけ（2.3 の6つと、2.5 のベンチ作品・その分析、2.6 の資料・その記録）。
+    // 決まった項目だけで（資料のタグ tags などの項目は足せない）、分割・削除の印・復元の印は無く、文書の名前は {表名}:{id}。
+    // 新しく作るだけなので、作者が資料に付けたタグ（記録の json の中）をコネクタが書き換えることはない
+    // （コネクタは作る資料にタグを付けない。タグは作者がアプリで付けて管理する）。
     // 書き込みは持ち主が「書き込みを許可」している間だけ（config/connector の writes）
     function connectorCreate(docId) {
       let d = request.resource.data;
@@ -54,7 +56,7 @@ service cloud.firestore {
         && d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.table in ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults',
-          'benchWorks', 'benchAnalyses']
+          'benchWorks', 'benchAnalyses', 'materials', 'materialNotes']
         && d.id is string && d.id.size() > 0 && d.id.size() <= 64
         && docId == d.table + ':' + d.id
         && d.device == 'claude-connector'

@@ -8,9 +8,11 @@
 // - コネクタ（source = claude）が書く記録だけは、1件を JSON にして 200,000 字まで（コネクタは分割文書を書かないため）。
 //   超える時は、分け方を書いた理由を返す。貼り付け（source = paste）は端末が大きな記録を分割文書に分けて送るので上限なし
 // - 相対比較の分析（2.5。W6。内部名は bench）は、どのタイトルにも属さない。作品が無ければ new_work を付けた時だけ作品も作る
+// - 資料の記録（2.6。W7）も、どのタイトルにも属さない。資料が無ければ new_material を付けた時だけ資料も作る（W6 と同じ決まり）
 // 作るだけで、データには入れない（アプリはストアの addClaudeRecords、コネクタは Firestore への作成で入れる）。
 import { BENCH_LIMITS, benchWorkName, sortedBenchWorks } from '../domain/benchOps'
 import { hashJson } from '../domain/hash'
+import { MATERIAL_LIMITS, materialName, sortedMaterials } from '../domain/materialOps'
 import { adoptedText, isSplit, pieceFullLabel, pieceLabel } from '../domain/structure'
 import type {
   AppData,
@@ -21,6 +23,8 @@ import type {
   CritiqueResult,
   CritiqueScope,
   ID,
+  Material,
+  MaterialNote,
   Piece,
   ProofBatch,
   ProofCategory,
@@ -41,6 +45,8 @@ import {
   benchWorkId,
   critiquePromptId,
   critiqueResultId,
+  materialId,
+  materialNoteId,
   proofBatchId,
   proofRunId,
   proofSuggestionId,
@@ -48,6 +54,7 @@ import {
   strategyNoteId,
 } from './derivedId'
 import { matchesId, readingOrder, refKey, resolvePiece, resolveTitle, shortId, type ReadingItem } from './refs'
+import { materialRef, resolveMaterial } from './material'
 import { manuscriptOf } from './snapshot'
 import { canClaudeWrite, CLAUDE_RECORD_VERSION } from './visibility'
 
@@ -89,6 +96,14 @@ export const RECORD_LIMITS = {
   pdfPlace: BENCH_LIMITS.pdfPlace,
   /** 作品批評の結果の比べた作品（bench_works）の数 */
   benchRefs: 20,
+  // 2.6: 資料
+  materialItems: 20,
+  section: MATERIAL_LIMITS.section,
+  materialName: MATERIAL_LIMITS.materialName,
+  materialAuthor: MATERIAL_LIMITS.author,
+  materialPublisher: MATERIAL_LIMITS.publisher,
+  materialYear: MATERIAL_LIMITS.year,
+  materialPdfPlace: MATERIAL_LIMITS.pdfPlace,
 } as const
 
 // ---------- 入力の形（コネクタの書き込みツールの入力と同じ） ----------
@@ -205,6 +220,35 @@ export interface BenchAnalysisItemInput {
   run_date?: string
 }
 
+/** W7 novel_add_material_notes（2.6） */
+export interface MaterialNotesInput {
+  /** 資料の指し方（d:… の短い id・id・資料名そのもの） */
+  material: string
+  /** 資料がまだ棚に無い時に作る（付けた時だけ作る） */
+  new_material?: MaterialNewInput
+  items: MaterialNoteItemInput[]
+  model?: string
+}
+
+/** 資料がまだ棚に無い時に作る資料の情報（タグは作者が付けて管理するので無い。付いていても使わない） */
+export interface MaterialNewInput {
+  name: string
+  author: string
+  publisher?: string
+  year?: string
+  /** PDF の置き場所（claude.ai のプロジェクト名など） */
+  pdf_place?: string
+}
+
+export interface MaterialNoteItemInput {
+  /** 項目の名前（要約・創作に役立つ知識・描写に使える部分・サンプルシーン…。40字まで） */
+  section: string
+  /** 記録の本文（Markdown。長さの上限なし） */
+  body_markdown: string
+  /** YYYY-MM-DD（日本時間）。省略時は今日 */
+  run_date?: string
+}
+
 /** 書き込みツールの名前（コネクタと手動連携の JSON の tool） */
 export const WRITE_TOOLS = [
   'novel_add_proofreading',
@@ -213,6 +257,7 @@ export const WRITE_TOOLS = [
   'novel_save_critique_prompt',
   'novel_add_critique_result',
   'novel_add_bench_analysis',
+  'novel_add_material_notes',
 ] as const
 
 export type WriteTool = (typeof WRITE_TOOLS)[number]
@@ -224,6 +269,7 @@ export type WriteToolInput = {
   novel_save_critique_prompt: CritiquePromptInput
   novel_add_critique_result: CritiqueResultInput
   novel_add_bench_analysis: BenchAnalysisInput
+  novel_add_material_notes: MaterialNotesInput
 }
 
 export type WriteToolCall = { [K in WriteTool]: { tool: K; input: WriteToolInput[K] } }[WriteTool]
@@ -240,6 +286,7 @@ export const WRITE_TOOL_LABELS: Record<WriteTool, string> = {
   novel_save_critique_prompt: '批評プロンプトを保存',
   novel_add_critique_result: '作品批評の結果を記録',
   novel_add_bench_analysis: '相対比較に分析を追加',
+  novel_add_material_notes: '資料に記録を追加',
 }
 
 // ---------- 結果の形 ----------
@@ -253,6 +300,8 @@ export type ClaudeRecord =
   | CritiqueResult
   | BenchWork
   | BenchAnalysis
+  | Material
+  | MaterialNote
 
 export interface NewRecord {
   table: ClaudeTableName
@@ -304,6 +353,8 @@ export interface BuildContext {
    * 手で足した作品は id が内容から作った id でないので、new_work で作り直さないように作品名で見分ける
    */
   trashedBenchWorkNamed?: (name: string) => boolean
+  /** ゴミ箱に同じ資料名の資料があるか（trashedMaterialNamesOf。相対比較の作品と同じ見分け方） */
+  trashedMaterialNamed?: (name: string) => boolean
 }
 
 // ---------- 小さな道具 ----------
@@ -415,6 +466,14 @@ export function trashedBenchNamesOf(data: AppData): (name: string) => boolean {
   for (const e of Object.values(data.trashEntries))
     if (e.kind === 'benchWork' && typeof e.label === 'string') set.add(refKey(e.label))
   // 作品名で探す時と同じ比べ方（全角と半角・続く空白の違いは同じ）
+  return (name) => set.has(refKey(name))
+}
+
+/** ゴミ箱に入っている資料の資料名（ゴミ箱の1件の表記 label は資料名。trashLabel.material）。trashedBenchNamesOf と同じ */
+export function trashedMaterialNamesOf(data: AppData): (name: string) => boolean {
+  const set = new Set<string>()
+  for (const e of Object.values(data.trashEntries))
+    if (e.kind === 'material' && typeof e.label === 'string') set.add(refKey(e.label))
   return (name) => set.has(refKey(name))
 }
 
@@ -1223,6 +1282,185 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
   return { ok: true, records, items, notes }
 }
 
+// ---------- W7 資料の記録（2.6） ----------
+
+/** 資料がまだ無い時に作る資料（形が違えば理由） */
+function newMaterialOf(raw: unknown): MaterialNewInput | string {
+  if (!isObj(raw)) return 'new_material の形が違います（{"name": …, "author": …}）'
+  const m = raw as unknown as MaterialNewInput
+  const err =
+    checkText(m.name, 'new_material.name', RECORD_LIMITS.materialName, true) ??
+    checkText(m.author, 'new_material.author', RECORD_LIMITS.materialAuthor, false) ??
+    checkText(m.publisher, 'new_material.publisher', RECORD_LIMITS.materialPublisher, false) ??
+    checkText(m.year, 'new_material.year', RECORD_LIMITS.materialYear, false) ??
+    checkText(m.pdf_place, 'new_material.pdf_place', RECORD_LIMITS.materialPdfPlace, false)
+  return err ?? m
+}
+
+/**
+ * 資料の記録を足す。決まりは相対比較の分析（W6 buildBenchAnalysis）と同じ: 資料は material → new_material の資料名の順に探し、
+ * 無ければ new_material がある時だけ作る（記録を1つでも作る時だけ。資料が先）。著者が違えば同じ資料名の別の資料。
+ * 以前に削除した資料（同じ id・ゴミ箱に同じ資料名）は作り直さない。コネクタの答えには足す先の資料をいつも d:… で出す
+ */
+export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx: BuildContext): BuildResult {
+  if (!isObj(input)) return fail('入力の形が違います')
+  if (!Array.isArray(input.items) || input.items.length === 0) return fail('items がありません（記録の配列）')
+  if (input.items.length > RECORD_LIMITS.materialItems)
+    return fail(`items が多すぎます（1回 ${RECORD_LIMITS.materialItems} 件まで。項目ごとに分けて呼んでください）`)
+  const ref = isStr(input.material) ? input.material.trim() : ''
+  const newMaterial = input.new_material === undefined || input.new_material === null ? null : newMaterialOf(input.new_material)
+  if (typeof newMaterial === 'string') return fail(newMaterial)
+  if (!ref && !newMaterial)
+    return fail('material がありません（資料の d:… か資料名。資料の棚にまだ無い資料は new_material も付ける）')
+  const notes: string[] = []
+  const records: NewRecord[] = []
+  // 資料: material → new_material の資料名の順に探し、無ければ new_material がある時だけ作る。
+  // 資料名で見つけた資料は、new_material の著者と資料の著者が両方あって違えば、同じ資料名の別の資料とみなす。
+  // d:… の短い id・id で指した資料には、著者が違っても足す（違うことを notes で知らせる）
+  const materials = sortedMaterials(data)
+  const wantAuthor = newMaterial ? refKey(newMaterial.author ?? '') : ''
+  const otherAuthor = (m: Material) => Boolean(wantAuthor && refKey(m.author) && refKey(m.author) !== wantAuthor)
+  let material: Material | null = null
+  let created: Material | null = null
+  /** 資料名は同じで著者の違う資料（別の資料として作った時に知らせる） */
+  let nameTwin: Material | null = null
+  const byIdRef = ref ? materials.some((m) => matchesId('material', ref, m.id)) : false
+  if (byIdRef || !newMaterial) {
+    const found = ref ? resolveMaterial(data, ref) : null
+    if (found?.ok) {
+      material = found.value
+      if (otherAuthor(material))
+        notes.push(
+          `new_material の著者（${short(wantAuthor, 20)}）は、指した資料 ${materialRef(material)} と違います（指した資料を使います）`,
+        )
+    } else if (found?.reason === 'ambiguous') return fail(found.message, found.candidates)
+    else
+      return fail(
+        `${found?.message ?? '資料が見つかりません'}。資料の棚にまだ無い資料は new_material（name・author など）を付けると、資料も資料の棚に追加します`,
+        found?.candidates,
+      )
+  } else {
+    // 資料名で探す（material → new_material.name。同じ書き方は1回だけ）
+    const names = [ref, newMaterial.name].filter((n, i, all) => n && all.findIndex((x) => refKey(x) === refKey(n)) === i)
+    for (const name of names) {
+      const hits = materials.filter((m) => refKey(m.name) === refKey(name))
+      if (!hits.length) continue
+      const fits = hits.filter((m) => !otherAuthor(m))
+      // 同じ資料名がいくつかあっても、著者まで同じものが1つならそれ（Claude が別の資料として作った後の呼び出しなど）
+      const exact = fits.length > 1 && wantAuthor ? fits.filter((m) => refKey(m.author) === wantAuthor) : fits
+      if (exact.length === 1) {
+        material = exact[0]
+        break
+      }
+      if (fits.length > 1)
+        return fail(
+          `資料の棚に資料名「${short(name, 30)}」の資料が${fits.length}件あります。d:… の短い id で指してください`,
+          fits.slice(0, 30).map((m) => materialRef(m)),
+        )
+      nameTwin ??= hits[0]
+    }
+    if (!material) {
+      const id = materialId(newMaterial.name, newMaterial.author ?? '')
+      const same = data.materials[id]
+      if (same) material = same
+      // 以前に Claude が作って削除した資料（同じ id）も、手で足して削除した資料（ゴミ箱に同じ資料名）も作り直さない
+      else if (ctx.wasDeleted?.('materials', id) || ctx.trashedMaterialNamed?.(newMaterial.name))
+        return fail(
+          `資料『${short(newMaterial.name, 30)}』は以前に削除されています（作り直す時は、アプリのホームの「資料」で追加するか、ゴミ箱から戻してください）`,
+        )
+      else {
+        const opt = (v: string | undefined) => (isStr(v) && v.trim() ? v.trim() : undefined)
+        const publisher = opt(newMaterial.publisher)
+        const year = opt(newMaterial.year)
+        // タグは作者が付けて管理する（new_material に tags などがあっても資料には入れない）
+        created = {
+          id,
+          name: newMaterial.name.trim(),
+          author: (newMaterial.author ?? '').trim(),
+          ...(publisher ? { publisher } : {}),
+          ...(year ? { year } : {}),
+          pdfPlace: (newMaterial.pdf_place ?? '').trim(),
+          note: '',
+          order: materials.reduce((m, x) => Math.max(m, x.order), -1) + 1,
+          createdAt: ctx.now,
+          updatedAt: ctx.now,
+          source: ctx.source,
+        }
+        material = created
+      }
+    }
+  }
+
+  const model = modelOf(input.model)
+  const seen = new Set<string>()
+  const items: ItemResult[] = []
+  input.items.forEach((raw, index) => {
+    if (!isObj(raw)) return items.push({ index, status: 'invalid', label: '記録', hint: '記録の形が違います' })
+    const item = raw as unknown as MaterialNoteItemInput
+    const label =
+      isStr(item.section) && item.section.trim()
+        ? `『${short(material!.name, 20)}』の「${short(item.section, 20)}」`
+        : `『${short(material!.name, 20)}』の記録`
+    const err =
+      checkText(item.section, 'section', RECORD_LIMITS.section, true) ??
+      checkText(item.body_markdown, 'body_markdown', null, true)
+    if (err) return items.push({ index, status: 'invalid', label, hint: err })
+    const itemNotes: string[] = []
+    const runDate = runDateOf(item.run_date, ctx, itemNotes)
+    notes.push(...itemNotes)
+    const id = materialNoteId({ materialId: material!.id, section: item.section, runDate, body: item.body_markdown })
+    const status = existing(data, ctx, 'materialNotes', id, seen)
+    if (status) return items.push({ index, status, id, table: 'materialNotes', label, hint: STATUS_HINTS[status] })
+    // 同じ呼び出しの記録は、送った順に1ずつずらした時刻にする（ほかの項目のまとまりの順が送った順になるように）
+    const at = ctx.now + index
+    const rec: MaterialNote = {
+      id,
+      materialId: material!.id,
+      section: item.section.trim(),
+      body: item.body_markdown,
+      runDate,
+      source: ctx.source,
+      ...(model ? { model } : {}),
+      v: CLAUDE_RECORD_VERSION,
+      createdAt: at,
+      updatedAt: at,
+    }
+    const tooBig = sizeProblem(
+      rec,
+      ctx,
+      '資料の記録',
+      rec.body,
+      (k) =>
+        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ section・run_date の別々の items にして送ってください（各部の body_markdown の1行目の先頭に「（1/${k}）」「（2/${k}）」…と番号を書く（見出しで始める時は「## （1/${k}）要約」のように # の後ろに。番号だけの行を1行目にしてもよい）。アプリと一覧はこの番号の順に並べます。items が多くなる時は novel_add_material_notes を分けて呼ぶ）`,
+      'section を短くしてください',
+    )
+    if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
+    seen.add(`materialNotes:${id}`)
+    records.push({ table: 'materialNotes', record: rec })
+    items.push({ index, status: 'created', id, table: 'materialNotes', label })
+  })
+  // 資料は、記録を1つでも作る時だけ作る（先に作る）
+  if (created && records.length) {
+    records.unshift({ table: 'materials', record: created })
+    notes.push(`資料 ${materialRef(created)} を資料に追加しました`)
+    if (nameTwin) notes.push(`著者の違う同名の資料 ${materialRef(nameTwin)} があるため、別の資料として足しました`)
+  } else if (ctx.source === 'claude') {
+    // コネクタの答えには、足す先の資料をいつも d:… で出す（Claude が資料の一覧で id を探し直さなくてよいように）。
+    // 貼り付けには出さない（［追加］を押す前の確かめに出るので「追加しました」は合わない。資料は各記録の『資料名』で分かる）
+    if (!created)
+      notes.push(
+        records.length
+          ? `資料 ${materialRef(material!)} に追加しました`
+          : `資料 ${materialRef(material!)} には何も追加していません`,
+      )
+    else
+      notes.push(
+        `記録を1つも追加しなかったため、資料『${materialName(created)}』${created.author ? `（${created.author}）` : ''}は資料の棚に追加していません`,
+      )
+  }
+  return { ok: true, records, items, notes }
+}
+
 // ---------- まとめ ----------
 
 /** 書き込みツールの呼び出し1つから記録を作る */
@@ -1240,6 +1478,8 @@ export function buildToolCall(data: AppData, call: WriteToolCall, ctx: BuildCont
       return buildCritiqueResult(data, call.input, ctx)
     case 'novel_add_bench_analysis':
       return buildBenchAnalysis(data, call.input, ctx)
+    case 'novel_add_material_notes':
+      return buildMaterialNotes(data, call.input, ctx)
     default:
       return fail(`知らないツールです: ${String((call as { tool?: unknown }).tool)}`)
   }

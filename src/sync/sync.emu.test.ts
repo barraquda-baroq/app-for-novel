@@ -26,6 +26,7 @@ import * as A from '../domain/acts'
 import * as B from '../domain/benchOps'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
+import * as M from '../domain/materialOps'
 import { repairData } from '../domain/repair'
 import * as S from '../domain/storyOps'
 import * as T from '../domain/trash'
@@ -1543,6 +1544,159 @@ describe('相対比較の同期（エミュレーター）', () => {
     expect(data.benchAnalyses[analysis.id]).toEqual(analysis)
     expect(data.titles[titleId].synopsis).toBe('この端末で書いたあらすじ')
     expect(a.notes).toEqual([])
+  })
+})
+
+describe('資料の同期（エミュレーター）', () => {
+  it('資料と記録が届き、タグは2台で別々に付けても両方残り、片方で外せば外れる。片方で資料を削除・片方で記録を書き換えたら控え、戻すともう一方の端末でも戻る', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let matA = ''
+    let matB = ''
+    let noteId = ''
+    await a.edit((d) => {
+      const m1 = M.addMaterial(d, { name: '現代の特殊部隊', author: '山田' })
+      matA = m1.result
+      const m2 = M.addMaterial(m1.data, { name: '戦国の合戦', author: '佐藤', tags: ['歴史'] })
+      matB = m2.result
+      const n = M.addMaterialNote(m2.data, matA, { section: '要約', body: '編成の章', runDate: '2026-11-01' })
+      noteId = n.result
+      return n.data
+    })
+    await settle(a, b)
+    const first = await b.load()
+    expect(first.materialNotes[noteId]).toMatchObject({ materialId: matA, section: '要約', body: '編成の章' })
+    expect(first.materials[matA].tags).toBeUndefined()
+    expect(first.materials[matB].tags).toEqual(['歴史'])
+    // オフラインの間に、A は「ミリタリ」「現代」、B は「ミリタリ」「戦闘」を付ける（タグの無い資料に。両方残る）。メモは両方で書けばつなぐ
+    b.offline()
+    await a.edit((d) => M.updateMaterial(M.setMaterialTags(d, matA, ['ミリタリ', '現代']), matA, { note: 'A のメモ' }))
+    await settle(a)
+    await b.edit((d) => M.updateMaterial(M.setMaterialTags(d, matA, ['ミリタリ', '戦闘']), matA, { note: 'B のメモ' }))
+    await b.online()
+    await settle(a, b)
+    const merged = await a.load()
+    expect([...(merged.materials[matA].tags ?? [])].sort()).toEqual(['ミリタリ', '現代', '戦闘'].sort())
+    expect(merged.materials[matA].note).toContain('A のメモ')
+    expect(merged.materials[matA].note).toContain('B のメモ')
+    expect(merged.materials[matB].tags).toEqual(['歴史'])
+    // A はタグ「ミリタリ」をすべての資料から外し、B は「特殊部隊」を足す（外したタグは戻らず、足したタグは残る）
+    b.offline()
+    await a.edit((d) => M.removeMaterialTag(d, 'ミリタリ').data)
+    await settle(a)
+    await b.edit((d) => M.setMaterialTags(d, matA, [...(d.materials[matA].tags ?? []), '特殊部隊']))
+    await b.online()
+    await settle(a, b)
+    for (const dev of [a, b]) {
+      const data = await dev.load()
+      expect([...(data.materials[matA].tags ?? [])].sort()).toEqual(['現代', '戦闘', '特殊部隊'].sort())
+      expect(M.materialTagsInUse(data).map((t) => t.tag)).not.toContain('ミリタリ')
+    }
+    // 名前を変えたタグも届く（すべての資料で）
+    await b.edit((d) => M.renameMaterialTag(d, '歴史', '戦国').data)
+    await settle(a, b)
+    expect((await a.load()).materials[matB].tags).toEqual(['戦国'])
+    // A は資料を削除（記録ごと）、B はその記録を書き換え
+    b.offline()
+    await a.edit((d) => M.deleteMaterial(d, matA))
+    await settle(a)
+    await b.edit((d) => M.updateMaterialNote(d, noteId, { body: '編成の章。B で足した' }))
+    await b.online()
+    await settle(a, b)
+    const data = await a.load()
+    expect(data.materials[matA]).toBeUndefined()
+    expect(data.materialNotes[noteId]).toBeUndefined()
+    const kept = Object.values(data.trashRecords).find(
+      (r) => r.table === 'materialNotes' && (r.record as { body: string }).body.includes('B で足した'),
+    )
+    expect(kept).toBeDefined()
+    expect(data.trashEntries[kept!.entryId]).toMatchObject({ kind: 'materialNote', reason: 'conflict' })
+    // 資料をゴミ箱から戻すと、もう一方の端末でも棚の元の位置に、記録とタグといっしょに戻る
+    const entry = Object.values(data.trashEntries).find((e) => e.kind === 'material')!
+    await a.edit((d) => T.restoreTrashEntry(d, entry.id).data)
+    await settle(a, b)
+    const back = await b.load()
+    expect(back.materials[matA].name).toBe('現代の特殊部隊')
+    expect([...(back.materials[matA].tags ?? [])].sort()).toEqual(['現代', '戦闘', '特殊部隊'].sort())
+    expect(back.materialNotes[noteId]).toMatchObject({ materialId: matA, body: '編成の章' })
+    expect(M.sortedMaterials(back).map((m) => m.id)).toEqual([matA, matB])
+  })
+
+  it('コネクタが作った資料と記録（device: claude-connector。タグは無い）が、送信待ちのある端末に届き、作者が付けたタグがもう一方の端末に届く', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    await a.online()
+    let own = ''
+    await a.edit((d) => {
+      const r = M.addMaterial(d, { name: '江戸の町と暮らし', author: '高橋' })
+      own = r.result
+      return r.data
+    })
+    await settle(a)
+    a.offline()
+    await a.edit((d) => M.updateMaterial(d, own, { note: 'この端末で書いたメモ' }))
+    const material = {
+      id: 'cd-test.1',
+      name: '現代の特殊部隊',
+      author: '山田',
+      pdfPlace: 'プロジェクト「資料」',
+      note: '',
+      order: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      source: 'claude',
+    }
+    const note = {
+      id: 'ck-test.1',
+      materialId: material.id,
+      section: '要約',
+      body: '## 要約\n第1章は編成。',
+      runDate: '2026-11-01',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    for (const [table, rec] of [
+      ['materialNotes', note],
+      ['materials', material],
+    ] as const) {
+      const enc = encodeRecord(rec)
+      await setDoc(doc(a.fs, 'users', a.uid, 'records', `${table}:${rec.id}`), {
+        table,
+        id: rec.id,
+        json: enc.json,
+        chunks: 0,
+        deleted: false,
+        hash: enc.hash,
+        updated: serverTimestamp(),
+        device: 'claude-connector',
+      })
+    }
+    await a.online()
+    await settle(a)
+    // 1台の settle は送り終えるまでしか待たない（受け取りは待たない）。コネクタの資料と記録が届くまで待つ
+    const data = await waitFor(async () => {
+      const d = await a.load()
+      return d.materials[material.id] && d.materialNotes[note.id] ? d : null
+    }, 'コネクタの資料と記録が届く')
+    expect(data.materials[material.id]).toEqual(material)
+    expect(data.materialNotes[note.id]).toEqual(note)
+    expect(data.materials[own].note).toBe('この端末で書いたメモ')
+    expect(a.notes).toEqual([])
+    // 作者がタグを付けると、もう一方の端末にも届く（Claude が作った資料のまま）
+    await a.edit((d) => M.setMaterialTags(d, material.id, ['ミリタリ', '現代']))
+    await settle(a)
+    const b = await makeDevice('b', who)
+    await b.online()
+    await settle(a, b)
+    const other = await b.load()
+    expect(other.materials[material.id]).toMatchObject({ source: 'claude', tags: ['ミリタリ', '現代'] })
+    expect(other.materialNotes[note.id]).toEqual(note)
+    expect(other.materials[own].note).toBe('この端末で書いたメモ')
   })
 })
 

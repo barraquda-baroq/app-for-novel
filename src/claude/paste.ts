@@ -4,6 +4,7 @@
 // 作品批評は、コードブロックが無ければ答えの Markdown をそのまま結果として受け付ける（URL は画面で入れる。コードブロックの
 // 結果に artifact_url が無い時も、画面で入れた URL を使う）。
 // 相対比較の作品の画面（2.5）では、novel_add_bench_analysis の work をその作品にして受け付ける（new_work は使わない）。
+// 資料の画面（2.6）では、novel_add_material_notes の material をその資料にして受け付ける（new_material は使わない）。
 import type { AppData, ClaudeTableName, ID } from '../domain/types'
 import {
   buildToolCall,
@@ -11,6 +12,7 @@ import {
   summarizeItems,
   trashedBenchNamesOf,
   trashedIdsOf,
+  trashedMaterialNamesOf,
   WRITE_TOOL_LABELS,
   type BuildResult,
   type NewRecord,
@@ -100,10 +102,12 @@ export function parseCalls(json: string): ParseCallsResult {
 }
 
 export interface PasteOptions {
-  /** 貼り付けたタイトル（JSON の title_id はこれに置き換える）。相対比較の作品の画面では無い */
+  /** 貼り付けたタイトル（JSON の title_id はこれに置き換える）。相対比較の作品の画面・資料の画面では無い */
   titleId?: ID
   /** 貼り付けた相対比較の作品（JSON の work はこれに置き換える。作品の画面） */
   benchWorkId?: ID
+  /** 貼り付けた資料（JSON の material はこれに置き換える。資料の画面） */
+  materialId?: ID
   now: number
   /** 受け付ける書き込みツール（省略ですべて） */
   expect?: readonly WriteTool[]
@@ -144,6 +148,7 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
   if (opts.titleId !== undefined && !data.titles[opts.titleId]) return { ok: false, error: 'タイトルが見つかりません' }
   if (opts.benchWorkId !== undefined && !data.benchWorks[opts.benchWorkId])
     return { ok: false, error: '相対比較の作品が見つかりません' }
+  if (opts.materialId !== undefined && !data.materials[opts.materialId]) return { ok: false, error: '資料が見つかりません' }
   let calls: WriteToolCall[]
   let plain = false
   const block = extractBlock(text)
@@ -189,6 +194,7 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
     now: opts.now,
     wasDeleted: trashedIdsOf(data),
     trashedBenchWorkNamed: trashedBenchNamesOf(data),
+    trashedMaterialNamed: trashedMaterialNamesOf(data),
   }
   const previews: PasteCallPreview[] = []
   const records: NewRecord[] = []
@@ -198,6 +204,10 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
     if (call.tool === 'novel_add_bench_analysis') {
       // 相対比較の作品の画面ではその作品に書く（相対比較に無い作品を作る new_work は使わない）
       const input = opts.benchWorkId ? { ...call.input, work: opts.benchWorkId, new_work: undefined } : call.input
+      result = buildToolCall(data, { tool: call.tool, input } as WriteToolCall, ctx)
+    } else if (call.tool === 'novel_add_material_notes') {
+      // 資料の画面ではその資料に書く（資料の棚に無い資料を作る new_material は使わない）
+      const input = opts.materialId ? { ...call.input, material: opts.materialId, new_material: undefined } : call.input
       result = buildToolCall(data, { tool: call.tool, input } as WriteToolCall, ctx)
     } else if (opts.titleId) {
       // 貼り付けた画面のタイトルに書く（共通の批評プロンプトは title_id を使わない）
@@ -232,8 +242,8 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
       summary: result.ok ? summarizeItems(result.items) : (result.error ?? ''),
     })
   }
-  // 推敲案の実行の記録・分析と一緒に作る相対比較の作品は数えない（追加する推敲案・分析などの数）
-  const created = records.filter((r) => r.table !== 'proofBatches' && r.table !== 'benchWorks').length
+  // 推敲案の実行の記録・分析と一緒に作る相対比較の作品・記録と一緒に作る資料は数えない（追加する推敲案・分析・記録などの数）
+  const created = records.filter((r) => r.table !== 'proofBatches' && r.table !== 'benchWorks' && r.table !== 'materials').length
   return { ok: true, calls: previews, records, created, plain }
 }
 

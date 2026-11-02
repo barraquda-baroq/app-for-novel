@@ -181,6 +181,46 @@ describe('複数タブ・保存失敗', () => {
     other.close()
   })
 
+  it('資料とその記録の操作が端末内に保存され、読み込み直すと戻る（記録だけ先に届いた資料は表示しない）', async () => {
+    const name = `test-db-${++n}`
+    await initStore(createPersistence(name))
+    const materialId = actions.addMaterial({ name: '江戸の暮らし', author: '著者', tags: ['歴史'] })
+    const noteId = actions.addMaterialNote(materialId, { section: '要約', body: '町の暮らしの要約' })
+    // タグは作者が付けて管理する（付け直す・名前を変える・外すのは、すべての資料で）
+    actions.setMaterialTags(materialId, ['歴史', '江戸', '暮らし'])
+    expect(actions.renameMaterialTag('暮らし', '風俗')).toBe(1)
+    expect(actions.removeMaterialTag('江戸')).toBe(1)
+    actions.updateMaterialNote(noteId, { body: '直した要約' })
+    const other = actions.addMaterial({ name: '武器の事典' })
+    actions.moveMaterialStep(other, -1)
+    await flushNow()
+    resetStoreForTests()
+    // 資料より先に、別の端末の記録が届いた（資料はまだ無い）
+    const writer = createPersistence(name)
+    const disk = await writer.load()
+    const orphan = { ...disk.materialNotes[noteId], id: 'later', materialId: 'not-yet' }
+    await writer.save(disk, { ...disk, materialNotes: { ...disk.materialNotes, later: orphan } })
+    writer.close()
+
+    await initStore(createPersistence(name))
+    const data = useApp.getState().data
+    expect(data.materials[materialId]).toMatchObject({ name: '江戸の暮らし', author: '著者', tags: ['歴史', '風俗'], order: 1 })
+    expect(data.materials[other].order).toBe(0)
+    expect(data.materialNotes[noteId]).toMatchObject({ materialId, section: '要約', body: '直した要約' })
+    expect(data.materialNotes.later).toBeUndefined()
+    actions.deleteMaterial(materialId)
+    expect(useApp.getState().data.materialNotes[noteId]).toBeUndefined()
+    expect(await flushNow()).toBe(true)
+    const check = createPersistence(name)
+    const saved = await check.load()
+    expect(saved.materials[materialId]).toBeUndefined()
+    expect(saved.materialNotes[noteId]).toBeUndefined()
+    // 表示から外した記録は端末内に残る（資料が届けばまた見える）
+    expect(saved.materialNotes.later).toBeDefined()
+    expect(Object.values(saved.trashEntries).map((e) => e.kind)).toEqual(['material'])
+    check.close()
+  })
+
   it('まだ届いていない相対比較の作品への、相対比較する作品の印は、表示では外しても、タイトルを書き換えた時に端末内に残る（作品が届けばまた見える）', async () => {
     const name = `test-db-${++n}`
     await initStore(createPersistence(name))

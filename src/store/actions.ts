@@ -5,6 +5,7 @@ import * as A from '../domain/acts'
 import * as B from '../domain/benchOps'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
+import * as M from '../domain/materialOps'
 import {
   applyPieceEdits,
   keepOrphanedEdits,
@@ -180,6 +181,23 @@ export const actions = {
   /** タイトルの比べるベンチ作品に足す・外す */
   addTitleBenchWork: (titleId: ID, workId: ID) => apply((d) => B.addTitleBenchWork(d, titleId, workId)),
   removeTitleBenchWork: (titleId: ID, workId: ID) => apply((d) => B.removeTitleBenchWork(d, titleId, workId)),
+
+  // 2.6: 資料（ホームの棚）とその記録
+  /** 戻り値は資料の id */
+  addMaterial: (input: M.MaterialInput) => run((d) => M.addMaterial(d, input)),
+  updateMaterial: (id: ID, patch: M.MaterialInput) => apply((d) => M.updateMaterial(d, id, patch)),
+  moveMaterialStep: (id: ID, dir: -1 | 1) => apply((d) => M.moveMaterialStep(d, id, dir)),
+  moveMaterialTo: (id: ID, index: number) => apply((d) => M.moveMaterialTo(d, id, index)),
+  // タグ（作者が付けて管理する）。名前を変える・外すのは、すべての資料で。戻り値は書き換えた資料の数
+  setMaterialTags: (id: ID, tags: readonly string[]) => apply((d) => M.setMaterialTags(d, id, tags)),
+  renameMaterialTag: (from: string, to: string) => run((d) => M.renameMaterialTag(d, from, to)),
+  removeMaterialTag: (tag: string) => run((d) => M.removeMaterialTag(d, tag)),
+  /** 資料を記録といっしょにゴミ箱へ */
+  deleteMaterial: (id: ID) => apply((d) => M.deleteMaterial(d, id)),
+  /** 戻り値は記録の id */
+  addMaterialNote: (materialId: ID, input: M.MaterialNoteInput) => run((d) => M.addMaterialNote(d, materialId, input)),
+  updateMaterialNote: (id: ID, patch: M.MaterialNoteInput) => apply((d) => M.updateMaterialNote(d, id, patch)),
+  deleteMaterialNote: (id: ID) => apply((d) => M.deleteMaterialNote(d, id)),
 
   // ゴミ箱（削除の操作は上の各 delete… がゴミ箱へ移す）
   restoreTrashEntry: (entryId: ID) => run((d) => T.restoreTrashEntry(d, entryId)),

@@ -1,4 +1,4 @@
-/* ===== ホーム（home-）: タイトル群とアイデア領域、相対比較の棚 ===== */
+/* ===== ホーム（home-）: タイトル群とアイデア領域、相対比較の棚、資料の棚 ===== */
 
 .page.home-page {
   max-width: 1360px;
@@ -7,11 +7,12 @@
 .home-grid {
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  /* 左にタイトルとその下の相対比較、右にアイデア（アイデアが長くても、相対比較はタイトルのすぐ下に出る） */
+  /* 左にタイトルとその下の相対比較・資料、右にアイデア（アイデアが長くても、相対比較と資料はタイトルのすぐ下に出る） */
   grid-template-areas:
     'titles ideas'
-    'bench ideas';
-  grid-template-rows: auto 1fr;
+    'bench ideas'
+    'materials ideas';
+  grid-template-rows: auto auto 1fr;
   gap: 32px;
   align-items: start;
 }
@@ -26,6 +27,10 @@
 
 .home-bench {
   grid-area: bench;
+}
+
+.home-materials {
+  grid-area: materials;
 }
 
 .home-pane {
@@ -172,6 +177,25 @@
   /* 3つの領域が 360px の幅にも収まるように、横の余白を詰める */
   padding-inline: 6px;
   font-size: 14px;
+}
+
+/* 4つの領域（タイトル・アイデア・相対比較・資料）が横に並びきらない幅（360px〜519px）では、数を名前の下に置く
+   （名前と数を横に並べると 1つあたり 81px に収まらない。数が3桁でも収まるように） */
+@media (max-width: 519px) {
+  .segmented.home-jump-seg button {
+    flex-direction: column;
+    gap: 1px;
+    min-height: 44px;
+    padding: 3px 2px;
+    line-height: 1.25;
+  }
+
+  .segmented.home-jump-seg .home-jump-count {
+    min-width: 20px;
+    padding: 0 5px;
+    font-size: 11px;
+    line-height: 16px;
+  }
 }
 
 /* 領域の色をタブと同じように示す（下線を淡く敷き、表示中の領域はその色の背景・下線・文字） */
@@ -514,7 +538,8 @@
     grid-template-areas:
       'titles'
       'ideas'
-      'bench';
+      'bench'
+      'materials';
     grid-template-rows: auto;
     gap: 28px;
   }
@@ -766,4 +791,327 @@ button.home-bench-toggle {
   font-size: 13px;
   line-height: 1.7;
   text-align: left;
+}
+
+/* ---------- 資料の棚（2.6。内部名は materials）: 相対比較の棚と同じ見た目に、検索の欄とタグのチップ ---------- */
+.home-mat-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.home-mat-search {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.home-mat-search .input {
+  padding-left: 36px;
+}
+
+.home-mat-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  width: 18px;
+  height: 18px;
+  color: var(--text-faint);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* タグのチップの列（押すと絞る。いくつか選ぶと、すべてのタグを持つ資料だけ）と、選択の解除・タグを管理 */
+.home-mat-tagbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.home-mat-tags {
+  /* チップの中の読み上げ用の文字（visually-hidden。position: absolute）をこの列の中に収める。スマホでこの列を横に
+     スクロールする時、列の外に出ると画面の横幅を広げてしまい、ページ全体が縮んで表示されるため */
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.home-mat-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 4px 8px 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.home-mat-tag:hover {
+  border-color: var(--area-materials);
+}
+
+.home-mat-tag.is-on {
+  border-color: color-mix(in srgb, var(--area-materials) 60%, var(--border));
+  background: var(--area-materials-soft);
+  color: var(--area-materials-text);
+}
+
+.home-mat-tag-name {
+  min-width: 0;
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-mat-tag-count {
+  flex: none;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-mat-tag.is-on .home-mat-tag-count {
+  background: color-mix(in srgb, var(--area-materials) 22%, transparent);
+  color: var(--area-materials-text);
+}
+
+.btn.home-mat-tags-more {
+  flex: none;
+}
+
+.home-mat-tag-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.home-mat-tags-hint {
+  margin: 0;
+}
+
+.home-mat-filter-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 絞り込んでいない間は場所を取らない（読み上げの領域としては残す） */
+.home-mat-filter-status.is-idle {
+  height: 0;
+  margin-top: -8px;
+  overflow: hidden;
+}
+
+.home-mat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-anchor: none;
+}
+
+.home-mat-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--area-materials) 70%, var(--border));
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.home-mat-card:hover {
+  border-color: color-mix(in srgb, var(--area-materials) 45%, var(--border));
+  border-left-color: var(--area-materials);
+}
+
+.home-mat-link {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 10px 14px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.home-mat-link:hover {
+  background: var(--surface-2);
+}
+
+.home-mat-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.home-mat-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.home-mat-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--editor-font);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.home-mat-biblio {
+  color: var(--text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* カードのタグ（作者が付けたもの。押せない） */
+.home-mat-cardtags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.home-mat-cardtag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.home-mat-cardtag::before {
+  content: '#';
+  margin-right: 1px;
+  color: var(--text-faint);
+}
+
+.home-mat-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 項目のチップ（要約・創作に役立つ知識…） */
+.home-mat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 1px 9px;
+  border: 1px solid color-mix(in srgb, var(--area-materials) 35%, var(--border));
+  border-radius: 999px;
+  background: var(--area-materials-soft);
+  color: var(--area-materials-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.home-mat-chip-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty.home-mat-empty {
+  padding: 22px 16px;
+}
+
+.empty.home-mat-empty p {
+  max-width: 34em;
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: left;
+}
+
+.empty.home-mat-nomatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 16px;
+  background: var(--surface);
+}
+
+.empty.home-mat-nomatch p {
+  margin: 0;
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .home-mat-link {
+    gap: 5px;
+    padding: 10px 12px 9px 14px;
+  }
+
+  .home-mat-name {
+    font-size: 16px;
+  }
+
+  .home-mat-card .home-title-edit .icon-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  /* タグのチップは1行にして横にスクロールする（タグが多くても、縦に場所を取らないように） */
+  .home-mat-tags {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 0 -12px;
+    padding: 2px 12px 6px;
+    scrollbar-width: thin;
+    overscroll-behavior-x: contain;
+  }
+
+  .home-mat-tag {
+    flex: none;
+  }
+
+  .home-mat-tag-name {
+    max-width: 10em;
+  }
 }

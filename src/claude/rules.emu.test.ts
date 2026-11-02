@@ -301,7 +301,7 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       ['知らない項目', { ...ok('ci-extra'), extra: { note: 'x' } }],
     ]
     for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
-    // 8つの表（2.3 の6つと、2.5 の相対比較の作品・その分析）はどれも作れる
+    // 10の表（2.3 の6つと、2.5 の相対比較の作品・その分析、2.6 の資料・その記録）はどれも作れる
     for (const table of [
       'proofSuggestions',
       'proofBatches',
@@ -311,6 +311,8 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       'critiqueResults',
       'benchWorks',
       'benchAnalyses',
+      'materials',
+      'materialNotes',
     ])
       expect([table, await connectorCommit(anon, owner.uid, [connectorRecord(table, `c-${table}`)])]).toEqual([table, 200])
   })
@@ -333,6 +335,37 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     // 持ち主は今までどおり書き換え・削除できる
     const ref = doc(owner.fs, 'users', owner.uid, 'records', 'benchAnalyses:ca-1')
     await updateDoc(ref, { ...recordDoc('benchAnalyses', 'ca-1', { workId: 'cw-1', viewpoint: '構成', body: '直した' }) })
+    await deleteDoc(ref)
+    expect((await getDoc(ref)).exists()).toBe(false)
+  })
+
+  it('資料とその記録: 作れるのは新しい記録だけ（書き換え・削除・決まった形でない作成は拒む）', async () => {
+    const material = connectorRecord('materials', 'cd-1', { name: '江戸の暮らし', author: '山田' })
+    const note = connectorRecord('materialNotes', 'ck-1', { materialId: 'cd-1', section: '要約', body: '## 要約' })
+    expect(await connectorCommit(anon, owner.uid, [material, note])).toBe(200)
+    expect(await connectorCommit(anon, owner.uid, [material])).not.toBe(200)
+    expect(await connectorCommit(anon, owner.uid, [{ ...note, noPrecondition: true }])).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'materialNotes:ck-1')).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'materials:cd-1')).toBe(403)
+    const denied: [string, ConnectorWrite][] = [
+      ['分割（chunks）', { ...connectorRecord('materialNotes', 'ck-chunks'), extra: { chunks: 1 } }],
+      ['削除の印', { ...connectorRecord('materials', 'cd-del'), extra: { deleted: true } }],
+      ['端末の名前が違う', { ...connectorRecord('materials', 'cd-dev'), extra: { device: 'owner-device' } }],
+      ['表の名前が違う', { ...connectorRecord('materialNotes', 'ck-table'), docId: 'materials:ck-table' }],
+      ['json が長すぎる', { ...connectorRecord('materialNotes', 'ck-long'), json: 'x'.repeat(200_001) }],
+      // タグは作者が付けて管理する（コネクタは決まった項目だけ。タグ・分野の項目は足せない）
+      ['タグの項目', { ...connectorRecord('materials', 'cd-tags'), extra: { tags: 'ミリタリ' } }],
+      ['分野の項目', { ...connectorRecord('materials', 'cd-field'), extra: { field: '歴史' } }],
+    ]
+    for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
+    // 作者がタグを付けた資料を、コネクタは書き換えられない（作るのは新しい記録だけ）
+    const tagged = connectorRecord('materials', 'cd-1', { name: '江戸の暮らし', author: '山田', tags: ['歴史'] })
+    expect(await connectorCommit(anon, owner.uid, [{ ...tagged, noPrecondition: true }])).toBe(403)
+    // 持ち主は今までどおり書き換え・削除できる（タグを付けるのも持ち主）
+    const own = doc(owner.fs, 'users', owner.uid, 'records', 'materials:cd-1')
+    await updateDoc(own, { ...recordDoc('materials', 'cd-1', { name: '江戸の暮らし', author: '山田', tags: ['歴史', '江戸'] }) })
+    const ref = doc(owner.fs, 'users', owner.uid, 'records', 'materialNotes:ck-1')
+    await updateDoc(ref, { ...recordDoc('materialNotes', 'ck-1', { materialId: 'cd-1', section: '要約', body: '直した' }) })
     await deleteDoc(ref)
     expect((await getDoc(ref)).exists()).toBe(false)
   })

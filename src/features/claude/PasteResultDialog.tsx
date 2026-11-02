@@ -3,6 +3,7 @@
 // 作り方はコネクタと同じ（src/claude/records.ts。id は内容から作るので、同じ答えを2回貼り付けても増えない）。
 // 作品批評では、コードブロックが無ければ答えの Markdown をそのまま結果にする（アーティファクトの URL も入れられる）。
 // 相対比較の作品の画面（2.5。benchWorkId）では、その作品の分析（novel_add_bench_analysis）だけを受け付ける。
+// 資料の画面（2.6。materialId）では、その資料の記録（novel_add_material_notes）だけを受け付ける。
 import { useDeferredValue, useMemo, useState } from 'react'
 import { critiquePromptsOf } from '../../claude/order'
 import { previewPaste, type PastePreview } from '../../claude/paste'
@@ -22,6 +23,8 @@ export interface PasteResultDialogProps {
   titleId?: ID
   /** 貼り付ける相対比較の作品（作品の画面。その作品の分析だけを受け付ける） */
   benchWorkId?: ID
+  /** 貼り付ける資料（資料の画面。その資料の記録だけを受け付ける） */
+  materialId?: ID
   /** 作品批評: コードブロックが無ければ Markdown をそのまま結果にする */
   critique?: boolean
   /** 作品批評で最初に選んでおくプロンプト */
@@ -31,7 +34,15 @@ export interface PasteResultDialogProps {
   onAdded?: (count: number) => void
 }
 
-export function PasteResultDialog({ titleId, benchWorkId, critique, promptId, onClose, onAdded }: PasteResultDialogProps) {
+export function PasteResultDialog({
+  titleId,
+  benchWorkId,
+  materialId,
+  critique,
+  promptId,
+  onClose,
+  onAdded,
+}: PasteResultDialogProps) {
   const data = useData()
   const [text, setText] = useState('')
   const [url, setUrl] = useState('')
@@ -42,13 +53,14 @@ export function PasteResultDialog({ titleId, benchWorkId, critique, promptId, on
   const options = (u: string) => ({
     ...(titleId ? { titleId } : {}),
     ...(benchWorkId ? { benchWorkId, expect: ['novel_add_bench_analysis' as const] } : {}),
+    ...(materialId ? { materialId, expect: ['novel_add_material_notes' as const] } : {}),
     now: Date.now(),
     ...(critique ? { plainCritique: { promptId: prompt || null, artifactUrl: u } } : {}),
   })
   const preview: PastePreview | null = useMemo(() => {
     if (!deferredText.trim() && !(critique && deferredUrl.trim())) return null
     return previewPaste(data, deferredText, options(deferredUrl))
-  }, [data, deferredText, deferredUrl, prompt, titleId, benchWorkId, critique]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, deferredText, deferredUrl, prompt, titleId, benchWorkId, materialId, critique]) // eslint-disable-line react-hooks/exhaustive-deps
   const created = preview?.ok ? preview.created : 0
 
   const add = () => {
@@ -57,9 +69,9 @@ export function PasteResultDialog({ titleId, benchWorkId, critique, promptId, on
     if (!fresh.ok) return
     const ids = attempt(() => actions.addClaudeRecords(fresh.records))
     if (!ids) return
-    // 推敲案の実行の記録・分析と一緒に作る相対比較の作品は数えない
+    // 推敲案の実行の記録・分析と一緒に作る相対比較の作品・記録と一緒に作る資料は数えない
     const now = getData()
-    const n = ids.filter((id) => !now.proofBatches[id] && !now.benchWorks[id]).length
+    const n = ids.filter((id) => !now.proofBatches[id] && !now.benchWorks[id] && !now.materials[id]).length
     notify(n > 0 ? `${n}件を追加しました` : '新しく追加するものはありませんでした（もうあります）')
     onAdded?.(n)
     onClose()
@@ -87,6 +99,7 @@ export function PasteResultDialog({ titleId, benchWorkId, critique, promptId, on
           Claude の答えを最後のコードブロック（```novel-studio-v1）まで、そのまま貼り付けてください。
           {critique ? 'コードブロックが無ければ、答えの全体を批評の結果として残します。' : ''}
           {benchWorkId ? 'この作品の分析として残します。' : ''}
+          {materialId ? 'この資料の記録として残します。' : ''}
           同じ答えを2回貼り付けても、同じものは増えません。
         </p>
         <label className="field">

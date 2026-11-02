@@ -1,6 +1,6 @@
 // テスト用の小さな Firebase（Auth の REST・Firestore の REST の、コネクタが使う部分だけ）。fetch として渡す。
 // - 文書は名前の順・updated（サーバー時刻）の順に並ぶ。1回の commit の書き込みはすべて同じ時刻
-// - アクセスルールの要点だけをまねる: コネクタ（config/connector の uid）は読める・8つの表に作るだけ（writes の時だけ）
+// - アクセスルールの要点だけをまねる: コネクタ（config/connector の uid）は読める・10の表に作るだけ（writes の時だけ）
 // 本物のアクセスルールとの合わせは、エミュレーターの結合テスト（test/emu）で確かめる。
 import { encodeRecord, splitJson } from '../../../src/sync/codec'
 import type { Rec } from '../../../src/sync/merge'
@@ -28,6 +28,8 @@ const CLAUDE_TABLES = new Set([
   'critiqueResults',
   'benchWorks',
   'benchAnalyses',
+  'materials',
+  'materialNotes',
 ])
 
 export class FakeFirebase {
@@ -333,7 +335,7 @@ export class FakeFirebase {
         const pre = w.currentDocument as { exists?: boolean } | undefined
         if (pre?.exists === false && exists) return jsonRes({ error: { code: 409, status: 'ALREADY_EXISTS', message: 'exists' } }, 409)
         if (isOwner) continue
-        // コネクタ: 8つの表に、決まった形で作るだけ
+        // コネクタ: 10の表に、決まった形で作るだけ
         const f = upd.fields
         const table = f.table?.stringValue as string
         const id = f.id?.stringValue as string

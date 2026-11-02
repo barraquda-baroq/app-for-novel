@@ -6,7 +6,8 @@
 //   分けて記録したもの（大きすぎてコネクタが分けるように答えた時など。「（1/3）」「（2/3）」…）は、まとめて番号の順
 //   （番号は、本文なら1行目の先頭、見出しなら先頭か末尾。parts.ts の partMarkOf）
 // - 批評プロンプト: このタイトルのもの（order の順）と、共通のもの（order の順）
-// - ベンチ作品の分析（2.5）は benchOrder.ts（ホームの棚から読むので、推敲案の場所を探す部品を読み込まないように分けている）
+// - ベンチ作品の分析（2.5）は benchOrder.ts（ホームの棚から読むので、推敲案の場所を探す部品を読み込まないように分けている）。
+//   資料の記録（2.6）も同じ理由で materialOrder.ts
 import { adoptedText, isSplit } from '../domain/structure'
 import { hashJson } from '../domain/hash'
 import type {

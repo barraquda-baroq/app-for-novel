@@ -1,4 +1,4 @@
-// 読むツール（R1〜R11）の結果の文字の形。目次・採用原稿・検索はアプリの手動連携と同じ src/claude/view.ts を使う。
+// 読むツール（R1〜R13）の結果の文字の形。目次・採用原稿・検索はアプリの手動連携と同じ src/claude/view.ts を使う。
 // ここで見るデータは、いつも見せる内容（claudeView: 見せないタイトル・ゴミ箱・応募時の原稿の控えなどを除いたもの）。
 import {
   analysisText,
@@ -13,6 +13,18 @@ import { proofCategoryLabel, isProofCategory } from '../../../../src/claude/cate
 import { jstDate, shortDate } from '../../../../src/claude/dates'
 import { reanchor } from '../../../../src/claude/anchor'
 import { benchAnalysesOf } from '../../../../src/claude/benchOrder'
+import {
+  filterBySections,
+  materialBiblio,
+  materialLine,
+  materialNotesText,
+  materialRef,
+  materialTagsLine,
+  noteText,
+  resolveMaterial,
+  sectionNames,
+} from '../../../../src/claude/material'
+import { materialNotesOf } from '../../../../src/claude/materialOrder'
 import {
   critiquePromptsOf,
   critiqueResultsOf,
@@ -47,6 +59,7 @@ import {
   titleSummary,
 } from '../../../../src/domain/entityOps'
 import { benchWorkName, benchWorksOfTitle, sortedBenchWorks } from '../../../../src/domain/benchOps'
+import { MATERIAL_LIMITS, materialName, sortedMaterials } from '../../../../src/domain/materialOps'
 import { byOrder } from '../../../../src/domain/util'
 import { actParts, adoptedMetrics, isSplit, pieceFullLabel, pieceLabel } from '../../../../src/domain/structure'
 import {
@@ -57,7 +70,7 @@ import {
   textLimitRange,
 } from '../../../../src/domain/submissionTexts'
 import { bodyMetrics, formatCount } from '../../../../src/domain/text'
-import type { AppData, BenchWork, ID, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
+import type { AppData, BenchWork, ID, Material, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
 import {
   bool,
   fail,
@@ -453,13 +466,13 @@ function findBy<T extends { id: ID }>(list: readonly T[], kind: Parameters<typeo
 
 /** 1つの項目を全文で読む（長ければ char_budget 字ずつ。続きは cursor に項目の id と位置を入れる） */
 /**
- * 1つの項目を char_budget 字ずつ返す。k と t（タイトル・相対比較の作品の id）と extra（観点の絞り込みなど）を cursor に入れ、
+ * 1つの項目を char_budget 字ずつ返す。k と t（タイトル・相対比較の作品・資料の id）と extra（観点・項目の絞り込みなど）を cursor に入れ、
  * 続きの時に同じ項目を同じ形で作り直せるようにする
  */
 function pagedItem(
   ctx: ReadContext,
   args: Args,
-  k: 'strategy' | 'critique' | 'bench',
+  k: 'strategy' | 'critique' | 'bench' | 'material',
   titleId: ID,
   item: { which: string; id: ID; label: string; text: string },
   offset: number,
@@ -479,7 +492,7 @@ function pagedItem(
 /** 続きの cursor（1つの項目の続き）を読む。無ければ null、違う形なら 'bad' */
 function itemCursor(
   args: Args,
-  k: 'strategy' | 'critique' | 'bench',
+  k: 'strategy' | 'critique' | 'bench' | 'material',
   titleId: ID | null,
 ): { which: string; id: string; o: number; t: string; raw: Record<string, unknown> } | null | 'bad' {
   const raw = str(args.cursor)
@@ -774,10 +787,10 @@ interface NameFilters {
   keys: string[]
 }
 
-/** 作品名の絞り込み（refKey が同じものは最初の1つ）。形が違えば 'bad' */
-function benchNameFilters(v: unknown): NameFilters | 'bad' {
+/** 名前の絞り込み（refKey が同じものは最初の1つ。相対比較の作品名・資料の資料名とタグ）。形が違えば 'bad' */
+function nameFilters(v: unknown, limits: { count: number; length: number }): NameFilters | 'bad' {
   if (v === undefined || v === null) return { raw: [], keys: [] }
-  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || Array.from(x).length > BENCH_LIST_FILTERS.length)) return 'bad'
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || Array.from(x).length > limits.length)) return 'bad'
   const out: NameFilters = { raw: [], keys: [] }
   for (const x of v as string[]) {
     const k = refKey(x)
@@ -785,20 +798,77 @@ function benchNameFilters(v: unknown): NameFilters | 'bad' {
     out.raw.push(x.trim())
     out.keys.push(k)
   }
-  return out.keys.length > BENCH_LIST_FILTERS.count ? 'bad' : out
+  return out.keys.length > limits.count ? 'bad' : out
 }
+
+/** 作品名の絞り込み */
+const benchNameFilters = (v: unknown) => nameFilters(v, BENCH_LIST_FILTERS)
 
 const sameKeys = (a: NameFilters, b: NameFilters) =>
   a.keys.length === b.keys.length && [...a.keys].sort().join('\n') === [...b.keys].sort().join('\n')
 
+const quoted = (list: readonly string[]) => list.map((k) => `「${k}」`).join('')
+
+/** 「「【原稿】星の庭（」を含む」「「【対照】」を含まない」（含む・含まないの絞り込みの文。無ければ空の配列） */
+function includeExcludeParts(names: NameFilters, excludes: NameFilters): string[] {
+  return [
+    names.raw.length ? `${quoted(names.raw)}${names.raw.length > 1 ? 'のどれかを' : 'を'}含む` : '',
+    excludes.raw.length ? `${quoted(excludes.raw)}${excludes.raw.length > 1 ? 'のどれも' : 'を'}含まない` : '',
+  ].filter(Boolean)
+}
+
 /** 「作品名に「【原稿】星の庭（」を含む・「【対照】」を含まない」（絞り込みが無ければ空） */
 function benchFilterLabel(names: NameFilters, excludes: NameFilters): string {
-  const q = (list: readonly string[]) => list.map((k) => `「${k}」`).join('')
-  const parts = [
-    names.raw.length ? `${q(names.raw)}${names.raw.length > 1 ? 'のどれかを' : 'を'}含む` : '',
-    excludes.raw.length ? `${q(excludes.raw)}${excludes.raw.length > 1 ? 'のどれも' : 'を'}含まない` : '',
-  ].filter(Boolean)
+  const parts = includeExcludeParts(names, excludes)
   return parts.length ? `作品名に${parts.join('・')}` : ''
+}
+
+/**
+ * 続きの始まり: 前のページで最後に出した項目（after）の今の位置の次から（アプリで並べ替えて並び順の数が振り直されても抜けない）。
+ * その項目が消えていれば並び順で次から。after が無ければ最初から
+ */
+function resumeIndex(items: readonly { id: ID; order: number }[], after: { order: number; id: string } | null): number {
+  const at = after ? items.findIndex((x) => x.id === after.id) : -1
+  const start = !after ? 0 : at >= 0 ? at + 1 : items.findIndex((x) => byOrder(x, after) > 0)
+  return start < 0 ? items.length : start
+}
+
+/**
+ * 棚の一覧の1回分（相対比較の作品・資料で同じ切り方）。全体が cap 字に収まればそのまま全部（closing まで）。収まらない時だけ
+ * 項目（作品・資料）の切れ目で切り、最後の行を続きの行 more.footer(出した項目の数, 残りの数) にする（その分 more.room 字を空けておく）。
+ * 1つの項目の行だけで長すぎる時は、行の切れ目（前の方にしか無ければ行の途中）で切って more.clipped の行を付ける
+ */
+function shelfPage(
+  head: readonly string[],
+  rest: readonly string[],
+  closing: readonly string[],
+  cap: number,
+  more: { room: number; footer: (shown: number, left: number) => string; clipped: string },
+): string {
+  const whole = [...head, ...rest, ...closing].join('\n')
+  if (whole.length <= cap) return whole
+  const lines = [...head]
+  const limit = Math.max(1_000, cap - more.room)
+  let used = lines.join('\n').length + 1
+  let i = 0
+  for (; i < rest.length; i++) {
+    let line = rest[i]
+    if (i > 0 && used + line.length + 1 > limit) break
+    // 1つの項目の行だけで長すぎる時（観点・項目がとても多い）は切る（続きの行を残すため）。行の切れ目が前の方にしか無ければ行の途中で切る
+    if (line.length > limit) {
+      const room = limit - 40
+      let cut = line.lastIndexOf('\n', room)
+      if (cut < room / 2) cut = room
+      const c = line.charCodeAt(cut - 1)
+      if (c >= 0xd800 && c <= 0xdbff) cut -= 1
+      line = `${line.slice(0, cut)}\n${more.clipped}`
+    }
+    lines.push(line)
+    used += line.length + 1
+  }
+  if (i < rest.length) lines.push(more.footer(i, rest.length - i))
+  else lines.push(...closing)
+  return lines.join('\n')
 }
 
 /**
@@ -841,11 +911,8 @@ export function listBenchWorks(ctx: ReadContext, args: Args = {}): ToolResult {
     const k = refKey(benchWorkName(w))
     return (!inc.length || inc.some((n) => k.includes(n))) && !exc.some((n) => k.includes(n))
   })
-  const last = after
   // 続きは、最後に出した作品の今の位置の次から（アプリで並べ替えて並び順の数が振り直されても抜けない）。その作品が消えていれば並び順で次から
-  const at = last ? works.findIndex((w) => w.id === last.id) : -1
-  const start = !last ? 0 : at >= 0 ? at + 1 : works.findIndex((w) => byOrder(w, last) > 0)
-  const from = start < 0 ? works.length : start
+  const from = resumeIndex(works, after)
   const cap = Math.min(RESULT_LIMIT, Math.max(2_000, budget ?? RESULT_LIMIT))
   const lines: string[] = [
     after
@@ -862,35 +929,18 @@ export function listBenchWorks(ctx: ReadContext, args: Args = {}): ToolResult {
   else if (from >= works.length) lines.push('（この後の作品はありません）')
   const rest = works.slice(from).map((w) => benchWorkLine(ctx.view, w))
   const closing = works.length ? ['分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。'] : []
-  const whole = [...lines, ...rest, ...closing].join('\n')
-  if (whole.length <= cap) return ok(whole)
-  // 収まらない: 作品の切れ目で切る。続きの行の分を空けておく（絞り込みが長いと cursor も長い）
-  const cursorOf = (w: BenchWork) =>
+  // 収まらない時は作品の切れ目で切る。続きの行の分を空けておく（絞り込みが長いと cursor も長い）
+  const cursorOf = (w: Pick<BenchWork, 'id' | 'order'>) =>
     encodeCursor({ k: 'benchList', n: names.raw, x: excludes.raw, a: w.id, o: w.order, ...(budget !== undefined ? { b: budget } : {}) })
   const footerOf = (next: string, left: number) =>
     `続き: cursor="${next}"（結果が長いため、ここで切りました。残り${left}作品は、この cursor で読めます）`
-  const footerRoom = footerOf(cursorOf({ id: 'x'.repeat(40), order: -Number.MAX_VALUE } as BenchWork), 99_999).length + 2
-  const limit = Math.max(1_000, cap - footerRoom)
-  let used = lines[0].length + 1
-  let i = 0
-  for (; i < rest.length; i++) {
-    let line = rest[i]
-    if (i > 0 && used + line.length + 1 > limit) break
-    // 1つの作品の行だけで長すぎる時（観点がとても多い）は切る（続きの行を残すため）。行の切れ目が前の方にしか無ければ行の途中で切る
-    if (line.length > limit) {
-      const room = limit - 40
-      let cut = line.lastIndexOf('\n', room)
-      if (cut < room / 2) cut = room
-      const c = line.charCodeAt(cut - 1)
-      if (c >= 0xd800 && c <= 0xdbff) cut -= 1
-      line = `${line.slice(0, cut)}\n  （この作品の行は長いため、ここまで）`
-    }
-    lines.push(line)
-    used += line.length + 1
-  }
-  if (i < rest.length) lines.push(footerOf(cursorOf(works[from + i - 1]), rest.length - i))
-  else lines.push(...closing)
-  return ok(lines.join('\n'))
+  return ok(
+    shelfPage(lines, rest, closing, cap, {
+      room: footerOf(cursorOf({ id: 'x'.repeat(40), order: -Number.MAX_VALUE }), 99_999).length + 2,
+      footer: (shown, left) => footerOf(cursorOf(works[from + shown - 1]), left),
+      clipped: '  （この作品の行は長いため、ここまで）',
+    }),
+  )
 }
 
 // ---------- R11 相対比較の分析 ----------
@@ -938,6 +988,184 @@ export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
     )
   }
   return page('work', work.id, 0)
+}
+
+// ---------- R12 資料の一覧 ----------
+
+/**
+ * names・exclude_names・tags の数と1つの長さの上限（schemas.ts と同じ。長さは資料名・タグの上限と同じ）
+ */
+export const MATERIAL_LIST_FILTERS = {
+  count: 10,
+  length: MATERIAL_LIMITS.materialName,
+  tagLength: MATERIAL_LIMITS.tag,
+} as const
+
+const MATERIAL_NAME_FILTER = { count: MATERIAL_LIST_FILTERS.count, length: MATERIAL_LIST_FILTERS.length }
+const MATERIAL_TAG_FILTER = { count: MATERIAL_LIST_FILTERS.count, length: MATERIAL_LIST_FILTERS.tagLength }
+
+/** 「資料名に「江戸」を含む・「図録」を含まない・タグ「ミリタリ」「現代」をすべて持つ」（絞り込みが無ければ空） */
+function materialFilterLabel(names: NameFilters, excludes: NameFilters, tags: NameFilters): string {
+  const parts = includeExcludeParts(names, excludes)
+  return [
+    parts.length ? `資料名に${parts.join('・')}` : '',
+    tags.raw.length ? `タグ${quoted(tags.raw)}を${tags.raw.length > 1 ? 'すべて' : ''}持つ` : '',
+  ]
+    .filter(Boolean)
+    .join('・')
+}
+
+/** 資料のタグの照らす形（refKey。作者が付けたタグ） */
+const materialTagKeys = (m: Material): Set<string> =>
+  new Set((Array.isArray(m.tags) ? m.tags : []).filter((t): t is string => typeof t === 'string').map(refKey).filter(Boolean))
+
+/**
+ * 資料の一覧（アプリの棚の順）。相対比較の作品一覧（listBenchWorks）と同じ決まりで、names・exclude_names で資料名を
+ * 部分一致で絞り、tags で作者が付けたタグをすべて持つ資料だけにする（どちらも refKey にして照らす。タグは名前そのもので照らす）。
+ * 1回に返すのは char_budget 字（省略時は結果の上限 RESULT_LIMIT）まで。収まらない時だけ資料の切れ目で切り、最後の行を
+ * 続き: cursor="…" にする。cursor には絞り込み（入力のまま）・char_budget と、最後に出した資料の id と並び順を入れる
+ */
+export function listMaterials(ctx: ReadContext, args: Args = {}): ToolResult {
+  const all = sortedMaterials(ctx.view)
+  const argNames = nameFilters(args.names, MATERIAL_NAME_FILTER)
+  const argExcludes = nameFilters(args.exclude_names, MATERIAL_NAME_FILTER)
+  const argTags = nameFilters(args.tags, MATERIAL_TAG_FILTER)
+  if (argNames === 'bad' || argExcludes === 'bad' || argTags === 'bad')
+    return fail(
+      `names・exclude_names・tags は文字列の配列にしてください（それぞれ${MATERIAL_LIST_FILTERS.count}個まで・1つ${MATERIAL_LIST_FILTERS.length}字まで。tags は1つ${MATERIAL_LIST_FILTERS.tagLength}字まで）`,
+    )
+  let names = argNames
+  let excludes = argExcludes
+  let tags = argTags
+  let budget = num(args.char_budget)
+  /** 前のページで最後に出した資料（id と並び順） */
+  let after: { order: number; id: string } | null = null
+  const cursorArg = str(args.cursor)
+  if (cursorArg) {
+    const c = decodeCursor(cursorArg)
+    const cn = c ? nameFilters(c.n, MATERIAL_NAME_FILTER) : 'bad'
+    const cx = c ? nameFilters(c.x, MATERIAL_NAME_FILTER) : 'bad'
+    const ct = c ? nameFilters(c.t, MATERIAL_TAG_FILTER) : 'bad'
+    if (
+      !c ||
+      c.k !== 'materialList' ||
+      typeof c.a !== 'string' ||
+      typeof c.o !== 'number' ||
+      cn === 'bad' ||
+      cx === 'bad' ||
+      ct === 'bad'
+    )
+      return fail('cursor が読めません（novel_list_materials の続きの cursor をそのまま渡してください）')
+    if (
+      (args.names !== undefined && !sameKeys(names, cn)) ||
+      (args.exclude_names !== undefined && !sameKeys(excludes, cx)) ||
+      (args.tags !== undefined && !sameKeys(tags, ct))
+    )
+      return fail('cursor が別の条件のものです（cursor だけを渡すか、同じ names・exclude_names・tags で渡してください）')
+    names = cn
+    excludes = cx
+    tags = ct
+    after = { order: c.o, id: c.a }
+    budget ??= num(c.b)
+  }
+  const inc = names.keys
+  const exc = excludes.keys
+  const wantTags = tags.keys
+  const filter = materialFilterLabel(names, excludes, tags)
+  const materials = all.filter((m) => {
+    const k = refKey(materialName(m))
+    if ((inc.length && !inc.some((n) => k.includes(n))) || exc.some((n) => k.includes(n))) return false
+    if (!wantTags.length) return true
+    const have = materialTagKeys(m)
+    return wantTags.every((t) => have.has(t))
+  })
+  const from = resumeIndex(materials, after)
+  const cap = Math.min(RESULT_LIMIT, Math.max(2_000, budget ?? RESULT_LIMIT))
+  const lines: string[] = [
+    after
+      ? `=== 資料の続き（${filter ? `${filter}資料 ` : ''}${materials.length}件のうち${from + 1}件目から／全${all.length}件）===`
+      : filter
+        ? `=== 資料（${filter}資料 ${materials.length}件／全${all.length}件。作者が創作のために読む資料）===`
+        : `=== 資料（${all.length}件。作者が創作のために読む資料）===`,
+  ]
+  if (!all.length && !filter)
+    lines.push(
+      '（まだありません。資料の PDF を読んで novel_add_material_notes の new_material を付けて記録を追加すると、資料も資料の棚に追加されます）',
+    )
+  else if (!materials.length) lines.push(`（${filter}資料はありません）`)
+  else if (from >= materials.length) lines.push('（この後の資料はありません）')
+  const rest = materials.slice(from).map((m) => materialLine(ctx.view, m))
+  const closing = materials.length ? ['記録の本文は novel_get_material（material に d:…）で読んでください。'] : []
+  const cursorOf = (m: Pick<Material, 'id' | 'order'>) =>
+    encodeCursor({
+      k: 'materialList',
+      n: names.raw,
+      x: excludes.raw,
+      t: tags.raw,
+      a: m.id,
+      o: m.order,
+      ...(budget !== undefined ? { b: budget } : {}),
+    })
+  const footerOf = (next: string, left: number) =>
+    `続き: cursor="${next}"（結果が長いため、ここで切りました。残り${left}件は、この cursor で読めます）`
+  return ok(
+    shelfPage(lines, rest, closing, cap, {
+      room: footerOf(cursorOf({ id: 'x'.repeat(40), order: -Number.MAX_VALUE }), 99_999).length + 2,
+      footer: (shown, left) => footerOf(cursorOf(materials[from + shown - 1]), left),
+      clipped: '  （この資料の行は長いため、ここまで）',
+    }),
+  )
+}
+
+// ---------- R13 資料の記録 ----------
+
+/** 1つの資料の記録を読む（相対比較の分析を読む getBenchAnalysis と同じ形。項目で絞る・1つだけ・続き） */
+export function getMaterial(ctx: ReadContext, args: Args): ToolResult {
+  const view = ctx.view
+  const cont = itemCursor(args, 'material', null)
+  if (cont === 'bad' || (cont && cont.which !== 'material' && cont.which !== 'note'))
+    return fail('cursor が読めません（novel_get_material の続きの cursor をそのまま渡してください）')
+  const ref = cont ? cont.t : str(args.material)
+  if (!ref) return fail('material がありません（novel_list_materials で d:… を確かめてください）')
+  const r = resolveMaterial(view, ref)
+  if (!r.ok) return fail(r.message, r.candidates)
+  const material = r.value
+  const name = materialName(material)
+  const sections = cont ? strList(cont.raw.sec) : strList(args.sections)
+  const sec = sections?.length ? { sec: sections } : {}
+  const page = (which: 'material' | 'note', id: ID, offset: number): ToolResult => {
+    if (which === 'note') {
+      const n = view.materialNotes[id]
+      if (!n || n.materialId !== material.id)
+        return fail('続きを読む記録が見つかりません（削除された可能性があります。cursor なしで読み直してください）')
+      // 資料全体を読む時と同じく、書誌とタグも先頭に出す
+      const head = [`=== 資料 ${materialRef(material)} の記録 ===`, materialBiblio(material), materialTagsLine(material)].filter(Boolean)
+      const text = `${head.join('\n')}\n${noteText(n)}`
+      return pagedItem(ctx, args, 'material', material.id, { which, id, label: `『${name}』の「${n.section}」`, text }, offset)
+    }
+    const text = materialNotesText(view, material, sections)
+    return pagedItem(ctx, args, 'material', material.id, { which, id: material.id, label: `『${name}』の記録`, text }, offset, sec)
+  }
+  if (cont) return page(cont.which as 'material' | 'note', cont.id, cont.o)
+  const nid = str(args.note_id)
+  if (nid) {
+    const list = materialNotesOf(view, material.id)
+    const hits = list.filter((n) => matchesId('materialNote', nid, n.id))
+    if (hits.length !== 1)
+      return fail(
+        `記録 '${nid}' が『${name}』に見つかりません`,
+        list.map((n) => `${shortId('materialNote', n.id)}「${n.section}」${n.runDate}`),
+      )
+    return page('note', hits[0].id, 0)
+  }
+  if (sections?.length && !filterBySections(materialNotesOf(view, material.id), sections).length) {
+    const names = sectionNames(materialNotesOf(view, material.id))
+    return fail(
+      `『${name}』には項目「${sections.join('」「')}」の記録がありません`,
+      names.length ? names.map((n) => `項目「${n}」`) : undefined,
+    )
+  }
+  return page('material', material.id, 0)
 }
 
 // ---------- R9 推敲案 ----------
