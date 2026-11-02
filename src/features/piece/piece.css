@@ -145,6 +145,11 @@
   padding: 4px 8px 4px 12px;
 }
 
+/* 最新話の「次の話を追加」: アイコンが左にあるので、前の話と同じ余白 */
+.pw-root .pw-add-next {
+  padding: 4px 12px 4px 8px;
+}
+
 .pw-root .pw-nav .icon {
   width: 16px;
   height: 16px;

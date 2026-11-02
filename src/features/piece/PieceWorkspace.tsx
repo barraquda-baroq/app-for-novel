@@ -24,8 +24,9 @@ import {
 import { openProofSuggestionsFor } from '../../claude/order'
 import type { AppData, ID, Piece, Title } from '../../domain/types'
 import { paths, PROOF_PARAM } from '../../routes'
+import { actions } from '../../store/actions'
 import { getData, useData } from '../../store/appStore'
-import { usePrefs } from '../../store/uiStore'
+import { attempt, notify, usePrefs } from '../../store/uiStore'
 import { useDocumentTitle, useMediaQuery, useSplitOrientation } from '../../ui/hooks'
 import { BookIcon } from '../../ui/icons'
 import { AppHeader, type Crumb } from '../../ui/Layout'
@@ -302,6 +303,24 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
     navigate(paths.piece(title.id, id))
   }
 
+  /**
+   * 最新話（読む順でいちばん後ろの話）の「次の話を追加」: この話の次に話を足して開く（置き場所はタイトル画面の「話を追加」と同じ。
+   * 章ごとの話数なら最後に話がある章＝この話の章の末尾）。保存していない編集があれば先に保存するか聞き、やめたら何も足さない
+   * （足してから移動の確認でやめると、空の話だけが残るため）
+   */
+  const addNext = async () => {
+    const ok = await ensureSaved({
+      message: '次の話を足す前に、この話で保存していない編集を保存します。',
+      confirmLabel: '保存して次の話を追加',
+    })
+    if (!ok || !mounted.current) return
+    const id = attempt(() => actions.addEpisode(title.id))
+    if (!id) return
+    const created = getData().pieces[id]
+    notify(`${created ? pieceLabel(getData(), created, episodeNumbers(getData(), title.id)) : '次の話'}を追加しました`)
+    navigate(paths.piece(title.id, id))
+  }
+
   /** コピーの見出し（編集中の見出し・話の題を使う）。幕は「第3話　題　第2幕」 */
   const pieceKind = piece.kind
   const storedLabel = piece.label
@@ -467,6 +486,7 @@ function Workspace({ title, piece, ps }: { title: Title; piece: Piece; ps: Piece
         prev={neighbors.prev ? { id: neighbors.prev, label: pieceLabel(data, data.pieces[neighbors.prev], numbers) } : null}
         next={neighbors.next ? { id: neighbors.next, label: pieceLabel(data, data.pieces[neighbors.next], numbers) } : null}
         onNavigate={goTo}
+        onAddNext={piece.kind === 'episode' && !neighbors.next ? () => void addNext() : null}
         comparing={comparing}
         scrollSync={scrollSync}
         onScrollSyncChange={setScrollSync}

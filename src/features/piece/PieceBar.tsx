@@ -1,10 +1,11 @@
 // 原稿画面の上部バー: 第n話（変更不可）／特殊ブロックの見出し、話の題、前後の話、表示の設定。
 // 幕の画面では「第3話　話の題　第2幕」（話の題は属する話のもの）、前後は同じ話の中の幕。
+// 最新話（読む順でいちばん後ろの話）を開いている時は、「次の話」の代わりに「次の話を追加」を出す（一つ上の画面に戻らずに書き進められるように）。
 import { useId, useRef, useState } from 'react'
 import type { ID, Piece } from '../../domain/types'
 import { usePrefs, type SplitOrientation } from '../../store/uiStore'
 import { useMediaQuery } from '../../ui/hooks'
-import { ChevronLeftIcon, ChevronRightIcon } from '../../ui/icons'
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../../ui/icons'
 import { PopupMenu, type PopupMenuItem } from '../../ui/PopupMenu'
 import { ActsIcon } from '../acts/actIcons'
 import { useDismiss } from './editing'
@@ -41,6 +42,8 @@ export interface PieceBarProps {
   prev: NavTarget | null
   next: NavTarget | null
   onNavigate: (id: ID) => void
+  /** 次の話が無い最新話の時だけ: 「次の話」の代わりに出す「次の話を追加」（押すと話を足して開く） */
+  onAddNext?: (() => void) | null
   comparing: boolean
   showDiff: boolean
   onShowDiffChange: (v: boolean) => void
@@ -58,6 +61,7 @@ export function PieceBar({
   prev,
   next,
   onNavigate,
+  onAddNext,
   comparing,
   showDiff,
   onShowDiffChange,
@@ -183,18 +187,32 @@ export function PieceBar({
         ) : null}
       </div>
 
-      <button
-        type="button"
-        className="btn pw-nav pw-next"
-        disabled={!next}
-        onClick={() => next && onNavigate(next.id)}
-        aria-label={next ? `次の${noun}（${next.label}）` : `次の${noun}`}
-        title={next ? `次の${noun}：${next.label}` : `次の${noun}はありません`}
-        data-testid="next-piece"
-      >
-        <span className="pw-nav-text">次の{noun}</span>
-        <ChevronRightIcon />
-      </button>
+      {!next && onAddNext ? (
+        <button
+          type="button"
+          className="btn pw-nav pw-next pw-add-next"
+          onClick={onAddNext}
+          aria-label="次の話を追加"
+          title="この話の次に新しい話を追加して開きます"
+          data-testid="add-next-piece"
+        >
+          <PlusIcon />
+          <span className="pw-nav-text">次の話を追加</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn pw-nav pw-next"
+          disabled={!next}
+          onClick={() => next && onNavigate(next.id)}
+          aria-label={next ? `次の${noun}（${next.label}）` : `次の${noun}`}
+          title={next ? `次の${noun}：${next.label}` : `次の${noun}はありません`}
+          data-testid="next-piece"
+        >
+          <span className="pw-nav-text">次の{noun}</span>
+          <ChevronRightIcon />
+        </button>
+      )}
 
       <div className={`pw-view${menuOpen ? ' is-open' : ''}`} ref={viewRef} data-back-close={menuOpen ? 'esc' : undefined}>
         {compact ? null : ratioControl}

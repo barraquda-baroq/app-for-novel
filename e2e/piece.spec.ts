@@ -446,7 +446,15 @@ test.describe('原稿画面', () => {
     await expect(page).toHaveURL(new RegExp(`/p/${pieceIds[1]}$`))
     await expect(page.getByTestId('piece-label')).toContainText('第2話')
     await expect(page.getByTestId('active-editor')).toHaveValue(BODY2)
-    await expect(page.getByTestId('next-piece')).toBeDisabled()
+    // 最新話では「次の話」の代わりに「次の話を追加」（押すと次の話を足して開く）
+    await expect(page.getByTestId('next-piece')).toHaveCount(0)
+    await page.getByTestId('add-next-piece').click()
+    await expect(page.getByTestId('piece-label')).toContainText('第3話')
+    await expect(page).not.toHaveURL(new RegExp(`/p/${pieceIds[1]}$`))
+    await expect(page.getByTestId('add-next-piece')).toBeVisible()
+    await page.getByTestId('prev-piece').click()
+    await expect(page).toHaveURL(new RegExp(`/p/${pieceIds[1]}$`))
+    await expect(page.getByTestId('next-piece')).toBeEnabled()
 
     await openApp(page, `/t/${titleId}/p/missing-piece`)
     await expect(page.getByText('話が見つかりません。削除された可能性があります。')).toBeVisible()

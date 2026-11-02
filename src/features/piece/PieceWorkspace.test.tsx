@@ -358,6 +358,70 @@ describe('保存ボタン', () => {
   })
 })
 
+describe('最新話の「次の話を追加」', () => {
+  /** 2話のタイトル（最後にエピローグを置くこともできる） */
+  function twoEpisodes(epilogue = false) {
+    const titleId = actions.createTitle('続きの作品')
+    const first = actions.addEpisode(titleId)
+    const last = actions.addEpisode(titleId)
+    const ep = epilogue ? actions.addSpecial(titleId, { chapterId: null, index: 2 }, 'エピローグ') : null
+    return { titleId, first, last, ep }
+  }
+  const episodes = (titleId: ID) => Object.values(getData().pieces).filter((p) => p.titleId === titleId && p.kind === 'episode')
+
+  it('最新話では「次の話」の代わりに出て、押すと次の話を足して開く（ほかの話では今までどおり「次の話」）', async () => {
+    const { titleId, first, last } = twoEpisodes()
+    renderAt(`/t/${titleId}/p/${first}`)
+    expect(await screen.findByTestId('next-piece')).toBeTruthy()
+    expect(screen.queryByTestId('add-next-piece')).toBeNull()
+    cleanup()
+    renderAt(`/t/${titleId}/p/${last}`)
+    const add = await screen.findByTestId('add-next-piece')
+    expect(screen.queryByTestId('next-piece')).toBeNull()
+    expect(add.getAttribute('aria-label')).toBe('次の話を追加')
+    const user = userEvent.setup()
+    await user.click(add)
+    await waitFor(() => expect(episodes(titleId)).toHaveLength(3))
+    const created = episodes(titleId).find((p) => p.id !== first && p.id !== last)!
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe(`/t/${titleId}/p/${created.id}`))
+    expect(toastTexts()).toContain('第3話を追加しました')
+    // 足した話も最新話なので、また「次の話を追加」が出る
+    expect(await screen.findByTestId('add-next-piece')).toBeTruthy()
+  })
+
+  it('保存していない編集があれば先に保存するか聞き、キャンセルなら何も足さない', async () => {
+    const { titleId, last } = twoEpisodes()
+    renderAt(`/t/${titleId}/p/${last}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), '最終話の続き')
+    await user.click(screen.getByTestId('add-next-piece'))
+    let dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('次の話を足す前に、この話で保存していない編集を保存します。')
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }))
+    expect(episodes(titleId)).toHaveLength(2)
+    expect(screen.getByTestId('location').textContent).toBe(`/t/${titleId}/p/${last}`)
+    // 保存して次の話を追加
+    await user.click(screen.getByTestId('add-next-piece'))
+    dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '保存して次の話を追加' }))
+    await waitFor(() => expect(episodes(titleId)).toHaveLength(3))
+    const v = getData().pieces[last].activeVersionId!
+    expect(bodyOf(v)).toContain('最終話の続き')
+    await waitFor(() => expect(screen.getByTestId('location').textContent).not.toBe(`/t/${titleId}/p/${last}`))
+  })
+
+  it('最後がエピローグなどの特殊ブロックなら、最新話では「次の話」（エピローグへ）、エピローグでは出さない', async () => {
+    const { titleId, last, ep } = twoEpisodes(true)
+    renderAt(`/t/${titleId}/p/${last}`)
+    expect(await screen.findByTestId('next-piece')).toBeTruthy()
+    expect(screen.queryByTestId('add-next-piece')).toBeNull()
+    cleanup()
+    renderAt(`/t/${titleId}/p/${ep}`)
+    expect(((await screen.findByTestId('next-piece')) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByTestId('add-next-piece')).toBeNull()
+  })
+})
+
 describe('保存と一緒に変わる表示', () => {
   it('保存する前に稿が別の端末で削除されていたら、推敲メモの編集も新しい稿として残し、そう知らせる', async () => {
     const { titleId, pieceId, v2 } = seed()
