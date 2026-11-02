@@ -65,6 +65,18 @@ describe('レコードのマージ', () => {
     expect(r.synopsis).toBe('あちら')
     expect(r.updatedAt).toBe(3)
   })
+  it('資料のタグはアプリと同じく refKey で照らす（全角と半角・空白だけ違う書き方は1つ。片方で外すと、もう一方の書き方も外れる）', () => {
+    const m = { id: 'm1', name: '現代の特殊部隊', updatedAt: 1 }
+    // 共通の版に無いタグを、2台が書き方を変えて付けた
+    const mine = { ...m, tags: ['SF'], updatedAt: 2 }
+    const theirs = { ...m, tags: ['ＳＦ'], updatedAt: 3 }
+    expect((mergeFields('materials', m, mine, theirs, D).record as typeof mine).tags).toEqual(['SF'])
+    // 2つの書き方が残っていても、この端末で外したら（同じタグなので）どちらも外れる
+    const both = { ...m, tags: ['ＳＦ', 'SF', '現代'] }
+    const removed = { ...both, tags: ['現代'], updatedAt: 4 }
+    const other = { ...both, tags: ['ＳＦ', 'SF', '現代', '戦闘'], updatedAt: 5 }
+    expect((mergeFields('materials', both, removed, other, D).record as typeof both).tags).toEqual(['現代', '戦闘'])
+  })
   it('構成の並びは要素ごとに合わせる', () => {
     const mine = { ...base, structure: [...base.structure, { type: 'piece', id: 'm' }] }
     const theirs = { ...base, structure: [{ type: 'piece', id: 't' }, ...base.structure] }

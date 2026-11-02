@@ -199,6 +199,9 @@ const SEND_ORDER: TableName[] = [
   // 2.5: ベンチ作品の分析を、作品より先に送る（作品はどのタイトルにも属さない。タイトルの比べる作品はタイトルと一緒に後で）
   'benchAnalyses',
   'benchWorks',
+  // 2.6: 資料の記録を、資料より先に送る（資料はどのタイトルにも属さない）
+  'materialNotes',
+  'materials',
   'settingCategories',
   'pieces',
   'chapters',
@@ -238,6 +241,8 @@ const PARENT_OF: Partial<Record<TableName, { table: TableName; field: string }[]
   critiqueResults: [{ table: 'titles', field: 'titleId' }],
   // 2.5: ベンチ作品の分析の親は作品（作品はどのタイトルにも属さない。タイトルの比べる作品への参照は確かめない）
   benchAnalyses: [{ table: 'benchWorks', field: 'workId' }],
+  // 2.6: 資料の記録の親は資料（資料はどのタイトルにも属さない）
+  materialNotes: [{ table: 'materials', field: 'materialId' }],
 }
 
 /** 親が消えたら、子も消す（子にしか無い文章はゴミ箱に控える） */
@@ -266,6 +271,8 @@ const CHILDREN: Partial<Record<TableName, { table: TableName; field: string }[]>
   settingCategories: [{ table: 'settingEntries', field: 'categoryId' }],
   // 2.5: ベンチ作品が別の端末で削除されたら、その分析も片付ける（この端末にしか無い分析はゴミ箱に控える）
   benchWorks: [{ table: 'benchAnalyses', field: 'workId' }],
+  // 2.6: 資料が別の端末で削除されたら、その記録も片付ける（この端末にしか無い記録はゴミ箱に控える）
+  materials: [{ table: 'materialNotes', field: 'materialId' }],
 }
 
 class NovelDB extends Dexie {
@@ -308,7 +315,14 @@ class NovelDB extends Dexie {
       _meta: 'key',
     })
     // v5（2.5）: ベンチ作品とその分析の表を追加
+    const v5Tables = [...v4Tables, 'benchWorks', 'benchAnalyses']
     this.version(5).stores({
+      ...Object.fromEntries(v5Tables.map((t) => [t, 'id'])),
+      _outbox: 'k',
+      _meta: 'key',
+    })
+    // v6（2.6）: 資料とその記録の表を追加
+    this.version(6).stores({
       ...Object.fromEntries(TABLE_NAMES.map((t) => [t, 'id'])),
       _outbox: 'k',
       _meta: 'key',

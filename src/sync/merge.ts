@@ -3,6 +3,7 @@
 // mine   = この端末の内容（null = この端末で削除した）
 // theirs = クラウドの最新の内容（null = 別の端末で削除された）
 // 項目ごとに、この端末が base から変えた項目だけをクラウド側に重ねる。
+import { refKey } from '../claude/refs'
 import { deepEqual } from '../domain/equal'
 import type { TableName } from '../domain/types'
 
@@ -34,6 +35,8 @@ export function stableStringify(value: unknown): string {
 type KeyOf = (item: unknown) => string
 
 const asString: KeyOf = (x) => String(x)
+/** 資料のタグ（2.6）: アプリと同じく refKey で照らす（全角と半角・空白の違いは同じタグ。どちらかで外す・名前を変えると、もう一方の書き方も外れる） */
+const asTag: KeyOf = (x) => refKey(String(x))
 const byId: KeyOf = (x) => String((x as { id?: unknown })?.id)
 const byNode: KeyOf = (x) => {
   const n = x as { type?: unknown; id?: unknown }
@@ -58,6 +61,8 @@ export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
   strategyNotes: { contests: byId },
   // 2.5: 批評で比べたベンチ作品
   critiqueResults: { benchWorkIds: asString },
+  // 2.6: 資料のタグ（作者が付ける。2台で別々に付けても両方残り、片方で外せば外れる）
+  materials: { tags: asTag },
 }
 
 /**
@@ -78,6 +83,9 @@ export const TEXT_TABLES: ReadonlySet<TableName> = new Set<TableName>([
   // 2.5: ベンチ作品（メモ）とその分析（本文）
   'benchWorks',
   'benchAnalyses',
+  // 2.6: 資料（メモ）とその記録（本文）
+  'materials',
+  'materialNotes',
 ])
 
 const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
@@ -163,6 +171,9 @@ export const TEXT_FIELDS: Partial<Record<TableName, readonly string[]>> = {
   // 2.5（作品名・著者・観点などの短い項目は項目ごとに合わせる）
   benchWorks: ['note'],
   benchAnalyses: ['body'],
+  // 2.6（資料名・著者・項目などの短い項目は項目ごとに合わせる）
+  materials: ['note'],
+  materialNotes: ['body'],
 }
 
 export function joinConflictText(theirs: string, mine: string, device: string): string {

@@ -1,6 +1,7 @@
 // 読み込んだデータの整合性を直す。壊れたバックアップや、別タブとの競合で参照が切れたデータでも
 // 画面が落ちないよう、起動時とバックアップ復元時に通す。直せないものは安全側（削除・未分類）に倒す。
 import { deepEqual } from './equal'
+import { MATERIAL_LIMITS, tagKey } from './materialOps'
 import { textHash } from './text'
 import { TRASH_KIND_LABELS, isContentTable, isTrashKind } from './trash'
 import {
@@ -14,6 +15,8 @@ import {
   type CritiqueScope,
   type ID,
   type Idea,
+  type Material,
+  type MaterialNote,
   type Memo,
   type NodeRef,
   type Piece,
@@ -154,6 +157,9 @@ export function repairData(input: AppData): RepairResult {
     // 2.5 の表（古いバックアップ・古い形のデータには無い）
     benchWorks: { ...(input.benchWorks ?? {}) },
     benchAnalyses: { ...(input.benchAnalyses ?? {}) },
+    // 2.6 の表（古いバックアップ・古い形のデータには無い）
+    materials: { ...(input.materials ?? {}) },
+    materialNotes: { ...(input.materialNotes ?? {}) },
     trashEntries: { ...(input.trashEntries ?? {}) },
     trashRecords: { ...(input.trashRecords ?? {}) },
   }
@@ -497,6 +503,8 @@ export function repairData(input: AppData): RepairResult {
 
   repairBench(d, fix)
 
+  repairMaterials(d, fix)
+
   repairTrash(d, fix)
 
   return { data: fixes.length ? d : input, fixes }
@@ -747,6 +755,79 @@ function repairBench(d: AppData, fix: (m: string) => void): void {
     if (!same(ids, t.benchWorkIds)) {
       d.titles[t.id] = { ...t, benchWorkIds: ids }
       fix('相対比較する作品から、無い作品を外しました')
+    }
+  }
+}
+
+// ---------- 2.6: 資料 ----------
+// 表示用に足りない項目を補う（知らない項目は残す）。資料の無い記録は見えなくする（同期の途中で、資料より先に記録が届いた時など）。
+// タグは文字列の配列だけにし、空のもの・重なるもの（refKey が同じ2つ目から）・上限を超えるもの（20字を超えるタグ・21個目から）は
+// 表示から外す（書き戻さない。形の違うタグは項目ごと外す）。
+
+/** 資料のタグを表示できる形にする（配列でなければ undefined） */
+function materialTags(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const x of raw) {
+    if (typeof x !== 'string') continue
+    const tag = x.trim()
+    const key = tagKey(tag)
+    if (!key || seen.has(key) || Array.from(tag).length > MATERIAL_LIMITS.tag) continue
+    seen.add(key)
+    out.push(tag)
+    if (out.length === MATERIAL_LIMITS.tags) break
+  }
+  return out
+}
+
+function repairMaterials(d: AppData, fix: (m: string) => void): void {
+  for (const m of Object.values(d.materials)) {
+    let next: Material = {
+      ...m,
+      name: str(m.name),
+      author: str(m.author),
+      pdfPlace: str(m.pdfPlace),
+      note: str(m.note),
+      order: num(m.order),
+      createdAt: num(m.createdAt),
+      updatedAt: num(m.updatedAt),
+    }
+    for (const key of ['publisher', 'year'] as const) next = optionalString(next, key)
+    if (next.source !== undefined && !SOURCES.includes(next.source)) {
+      next = { ...next }
+      delete next.source
+    }
+    if (next.tags !== undefined) {
+      const tags = materialTags(next.tags)
+      next = { ...next }
+      if (tags === undefined) delete next.tags
+      else next.tags = same(tags, m.tags) ? m.tags : tags
+    }
+    if (!same(next, m)) {
+      d.materials[m.id] = next
+      fix('資料の項目を補いました')
+    }
+  }
+  for (const n of Object.values(d.materialNotes)) {
+    if (typeof n.materialId !== 'string' || !d.materials[n.materialId]) {
+      delete d.materialNotes[n.id]
+      fix('資料のない資料の記録を表示から外しました')
+      continue
+    }
+    const next = optionalString<MaterialNote>(
+      {
+        ...n,
+        ...claudeBase(n),
+        section: str(n.section),
+        body: str(n.body),
+        runDate: str(n.runDate),
+      },
+      'model',
+    )
+    if (!same(next, n)) {
+      d.materialNotes[n.id] = next
+      fix('資料の記録の項目を補いました')
     }
   }
 }

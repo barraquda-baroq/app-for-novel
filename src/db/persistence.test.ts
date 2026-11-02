@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { joinActWithNext, separatePiece } from '../domain/acts'
 import { addMemo, addSubmission, createTitle, deleteSubmission, recordSubmissionSnapshot } from '../domain/entityOps'
+import { addMaterial, addMaterialNote, updateMaterialNote } from '../domain/materialOps'
 import { addEpisode, addVersion, deleteVersion, setActiveVersion, updatePiece, updateVersion } from '../domain/storyOps'
 import { TABLE_NAMES, emptyData, type AppData, type Version } from '../domain/types'
 import { newId } from '../domain/util'
@@ -151,6 +152,39 @@ describe('クラウドからの反映', () => {
     expect(disk.pieces[pieceId]).toBeUndefined()
     expect(disk.versions[versionId]).toBeUndefined()
     expect(Object.values(disk.trashRecords).map((r) => (r.record as { body?: string }).body)).toContain('オフラインで書いた本文')
+  })
+
+  it('別の端末で資料が削除されたら、記録はゴミ箱に控えてから片付ける（この端末で書いた内容も消えない。2.6）', async () => {
+    const { data: d0 } = sample()
+    const m = addMaterial(d0, { name: '江戸の暮らし', author: '著者' })
+    const k = addMaterialNote(m.data, m.result, { section: '要約', body: '元の要約' })
+    const data = addMaterialNote(k.data, m.result, { section: '年表', body: '年表' }).data
+    const p = fresh()
+    await seed(p, data)
+    expect((await p.load()).materials[m.result]).toEqual(data.materials[m.result])
+    // この端末で記録を書き換えた（まだ送っていない）
+    const next = updateMaterialNote(data, k.result, { body: 'オフラインで書いた要約' })
+    await p.save(
+      data,
+      next,
+      hooks(() => data),
+    )
+    await p.applyRemote(
+      [{ table: 'materials', id: m.result, record: null }],
+      hooks(() => next),
+    )
+    const disk = await p.load()
+    expect(disk.materials[m.result]).toBeUndefined()
+    expect(disk.materialNotes).toEqual({})
+    // 記録の削除がまだ届いていないので、端末内の記録はゴミ箱に控える（この端末で書いた内容も消えない）
+    const kept = Object.values(disk.trashRecords).filter((r) => r.table === 'materialNotes')
+    expect(kept.map((r) => (r.record as { body?: string }).body).sort()).toEqual(['オフラインで書いた要約', '年表'].sort())
+    for (const r of kept)
+      expect(disk.trashEntries[r.entryId]).toMatchObject({
+        kind: 'materialNote',
+        reason: 'conflict',
+        parentLabel: '江戸の暮らし',
+      })
   })
 
   it('同期したことのある端末の復元・すべて削除は、クラウドに当てるまで反映しない。当てる送信待ちは「必ず上書き」になる', async () => {
@@ -311,6 +345,20 @@ describe('第2回の見直しで直したこと', () => {
     expect(order.indexOf('versions')).toBeLessThan(order.indexOf('pieces'))
     expect(order.indexOf('pieces')).toBeLessThan(order.indexOf('titles'))
     expect(order[order.length - 1]).toBe('titles')
+  })
+
+  it('資料の記録を資料より先に、資料をタイトルより先に送る（2.6）', async () => {
+    const { data: d0 } = sample()
+    const m = addMaterial(d0, { name: '江戸の暮らし' })
+    const data = addMaterialNote(m.data, m.result, { section: '要約', body: '要約' }).data
+    const p = fresh()
+    await p.replaceAll(data)
+    const order = (await p.readOutbox(1000)).map((i) => i.table)
+    expect(order.indexOf('materialNotes')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('materialNotes')).toBeLessThan(order.indexOf('materials'))
+    expect(order.indexOf('materials')).toBeLessThan(order.indexOf('titles'))
+    expect(tableSendRank('materialNotes')).toBeGreaterThan(tableSendRank('benchWorks'))
+    expect(tableSendRank('materials')).toBeLessThan(tableSendRank('settingCategories'))
   })
 
   it('復元を始めた後にほかの端末が書いたものは、「必ず上書き」の送信待ちがあっても 3者マージする', async () => {

@@ -1,5 +1,5 @@
 // 新しい日付から並べる時の、分けて記録したもの（「（1/3）」「（2/3）」…）のまとめ方。
-// 戦略メモ・作品批評の結果（order.ts）とベンチ作品の分析（benchOrder.ts）で同じものを使う。
+// 戦略メモ・作品批評の結果（order.ts）とベンチ作品の分析（benchOrder.ts）、資料の記録（materialOrder.ts）で同じものを使う。
 import type { ID } from '../domain/types'
 
 const byId = (a: { id: ID }, b: { id: ID }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)

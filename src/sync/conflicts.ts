@@ -13,6 +13,8 @@ import type {
   CritiqueResult,
   ID,
   Idea,
+  Material,
+  MaterialNote,
   Memo,
   Piece,
   RevisionIdea,
@@ -177,6 +179,9 @@ const KIND_OF: Partial<Record<ContentTableName, TrashKind>> = {
   // 2.5
   benchWorks: 'benchWork',
   benchAnalyses: 'benchAnalysis',
+  // 2.6
+  materials: 'material',
+  materialNotes: 'materialNote',
 }
 
 /**
@@ -290,6 +295,18 @@ export function conflictTrash(
     const work = data.benchWorks[a.workId]
     if (work) parentLabel = trashLabel.benchWork(work)
     origin.workId = a.workId
+    origin.index = -1
+  } else if (table === 'materials') {
+    // 資料はどのタイトルにも属さない（棚の元の位置へ戻す）
+    const m = record as unknown as Material
+    label = trashLabel.material(m)
+    origin.index = typeof m.order === 'number' ? m.order : -1
+  } else if (table === 'materialNotes') {
+    const n = record as unknown as MaterialNote
+    label = trashLabel.materialNote(n)
+    const material = data.materials[n.materialId]
+    if (material) parentLabel = trashLabel.material(material)
+    origin.materialId = n.materialId
     origin.index = -1
   }
   origin.titleId = table === 'titles' ? null : titleId

@@ -46,6 +46,9 @@ export function trashPlace(entry: Pick<TrashEntry, 'kind' | 'titleName' | 'paren
   // 相対比較の作品（ホームの棚）はタイトルに属さない。分析は「相対比較 › 作品名」
   if (entry.kind === 'benchWork') return '相対比較'
   if (entry.kind === 'benchAnalysis') return entry.parentLabel ? `相対比較 › ${entry.parentLabel}` : '相対比較'
+  // 資料（ホームの棚）もタイトルに属さない。記録は「資料 › 資料名」
+  if (entry.kind === 'material') return '資料'
+  if (entry.kind === 'materialNote') return entry.parentLabel ? `資料 › ${entry.parentLabel}` : '資料'
   const title = entry.titleName.trim() || '無題のタイトル'
   return entry.parentLabel ? `${title} › ${entry.parentLabel}` : title
 }
@@ -118,4 +121,4 @@ export const CONFLICT_HELP =
   '片方の端末で削除され、もう片方の端末で編集されていたので、編集された内容をここに残しました。元に戻す時、同じものが残っていれば複製として戻ります。'
 
 /** ページの説明 */
-export const TRASH_LEAD = `削除したタイトル・話・推敲バージョン・メモ・アイデア・推敲案・改稿案・批評・相対比較の作品などは、ここに${TRASH_RETENTION_DAYS}日間残ります。「元に戻す」で元の場所に戻せます。${TRASH_RETENTION_DAYS}日たつと自動で完全に削除されます。`
+export const TRASH_LEAD = `削除したタイトル・話・推敲バージョン・メモ・アイデア・推敲案・改稿案・批評・相対比較の作品・資料などは、ここに${TRASH_RETENTION_DAYS}日間残ります。「元に戻す」で元の場所に戻せます。${TRASH_RETENTION_DAYS}日たつと自動で完全に削除されます。`

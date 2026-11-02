@@ -65,6 +65,46 @@ describe('件数', () => {
     expect(counts.map((c) => c.table)).not.toContain('benchAnalyses')
     expect(countsSummary(counts)).toContain('相対比較の作品 1件')
   })
+  it('資料とその記録は、1件以上ある時だけ件数に出す（相対比較の後）', () => {
+    const data = createTitle(emptyData(), '星の海').data
+    expect(dataCounts(data).map((c) => c.table)).not.toContain('materials')
+    data.benchWorks = {
+      w1: { id: 'w1', name: '銀河の果て', author: '', pdfPlace: '', note: '', order: 0, createdAt: 1, updatedAt: 1 },
+    }
+    data.materials = {
+      d1: { id: 'd1', name: '江戸の暮らし', author: '', pdfPlace: '', note: '', order: 0, createdAt: 1, updatedAt: 1 },
+    }
+    data.materialNotes = {
+      k1: {
+        id: 'k1',
+        materialId: 'd1',
+        section: '要約',
+        body: '',
+        runDate: '2026-11-02',
+        source: 'claude',
+        v: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      k2: {
+        id: 'k2',
+        materialId: 'd1',
+        section: 'サンプルシーン',
+        body: '',
+        runDate: '2026-11-02',
+        source: 'claude',
+        v: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }
+    const counts = dataCounts(data)
+    expect(counts.slice(-3).map((c) => c.table)).toEqual(['benchWorks', 'materials', 'materialNotes'])
+    expect(counts.find((c) => c.table === 'materials')).toEqual({ table: 'materials', label: '資料', count: 1 })
+    expect(counts.find((c) => c.table === 'materialNotes')).toEqual({ table: 'materialNotes', label: '資料の記録', count: 2 })
+    expect(countsSummary(counts)).toContain('資料 1件、資料の記録 2件')
+    expect(isEmptyData({ ...emptyData(), materials: data.materials })).toBe(false)
+  })
   it('応募時の原稿の控え（snapshotTexts）は内部の表なので、件数・確認文に出さない', () => {
     const data = createTitle(emptyData(), '星の海').data
     data.snapshotTexts = { k1: { id: 'k1', body: '応募した本文' } }

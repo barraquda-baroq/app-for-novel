@@ -6,6 +6,7 @@
 import * as z from 'zod'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_GUIDE } from '../../../src/claude/categories'
 import { RECORD_LIMITS as L } from '../../../src/claude/records'
+import { MATERIAL_LIMITS, MATERIAL_SECTIONS } from '../../../src/domain/materialOps'
 
 const titleId = z
   .string()
@@ -40,6 +41,14 @@ const benchWork = z
   .min(1)
   .max(200)
   .describe('相対比較の作品の指し方（w:3f2a9c1b のような短い id・id・作品名そのもの）。novel_list_bench_works で確かめられる')
+const material = z
+  .string()
+  .min(1)
+  .max(200)
+  .describe('資料の指し方（d:3f2a9c1b のような短い id・id・資料名そのもの）。novel_list_materials で確かめられる')
+/** 資料の一覧の資料名・タグの絞り込み（src/vault/tools/read.ts の MATERIAL_LIST_FILTERS と同じ上限。1つの長さは資料名・タグの上限と同じ） */
+const materialNameFilter = z.array(z.string().min(1).max(L.materialName)).min(1).max(10)
+const materialTagFilter = z.array(z.string().min(1).max(MATERIAL_LIMITS.tag)).min(1).max(10)
 const model = z.string().max(L.model).describe('使ったモデルの名前（任意）')
 
 export const SCHEMAS = {
@@ -293,6 +302,72 @@ export const SCHEMAS = {
       .min(1)
       .max(L.benchItems)
       .describe('分析（観点ごとに1つ。1回20件まで）'),
+    model: model.optional(),
+  }),
+  novel_list_materials: z.object({
+    names: materialNameFilter
+      .optional()
+      .describe('資料名のどこかにこのどれかを含む資料だけを出す（部分一致。全角と半角・空白の違いは問わない。10個まで）'),
+    exclude_names: materialNameFilter
+      .optional()
+      .describe('資料名のどこかにこのどれかを含む資料を出さない（部分一致。10個まで）'),
+    tags: materialTagFilter
+      .optional()
+      .describe(
+        'このタグをすべて持つ資料だけを出す（作者が付けたタグ。タグの名前そのもので照らし、全角と半角・空白の違いは問わない。例: ["ミリタリ", "現代"]。10個まで）',
+      ),
+    char_budget: z
+      .number()
+      .int()
+      .min(2_000)
+      .max(100_000)
+      .optional()
+      .describe('1回に返す文字数（2,000〜100,000。省略時は結果の上限の 100,000）。収まれば全部、収まらなければ資料の途中では切らずに返し、残りは 続き: cursor="…"'),
+    cursor: z
+      .string()
+      .min(1)
+      .max(16_000)
+      .optional()
+      .describe('前の結果の最後にある 続き: cursor="…" の値をそのまま渡す（絞り込みは cursor に入っているので、cursor だけでよい）'),
+  }),
+  novel_get_material: z.object({
+    material,
+    sections: z
+      .array(z.string().min(1).max(L.section))
+      .max(20)
+      .optional()
+      .describe(`この項目の記録だけを読む（${MATERIAL_SECTIONS.join('・')}など。省略時はすべての項目）`),
+    note_id: z.string().min(1).max(200).optional().describe('この記録（k:…）だけを読む'),
+    char_budget: itemBudgetSchema,
+    cursor: cursor.optional(),
+  }),
+  novel_add_material_notes: z.object({
+    material: material.describe('記録を足す資料（d:… か資料名）。資料の棚にまだ無い資料は new_material も付ける'),
+    new_material: z
+      .object({
+        name: z.string().min(1).max(L.materialName).describe('資料名（書名など。80字以内）'),
+        author: z.string().max(L.materialAuthor).describe('著者（80字以内）'),
+        publisher: z.string().max(L.materialPublisher).optional().describe('出版社'),
+        year: z.string().max(L.materialYear).optional().describe('刊行年'),
+        pdf_place: z.string().max(L.materialPdfPlace).optional().describe('PDF の置き場所（claude.ai のプロジェクト名など）'),
+      })
+      .optional()
+      .describe('資料が資料の棚に無い時だけ作る資料（付けた時だけ作る。同じ資料名・著者の資料があればそれに足す（著者が違えば別の資料として作る））'),
+    items: z
+      .array(
+        z.object({
+          section: z
+            .string()
+            .min(1)
+            .max(L.section)
+            .describe(`項目の名前（${MATERIAL_SECTIONS.join('・')}。ほかの名前も作れる。40字以内）`),
+          body_markdown: z.string().min(1).describe('その項目の記録（Markdown。長さの上限なし）'),
+          run_date: runDate.optional(),
+        }),
+      )
+      .min(1)
+      .max(L.materialItems)
+      .describe('記録（項目ごとに1つ。1回20件まで）'),
     model: model.optional(),
   }),
 } as const

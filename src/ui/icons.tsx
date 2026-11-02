@@ -116,6 +116,30 @@ export const ShelfIcon = (p: IconProps) => (
   </Svg>
 )
 
+/** 開いた本（資料） */
+export const OpenBookIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.5 5.6c2.6-1.2 5.8-1 9.5 1.1 3.7-2.1 6.9-2.3 9.5-1.1v13c-2.6-1.2-5.8-1-9.5 1.1-3.7-2.1-6.9-2.3-9.5-1.1z" />
+    <path d="M12 6.7v13" />
+  </Svg>
+)
+
+/** 荷札（資料のタグ） */
+export const TagIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 12.6V4.5a1 1 0 0 1 1-1h8.1l8 8a1.4 1.4 0 0 1 0 2l-7.1 7.1a1.4 1.4 0 0 1-2 0z" />
+    <circle cx="8.3" cy="8.3" r="1.4" />
+  </Svg>
+)
+
+/** 虫めがね（探す） */
+export const SearchIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="M16 16l4.5 4.5" />
+  </Svg>
+)
+
 export const BulbIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z" />

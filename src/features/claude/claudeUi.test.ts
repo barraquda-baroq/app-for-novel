@@ -59,8 +59,8 @@ describe('Claude ができること（同意・設定の画面）', () => {
       l.replace(/を(追加|保存|記録)$/, '').replace(/^作品批評の/, '批評の'),
     )
     for (const s of subjects) {
-      // 相対比較の分析はタイトルに属さないので、タイトルの「読む＋書き込む」の説明には書かない
-      if (s !== '相対比較に分析') expect(CLAUDE_ACCESS_HINTS.write, s).toContain(s)
+      // 相対比較の分析・資料の記録はタイトルに属さないので、タイトルの「読む＋書き込む」の説明には書かない
+      if (s !== '相対比較に分析' && s !== '資料に記録') expect(CLAUDE_ACCESS_HINTS.write, s).toContain(s)
       expect(can, s).toContain(s)
     }
   })

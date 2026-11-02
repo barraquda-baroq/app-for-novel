@@ -728,6 +728,11 @@ test.describe('ホーム', () => {
     await expect(jumpTitles).toContainText('8')
     await expect(jumpIdeas).toContainText('2')
     await expect(jumpTitles).toHaveAttribute('aria-current', 'true')
+    // 切り替えは4つ（タイトル・アイデア・相対比較・資料）で、1列に並ぶ
+    const jumps = page.getByTestId('home-jump').getByRole('button')
+    await expect(jumps).toHaveText(['タイトル8', 'アイデア2', '相対比較0', '資料0'])
+    const tops = await jumps.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)))
+    expect(new Set(tops).size).toBe(1)
     // 両方とも表示されていて、タイトルが上、アイデアがその下
     await expect(page.getByTestId('title-group')).toBeVisible()
     await expect(page.getByTestId('idea-area')).toBeVisible()
@@ -746,6 +751,19 @@ test.describe('ホーム', () => {
     await expect(page.getByTestId('title-group')).toBeVisible()
     await noHorizontalScroll(page)
 
+    // 相対比較・資料の棚へも移れる
+    for (const [id, name] of [
+      ['bench', '相対比較'],
+      ['materials', '資料'],
+    ] as const) {
+      const jump = page.getByTestId(`home-jump-${id}`)
+      await jump.click()
+      const heading = page.getByRole('heading', { name, level: 2, exact: true })
+      await expect(heading).toBeInViewport()
+      await expect(heading).toBeFocused()
+      await expect(jump).toHaveAttribute('aria-current', 'true')
+    }
+
     await jumpTitles.click()
     await expect(page.getByRole('heading', { name: 'タイトル', level: 2 })).toBeInViewport()
     await expect(jumpTitles).toHaveAttribute('aria-current', 'true')
@@ -762,10 +780,12 @@ test.describe('ホーム', () => {
     }
   })
 
-  test('アイデアから下が画面より短くても、切り替えで押した領域が表示中になり、自分でスクロールすると位置から決まる', async ({
+  test('押した領域から下が画面より短くても、切り替えで押した領域が表示中になり、自分でスクロールすると位置から決まる', async ({
     page,
   }) => {
-    // タイトルなし・アイデア1件（仕切りは折りたたむ）・棚は空: アイデアの先頭までは届かず、最後まで来たところでスクロールが止まる
+    // タイトルなし・アイデア1件（仕切りは折りたたむ）・棚は2つとも空: 押した領域の先頭までは届かず、最後まで来たところでスクロールが止まる。
+    // 下に相対比較と資料の2つの棚があるので、アイデアから下が画面より短くなるのは縦に長い画面だけ。相対比較から下（相対比較と資料の棚）は
+    // ふつうのスマホの画面より短い
     await openApp(page)
     await seed(page, ({ actions }) => {
       actions.addIdea(null, '', 'どこにも属さないアイデア')
@@ -773,33 +793,57 @@ test.describe('ホーム', () => {
     const toggle = section(page, 'none').getByTestId('idea-section-toggle')
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    const jumpIdeas = page.getByTestId('home-jump-ideas')
-    const jumpBench = page.getByTestId('home-jump-bench')
-    const ideasHeading = page.getByRole('heading', { name: 'アイデア', level: 2 })
+    const jumps = {
+      ideas: page.getByTestId('home-jump-ideas'),
+      bench: page.getByTestId('home-jump-bench'),
+      materials: page.getByTestId('home-jump-materials'),
+    }
+    const headings = {
+      ideas: page.getByRole('heading', { name: 'アイデア', level: 2 }),
+      bench: page.getByRole('heading', { name: '相対比較', level: 2 }),
+      materials: page.getByRole('heading', { name: '資料', level: 2 }),
+    }
+    const onlyCurrent = async (area: keyof typeof jumps) => {
+      for (const [key, jump] of Object.entries(jumps)) {
+        if (key === area) await expect(jump).toHaveAttribute('aria-current', 'true')
+        else await expect(jump).not.toHaveAttribute('aria-current', 'true')
+      }
+    }
     const atBottom = () => page.evaluate(() => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2)
-    for (const size of [
-      { width: 390, height: 844 },
-      { width: 360, height: 760 },
+    for (const { short, ...size } of [
+      { width: 390, height: 960, short: 'ideas' as const },
+      { width: 390, height: 844, short: 'bench' as const },
+      { width: 360, height: 760, short: 'bench' as const },
     ]) {
       await page.setViewportSize(size)
+      // 自分でスクロールして（前に押した領域の固定が外れる）、一番上へ戻る
+      await page.mouse.wheel(0, -120)
+      await expect.poll(atBottom).toBe(false)
       await page.evaluate(() => window.scrollTo(0, 0))
       await expect(page.getByTestId('home-jump-titles')).toHaveAttribute('aria-current', 'true')
 
-      await jumpIdeas.click()
-      await expect(ideasHeading).toBeFocused()
-      await expect(ideasHeading).toBeInViewport()
-      // 最後まで来て止まっても（この場合を確かめている）、押した「アイデア」を表示中とする
+      await jumps[short].click()
+      await expect(headings[short]).toBeFocused()
+      await expect(headings[short]).toBeInViewport()
+      // 最後まで来て止まっても（この場合を確かめている）、押した領域を表示中とする（下の棚が見えていても）
       await expect.poll(atBottom).toBe(true)
-      await expect(jumpIdeas).toHaveAttribute('aria-current', 'true')
-      await expect(jumpBench).not.toHaveAttribute('aria-current', 'true')
+      await onlyCurrent(short)
 
-      // 自分でスクロールし始めたら、また位置から決める（最後まで来たら「相対比較」）
+      // 自分でスクロールし始めたら、また位置から決める（最後まで来たら、いちばん下の「資料」）
       await page.mouse.wheel(0, -120)
       await expect.poll(atBottom).toBe(false)
       await page.mouse.wheel(0, 2000)
       await expect.poll(atBottom).toBe(true)
-      await expect(jumpBench).toHaveAttribute('aria-current', 'true')
-      await expect(jumpIdeas).not.toHaveAttribute('aria-current', 'true')
+      await onlyCurrent('materials')
+
+      // 最後まで来ていても、押した「相対比較」「アイデア」を表示中とする。「資料」も押せば表示中
+      for (const area of ['bench', 'ideas', 'materials'] as const) {
+        await jumps[area].click()
+        await expect(headings[area]).toBeFocused()
+        await onlyCurrent(area)
+      }
+      // 「資料」へのスクロール（なめらかに動く）が最後まで終わってから、次の大きさへ
+      await expect.poll(atBottom).toBe(true)
       await noHorizontalScroll(page)
     }
   })
@@ -1248,7 +1292,7 @@ test.describe('アプリの設定', () => {
       }
     }
     expect(json.app).toBe('novel-studio')
-    expect(json.schemaVersion).toBe(3)
+    expect(json.schemaVersion).toBe(4)
     expect(Object.values(json.data.titles).map((t) => t.name)).toEqual(['バックアップの星'])
     expect(Object.values(json.data.versions).map((v) => v.body)).toEqual(['大切な本文'])
     expect(Object.values(json.data.ideas).map((i) => i.heading)).toEqual(['控えの案'])
@@ -1282,7 +1326,7 @@ test.describe('アプリの設定', () => {
     await button.click()
     const download = await downloadPromise
     const text = await readFile(await download.path(), 'utf8')
-    expect(text.startsWith('{"app":"novel-studio","schemaVersion":3,"exportedAt":"')).toBe(true)
+    expect(text.startsWith('{"app":"novel-studio","schemaVersion":4,"exportedAt":"')).toBe(true)
     expect(text).not.toContain('\n')
     const json = JSON.parse(text) as { data: { versions: Record<string, { body: string }> } }
     expect(

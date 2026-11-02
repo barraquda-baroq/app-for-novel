@@ -3,12 +3,15 @@
 // Claude には最後に ```novel-studio-v1 のコードブロックで JSON（コネクタの書き込みツールの入力と同じ形）を返してもらう。
 // 返ってきた答えは src/claude/paste.ts で読み、同じ作り方（src/claude/records.ts）で記録にする。
 // 相対比較（2.5。内部名は bench）の作品の分析の依頼（benchAnalysisPrompt）は本文を送らない: PDF は利用者の claude.ai のプロジェクトにある。
+// 資料（2.6）の記録の依頼（materialNotesPrompt）も同じく本文を送らない。
 import { benchWorkRef, comparisonMaterial } from './bench'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_LABELS } from './categories'
 import { submissionsOf, submissionStatusLabel } from '../domain/entityOps'
+import { MATERIAL_SECTIONS, materialName } from '../domain/materialOps'
 import { submissionExtraLines } from '../domain/submissionTexts'
 import { formatCount } from '../domain/text'
-import type { AppData, BenchWork, CritiquePrompt, ID, Title } from '../domain/types'
+import type { AppData, BenchWork, CritiquePrompt, ID, Material, Title } from '../domain/types'
+import { materialSectionLines } from './material'
 import { PASTE_FENCE } from './paste'
 import { shortId } from './refs'
 import { outlineView, readTextPages, type ReadSelection } from './view'
@@ -396,6 +399,48 @@ export function benchAnalysisPrompt(
     fence(example),
     `- viewpoint: 観点の名前（40字以内。上の観点の名前のまま）。body_markdown: その観点の分析の全文（Markdown）。run_date: 今日 ${today}`,
     '- items は1つの呼び出しで20件まで',
+    RETURN_RULES,
+  ].join('\n')
+}
+
+/** 資料の記録の項目の既定（「Claude に頼む（手動）」で最初に選んでおくもの。決まった4つ） */
+export const DEFAULT_MATERIAL_SECTIONS = MATERIAL_SECTIONS
+
+/**
+ * 資料の記録の依頼文（資料の画面の「Claude に頼む（手動）」）。PDF は利用者の claude.ai のプロジェクトにあるので本文は送らない。
+ * 項目ごとの書き方（material.ts の MATERIAL_SECTION_GUIDE）を入れ、最後に novel_add_material_notes と同じ形の JSON を
+ * コードブロックで返してもらう（貼り付けで取り込む）
+ */
+export function materialNotesPrompt(
+  material: Pick<Material, 'id' | 'name' | 'author' | 'pdfPlace'>,
+  sections: readonly string[],
+  today: string,
+): string {
+  const picked = sections.map((s) => s.trim()).filter(Boolean)
+  const list = picked.length ? picked : [...DEFAULT_MATERIAL_SECTIONS]
+  const example = JSON.stringify({
+    tool: 'novel_add_material_notes',
+    input: {
+      material: shortId('material', material.id),
+      items: list.slice(0, 2).map((s) => ({ section: s, body_markdown: `## ${s}\n…`, run_date: today })),
+    },
+  })
+  const place = material.pdfPlace.trim()
+  return [
+    `このプロジェクトのナレッジにある資料『${materialName(material)}』${material.author.trim() ? `（${material.author.trim()}）` : ''}の PDF を読んで、小説の書き手が創作に使うための記録を書いてください。${place ? `（PDF の置き場所: ${place}）` : ''}`,
+    '',
+    '## 記録する項目',
+    ...materialSectionLines(list),
+    '',
+    '項目ごとに Markdown で書いてください。「創作に役立つ知識」「描写に使える部分」は、要点だけに絞らず、資料の中から当てはまるものをすべて拾ってください。',
+    'PDF に無いことは推測で書かず、読み取れない時はそう書いてください（サンプルシーンの場面は仮想のものでかまいません）。引用は短く（数行まで）にしてください。',
+    '',
+    '## 返し方',
+    `最後に、項目ごとに1つずつ items に入れた次の形の JSON を \`\`\`${PASTE_FENCE} のコードブロックで返してください（Novel Studio の資料の画面に貼り付けて、記録として残します）。`,
+    fence(example),
+    `- section: 項目の名前（40字以内。上の項目の名前のまま）。body_markdown: その項目の記録の全文（Markdown）。run_date: 今日 ${today}`,
+    '- items は1つの呼び出しで20件まで',
+    '- 長くて1回の答えに収まらない時は、項目ごとに答えを分けてください（答えごとに、その答えの項目の JSON のコードブロックを最後に1つ。作者が答えごとに貼り付けます）。1つの項目がとても長い時は、同じ section・run_date の items に分け、各部の body_markdown の1行目の先頭に「（1/2）」「（2/2）」…と番号を書いてください（アプリはこの番号の順に並べます）',
     RETURN_RULES,
   ].join('\n')
 }

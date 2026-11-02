@@ -21,6 +21,8 @@ import {
   type CritiqueResult,
   type CritiqueScope,
   type ID,
+  type Material,
+  type MaterialNote,
   type ProofCategory,
   type ProofSuggestion,
   type RevisionIdea,
@@ -642,7 +644,8 @@ export function deleteStrategyNote(data: AppData, id: ID): AppData {
 
 /**
  * src/claude/records.ts で作った記録を入れる。もうあるもの（同じ内容を2回貼り付けた）・ゴミ箱にあるもの（以前に削除した）・
- * タイトルが無いものは入れない（ベンチ作品の分析は作品が無いもの。作品は先に入れる）。戻り値は入れた記録の id
+ * タイトルが無いものは入れない（ベンチ作品の分析は作品が無いもの、資料の記録は資料が無いもの。作品・資料は先に入れる）。
+ * 戻り値は入れた記録の id
  */
 export function addClaudeRecords(data: AppData, records: readonly NewRecord[]): { data: AppData; result: ID[] } {
   const trashed = new Set<string>()
@@ -664,6 +667,18 @@ export function addClaudeRecords(data: AppData, records: readonly NewRecord[]): 
       if (table === 'benchAnalyses') {
         if (!tx.get('benchWorks', (record as BenchAnalysis).workId)) continue
         tx.put('benchAnalyses', record as BenchAnalysis)
+        added.push(record.id)
+        continue
+      }
+      // 資料もどのタイトルにも属さない
+      if (table === 'materials') {
+        tx.put('materials', record as Material)
+        added.push(record.id)
+        continue
+      }
+      if (table === 'materialNotes') {
+        if (!tx.get('materials', (record as MaterialNote).materialId)) continue
+        tx.put('materialNotes', record as MaterialNote)
         added.push(record.id)
         continue
       }

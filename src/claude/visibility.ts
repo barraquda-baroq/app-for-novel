@@ -4,6 +4,7 @@
 // アクセスルールではタイトルごとに分けられない（タイトルの id は文書の JSON の中にある）ので、コネクタのコードで守る。
 // ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアは、どのタイトルの設定でも見せない。
 // ベンチ作品とその分析（2.5）はどのタイトルにも属さない利用者の覚え書きなので、タイトルの設定とは関係なく見せる。
+// 資料とその記録（2.6）も同じく、タイトルの設定とは関係なく見せる。
 import { emptyData, type AppData, type ClaudeAccess, type TableName, type Title } from '../domain/types'
 
 export const CLAUDE_ACCESS_VALUES: readonly ClaudeAccess[] = ['none', 'read', 'write']
@@ -40,13 +41,13 @@ export function canClaudeWrite(title: Pick<Title, 'claudeAccess'> | null | undef
 /** どのタイトルの設定でも見せない表 */
 const NEVER_SERVED: ReadonlySet<TableName> = new Set<TableName>(['snapshotTexts', 'trashEntries', 'trashRecords'])
 
-/** タイトルの設定と関係なく、いつも見せる表（ベンチ作品とその分析） */
-const ALWAYS_SERVED: ReadonlySet<TableName> = new Set<TableName>(['benchWorks', 'benchAnalyses'])
+/** タイトルの設定と関係なく、いつも見せる表（ベンチ作品とその分析、資料とその記録） */
+const ALWAYS_SERVED: ReadonlySet<TableName> = new Set<TableName>(['benchWorks', 'benchAnalyses', 'materials', 'materialNotes'])
 
 /**
  * コネクタに見せる内容。見せないタイトル（none）と、その配下のレコード（titleId で見る）を除き、
  * ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアも除く。共通の批評プロンプト（titleId = null）と
- * ベンチ作品・その分析は見せる。
+ * ベンチ作品・その分析、資料・その記録は見せる。
  * 変わらない表は同じオブジェクトのまま返す
  */
 export function claudeView(data: AppData): AppData {

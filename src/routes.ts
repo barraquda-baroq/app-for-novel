@@ -7,14 +7,16 @@ export type TitleTab = 'story' | 'settings' | 'strategy' | 'critique' | 'ideas'
 export const PROOF_PARAM = 'ps'
 
 /** ホームの領域（?view=。リンクから開いた時にその領域の先頭を見せる） */
-export type HomeArea = 'titles' | 'ideas' | 'bench'
+export type HomeArea = 'titles' | 'ideas' | 'bench' | 'materials'
 
 export const paths = {
   home: () => '/',
-  /** ホームのその領域の先頭（相対比較の作品の画面のパンくずなど） */
+  /** ホームのその領域の先頭（相対比較の作品の画面・資料の画面のパンくずなど） */
   homeArea: (area: HomeArea) => `/?view=${area}`,
   /** 相対比較の作品（ホームの棚の1冊）の画面 */
   bench: (workId: ID) => `/bench/${workId}`,
+  /** 資料（ホームの棚「資料」の1冊）の画面 */
+  material: (materialId: ID) => `/materials/${materialId}`,
   appSettings: () => '/settings',
   trash: () => '/trash',
   title: (titleId: ID, tab?: TitleTab) => (tab && tab !== 'story' ? `/t/${titleId}?tab=${tab}` : `/t/${titleId}`),

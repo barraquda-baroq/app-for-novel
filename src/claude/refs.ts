@@ -25,6 +25,9 @@ export const SHORT_ID_LETTERS = {
   // 2.5: ベンチ作品（work）とその分析
   benchWork: 'w',
   benchAnalysis: 'n',
+  // 2.6: 資料とその記録
+  material: 'd',
+  materialNote: 'k',
 } as const
 
 export type ShortIdKind = keyof typeof SHORT_ID_LETTERS
@@ -96,7 +99,8 @@ export function pieceRefLabel(data: AppData, piece: Piece, order?: readonly Read
 
 /**
  * 名前で指す時に比べる形（Unicode の NFKC で全角の英数字・全角の空白などをそろえ、続く空白は1つにして前後を落とす）。
- * タイトル・章・話の見出しのほか、ベンチ作品の作品名・著者（bench.ts・derivedId.ts の benchWorkId）でも同じものを使う
+ * タイトル・章・話の見出しのほか、ベンチ作品の作品名・著者（bench.ts・derivedId.ts の benchWorkId）、資料の資料名・著者
+ * （material.ts・derivedId.ts の materialId）でも同じものを使う
  */
 export const refKey = (s: string): string =>
   s

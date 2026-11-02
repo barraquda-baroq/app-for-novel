@@ -16,6 +16,8 @@ export type DerivedKind =
   | 'critiqueResult'
   | 'benchWork'
   | 'benchAnalysis'
+  | 'material'
+  | 'materialNote'
 
 /** 種類ごとの1文字 */
 export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
@@ -28,6 +30,8 @@ export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
   critiqueResult: 'q',
   benchWork: 'w',
   benchAnalysis: 'a',
+  material: 'd',
+  materialNote: 'k',
 }
 
 /** 比べる前に揃える（Unicode の正規化 NFC。合成済みの文字と組み合わせの文字を同じに扱う） */
@@ -116,4 +120,17 @@ export function benchWorkId(name: string, author: string): ID {
 /** ベンチ作品の分析（同じ作品・観点・日付・本文なら同じ id） */
 export function benchAnalysisId(p: { workId: ID; viewpoint: string; runDate: string; body: string }): ID {
   return derivedId('benchAnalysis', [p.workId, p.viewpoint.trim(), p.runDate, long(p.body)])
+}
+
+/**
+ * 資料（2.6。Claude が記録と一緒に作る資料。同じ資料名・著者なら同じ id。資料名で探す時と同じく、全角と半角・続く空白の
+ * 違いは同じとみなす（refs.ts の refKey）。相対比較の作品（benchWorkId）と同じ作り方
+ */
+export function materialId(name: string, author: string): ID {
+  return derivedId('material', [refKey(name), refKey(author)])
+}
+
+/** 資料の記録（同じ資料・項目・日付・本文なら同じ id） */
+export function materialNoteId(p: { materialId: ID; section: string; runDate: string; body: string }): ID {
+  return derivedId('materialNote', [p.materialId, p.section.trim(), p.runDate, long(p.body)])
 }

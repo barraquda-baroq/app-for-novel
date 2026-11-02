@@ -76,6 +76,10 @@
   --area-bench: #8a5a2b;
   --area-bench-text: #6b421c;
   --area-bench-soft: #f6ece1;
+  /* 資料（ホームの棚。2.6。内部名は materials）: 古い紙と苔の色 */
+  --area-materials: #587c28;
+  --area-materials-text: #3e5a1a;
+  --area-materials-soft: #edf3e1;
 
   --radius: 10px;
   --radius-sm: 6px;
@@ -160,6 +164,9 @@
   --area-bench: #d39b62;
   --area-bench-text: #e9c49d;
   --area-bench-soft: #2a1f15;
+  --area-materials: #9cc262;
+  --area-materials-text: #c3dd9b;
+  --area-materials-soft: #1b2414;
   color-scheme: dark;
 }
 
@@ -232,6 +239,9 @@
   --area-bench: #574c40;
   --area-bench-text: #aeaca6;
   --area-bench-soft: #1d1b18;
+  --area-materials: #4d5640;
+  --area-materials-text: #aeaca6;
+  --area-materials-soft: #1b1d18;
   color-scheme: dark;
 }
 
@@ -271,6 +281,12 @@
   --area: var(--area-bench);
   --area-text: var(--area-bench-text);
   --area-soft: var(--area-bench-soft);
+}
+
+[data-area='materials'] {
+  --area: var(--area-materials);
+  --area-text: var(--area-materials-text);
+  --area-soft: var(--area-materials-soft);
 }
 
 /* ===== ベース ===== */

@@ -522,6 +522,56 @@ export interface BenchAnalysis {
   updatedAt: number
 }
 
+// ---------- 資料（創作のために読む資料と、その記録） ----------
+// 利用者が購入した資料（主に書籍）の PDF は claude.ai のプロジェクトに置いたまま（Firebase の無料プランはファイルを置けない）、
+// Claude が読んでまとめた記録（要約・創作に役立つ知識・描写に使える部分・サンプルシーン）だけを、ホームの棚「資料」に残す。
+// どのタイトルにも属さず、すべてのタイトルで共有する。
+
+/** 資料（棚の1冊）。並びは order（ホームの棚の順） */
+export interface Material {
+  id: ID
+  /** 資料名（書名など） */
+  name: string
+  author: string
+  publisher?: string
+  /** 刊行年（自由な書き方。「2019」「2019年」など） */
+  year?: string
+  /**
+   * タグ（作者が自分で付けて管理する。ミリタリ・現代・戦闘…。並びは付けた順。1つ20字まで・1つの資料に20個まで。
+   * refs.ts の refKey が同じものは1つ。無い = タグなし）。Claude（コネクタ・貼り付け）はタグを付けない
+   */
+  tags?: string[]
+  /** PDF の置き場所（claude.ai のプロジェクト名など。自由に書く） */
+  pdfPlace: string
+  /** 自由メモ */
+  note: string
+  order: number
+  createdAt: number
+  updatedAt: number
+  /** 作ったもの（Claude のコネクタが記録と一緒に作った資料は claude。無い = アプリで手で作った） */
+  source?: ClaudeSource
+}
+
+/** 資料の記録（1つの項目の記録。1つの資料にいくつでも） */
+export interface MaterialNote {
+  id: ID
+  /** 記録した資料 */
+  materialId: ID
+  /** 項目の名前（要約・創作に役立つ知識・描写に使える部分・サンプルシーン…。40字まで） */
+  section: string
+  /** 記録の本文（Markdown。長さの上限なし） */
+  body: string
+  /** 記録した日（日本時間の YYYY-MM-DD） */
+  runDate: string
+  source: ClaudeSource
+  /** 記録したモデルの名前（分かれば） */
+  model?: string
+  /** 記録の形の版（いまは 1） */
+  v: number
+  createdAt: number
+  updatedAt: number
+}
+
 /** ゴミ箱に入れたものの種類（戻し方が変わる） */
 export type TrashKind =
   | 'title'
@@ -540,6 +590,8 @@ export type TrashKind =
   | 'critiqueResult'
   | 'benchWork'
   | 'benchAnalysis'
+  | 'material'
+  | 'materialNote'
 
 /** 削除した時点の場所。戻す時はここへ戻す（無くなっていれば近い所へ） */
 export interface TrashOrigin {
@@ -569,6 +621,8 @@ export interface TrashOrigin {
    * ゴミ箱の中のタイトルに足し直す）
    */
   titleIds?: ID[]
+  /** 資料の記録: 属していた資料 */
+  materialId?: ID
 }
 
 /**
@@ -635,6 +689,9 @@ export interface AppData {
   // ベンチ作品（2.5）
   benchWorks: Record<ID, BenchWork>
   benchAnalyses: Record<ID, BenchAnalysis>
+  // 資料（2.6）
+  materials: Record<ID, Material>
+  materialNotes: Record<ID, MaterialNote>
   trashEntries: Record<ID, TrashEntry>
   trashRecords: Record<ID, TrashRecord>
 }
@@ -663,6 +720,8 @@ export const TABLE_NAMES: TableName[] = [
   'critiqueResults',
   'benchWorks',
   'benchAnalyses',
+  'materials',
+  'materialNotes',
   'trashEntries',
   'trashRecords',
 ]
@@ -683,8 +742,11 @@ export const TITLE_CLAUDE_TABLES = [
 /** ベンチ作品の表（2.5。どのタイトルにも属さない） */
 export const BENCH_TABLES = ['benchWorks', 'benchAnalyses'] as const satisfies readonly TableName[]
 
+/** 資料の表（2.6。どのタイトルにも属さない） */
+export const MATERIAL_TABLES = ['materials', 'materialNotes'] as const satisfies readonly TableName[]
+
 /** Claude（コネクタ・貼り付け）が作れる表。コネクタが作れるのはこの表のレコードだけ（firestore.rules） */
-export const CLAUDE_TABLES = [...TITLE_CLAUDE_TABLES, ...BENCH_TABLES] as const satisfies readonly TableName[]
+export const CLAUDE_TABLES = [...TITLE_CLAUDE_TABLES, ...BENCH_TABLES, ...MATERIAL_TABLES] as const satisfies readonly TableName[]
 
 export type ClaudeTableName = (typeof CLAUDE_TABLES)[number]
 
@@ -708,6 +770,8 @@ export function emptyData(): AppData {
     critiqueResults: {},
     benchWorks: {},
     benchAnalyses: {},
+    materials: {},
+    materialNotes: {},
     trashEntries: {},
     trashRecords: {},
   }

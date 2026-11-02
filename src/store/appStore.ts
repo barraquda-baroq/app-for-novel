@@ -547,6 +547,9 @@ const JOURNAL_DROP_ORDER: TableName[] = [
   // 2.5: ベンチ作品の分析（Claude に作り直してもらえる）を作品より先に
   'benchAnalyses',
   'benchWorks',
+  // 2.6: 資料の記録（Claude に作り直してもらえる）を資料より先に
+  'materialNotes',
+  'materials',
   'submissions',
   'settingCategories',
   'settingEntries',

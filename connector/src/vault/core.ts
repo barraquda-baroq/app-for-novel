@@ -1,7 +1,14 @@
 // Vault の中身（Durable Object の外でも動く。テストでは node:sqlite と Firebase エミュレーターで動かす）。
 // 持ち主ごとに1つ（idFromName('owner')）。コネクタの身元・連携の状態・持ち主の記録の写し・数の記録・書き込みの順番を持つ。
 import { isPairingHash, PAIRING_TTL_MS } from '../../../src/claude/pairing'
-import { trashedBenchNamesOf, trashedIdsOf, buildToolCall, isWriteTool, type WriteTool } from '../../../src/claude/records'
+import {
+  trashedBenchNamesOf,
+  trashedIdsOf,
+  trashedMaterialNamesOf,
+  buildToolCall,
+  isWriteTool,
+  type WriteTool,
+} from '../../../src/claude/records'
 import { claudeView, canClaudeRead } from '../../../src/claude/visibility'
 import { repairData } from '../../../src/domain/repair'
 import type { AppData } from '../../../src/domain/types'
@@ -470,6 +477,10 @@ export class VaultCore {
         return R.listBenchWorks(ctx, args)
       case 'novel_get_bench_analysis':
         return R.getBenchAnalysis(ctx, args)
+      case 'novel_list_materials':
+        return R.listMaterials(ctx, args)
+      case 'novel_get_material':
+        return R.getMaterial(ctx, args)
       default:
         return fail(`知らないツールです: ${name}`)
     }
@@ -582,6 +593,8 @@ export class VaultCore {
           wasDeleted: (table, id) => this.mirror.wasDeleted(table, id) || trashed(table, id),
           // 手で足して削除した作品（ゴミ箱の一覧は写しでも中身を省かない）
           trashedBenchWorkNamed: trashedBenchNamesOf(raw),
+          // 手で足して削除した資料も同じ
+          trashedMaterialNamed: trashedMaterialNamesOf(raw),
         })
         if (!built.ok) return buildError(built)
         let prepared

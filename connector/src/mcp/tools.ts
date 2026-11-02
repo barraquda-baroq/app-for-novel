@@ -4,6 +4,8 @@
 //   （手順はサーバーの説明 instructions.ts と、アプリの手動連携の依頼文 src/claude/prompts.ts に書く）
 // - 読むツール: readOnlyHint true。書き込みツール: 記録を足すだけで書き換え・削除はしないので destructiveHint false、
 //   同じ内容をもう一度送っても増えない（内容から作る id）ので idempotentHint true
+import { MATERIAL_SECTION_GUIDE, MATERIAL_SPLIT_GUIDE } from '../../../src/claude/material'
+import { MATERIAL_SECTIONS } from '../../../src/domain/materialOps'
 import type { ToolName } from './schemas.gen'
 
 export interface ToolAnnotations {
@@ -37,6 +39,9 @@ const write = (name: ToolName, title: string, description: string): ToolDef => (
   kind: 'write',
   annotations: { title, readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 })
+
+/** 資料の決まった項目ごとの書き方（「「要約」は資料の全体の要約（章立てに沿って）。「創作に役立つ知識」は…」。手動連携の依頼文と同じ） */
+const MATERIAL_SECTION_TEXT = MATERIAL_SECTIONS.map((s) => `「${s}」は${MATERIAL_SECTION_GUIDE[s]}`).join('。')
 
 export const TOOL_DEFS: readonly ToolDef[] = [
   read(
@@ -99,6 +104,16 @@ export const TOOL_DEFS: readonly ToolDef[] = [
     '相対比較の分析を読む',
     '相対比較の1つの作品の分析（以前に PDF から書いた、観点ごとの Markdown）を返す。観点ごとにまとめ、新しい日付から並べる。viewpoints で観点を絞り、analysis_id（n:…）で1つだけを読める。長ければ char_budget 字ずつ返し、残りは 続き: cursor="…" で読む。作品批評で相対比較する作品の分析を読む時に使う（PDF を読み直さなくてよい）。',
   ),
+  read(
+    'novel_list_materials',
+    '資料の一覧を見る',
+    'ホームの「資料」（作者が創作のために読む資料の棚。主に作者が買った書籍）の資料の一覧を、アプリの棚の順（新しく足した資料ほど後ろ）で返す。資料ごとに短い id（d:…）、資料名・著者・出版社・刊行年、タグ（タグ: ミリタリ・現代…。作者が自分で付けて管理するもの）、PDF の置き場所、記録の数と項目ごとの数・最新の日付を出す。names で資料名のどこかに含む文字の資料だけに絞り、exclude_names で除き（部分一致）、tags でそのタグをすべて持つ資料だけにする（タグの名前そのもので照らす）。どれも全角と半角・空白の違いは問わない。長い時は資料の途中で切らずに char_budget 字（既定は結果の上限の 100,000）までを返し、最後の行の 続き: cursor="…"（結果が長いため、ここで切りました…）の cursor だけを渡すと続きを返す。記録の本文は novel_get_material で読む。PDF そのものは返さない（PDF は作者の claude.ai のプロジェクトにある）。',
+  ),
+  read(
+    'novel_get_material',
+    '資料を読む',
+    '1つの資料の記録（以前に PDF から書いた、項目ごとの Markdown）を返す。項目ごとにまとめ（決まった項目の要約・創作に役立つ知識・描写に使える部分・サンプルシーンをこの順に、その後ほかの項目を最初に記録した順）、新しい日付から並べる。sections で項目を絞り、note_id（k:…）で1つだけを読める。長ければ char_budget 字ずつ返し、残りは 続き: cursor="…" で読む。小説の設定・描写・場面に資料の知識を使う時に読む（PDF を読み直さなくてよい）。',
+  ),
   write(
     'novel_add_proofreading',
     '推敲案を追加',
@@ -128,6 +143,11 @@ export const TOOL_DEFS: readonly ToolDef[] = [
     'novel_add_bench_analysis',
     '相対比較に分析を追加',
     'ホームの「相対比較」（作者が比べるために読む既存の作品の棚。作者は「ベンチ作品」「比較作品」とも呼ぶ）の作品に、観点ごとの分析（構成・文体・人物・冒頭の掴みなど。Markdown）を追加する。work で作品を指し（w:… か作品名）、相対比較にまだ無い作品は new_work（作品名・著者など）を付けた時だけ作品も相対比較に追加する（作品名が同じでも著者が違えば別の作品）。1回20件まで。本文の長さに上限は無いが、コネクタが書ける1件の記録は JSON にして 200,000 字まで（超える時は番号を付けて分ける分け方を答える）。同じ作品・観点・日付・本文の分析が既にあれば追加しない。以前に削除された分析・作品は作り直さない。既にある分析・作品は書き換えない。答えには、分析を足す先の作品をいつも w:…『作品名』（著者）で出す（既にある作品に足した時も。分析を1つも作れず作品も作らなかった時は w:… はまだ無い）。作品名が「【原稿】」で始まる作者の原稿の分析は、1回の分析を1つの作品にする（同じ作品名だと前の回の作品に足されるので、novel_list_bench_works（names に「【原稿】{原稿名}（」、exclude_names に「【対照】」を入れるとその原稿の回だけ）で前の回を確かめ、最後の括弧を「（第2稿・2回目）」「（第2稿・2026-11-02）」のように前の回と違う回の札にする。作者が前の回に足すよう言った時は、その作品を w:… で指す）。',
+  ),
+  write(
+    'novel_add_material_notes',
+    '資料に記録を追加',
+    `ホームの「資料」（作者が創作のために読む資料の棚。主に作者が買った書籍。作者は「参考資料」「資料本」とも呼ぶ）の資料に、項目ごとの記録（Markdown）を追加する。決まった項目は4つで、アプリはこの順に並べる（ほかの名前の項目も作れる）: ${MATERIAL_SECTION_TEXT}。material で資料を指し（d:… か資料名）、資料の棚にまだ無い資料は new_material（資料名・著者など）を付けた時だけ資料も資料の棚に追加する（資料名が同じでも著者が違えば別の資料）。タグは作者が自分で付けて管理する（Claude はタグを付けない。new_material にタグは無い）。1回20件まで。${MATERIAL_SPLIT_GUIDE}。本文の長さに上限は無いが、コネクタが書ける1件の記録は JSON にして 200,000 字まで（超える時は番号を付けて分ける分け方を答える）。同じ資料・項目・日付・本文の記録が既にあれば追加しない。以前に削除された記録・資料は作り直さない。既にある記録・資料は書き換えない。答えには、記録を足す先の資料をいつも d:…『資料名』（著者）で出す（既にある資料に足した時も。記録を1つも作れず資料も作らなかった時は d:… はまだ無い）。`,
   ),
 ]
 

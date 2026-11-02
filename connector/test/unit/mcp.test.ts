@@ -4,6 +4,8 @@ import { createMcpHandler, fromJsonSchema } from '@modelcontextprotocol/server'
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/server/validators/cf-worker'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { novel } from '../../../src/test/claudeFixture'
+import { MATERIAL_SECTION_GUIDE } from '../../../src/claude/material'
+import { MATERIAL_SECTIONS } from '../../../src/domain/materialOps'
 import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions'
 import { TOOL_SCHEMAS } from '../../src/mcp/schemas.gen'
 import { createServer } from '../../src/mcp/server'
@@ -25,12 +27,15 @@ const EXPECTED_ORDER = [
   'novel_list_proofreading',
   'novel_list_bench_works',
   'novel_get_bench_analysis',
+  'novel_list_materials',
+  'novel_get_material',
   'novel_add_proofreading',
   'novel_add_revision_ideas',
   'novel_add_strategy_note',
   'novel_save_critique_prompt',
   'novel_add_critique_result',
   'novel_add_bench_analysis',
+  'novel_add_material_notes',
 ]
 
 describe('ツールの決まり', () => {
@@ -48,6 +53,9 @@ describe('ツールの決まり', () => {
       expect(t.description.length).toBeGreaterThan(60)
     }
     expect(new Set(TOOL_DEFS.map((t) => t.name)).size).toBe(TOOL_DEFS.length)
+    // 2.6: 読むツール 14・書き込みツール 7
+    expect(TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(14)
+    expect(TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(7)
     expect(SERVER_INSTRUCTIONS.length).toBeGreaterThan(200)
     expect(SERVER_INSTRUCTIONS.length).toBeLessThan(900)
   })
@@ -92,6 +100,71 @@ describe('ツールの決まり', () => {
     expect(await valid({ char_budget: 100_000 })).toBe(true)
     expect(await valid({ char_budget: 100_001 })).toBe(false)
     expect(await valid({ char_budget: 1_999 })).toBe(false)
+    // 資料の一覧（2.6）: 資料名の絞り込み（10個・80字まで）・タグの絞り込み（10個・20字まで）・char_budget・長い cursor
+    const materials = fromJsonSchema(TOOL_SCHEMAS.novel_list_materials as never, v)
+    const validMaterials = async (x: Record<string, unknown>) => {
+      const r = await materials['~standard'].validate(x)
+      return !('issues' in r && r.issues?.length)
+    }
+    expect(await validMaterials({})).toBe(true)
+    expect(
+      await validMaterials({
+        names: ['江戸'],
+        exclude_names: ['図録'],
+        tags: ['ミリタリ', '現代'],
+        char_budget: 2_000,
+        cursor: 'x'.repeat(12_000),
+      }),
+    ).toBe(true)
+    expect(await validMaterials({ tags: [] })).toBe(false)
+    expect(await validMaterials({ tags: [''] })).toBe(false)
+    expect(await validMaterials({ tags: ['あ'.repeat(21)] })).toBe(false)
+    expect(await validMaterials({ tags: ['あ'.repeat(20)] })).toBe(true)
+    expect(await validMaterials({ names: ['あ'.repeat(81)] })).toBe(false)
+    expect(await validMaterials({ tags: Array.from({ length: 11 }, (_, i) => `x${i}`) })).toBe(false)
+    expect(await validMaterials({ tags: Array.from({ length: 10 }, (_, i) => `x${i}`) })).toBe(true)
+    // 分野の絞り込みは無い（タグにした）
+    expect(Object.keys((TOOL_SCHEMAS.novel_list_materials as { properties: object }).properties)).toEqual([
+      'names',
+      'exclude_names',
+      'tags',
+      'char_budget',
+      'cursor',
+    ])
+    expect(await validMaterials({ char_budget: 100_001 })).toBe(false)
+    // 資料を読む: material が要る。項目で絞る・1つだけ読む
+    const get = fromJsonSchema(TOOL_SCHEMAS.novel_get_material as never, v)
+    const getOk = async (x: Record<string, unknown>) => {
+      const r = await get['~standard'].validate(x)
+      return !('issues' in r && r.issues?.length)
+    }
+    expect(await getOk({ material: 'd:12345678', sections: ['要約'], note_id: 'k:1', char_budget: 2_000 })).toBe(true)
+    expect(await getOk({ sections: ['要約'] })).toBe(false)
+    expect(await getOk({ material: 'd:1', sections: ['あ'.repeat(41)] })).toBe(false)
+    // 資料に記録を追加: 長い記録は入力の形の確かめで断らない。items は1〜20件、項目の名前は40字まで、new_material の刊行年は20字まで。
+    // new_material にタグ・分野は無い（タグは作者が付けて管理する）
+    const add = fromJsonSchema(TOOL_SCHEMAS.novel_add_material_notes as never, v)
+    const addOk = async (x: Record<string, unknown>) => {
+      const r = await add['~standard'].validate(x)
+      return !('issues' in r && r.issues?.length)
+    }
+    const item = { section: '要約', body_markdown: 'あ'.repeat(250_000), run_date: '2026-11-02' }
+    expect(
+      await addOk({
+        material: '江戸の暮らし',
+        new_material: { name: '江戸の暮らし', author: '山田', publisher: '海出版', year: '2019', pdf_place: 'プロジェクト「資料」' },
+        items: [item],
+        model: 'claude',
+      }),
+    ).toBe(true)
+    expect(await addOk({ material: 'd:1', items: [] })).toBe(false)
+    expect(await addOk({ material: 'd:1', items: Array.from({ length: 21 }, () => item) })).toBe(false)
+    expect(await addOk({ material: 'd:1', items: [{ ...item, section: 'あ'.repeat(41) }] })).toBe(false)
+    expect(await addOk({ material: 'd:1', new_material: { name: '江戸', author: '', year: '1'.repeat(21) }, items: [item] })).toBe(false)
+    const newMaterial = (TOOL_SCHEMAS.novel_add_material_notes as { properties: { new_material: { properties: object } } }).properties
+      .new_material
+    expect(Object.keys(newMaterial.properties)).toEqual(['name', 'author', 'publisher', 'year', 'pdf_place'])
+    expect(await addOk({ material: 'd:1', new_material: { name: '江戸' }, items: [item] })).toBe(false)
   })
 })
 
@@ -168,6 +241,31 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     }
     expect(instructions.replace('「ベンチ作品」「比較作品」とも呼ぶ', '')).not.toContain('ベンチ')
     expect(JSON.stringify(TOOL_SCHEMAS)).not.toContain('ベンチ')
+    // 資料（2.6）: 読む2つと書き込み1つ。説明に資料の棚と短い id（d:・k:）
+    const material = tools.filter((t) => /_materials?(_|$)/.test(t.name))
+    expect(material.map((t) => [t.name, t.title, t.annotations.readOnlyHint])).toEqual([
+      ['novel_list_materials', '資料の一覧を見る', true],
+      ['novel_get_material', '資料を読む', true],
+      ['novel_add_material_notes', '資料に記録を追加', false],
+    ])
+    expect(material[2].outputSchema).toBeTruthy()
+    expect(material[2].annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
+    expect(instructions).toContain('資料は、作者が創作のために読む資料')
+    expect(instructions).toContain('「参考資料」「資料本」とも呼ぶ')
+    expect(instructions).toContain('d: 資料、k: その記録')
+    // 追加のツールの説明に、決まった4つの項目の書き方（手動連携の依頼文と同じ）と分け方
+    const addMaterial = TOOL_DEFS.find((t) => t.name === 'novel_add_material_notes')!
+    expect(addMaterial.description).toContain('ホームの「資料」')
+    for (const s of MATERIAL_SECTIONS) expect(addMaterial.description).toContain(`「${s}」は${MATERIAL_SECTION_GUIDE[s]}`)
+    expect(addMaterial.description).toContain('すべて拾う')
+    expect(addMaterial.description).toContain('「（1/2）」「（2/2）」')
+    expect(addMaterial.description).toContain('著者が違えば別の資料')
+    // タグは作者が付けて管理する（Claude は付けない）。一覧はタグで絞れる
+    expect(addMaterial.description).toContain('タグは作者が自分で付けて管理する（Claude はタグを付けない')
+    const listMaterials = TOOL_DEFS.find((t) => t.name === 'novel_list_materials')!
+    expect(listMaterials.description).toContain('tags でそのタグをすべて持つ資料だけにする')
+    expect(listMaterials.description).toContain('作者が自分で付けて管理するもの')
+    for (const t of TOOL_DEFS) expect(t.description, t.name).not.toContain('分野')
     expect(tools[2].outputSchema).toBeUndefined()
     expect(calls).toBe(0)
   })

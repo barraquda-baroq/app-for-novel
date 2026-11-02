@@ -45,6 +45,16 @@ describe('ゴミ箱の一覧の表記', () => {
         entry({ kind: 'benchAnalysis', titleName: '', parentLabel: '銀河の果て', origin: { titleId: null, index: -1 } }),
       ),
     ).toBe('相対比較 › 銀河の果て')
+    // 2.6: 資料もホームの棚（タイトルに属さない）。記録は「資料 › 資料名」
+    expect(trashPlace(entry({ kind: 'material', titleName: '', origin: { titleId: null, index: 0 } }))).toBe('資料')
+    expect(
+      trashPlace(
+        entry({ kind: 'materialNote', titleName: '', parentLabel: '江戸の暮らし', origin: { titleId: null, index: -1 } }),
+      ),
+    ).toBe('資料 › 江戸の暮らし')
+    expect(trashPlace(entry({ kind: 'materialNote', titleName: '', origin: { titleId: null, index: -1 } }))).toBe('資料')
+    expect(trashKindLabel({ kind: 'material', recordIds: [], id: 'e' }, {})).toBe('資料')
+    expect(trashKindLabel({ kind: 'materialNote', recordIds: [], id: 'e' }, {})).toBe('資料の記録')
     expect(trashPlace(entry({ kind: 'idea', titleName: '', origin: { titleId: null, index: 0 } }))).toBe(
       'どのタイトルにも属さない',
     )
