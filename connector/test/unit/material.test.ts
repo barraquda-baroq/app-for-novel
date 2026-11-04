@@ -6,6 +6,7 @@ import { addBenchWork } from '../../../src/domain/benchOps'
 import { setTitleClaudeAccess } from '../../../src/domain/claudeOps'
 import { createTitle } from '../../../src/domain/entityOps'
 import { shortId } from '../../../src/claude/refs'
+import { materialId } from '../../../src/claude/derivedId'
 import type { AppData, ID } from '../../../src/domain/types'
 import { encodeCursor } from '../../../src/claude/view'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
@@ -568,6 +569,31 @@ describe('書き込み（novel_add_material_notes）', () => {
     })
     expect(ok.text).toContain('追加 1件')
     expect(ok.text).toContain(`資料 ${shortId('material', s.materialA)}『江戸の暮らし』（山田） に追加しました`)
+  })
+
+  it('Claude が作って削除し、ゴミ箱からも消した資料（削除の印だけが残る）は、別の id の新しい資料として作り直す', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core, clock } = await pairedCore(fake, s.data)
+    const input = {
+      material: '軍装の図鑑',
+      new_material: { name: '軍装の図鑑', author: '高橋' },
+      items: [{ section: '要約', body_markdown: '## 第1章\n外套と装具。', run_date: '2026-11-03' }],
+    }
+    const first = await core.callTool('novel_add_material_notes', input)
+    expect(first.text).toContain('を資料に追加しました')
+    const oldId = materialId('軍装の図鑑', '高橋')
+    const oldNote = docsOf(fake, 'materialNotes')[0].fields.id.stringValue as string
+    fake.tombstone(OWNER, 'materials', oldId)
+    fake.tombstone(OWNER, 'materialNotes', oldNote)
+    clock.now += 20_000
+    const again = await core.callTool('novel_add_material_notes', input)
+    expect(again.isError).toBeUndefined()
+    const newId = materialId('軍装の図鑑', '高橋', 2)
+    expect(again.text).toContain(`資料 ${shortId('material', newId)}『軍装の図鑑』（高橋） を資料に追加しました`)
+    expect(docsOf(fake, 'materials').map((d) => d.fields.id.stringValue)).toEqual([newId])
+    expect(docsOf(fake, 'materialNotes')).toHaveLength(1)
+    expect(decoded(fake, 'materialNotes')[0].materialId).toBe(newId)
   })
 
   it('相対比較の作品と資料は別の棚（同じ名前でも、資料のツールは相対比較の作品に足さない）', async () => {

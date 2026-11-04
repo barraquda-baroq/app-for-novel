@@ -6,6 +6,7 @@ import { addClaudeRecords, setTitleClaudeAccess } from '../../../src/domain/clau
 import { buildCritiqueResult } from '../../../src/claude/records'
 import { createTitle } from '../../../src/domain/entityOps'
 import { shortId } from '../../../src/claude/refs'
+import { benchWorkId } from '../../../src/claude/derivedId'
 import type { AppData, ID } from '../../../src/domain/types'
 import { encodeCursor } from '../../../src/claude/view'
 import { benchWorkLine } from '../../../src/claude/bench'
@@ -568,6 +569,47 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     })
     expect(ok.text).toContain('追加 1件')
     expect(ok.text).toContain(`相対比較の作品 ${shortId('benchWork', s.workA)}『銀河の果て』（山田） に追加しました`)
+  })
+
+  it('Claude が作って削除し、ゴミ箱からも消した作品（削除の印だけが残る）は、別の id の新しい作品として作り直す', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core, clock } = await pairedCore(fake, s.data)
+    const input = {
+      work: '52ヘルツのクジラたち',
+      new_work: { name: '52ヘルツのクジラたち', author: '町田' },
+      items: [{ viewpoint: '00 読書ノート', body_markdown: '## 0. 抽出確認\n本文。', run_date: '2026-11-03' }],
+    }
+    const first = await core.callTool('novel_add_bench_analysis', input)
+    expect(first.text).toContain('を相対比較に追加しました')
+    const oldId = benchWorkId('52ヘルツのクジラたち', '町田')
+    expect(first.text).toContain(shortId('benchWork', oldId))
+    const oldAnalysis = docsOf(fake, 'benchAnalyses')[0].fields.id.stringValue as string
+    // 端末で削除してゴミ箱も空にした: クラウドには削除の印だけが残る（コネクタは削除の印の文書を書き換えられない）
+    fake.tombstone(OWNER, 'benchWorks', oldId)
+    fake.tombstone(OWNER, 'benchAnalyses', oldAnalysis)
+    clock.now += 20_000
+    expect(await call(core, 'novel_list_bench_works')).not.toContain('52ヘルツ')
+    const again = await core.callTool('novel_add_bench_analysis', input)
+    expect(again.isError).toBeUndefined()
+    expect(again.text).toContain('追加 1件')
+    const newId = benchWorkId('52ヘルツのクジラたち', '町田', 2)
+    expect(again.text).toContain(`作品 ${shortId('benchWork', newId)}『52ヘルツのクジラたち』（町田） を相対比較に追加しました`)
+    expect(docsOf(fake, 'benchWorks').map((d) => d.fields.id.stringValue)).toEqual([newId])
+    expect(docsOf(fake, 'benchAnalyses')).toHaveLength(1)
+    // 削除の印はそのまま
+    const mark = fake.recordDocs(OWNER).find((d) => d.name.endsWith(`/benchWorks:${oldId}`))
+    expect(mark?.fields.deleted?.booleanValue).toBe(true)
+    // 同じ作品名でもう一度: 作り直した作品に足す（作品は増えない）
+    clock.now += 20_000
+    const more = await core.callTool('novel_add_bench_analysis', {
+      ...input,
+      items: [{ viewpoint: '02 ログライン・企画の核', body_markdown: '**結論**：一行', run_date: '2026-11-03' }],
+    })
+    expect(more.text).toContain('追加 1件')
+    expect(more.text).toContain(`相対比較の作品 ${shortId('benchWork', newId)}『52ヘルツのクジラたち』（町田） に追加しました`)
+    expect(docsOf(fake, 'benchWorks')).toHaveLength(1)
+    expect(await call(core, 'novel_list_bench_works')).toContain('『52ヘルツのクジラたち』（町田）')
   })
 
   it('大きすぎる分析は作らず、番号を付けて分けるよう返す。「書き込みを許可」が外れていれば書かない', async () => {

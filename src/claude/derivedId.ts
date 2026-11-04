@@ -111,10 +111,13 @@ export function critiqueResultId(p: {
 
 /**
  * ベンチ作品（Claude が分析と一緒に作る作品。同じ作品名・著者なら同じ id。作品名で探す時と同じく、全角と半角・続く空白の
- * 違いは同じとみなす（refs.ts の refKey））
+ * 違いは同じとみなす（refs.ts の refKey））。
+ * generation は作り直しの通し番号（1 = 初めて。2 以降は、同じ作品名・著者の作品を削除して削除の印が残った後に作り直す時。
+ * クラウドの削除の印はコネクタからは書き換えられないので、作り直す作品は別の id にする。records.ts の freshDerivedId）
  */
-export function benchWorkId(name: string, author: string): ID {
-  return derivedId('benchWork', [refKey(name), refKey(author)])
+export function benchWorkId(name: string, author: string, generation = 1): ID {
+  const parts = [refKey(name), refKey(author)]
+  return derivedId('benchWork', generation > 1 ? [...parts, generation] : parts)
 }
 
 /** ベンチ作品の分析（同じ作品・観点・日付・本文なら同じ id） */
@@ -124,10 +127,11 @@ export function benchAnalysisId(p: { workId: ID; viewpoint: string; runDate: str
 
 /**
  * 資料（2.6。Claude が記録と一緒に作る資料。同じ資料名・著者なら同じ id。資料名で探す時と同じく、全角と半角・続く空白の
- * 違いは同じとみなす（refs.ts の refKey）。相対比較の作品（benchWorkId）と同じ作り方
+ * 違いは同じとみなす（refs.ts の refKey）。相対比較の作品（benchWorkId）と同じ作り方（generation も同じ）
  */
-export function materialId(name: string, author: string): ID {
-  return derivedId('material', [refKey(name), refKey(author)])
+export function materialId(name: string, author: string, generation = 1): ID {
+  const parts = [refKey(name), refKey(author)]
+  return derivedId('material', generation > 1 ? [...parts, generation] : parts)
 }
 
 /** 資料の記録（同じ資料・項目・日付・本文なら同じ id） */

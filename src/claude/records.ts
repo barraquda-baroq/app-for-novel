@@ -350,7 +350,8 @@ export interface BuildContext {
   wasDeleted?: (table: ClaudeTableName, id: ID) => boolean
   /**
    * ゴミ箱に同じ作品名のベンチ作品があるか（アプリ・コネクタとも trashEntries から。trashedBenchNamesOf）。
-   * 手で足した作品は id が内容から作った id でないので、new_work で作り直さないように作品名で見分ける
+   * ゴミ箱にある間は new_work で作り直さない（手で足した作品は id が内容から作った id でないので、作品名で見分ける）。
+   * ゴミ箱から完全に削除した後は、別の id の新しい作品として作り直す（freshDerivedId）
    */
   trashedBenchWorkNamed?: (name: string) => boolean
   /** ゴミ箱に同じ資料名の資料があるか（trashedMaterialNamesOf。相対比較の作品と同じ見分け方） */
@@ -475,6 +476,30 @@ export function trashedMaterialNamesOf(data: AppData): (name: string) => boolean
   for (const e of Object.values(data.trashEntries))
     if (e.kind === 'material' && typeof e.label === 'string') set.add(refKey(e.label))
   return (name) => set.has(refKey(name))
+}
+
+/** 作り直しの通し番号の上限（削除と作り直しをこれより多く繰り返した作品・資料は、Claude からは作らない） */
+const MAX_GENERATION = 100
+
+/**
+ * Claude が作る作品・資料の id を決める（make(n) は n 番目の作り直しの id。1 は作品名・著者だけから作る id）。
+ * 前から順に見て、棚にあればその作品・資料（found）、削除の印があれば次の番号、どちらでもなければその id で新しく作る。
+ * クラウドの削除の印はコネクタからは書き換えられないので、削除した作品・資料は別の id で作り直す。
+ * 同じ作品名・著者なら、どの端末・どの呼び出しでも同じ順に同じ id を選ぶ（2回送っても2つ作らない）。
+ * 上限まですべて削除の印なら null
+ */
+function freshDerivedId<T>(
+  make: (generation: number) => ID,
+  live: (id: ID) => T | undefined,
+  deleted: (id: ID) => boolean,
+): { id: ID; found?: T } | null {
+  for (let generation = 1; generation <= MAX_GENERATION; generation++) {
+    const id = make(generation)
+    const found = live(id)
+    if (found) return { id, found }
+    if (!deleted(id)) return { id }
+  }
+  return null
 }
 
 /** 作る前の確かめ（もうある・以前に削除された・同じ入力の中で重なる） */
@@ -1180,15 +1205,25 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       nameTwin ??= hits[0]
     }
     if (!work) {
-      const id = benchWorkId(newWork.name, newWork.author ?? '')
-      const same = data.benchWorks[id]
-      if (same) work = same
-      // 以前に Claude が作って削除した作品（同じ id）も、手で足して削除した作品（ゴミ箱に同じ作品名）も作り直さない
-      else if (ctx.wasDeleted?.('benchWorks', id) || ctx.trashedBenchWorkNamed?.(newWork.name))
+      const pick = freshDerivedId(
+        (generation) => benchWorkId(newWork.name, newWork.author ?? '', generation),
+        (id) => data.benchWorks[id],
+        (id) => Boolean(ctx.wasDeleted?.('benchWorks', id)),
+      )
+      if (pick?.found) work = pick.found
+      // ゴミ箱に同じ作品名の作品がある間は作り直さない（戻すと同じ作品名の作品が2つになる。手で足した作品も作品名で見分ける）。
+      // 書き出しの「は以前に削除されています」は、名作分析のプロンプト（01）が見分けに使うので変えない
+      else if (ctx.trashedBenchWorkNamed?.(newWork.name))
         return fail(
-          `相対比較の作品『${short(newWork.name, 30)}』は以前に削除されています（作り直す時は、アプリのホームの「相対比較」で追加するか、ゴミ箱から戻してください）`,
+          `相対比較の作品『${short(newWork.name, 30)}』は以前に削除されています（ゴミ箱にあります。前の分析ごと使う時は、アプリのゴミ箱から戻してください。新しく作り直す時は、アプリのゴミ箱から完全に削除してから、もう一度送ってください）`,
         )
+      else if (!pick)
+        return fail(
+          `相対比較の作品『${short(newWork.name, 30)}』は削除と作り直しを何度も繰り返しているため、これ以上は作れません（アプリのホームの「相対比較」で追加してください）`,
+        )
+      // ゴミ箱から完全に削除した作品（削除の印だけが残る）は、別の id の新しい作品として作り直す
       else {
+        const id = pick.id
         const opt = (v: string | undefined) => (isStr(v) && v.trim() ? v.trim() : undefined)
         const publisher = opt(newWork.publisher)
         const year = opt(newWork.year)
@@ -1300,7 +1335,8 @@ function newMaterialOf(raw: unknown): MaterialNewInput | string {
 /**
  * 資料の記録を足す。決まりは相対比較の分析（W6 buildBenchAnalysis）と同じ: 資料は material → new_material の資料名の順に探し、
  * 無ければ new_material がある時だけ作る（記録を1つでも作る時だけ。資料が先）。著者が違えば同じ資料名の別の資料。
- * 以前に削除した資料（同じ id・ゴミ箱に同じ資料名）は作り直さない。コネクタの答えには足す先の資料をいつも d:… で出す
+ * ゴミ箱に同じ資料名の資料がある間は作り直さない（ゴミ箱から完全に削除した後は、別の id の新しい資料として作り直す）。
+ * コネクタの答えには足す先の資料をいつも d:… で出す
  */
 export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx: BuildContext): BuildResult {
   if (!isObj(input)) return fail('入力の形が違います')
@@ -1360,15 +1396,24 @@ export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx
       nameTwin ??= hits[0]
     }
     if (!material) {
-      const id = materialId(newMaterial.name, newMaterial.author ?? '')
-      const same = data.materials[id]
-      if (same) material = same
-      // 以前に Claude が作って削除した資料（同じ id）も、手で足して削除した資料（ゴミ箱に同じ資料名）も作り直さない
-      else if (ctx.wasDeleted?.('materials', id) || ctx.trashedMaterialNamed?.(newMaterial.name))
+      const pick = freshDerivedId(
+        (generation) => materialId(newMaterial.name, newMaterial.author ?? '', generation),
+        (id) => data.materials[id],
+        (id) => Boolean(ctx.wasDeleted?.('materials', id)),
+      )
+      if (pick?.found) material = pick.found
+      // ゴミ箱に同じ資料名の資料がある間は作り直さない（相対比較の作品と同じ。書き出しの言い方も同じ）
+      else if (ctx.trashedMaterialNamed?.(newMaterial.name))
         return fail(
-          `資料『${short(newMaterial.name, 30)}』は以前に削除されています（作り直す時は、アプリのホームの「資料」で追加するか、ゴミ箱から戻してください）`,
+          `資料『${short(newMaterial.name, 30)}』は以前に削除されています（ゴミ箱にあります。前の記録ごと使う時は、アプリのゴミ箱から戻してください。新しく作り直す時は、アプリのゴミ箱から完全に削除してから、もう一度送ってください）`,
         )
+      else if (!pick)
+        return fail(
+          `資料『${short(newMaterial.name, 30)}』は削除と作り直しを何度も繰り返しているため、これ以上は作れません（アプリのホームの「資料」で追加してください）`,
+        )
+      // ゴミ箱から完全に削除した資料（削除の印だけが残る）は、別の id の新しい資料として作り直す
       else {
+        const id = pick.id
         const opt = (v: string | undefined) => (isStr(v) && v.trim() ? v.trim() : undefined)
         const publisher = opt(newMaterial.publisher)
         const year = opt(newMaterial.year)

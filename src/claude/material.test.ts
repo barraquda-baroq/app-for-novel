@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { addBenchWork } from '../domain/benchOps'
 import { addClaudeRecords, setTitleClaudeAccess } from '../domain/claudeOps'
 import { addMaterial, addMaterialNote, deleteMaterial, deleteMaterialNote, MATERIAL_SECTIONS } from '../domain/materialOps'
-import { listTrash, restoreTrashEntry } from '../domain/trash'
+import { emptyTrash, listTrash, restoreTrashEntry } from '../domain/trash'
 import type { AppData, MaterialNote } from '../domain/types'
 import { decodeRecord, encodeRecord } from '../sync/codec'
 import { novel } from '../test/claudeFixture'
@@ -230,12 +230,36 @@ describe('資料の記録（novel_add_material_notes）', () => {
     // 記録を作れない時は資料も作らない
     const bad = buildMaterialNotes(n.data, { ...input, items: [{ section: '', body_markdown: 'x' }] }, claude)
     expect(bad.records).toHaveLength(0)
-    // 削除した資料は作り直さない
+    // 削除した資料は、ゴミ箱にある間は作り直さない
     const id = r.records[0].record.id
     const deleted = deleteMaterial(data, id)
-    const back = buildMaterialNotes(deleted, input, { ...claude, wasDeleted: trashedIdsOf(deleted) })
+    const back = buildMaterialNotes(deleted, input, {
+      ...claude,
+      wasDeleted: trashedIdsOf(deleted),
+      trashedMaterialNamed: trashedMaterialNamesOf(deleted),
+    })
     expect(back.ok).toBe(false)
-    expect(back.error).toContain('以前に削除されています')
+    expect(back.error).toContain('資料『刀剣図鑑』は以前に削除されています（ゴミ箱にあります。')
+    expect(back.records).toHaveLength(0)
+    // ゴミ箱から完全に削除した後（削除の印だけが残る）は、別の id の新しい資料として作り直す
+    const purged = emptyTrash(deleted)
+    const marks = new Set([`materials:${id}`, `materialNotes:${r.records[1].record.id}`])
+    const ctx: BuildContext = {
+      ...claude,
+      wasDeleted: (table, x) => marks.has(`${table}:${x}`),
+      trashedMaterialNamed: trashedMaterialNamesOf(purged),
+    }
+    const remade = buildMaterialNotes(purged, input, ctx)
+    expect(remade.records.map((x) => x.table)).toEqual(['materials', 'materialNotes'])
+    const newId = remade.records[0].record.id
+    expect(newId).toBe(materialId('刀剣図鑑', '佐藤', 2))
+    expect(newId).not.toBe(id)
+    expect((remade.records[1].record as MaterialNote).materialId).toBe(newId)
+    expect(remade.notes.join()).toContain(`資料 ${shortId('material', newId)}『刀剣図鑑』（佐藤） を資料に追加しました`)
+    // もう一度送っても、作り直した資料に足す
+    const twice = buildMaterialNotes(addClaudeRecords(purged, remade.records).data, input, ctx)
+    expect(twice.records).toHaveLength(0)
+    expect(twice.items[0].status).toBe('duplicate')
   })
 
   it('手で足して削除した資料（ゴミ箱に同じ資料名）は new_material で作り直さない。ゴミ箱から戻せばその資料に足す', () => {
@@ -257,7 +281,7 @@ describe('資料の記録（novel_add_material_notes）', () => {
       const r = buildMaterialNotes(deleted, input, ctxOf(deleted, base))
       expect(r.ok).toBe(false)
       expect(r.error).toBe(
-        '資料『薬草事典』は以前に削除されています（作り直す時は、アプリのホームの「資料」で追加するか、ゴミ箱から戻してください）',
+        '資料『薬草事典』は以前に削除されています（ゴミ箱にあります。前の記録ごと使う時は、アプリのゴミ箱から戻してください。新しく作り直す時は、アプリのゴミ箱から完全に削除してから、もう一度送ってください）',
       )
       expect(r.records).toHaveLength(0)
     }
