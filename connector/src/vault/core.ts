@@ -591,6 +591,8 @@ export class VaultCore {
           source: 'claude',
           now: this.#now(),
           wasDeleted: (table, id) => this.mirror.wasDeleted(table, id) || trashed(table, id),
+          // ゴミ箱の中（作品名を変えてから削除した作品も、ゴミ箱にある間は作り直さない）
+          inTrash: trashed,
           // 手で足して削除した作品（ゴミ箱の一覧は写しでも中身を省かない）
           trashedBenchWorkNamed: trashedBenchNamesOf(raw),
           // 手で足して削除した資料も同じ

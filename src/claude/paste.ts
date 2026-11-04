@@ -193,6 +193,7 @@ export function previewPaste(data: AppData, text: string, opts: PasteOptions): P
     source: 'paste' as const,
     now: opts.now,
     wasDeleted: trashedIdsOf(data),
+    inTrash: trashedIdsOf(data),
     trashedBenchWorkNamed: trashedBenchNamesOf(data),
     trashedMaterialNamed: trashedMaterialNamesOf(data),
   }

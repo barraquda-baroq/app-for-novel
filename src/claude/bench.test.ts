@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { addBenchAnalysis, addBenchWork, addTitleBenchWork, deleteBenchAnalysis, deleteBenchWork } from '../domain/benchOps'
+import {
+  addBenchAnalysis,
+  addBenchWork,
+  addTitleBenchWork,
+  deleteBenchAnalysis,
+  deleteBenchWork,
+  updateBenchWork,
+} from '../domain/benchOps'
 import { addClaudeRecords } from '../domain/claudeOps'
 import { setTitleClaudeAccess } from '../domain/claudeOps'
 import { emptyTrash, listTrash, restoreTrashEntry } from '../domain/trash'
@@ -233,6 +240,70 @@ describe('相対比較の分析（novel_add_bench_analysis）', () => {
     // 通し番号の id は、作品名・著者の比べ方（全角と半角・続く空白）も同じ
     expect(benchWorkId('ＳＦ傑作選', '', 2)).toBe(benchWorkId('SF傑作選', ' ', 2))
     expect(benchWorkId('星を継ぐ', '佐藤', 1)).toBe(benchWorkId('星を継ぐ', '佐藤'))
+  })
+
+  it('作品名を変えてからゴミ箱に入れた作品も、ゴミ箱にある間は元の作品名の new_work で作り直さない', () => {
+    const n = sample()
+    const input = {
+      work: '星を継ぐ',
+      new_work: { name: '星を継ぐ', author: '佐藤' },
+      items: [{ viewpoint: '構成', body_markdown: '三幕', run_date: '2026-10-29' }],
+    }
+    const first = buildBenchAnalysis(n.data, input, claude)
+    const oldId = first.records[0].record.id
+    // 作者が作品名を直してから削除: ゴミ箱の作品名は直した後の名前
+    const renamed = updateBenchWork(add(n.data, first.records), oldId, { name: '星を継ぐもの' })
+    const deleted = deleteBenchWork(renamed, oldId)
+    expect(trashedBenchNamesOf(deleted)('星を継ぐ')).toBe(false)
+    for (const base of [claude, paste]) {
+      const r = buildBenchAnalysis(deleted, input, {
+        ...base,
+        wasDeleted: trashedIdsOf(deleted),
+        inTrash: trashedIdsOf(deleted),
+        trashedBenchWorkNamed: trashedBenchNamesOf(deleted),
+      })
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain('は以前に削除されています（ゴミ箱にあります。')
+      expect(r.records).toHaveLength(0)
+    }
+    // ゴミ箱から完全に削除した後は、別の id で作り直す
+    const purged = emptyTrash(deleted)
+    const again = buildBenchAnalysis(purged, input, {
+      ...claude,
+      wasDeleted: (table, id) => table === 'benchWorks' && id === oldId,
+      inTrash: trashedIdsOf(purged),
+      trashedBenchWorkNamed: trashedBenchNamesOf(purged),
+    })
+    expect(again.records[0].record.id).toBe(benchWorkId('星を継ぐ', '佐藤', 2))
+  })
+
+  it('作り直した作品の著者・作品名を後で直しても、コネクタとアプリの貼り付けは同じ作品に足す', () => {
+    const n = sample()
+    const input = {
+      work: '星を継ぐ',
+      new_work: { name: '星を継ぐ', author: '佐藤' },
+      items: [{ viewpoint: '構成', body_markdown: '三幕', run_date: '2026-10-29' }],
+    }
+    // 1番の作品は削除してゴミ箱も空にした（削除の印だけ）。コネクタが2番の id で作り直した
+    const oldId = benchWorkId('星を継ぐ', '佐藤')
+    const marks = (table: string, id: string) => table === 'benchWorks' && id === oldId
+    const remade = buildBenchAnalysis(n.data, input, { ...claude, wasDeleted: marks })
+    const newId = remade.records[0].record.id
+    expect(newId).toBe(benchWorkId('星を継ぐ', '佐藤', 2))
+    // 作者が著者を直した（作品名で見つけても著者が違うので、同じ作品名の別の作品の扱いになる）
+    const edited = updateBenchWork(add(n.data, remade.records), newId, { author: '佐藤一郎' })
+    const next = { ...input, items: [{ viewpoint: '文体', body_markdown: '短文', run_date: '2026-10-30' }] }
+    const viaConnector = buildBenchAnalysis(edited, next, { ...claude, wasDeleted: marks })
+    // 貼り付けは削除の印を知らないが、先に棚の2番の作品を見つけるので、1番の id で別の作品を作らない
+    const viaPaste = buildBenchAnalysis(edited, next, {
+      ...paste,
+      wasDeleted: trashedIdsOf(edited),
+      inTrash: trashedIdsOf(edited),
+    })
+    for (const r of [viaConnector, viaPaste]) {
+      expect(r.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+      expect((r.records[0].record as BenchAnalysis).workId).toBe(newId)
+    }
   })
 
   it('手で足して削除した作品（ゴミ箱に同じ作品名）は new_work で作り直さない。ゴミ箱から戻せばその作品に足す', () => {

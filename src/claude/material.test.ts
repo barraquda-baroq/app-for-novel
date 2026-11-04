@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { addBenchWork } from '../domain/benchOps'
 import { addClaudeRecords, setTitleClaudeAccess } from '../domain/claudeOps'
-import { addMaterial, addMaterialNote, deleteMaterial, deleteMaterialNote, MATERIAL_SECTIONS } from '../domain/materialOps'
+import {
+  addMaterial,
+  addMaterialNote,
+  deleteMaterial,
+  deleteMaterialNote,
+  MATERIAL_SECTIONS,
+  updateMaterial,
+} from '../domain/materialOps'
 import { emptyTrash, listTrash, restoreTrashEntry } from '../domain/trash'
 import type { AppData, MaterialNote } from '../domain/types'
 import { decodeRecord, encodeRecord } from '../sync/codec'
@@ -260,6 +267,16 @@ describe('資料の記録（novel_add_material_notes）', () => {
     const twice = buildMaterialNotes(addClaudeRecords(purged, remade.records).data, input, ctx)
     expect(twice.records).toHaveLength(0)
     expect(twice.items[0].status).toBe('duplicate')
+    // 資料名を変えてからゴミ箱に入れた資料も、ゴミ箱にある間は元の資料名で作り直さない
+    const renamed = deleteMaterial(updateMaterial(data, id, { name: '刀剣の図鑑' }), id)
+    const refused = buildMaterialNotes(renamed, input, {
+      ...claude,
+      wasDeleted: trashedIdsOf(renamed),
+      inTrash: trashedIdsOf(renamed),
+      trashedMaterialNamed: trashedMaterialNamesOf(renamed),
+    })
+    expect(refused.ok).toBe(false)
+    expect(refused.error).toContain('資料『刀剣図鑑』は以前に削除されています（ゴミ箱にあります。')
   })
 
   it('手で足して削除した資料（ゴミ箱に同じ資料名）は new_material で作り直さない。ゴミ箱から戻せばその資料に足す', () => {
