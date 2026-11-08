@@ -63,6 +63,7 @@ import {
 } from './readLogic'
 import { readingAnchor, settleScrollTo, type ReadingAnchor } from './scrollAnchor'
 import { Tcy } from './Tcy'
+import { TocBody, type TocPick } from './TocBody'
 import { createPageCache, layoutVerticalPages } from './verticalPages'
 import './read.css'
 
@@ -248,16 +249,16 @@ function ReadToc({
   pieceCount,
   open,
   onToggle,
-  onJump,
-  href,
+  onPick,
+  hrefOf,
   pages,
 }: {
   groups: TocGroup[]
   pieceCount: number
   open: boolean
   onToggle: () => void
-  onJump: JumpHandler
-  href: string
+  onPick: TocPick
+  hrefOf: (pieceId: ID) => string
   /** 縦書きのページ表示: 話・幕の最初のページの番号（横書きでは null） */
   pages: ReadonlyMap<ID, number> | null
 }) {
@@ -272,84 +273,10 @@ function ReadToc({
       <h2 className="rt-toc-title">
         目次<span className="rt-toc-count">{pieceCount}</span>
       </h2>
-      <TocBody groups={groups} onJump={onJump} href={href} pages={pages} />
+      <TocBody groups={groups} hrefOf={hrefOf} onPick={onPick} className="rt-toc-body" pages={pages} />
     </nav>
   )
 }
-
-/** 目次の中身。開閉や表示の切り替えでは描き直さない（数百話あっても目次を開く・閉じるのを軽くする） */
-const TocBody = memo(function TocBody({
-  groups,
-  onJump,
-  href,
-  pages,
-}: {
-  groups: TocGroup[]
-  onJump: JumpHandler
-  href: string
-  pages: ReadonlyMap<ID, number> | null
-}) {
-  const pageOf = (id: ID) => {
-    const n = pages?.get(id)
-    return n === undefined ? null : (
-      <span className="rt-toc-page" aria-label={`${n}ページ`} data-testid="toc-page">
-        p.{n}
-      </span>
-    )
-  }
-  return (
-    <div className="rt-toc-body">
-      {groups.map((g, gi) => (
-        <div key={g.chapterId ?? `root-${gi}`} className="rt-toc-group">
-          {g.name ? <p className="rt-toc-chapter">{g.name}</p> : null}
-          <ol className="rt-toc-list">
-            {g.items.map((b) => (
-              <li key={b.pieceId}>
-                <a
-                  href={href}
-                  className={`rt-toc-link${b.kind === 'special' ? ' is-special' : ''}`}
-                  onClick={(e) => onJump(e, pieceAnchorId(b.pieceId))}
-                  data-testid="toc-link"
-                >
-                  <span className="rt-toc-label">{b.label}</span>
-                  {b.subtitle.trim() ? <span className="rt-toc-subtitle">{b.subtitle.trim()}</span> : null}
-                  {b.body === null && !b.acts ? (
-                    <span className="rt-toc-missing" title={NO_ACTIVE_MESSAGE} data-testid="toc-missing">
-                      採用原稿なし
-                    </span>
-                  ) : null}
-                  {pageOf(b.pieceId)}
-                </a>
-                {b.acts ? (
-                  <ol className="rt-toc-acts" aria-label={`${b.label}の幕`}>
-                    {b.acts.map((a) => (
-                      <li key={a.pieceId}>
-                        <a
-                          href={href}
-                          className="rt-toc-link rt-toc-act"
-                          onClick={(e) => onJump(e, actAnchorId(a.pieceId), pages?.get(a.pieceId))}
-                          data-testid="toc-act-link"
-                        >
-                          <span className="rt-toc-label">{a.label}</span>
-                          {a.body === null ? (
-                            <span className="rt-toc-missing" title={NO_ACTIVE_MESSAGE} data-testid="toc-missing">
-                              採用原稿なし
-                            </span>
-                          ) : null}
-                          {pageOf(a.pieceId)}
-                        </a>
-                      </li>
-                    ))}
-                  </ol>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        </div>
-      ))}
-    </div>
-  )
-})
 
 export function ReadThroughPage() {
   const { titleId = '' } = useParams()
@@ -526,8 +453,8 @@ export function ReadThroughPage() {
     verticalRef.current = vertical
   }, [vertical])
   const toggleToc = useCallback(() => setTocOpen((v) => !v), [])
-  const jumpTo = useCallback(
-    (e: MouseEvent<HTMLAnchorElement>, anchorId: string, page?: number) => {
+  const jumpTo = useCallback<JumpHandler>(
+    (e, anchorId, page) => {
       e.preventDefault()
       // スマホでは目次を先に閉じる（閉じて本文の位置が動いてから移動する。縦書きのページは、広がった枠に合わせてから）
       flushSync(() => setTocOpen(false))
@@ -547,6 +474,12 @@ export function ReadThroughPage() {
       heading?.focus({ preventScroll: true })
     },
     [checkNear, refitPages],
+  )
+  // 目次の項目はどれもこの画面のまま（押すと本文の中の見出しへ移る）
+  const tocHref = useCallback(() => selfHref, [selfHref])
+  const pickToc = useCallback<TocPick>(
+    (e, t) => (t.isAct ? jumpTo(e, actAnchorId(t.pieceId), tocPages?.get(t.pieceId)) : jumpTo(e, pieceAnchorId(t.pieceId))),
+    [jumpTo, tocPages],
   )
 
   if (!title) return <NotFound message="タイトルが見つかりません。" />
@@ -759,8 +692,8 @@ export function ReadThroughPage() {
               pieceCount={pieceCount}
               open={tocOpen}
               onToggle={toggleToc}
-              onJump={jumpTo}
-              href={selfHref}
+              onPick={pickToc}
+              hrefOf={tocHref}
               pages={tocPages}
             />
 

@@ -9,9 +9,11 @@ import { actions } from '../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../store/appStore'
 import { useAppUpdate, usePrefs, useToasts } from '../../store/uiStore'
 import { useSync } from '../../sync/controller'
+import { closeTopLayer } from '../../platform/nativeInit'
 import { cancelAllDialogs } from '../../ui/dialogs'
 import { AppFrame } from '../../ui/Layout'
 import { draftKey, ownerLockName, readCrashDraft, writeCrashDraft } from './crashDraft'
+import { JUMP_SHEET_QUERY } from './logic'
 import { PieceWorkspace } from './PieceWorkspace'
 import { pieceField, versionField } from './session'
 
@@ -419,6 +421,247 @@ describe('最新話の「次の話を追加」', () => {
     renderAt(`/t/${titleId}/p/${ep}`)
     expect(((await screen.findByTestId('next-piece')) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.queryByTestId('add-next-piece')).toBeNull()
+  })
+})
+
+describe('話の一覧（左上の「第n話」から開く）', () => {
+  /**
+   * 章が2つ・プロローグ・幕に分けた話・採用原稿の無い話のあるタイトル。
+   * 第一章　旅立ち: プロローグ・第1話 旅立ち・第2話（第1幕・第2幕）／第二章　帰郷: 第3話・第4話（採用原稿なし）
+   */
+  function seedStory() {
+    const titleId = actions.createTitle('一覧の作品')
+    const [e1, e2, e3, e4] = [1, 2, 3, 4].map(() => actions.addEpisode(titleId))
+    const prologue = actions.addSpecial(titleId, { chapterId: null, index: 0 }, 'プロローグ')
+    actions.setChaptersEnabled(titleId, true)
+    const ch1 = getData().titles[titleId].structure[0].id
+    actions.updateChapter(ch1, { name: '第一章　旅立ち' })
+    const ch2 = actions.addChapter(titleId, '第二章　帰郷')
+    actions.movePiece(e4, { chapterId: ch2, index: 0 })
+    actions.movePiece(e3, { chapterId: ch2, index: 0 })
+    actions.updatePiece(e1, { subtitle: '旅立ち' })
+    actions.updateVersion(getData().pieces[e2].versionIds[0], { body: '一幕目。二幕目。' })
+    const acts = actions.separatePiece(e2, [4])
+    actions.setActiveVersion(e4, null)
+    return { titleId, prologue, e1, e2, e3, e4, acts }
+  }
+  const list = () => screen.getByTestId('piece-jump-list')
+  const labels = (testId: string) =>
+    within(list())
+      .getAllByTestId(testId)
+      .map((a) => a.querySelector('.rt-toc-label')?.textContent)
+  const current = () => list().querySelector<HTMLAnchorElement>('[aria-current="page"]')
+  const location = () => screen.getByTestId('location').textContent
+  const linkOf = (label: string) =>
+    [...list().querySelectorAll<HTMLAnchorElement>('a.rt-toc-link')].find(
+      (a) => a.querySelector('.rt-toc-label')?.textContent === label,
+    )!
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  it('通し読みの目次と同じ並び（章の区切り・プロローグ・幕・採用原稿なし）で開き、今の話に印を付けてフォーカスする。選ぶとその話へ移る', async () => {
+    const { titleId, e1, e3 } = seedStory()
+    renderAt(`/t/${titleId}/p/${e1}`)
+    const user = userEvent.setup()
+    const button = await screen.findByTestId('piece-jump')
+    expect(button.getAttribute('aria-label')).toBe('第1話　話の一覧を開く')
+    expect(button.getAttribute('title')).toBe('話の一覧を開く（話数は並び順で自動的に決まり、変更できません）')
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    await user.click(button)
+
+    expect(screen.getByRole('dialog', { name: '話の一覧' })).toBeTruthy()
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    expect(button.getAttribute('aria-controls')).toBe(list().id)
+    expect([...list().querySelectorAll('.rt-toc-chapter')].map((c) => c.textContent)).toEqual(['第一章　旅立ち', '第二章　帰郷'])
+    expect(labels('toc-link')).toEqual(['プロローグ', '第1話', '第2話', '第3話', '第4話'])
+    expect(labels('toc-act-link')).toEqual(['第1幕', '第2幕'])
+    expect(within(list()).getByText('旅立ち', { selector: '.rt-toc-subtitle' })).toBeTruthy()
+    // 採用原稿の無い話は第4話だけ（幕に分けた話には付けない）
+    expect(within(list()).getAllByTestId('toc-missing')).toHaveLength(1)
+    expect(linkOf('第4話').textContent).toContain('採用原稿なし')
+    expect(list().querySelector('.pj-head')?.textContent).toBe('話の一覧5')
+    // 今の話に印が1つだけ付き、そこにフォーカスがある
+    expect(list().querySelectorAll('[aria-current="page"]')).toHaveLength(1)
+    expect(current()).toBe(linkOf('第1話'))
+    expect(document.activeElement).toBe(current())
+    // 項目は本当の行き先（Ctrl・⌘ を押しながらで新しいタブに開ける）
+    expect(linkOf('第3話').getAttribute('href')).toBe(`/t/${titleId}/p/${e3}`)
+
+    await user.click(linkOf('第3話'))
+    expect(location()).toBe(`/t/${titleId}/p/${e3}`)
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+    expect(screen.getByTestId('piece-label').textContent).toBe('第3話')
+    // 移った先でも開ける（今の話は第3話）
+    await user.click(screen.getByTestId('piece-jump'))
+    expect(current()).toBe(linkOf('第3話'))
+  })
+
+  it('今の話を選ぶと閉じるだけ（保存していない編集があっても確かめない）。Esc で閉じて押した所へ戻る', async () => {
+    const { titleId, e1 } = seedStory()
+    renderAt(`/t/${titleId}/p/${e1}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), '書きかけ')
+    await user.click(screen.getByTestId('piece-jump'))
+    await user.click(linkOf('第1話'))
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(location()).toBe(`/t/${titleId}/p/${e1}`)
+    expect(screen.getByTestId('unsaved-badge')).toBeTruthy()
+
+    await user.click(screen.getByTestId('piece-jump'))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByTestId('piece-jump'))
+    // Android の「戻る」（Esc を送る）でも閉じる
+    await user.click(screen.getByTestId('piece-jump'))
+    act(() => expect(closeTopLayer()).toBe(true))
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByTestId('piece-jump'))
+    // 押した所をもう一度押すと閉じる
+    await user.click(screen.getByTestId('piece-jump'))
+    await user.click(screen.getByTestId('piece-jump'))
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+    // 外側を押しても閉じる
+    await user.click(screen.getByTestId('piece-jump'))
+    await user.click(screen.getByTestId('subtitle-input'))
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+  })
+
+  it('開いたまま別の話へ移った時（ブラウザの「戻る」など）は閉じる', async () => {
+    const { titleId, e1, e3 } = seedStory()
+    const { router } = renderAt(`/t/${titleId}/p/${e3}`)
+    const user = userEvent.setup()
+    await screen.findByTestId('piece-jump')
+    act(() => void router.navigate(`/t/${titleId}/p/${e1}`))
+    await waitFor(() => expect(screen.getByTestId('piece-label').textContent).toBe('第1話'))
+    await user.click(screen.getByTestId('piece-jump'))
+    expect(current()).toBe(linkOf('第1話'))
+    act(() => void router.navigate(-1))
+    await waitFor(() => expect(location()).toBe(`/t/${titleId}/p/${e3}`))
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+    expect(screen.getByTestId('piece-jump').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('保存していない編集があれば、前後の話への移動と同じく確かめる（キャンセルで留まり、保存して移動もできる）', async () => {
+    const { titleId, e1, e3 } = seedStory()
+    renderAt(`/t/${titleId}/p/${e1}`)
+    const user = userEvent.setup()
+    await user.type(await screen.findByTestId('active-editor'), 'A')
+    await user.click(screen.getByTestId('piece-jump'))
+    await user.click(linkOf('第3話'))
+    let dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('保存していない編集があります')
+    // 一覧は先に閉じている（確認と重ならない）
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(location()).toBe(`/t/${titleId}/p/${e1}`)
+    expect(document.activeElement).toBe(screen.getByTestId('piece-jump'))
+
+    await user.click(screen.getByTestId('piece-jump'))
+    await user.click(linkOf('第3話'))
+    dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '保存して移動' }))
+    await waitFor(() => expect(location()).toBe(`/t/${titleId}/p/${e3}`))
+    expect(bodyOf(getData().pieces[e1].activeVersionId!)).toBe('A')
+  })
+
+  it('幕の画面では今の幕に印を付け、別の幕へ移れる。幕に分けた話を選ぶと幕の一覧へ（そこの「第n話」からも開ける）', async () => {
+    const { titleId, e2, acts } = seedStory()
+    renderAt(`/t/${titleId}/p/${acts[0]}`)
+    const user = userEvent.setup()
+    // 幕の画面の「第n話」は属する話のもの
+    expect((await screen.findByTestId('piece-label')).textContent).toBe('第2話')
+    await user.click(screen.getByTestId('piece-jump'))
+    expect(current()).toBe(within(list()).getAllByTestId('toc-act-link')[0])
+    await user.click(within(list()).getAllByTestId('toc-act-link')[1])
+    expect(location()).toBe(`/t/${titleId}/p/${acts[1]}`)
+
+    await user.click(screen.getByTestId('piece-jump'))
+    expect(current()).toBe(within(list()).getAllByTestId('toc-act-link')[1])
+    await user.click(linkOf('第2話'))
+    expect(location()).toBe(`/t/${titleId}/p/${e2}`)
+    expect(await screen.findByTestId('episode-folder')).toBeTruthy()
+    const folderJump = screen.getByTestId('piece-jump')
+    expect(within(folderJump).getByTestId('folder-label').textContent).toBe('第2話')
+    await user.click(folderJump)
+    expect(current()).toBe(linkOf('第2話'))
+    await user.click(linkOf('プロローグ'))
+    await waitFor(() => expect(location()).toMatch(/\/p\/[^/]+$/))
+    expect(screen.queryByTestId('episode-folder')).toBeNull()
+  })
+
+  it('特殊ブロックの画面では「特殊」の札で開ける', async () => {
+    const { titleId, prologue } = seedStory()
+    renderAt(`/t/${titleId}/p/${prologue}`)
+    const user = userEvent.setup()
+    const badge = await screen.findByTestId('piece-jump')
+    expect(badge.textContent).toBe('特殊')
+    expect(badge.getAttribute('aria-label')).toBe('特殊　話の一覧を開く')
+    // 見出しは今までどおり入力欄で直せる
+    expect(screen.getByTestId('special-label-input')).toBeTruthy()
+    await user.click(badge)
+    expect(current()).toBe(linkOf('プロローグ'))
+  })
+
+  it('↑↓・Home・End で項目を動き（端で止まる）、Enter で移る', async () => {
+    const { titleId, e1, e3 } = seedStory()
+    renderAt(`/t/${titleId}/p/${e1}`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('piece-jump'))
+    const focused = () => document.activeElement?.querySelector('.rt-toc-label')?.textContent
+    expect(focused()).toBe('第1話')
+    await user.keyboard('{ArrowDown}')
+    expect(focused()).toBe('第2話')
+    await user.keyboard('{ArrowDown}')
+    expect(focused()).toBe('第1幕')
+    await user.keyboard('{End}')
+    expect(focused()).toBe('第4話')
+    await user.keyboard('{ArrowDown}')
+    expect(focused()).toBe('第4話')
+    await user.keyboard('{Home}')
+    expect(focused()).toBe('プロローグ')
+    await user.keyboard('{ArrowUp}')
+    expect(focused()).toBe('プロローグ')
+    await user.keyboard('{End}{ArrowUp}')
+    expect(focused()).toBe('第3話')
+    await user.keyboard('{Enter}')
+    expect(location()).toBe(`/t/${titleId}/p/${e3}`)
+    expect(screen.queryByTestId('piece-jump-list')).toBeNull()
+  })
+
+  it('スマホ・高さの低い画面では下からのシート（ダイアログ）で開き、選ぶと移る', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({
+        matches: query === JUMP_SHEET_QUERY,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+    })
+    const { titleId, e1, e3 } = seedStory()
+    renderAt(`/t/${titleId}/p/${e1}`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('piece-jump'))
+    const dialog = screen.getByRole('dialog', { name: '話の一覧' })
+    expect(dialog.classList.contains('modal')).toBe(true)
+    expect(screen.queryByTestId('piece-jump-pop')).toBeNull()
+    expect(within(dialog).getByTestId('piece-jump-list')).toBeTruthy()
+    // 見出しは Modal のもの（一覧の中には出さない）
+    expect(list().querySelector('.pj-head')).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(current()))
+    expect(current()).toBe(linkOf('第1話'))
+    await user.click(linkOf('第3話'))
+    expect(location()).toBe(`/t/${titleId}/p/${e3}`)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 

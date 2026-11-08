@@ -1,6 +1,6 @@
 // 原稿画面（採用原稿と推敲バージョンの比較）とメモ画面の E2E テスト
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
-import { openApp, seed, seedTitleWithEpisodes } from './helpers'
+import { noHorizontalScroll, openApp, seed, seedTitleWithEpisodes } from './helpers'
 
 const BODY1 =
   '吾輩は猫である。名前はまだ無い。\nどこで生れたかとんと見当がつかぬ。\n何でも薄暗いじめじめした所でニャーニャー泣いていた事だけは記憶している。'
@@ -119,6 +119,54 @@ async function outerScrolls(page: Page, testId: string): Promise<string[]> {
     if (window.scrollY !== 0) out.push(`window: ${window.scrollY}`)
     return out
   })
+}
+
+/**
+ * 話の一覧（左上の「第n話」から開く）のタイトル。
+ * 第一章　旅立ち: プロローグ・第1話・第2話（第1幕・第2幕）／第二章　帰郷: 第3話・第4話（採用原稿なし）
+ */
+async function seedJumpStory(page: Page) {
+  await openApp(page)
+  return seed(page, ({ actions, getData }) => {
+    const titleId = actions.createTitle('一覧の作品')
+    const [e1, e2, e3, e4] = [1, 2, 3, 4].map((n) => {
+      const id = actions.addEpisode(titleId)
+      actions.updateVersion(getData().pieces[id].versionIds[0], { body: `第${n}話の本文。` })
+      return id
+    })
+    const prologue = actions.addSpecial(titleId, { chapterId: null, index: 0 }, 'プロローグ')
+    actions.setChaptersEnabled(titleId, true)
+    actions.updateChapter(getData().titles[titleId].structure[0].id, { name: '第一章　旅立ち' })
+    const ch2 = actions.addChapter(titleId, '第二章　帰郷')
+    actions.movePiece(e4, { chapterId: ch2, index: 0 })
+    actions.movePiece(e3, { chapterId: ch2, index: 0 })
+    actions.updatePiece(e1, { subtitle: '門出' })
+    actions.updateVersion(getData().pieces[e2].versionIds[0], { body: '一幕目。二幕目。' })
+    const acts = actions.separatePiece(e2, [4])
+    actions.setActiveVersion(e4, null)
+    return { titleId, prologue, e1, e2, e3, e4, acts }
+  })
+}
+
+/** 話の一覧の、ラベルが label の項目 */
+function jumpItem(page: Page, label: string): Locator {
+  return page
+    .getByTestId('piece-jump-list')
+    .locator('a.rt-toc-link')
+    .filter({ has: page.locator('.rt-toc-label', { hasText: new RegExp(`^${label}$`) }) })
+}
+
+/** 一覧の中の今の話・幕 */
+function jumpCurrent(page: Page): Locator {
+  return page.getByTestId('piece-jump-list').locator('a[aria-current="page"]')
+}
+
+/** el が box の見えている範囲に入っているか */
+async function insideBox(el: Locator, box: Locator): Promise<boolean> {
+  const a = await el.boundingBox()
+  const b = await box.boundingBox()
+  if (!a || !b) return false
+  return a.y >= b.y - 1 && a.y + a.height <= b.y + b.height + 1
 }
 
 test.describe('原稿画面', () => {
@@ -342,7 +390,11 @@ test.describe('原稿画面', () => {
     await expect(label).toContainText('第1話')
     await expect(label.locator('input, textarea, [contenteditable="true"]')).toHaveCount(0)
     await expect(page.getByTestId('special-label-input')).toHaveCount(0)
-    await expect(label).toHaveAttribute('title', '話数は並び順で自動的に決まり、変更できません')
+    // 押すと話の一覧が開く（話数を変えられないことはツールチップに残す）
+    await expect(page.getByTestId('piece-jump')).toHaveAttribute(
+      'title',
+      '話の一覧を開く（話数は並び順で自動的に決まり、変更できません）',
+    )
 
     const subtitle = page.getByTestId('subtitle-input')
     await expect(subtitle).toHaveAttribute('placeholder', '話の題（任意）')
@@ -778,6 +830,156 @@ test.describe('原稿画面', () => {
     await expect(editor).toBeFocused()
     const longTasks = await page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks)
     expect(Math.max(0, ...longTasks)).toBeLessThan(200)
+  })
+})
+
+test.describe('話の一覧（左上の「第n話」から開く）', () => {
+  test('押した所の下に開き、今の話に印。↓と Enter で幕へ、押して別の話へ移る。保存していない編集があれば確かめる', async ({
+    page,
+  }, info) => {
+    test.skip(!isDesktop(info), 'パソコンのポップオーバー（スマホはシート）')
+    const { titleId, e1, e3, acts } = await seedJumpStory(page)
+    await openPiece(page, titleId, e1)
+    const button = page.getByTestId('piece-jump')
+    await button.click()
+    const pop = page.getByTestId('piece-jump-pop')
+    await expect(pop).toBeVisible()
+    await expect(pop).toHaveAttribute('role', 'dialog')
+    // 押した所のすぐ下・画面の中
+    const b = (await button.boundingBox())!
+    const p = (await pop.boundingBox())!
+    expect(p.y).toBeGreaterThanOrEqual(b.y + b.height)
+    expect(p.y - (b.y + b.height)).toBeLessThan(16)
+    expect(p.x).toBeGreaterThanOrEqual(0)
+    expect(p.y + p.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+    // 通し読みの目次と同じ並び（章の区切り・特殊ブロック・幕・採用原稿なし）
+    await expect(pop.locator('.rt-toc-chapter')).toHaveText(['第一章　旅立ち', '第二章　帰郷'])
+    await expect(pop.getByTestId('toc-link').locator('.rt-toc-label')).toHaveText([
+      'プロローグ',
+      '第1話',
+      '第2話',
+      '第3話',
+      '第4話',
+    ])
+    await expect(pop.getByTestId('toc-act-link').locator('.rt-toc-label')).toHaveText(['第1幕', '第2幕'])
+    await expect(jumpItem(page, '第4話')).toContainText('採用原稿なし')
+    await expect(jumpItem(page, '第1話')).toContainText('門出')
+    // 今の話に印を付けてフォーカスする
+    await expect(jumpCurrent(page)).toHaveCount(1)
+    await expect(jumpCurrent(page)).toContainText('第1話')
+    await expect(jumpCurrent(page)).toBeFocused()
+
+    // ↓↓ で第2話の第1幕、Enter でその幕の画面へ
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByTestId('toc-act-link').first()).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(new RegExp(`/p/${acts[0]}$`))
+    await expect(pop).toHaveCount(0)
+    await expect(page.getByTestId('act-label')).toHaveText('第1幕')
+
+    // 幕の画面でも同じ一覧（今の幕に印）。Esc で閉じて押した所へ戻る
+    await button.click()
+    await expect(jumpCurrent(page)).toHaveText('第1幕')
+    await page.keyboard.press('Escape')
+    await expect(pop).toHaveCount(0)
+    await expect(button).toBeFocused()
+
+    // 保存していない編集があれば、前後の話への移動と同じく確かめる
+    await page.getByTestId('active-editor').click()
+    await page.keyboard.press('End')
+    await page.keyboard.type('書き足し')
+    await button.click()
+    await jumpItem(page, '第3話').click()
+    const dialog = page.getByRole('dialog', { name: '保存していない編集があります' })
+    await expect(dialog).toBeVisible()
+    await expect(pop).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'キャンセル' }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(page).toHaveURL(new RegExp(`/p/${acts[0]}$`))
+    await expect(button).toBeFocused()
+    await button.click()
+    await jumpItem(page, '第3話').click()
+    await dialog.getByRole('button', { name: '保存して移動' }).click()
+    await expect(page).toHaveURL(new RegExp(`/p/${e3}$`))
+    await expect(page.getByTestId('piece-label')).toHaveText('第3話')
+    expect(await activeBodyOf(page, acts[0])).toBe('一幕目。書き足し')
+  })
+
+  test('数百話あっても、開くと今の話が見えていて、開く・閉じるで画面が止まらない', async ({ page }, info) => {
+    test.skip(!isDesktop(info), '計測はデスクトップだけで行う')
+    await openApp(page)
+    const { titleId, target } = await seed(page, ({ actions, getData }) => {
+      const titleId = actions.createTitle('長い連載')
+      const ids: string[] = []
+      for (let i = 0; i < 400; i++) ids.push(actions.addEpisode(titleId))
+      actions.setChaptersEnabled(titleId, true)
+      for (let c = 2; c <= 8; c++) {
+        const ch = actions.addChapter(titleId, `第${c}章`)
+        for (let i = 0; i < 50; i++) actions.movePiece(ids[(c - 1) * 50 + i], { chapterId: ch, index: i })
+      }
+      for (const i of [10, 120, 300, 360]) {
+        actions.updateVersion(getData().pieces[ids[i]].versionIds[0], { body: 'あいうえお。かきくけこ。' })
+        actions.separatePiece(ids[i], [6])
+      }
+      return { titleId, target: ids[349] }
+    })
+    await openPiece(page, titleId, target)
+    await expect(page.getByTestId('piece-label')).toHaveText('第350話')
+    await page.evaluate(() => {
+      const w = window as unknown as { __longTasks: number[] }
+      w.__longTasks = []
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) w.__longTasks.push(Math.round(e.duration))
+      }).observe({ type: 'longtask' })
+    })
+    const button = page.getByTestId('piece-jump')
+    for (let i = 0; i < 3; i++) {
+      await button.click()
+      const pop = page.getByTestId('piece-jump-pop')
+      await expect(page.getByTestId('toc-link')).toHaveCount(400)
+      await expect(jumpCurrent(page)).toContainText('第350話')
+      await expect(jumpCurrent(page)).toBeFocused()
+      expect(await insideBox(jumpCurrent(page), pop)).toBe(true)
+      await page.keyboard.press('Escape')
+      await expect(pop).toHaveCount(0)
+    }
+    const longTasks = await page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks)
+    expect(Math.max(0, ...longTasks)).toBeLessThan(200)
+  })
+
+  test('スマホでは下からのシートで開き、今の話が見えている。押して移り、「戻る」（Esc）で閉じる', async ({ page }, info) => {
+    test.skip(isDesktop(info), 'スマホのみ')
+    await page.setViewportSize({ width: 360, height: 780 })
+    const { titleId, e3, e4, prologue } = await seedJumpStory(page)
+    await openPiece(page, titleId, e4)
+    // 特殊ブロック以外は「第n話」を押す
+    await page.getByTestId('piece-jump').click()
+    const sheet = page.locator('.modal')
+    await expect(sheet).toBeVisible()
+    await expect(sheet).toHaveAttribute('aria-labelledby', /.+/)
+    await expect(page.getByRole('dialog', { name: '話の一覧' })).toBeVisible()
+    // 下からのシート（下端が画面の下端）
+    await expect.poll(async () => Math.round((await sheet.boundingBox())!.y + (await sheet.boundingBox())!.height)).toBe(780)
+    await expect(jumpCurrent(page)).toContainText('第4話')
+    await expect(jumpCurrent(page)).toBeInViewport()
+    expect(await insideBox(jumpCurrent(page), sheet.locator('.modal-body'))).toBe(true)
+    // Android の「戻る」と同じ Esc で閉じる
+    await page.keyboard.press('Escape')
+    await expect(sheet).toHaveCount(0)
+    await page.getByTestId('piece-jump').click()
+    await jumpItem(page, '第3話').click()
+    await expect(page).toHaveURL(new RegExp(`/p/${e3}$`))
+    await expect(sheet).toHaveCount(0)
+    await expect(page.getByTestId('piece-label')).toHaveText('第3話')
+    // プロローグ（特殊ブロック）へ移ると、「特殊」の札から開ける
+    await page.getByTestId('piece-jump').click()
+    await jumpItem(page, 'プロローグ').click()
+    await expect(page).toHaveURL(new RegExp(`/p/${prologue}$`))
+    await expect(page.getByTestId('piece-jump')).toHaveText('特殊')
+    await page.getByTestId('piece-jump').click()
+    await expect(jumpCurrent(page)).toContainText('プロローグ')
+    await noHorizontalScroll(page)
   })
 })
 

@@ -1,0 +1,44 @@
+/*
+ * 「第n話」から開く話の一覧（PieceJump.tsx）の入れ物。項目の見た目は通し読みの目次と同じ（read/toc.css）。
+ * パソコンは押した所の下に開くポップオーバー（.pj-pop）、スマホ・高さの低い画面は下からのシート（Modal の中）。
+ */
+.pj-pop {
+  position: fixed;
+  /* 推敲案の一覧（40）より上、ダイアログ（100）より下。メニュー（.pm-menu）と同じ */
+  z-index: 60;
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(560px, calc(100dvh - 24px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 2px 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  animation: pop-in 0.12s ease-out;
+}
+
+.pj-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 8px 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+}
+
+/* シートの中: 項目の色付けが端まで届くよう、左右の余白を詰める */
+.modal-body > .pj-list {
+  margin-inline: -10px;
+}
+
+/* 指で押しやすい高さにする */
+.modal-body > .pj-list .rt-toc-link {
+  padding-block: 11px;
+}
+
+.modal-body > .pj-list .rt-toc-link.rt-toc-act {
+  padding-block: 9px;
+}

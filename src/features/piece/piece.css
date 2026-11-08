@@ -181,10 +181,30 @@
   cursor: default;
 }
 
-.pw-root .pw-lock {
+/* 「第n話」（特殊ブロックは「特殊」の札）: 押すと話の一覧が開く（PieceJump.tsx） */
+.pw-root .pw-label-jump {
+  margin: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.pw-root .pw-label-jump:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-3));
+}
+
+.pw-root .pw-label-jump[aria-expanded='true'] {
+  background: var(--accent-soft);
+}
+
+.pw-root .pw-jump-caret {
+  flex: none;
   width: 14px;
   height: 14px;
   color: var(--text-faint);
+}
+
+.pw-root .pw-label-jump[aria-expanded='true'] .pw-jump-caret {
+  color: var(--accent);
 }
 
 .pw-root .pw-label-special {
@@ -198,6 +218,26 @@
 .pw-root .pw-label-special .badge {
   background: var(--surface);
   flex: none;
+}
+
+.pw-root .pw-jump-badge {
+  align-self: stretch;
+  gap: 2px;
+  margin: 4px 0;
+  padding: 0 4px 0 8px;
+  border: 0;
+  cursor: pointer;
+}
+
+.pw-root .pw-jump-badge .pw-jump-caret {
+  width: 12px;
+  height: 12px;
+  color: inherit;
+}
+
+.pw-root .pw-jump-badge:hover,
+.pw-root .pw-jump-badge[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--special) 14%, var(--surface));
 }
 
 .pw-root .pw-label-input {

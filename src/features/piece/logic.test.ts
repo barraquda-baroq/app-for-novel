@@ -4,9 +4,11 @@ import { addEpisode, addSpecial, addVersion, deleteVersion, setActiveVersion, up
 import { emptyData, type AppData, type ID } from '../../domain/types'
 import {
   activeVersionOf,
+  centeredScrollTop,
   firstLine,
   formatCharDelta,
   formatStats,
+  jumpFocusIndex,
   liveStats,
   mapScrollTop,
   neighborPieces,
@@ -199,6 +201,37 @@ describe('比率とスクロール同期', () => {
     expect(mapScrollTop(150, 100, 400)).toBe(400)
     expect(mapScrollTop(10, 0, 400)).toBe(0)
     expect(mapScrollTop(10, 100, 0)).toBe(0)
+  })
+})
+
+describe('話の一覧（第n話から開く）', () => {
+  it('↓↑は1つずつ動き、端では止まる（回り込まない）。Home・End は最初・最後', () => {
+    expect(jumpFocusIndex('ArrowDown', 0, 3)).toBe(1)
+    expect(jumpFocusIndex('ArrowDown', 2, 3)).toBe(2)
+    expect(jumpFocusIndex('ArrowUp', 2, 3)).toBe(1)
+    expect(jumpFocusIndex('ArrowUp', 0, 3)).toBe(0)
+    expect(jumpFocusIndex('Home', 2, 3)).toBe(0)
+    expect(jumpFocusIndex('End', 0, 3)).toBe(2)
+  })
+
+  it('どこにもフォーカスが無い時の↓↑は最初へ。ほかのキーと、項目が無い時は動かない', () => {
+    expect(jumpFocusIndex('ArrowDown', -1, 3)).toBe(0)
+    expect(jumpFocusIndex('ArrowUp', -1, 3)).toBe(0)
+    expect(jumpFocusIndex('Enter', 1, 3)).toBeNull()
+    expect(jumpFocusIndex('ArrowLeft', 1, 3)).toBeNull()
+    expect(jumpFocusIndex('ArrowDown', -1, 0)).toBeNull()
+    expect(jumpFocusIndex('End', 0, 0)).toBeNull()
+  })
+
+  it('今の話が入れ物の真ん中に来るスクロール位置（上端・いちばん下で止まる）', () => {
+    // 高さ 400 の入れ物・中身 4000 の 2000 にある高さ 36 の項目
+    expect(centeredScrollTop(2000, 36, 400, 4000)).toBe(1818)
+    // 先頭の近くは 0 のまま
+    expect(centeredScrollTop(40, 36, 400, 4000)).toBe(0)
+    // 最後の近くは、いちばん下まで
+    expect(centeredScrollTop(3980, 36, 400, 4000)).toBe(3600)
+    // 中身が入れ物に収まる時は動かさない
+    expect(centeredScrollTop(100, 36, 400, 300)).toBe(0)
   })
 })
 

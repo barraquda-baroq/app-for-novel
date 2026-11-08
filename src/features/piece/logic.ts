@@ -156,6 +156,40 @@ export function mapScrollTop(srcTop: number, srcMax: number, dstMax: number): nu
 /** 上部バーを1行にする画面（スマホの横持ちなど、高さが低く幅のある画面）。piece.css と揃える */
 export const COMPACT_QUERY = '(max-height: 500px) and (min-width: 481px)'
 
+/** 話の一覧（PieceJump）を下からのシートにする画面（スマホ・高さの低い画面）。それ以外は押した所の下に開く */
+export const JUMP_SHEET_QUERY = '(max-width: 720px), (max-height: 500px)'
+
+/**
+ * 話の一覧で、キーで動いた先の項目の番号（↓↑は端で止まり、回り込まない。Home・End は最初・最後）。
+ * index はフォーカスのある項目（どこにも無ければ −1）。動かないキー・項目が無い時は null
+ */
+export function jumpFocusIndex(key: string, index: number, count: number): number | null {
+  if (count <= 0) return null
+  const last = count - 1
+  switch (key) {
+    case 'ArrowDown':
+      return index < 0 ? 0 : Math.min(last, index + 1)
+    case 'ArrowUp':
+      return index < 0 ? 0 : Math.max(0, index - 1)
+    case 'Home':
+      return 0
+    case 'End':
+      return last
+    default:
+      return null
+  }
+}
+
+/**
+ * 項目が入れ物の真ん中に来る scrollTop（0〜いちばん下までに収める）。
+ * itemTop は入れ物の中身の上端から測った項目の上端、viewHeight は入れ物の見えている高さ、scrollHeight は中身の高さ
+ */
+export function centeredScrollTop(itemTop: number, itemHeight: number, viewHeight: number, scrollHeight: number): number {
+  const max = Math.max(0, scrollHeight - viewHeight)
+  const top = itemTop + itemHeight / 2 - viewHeight / 2
+  return Math.round(Math.min(max, Math.max(0, top)))
+}
+
 /** スライダー（15〜85）と比率（0.15〜0.85）の変換 */
 export const RATIO_MIN = 15
 export const RATIO_MAX = 85

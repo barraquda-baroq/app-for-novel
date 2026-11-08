@@ -1,0 +1,113 @@
+/*
+ * 話の一覧（目次）の項目（TocBody.tsx）。通し読みの目次と、原稿画面・幕の画面の「第n話」から開く話の一覧で使う。
+ * 目次の入れ物（開閉・広い画面の列・縦書き・印刷）は read.css、話の一覧の入れ物は piece/pieceJump.css。
+ */
+.rt-toc-count {
+  min-width: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.7;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-toc-chapter {
+  margin: 10px 8px 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.rt-toc-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rt-toc-link {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  min-height: 36px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  text-decoration: none;
+}
+
+.rt-toc-link:hover {
+  background: var(--surface-3);
+}
+
+.rt-toc-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.rt-toc-label {
+  flex: none;
+  color: var(--accent);
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-toc-link.is-special .rt-toc-label {
+  color: var(--special);
+}
+
+.rt-toc-subtitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rt-toc-missing {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+/* 縦書きのページ表示: 話・幕の最初のページ（右に寄せる） */
+.rt-toc-page {
+  margin-inline-start: auto;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 目次の幕 */
+.rt-toc-acts {
+  margin: 0 0 2px;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+
+.rt-toc-link.rt-toc-act {
+  min-height: 34px;
+  padding-block: 5px;
+  font-size: 12px;
+}
+
+.rt-toc-link.rt-toc-act .rt-toc-label {
+  font-weight: 600;
+}
+
+/* 今開いている話・幕（話の一覧） */
+.rt-toc-link[aria-current='page'] {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.rt-toc-link[aria-current='page'] .rt-toc-label {
+  font-weight: 800;
+}

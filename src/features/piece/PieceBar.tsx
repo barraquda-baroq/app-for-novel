@@ -1,17 +1,19 @@
 // 原稿画面の上部バー: 第n話（変更不可）／特殊ブロックの見出し、話の題、前後の話、表示の設定。
 // 幕の画面では「第3話　話の題　第2幕」（話の題は属する話のもの）、前後は同じ話の中の幕。
+// 「第n話」（特殊ブロックは「特殊」の札）を押すと、そのタイトルの話の一覧が開き、選んだ話・幕へ移る（PieceJump.tsx）。
 // 最新話（読む順でいちばん後ろの話）を開いている時は、「次の話」の代わりに「次の話を追加」を出す（一つ上の画面に戻らずに書き進められるように）。
 import { useId, useRef, useState } from 'react'
 import type { ID, Piece } from '../../domain/types'
 import { usePrefs, type SplitOrientation } from '../../store/uiStore'
 import { useMediaQuery } from '../../ui/hooks'
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../../ui/icons'
+import { ChevronLeftIcon, ChevronRightIcon, DownIcon, PlusIcon } from '../../ui/icons'
 import { PopupMenu, type PopupMenuItem } from '../../ui/PopupMenu'
 import { ActsIcon } from '../acts/actIcons'
 import { useDismiss } from './editing'
 import type { EditorHub } from './editorHub'
 import { COMPACT_QUERY, RATIO_MAX, RATIO_MIN, ratioToSlider, sliderToRatio } from './logic'
-import { LockIcon, SlidersIcon } from './pieceIcons'
+import { SlidersIcon } from './pieceIcons'
+import { PieceJump } from './PieceJump'
 import { pieceField } from './session'
 import { SessionInput } from './SessionField'
 
@@ -121,14 +123,32 @@ export function PieceBar({
 
       <div className="pw-ident">
         {piece.kind !== 'special' ? (
-          <span className="pw-label" data-testid="piece-label" title={LOCK_HINT}>
-            <span className="pw-label-text">{label}</span>
-            <LockIcon className="icon pw-lock" />
-            <span className="visually-hidden">（{LOCK_HINT}）</span>
-          </span>
+          <PieceJump
+            titleId={piece.titleId}
+            currentId={piece.id}
+            onPick={onNavigate}
+            className="pw-label pw-label-jump"
+            ariaLabel={`${label}　話の一覧を開く`}
+            title={`話の一覧を開く（${LOCK_HINT}）`}
+          >
+            <span className="pw-label-text" data-testid="piece-label">
+              {label}
+            </span>
+            <DownIcon className="icon pw-jump-caret" />
+          </PieceJump>
         ) : (
           <span className="pw-label pw-label-special">
-            <span className="badge badge-special">特殊</span>
+            <PieceJump
+              titleId={piece.titleId}
+              currentId={piece.id}
+              onPick={onNavigate}
+              className="badge badge-special pw-jump-badge"
+              ariaLabel="特殊　話の一覧を開く"
+              title="話の一覧を開く"
+            >
+              特殊
+              <DownIcon className="icon pw-jump-caret" />
+            </PieceJump>
             <SessionInput
               key={piece.id}
               hub={hub}

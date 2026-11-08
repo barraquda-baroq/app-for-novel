@@ -6,6 +6,7 @@
 // いちばん下に記号バー（巻き戻し／進む・ダッシュ・三点リーダー・全角空白・ルビ・傍点）を置く。
 // 幕（セパレート）も同じ画面で編集する（見出しは「第3話　題　第2幕」、前後の移動は同じ話の中の幕）。
 // 幕に分けた話は、話自身の本文は編集せず、幕の一覧（EpisodeFolder）を出す。
+// 左上の「第n話」を押すと、そのタイトルの話の一覧が開き、ほかの話・幕へ移れる（PieceJump.tsx。保存していない編集の確認は前後の話への移動と同じ）。
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { joinError, unseparateError } from '../../domain/acts'

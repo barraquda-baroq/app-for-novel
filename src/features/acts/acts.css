@@ -423,6 +423,32 @@
   white-space: nowrap;
 }
 
+/* 押すと話の一覧が開く（piece/PieceJump.tsx） */
+.ef-label-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 0 -6px;
+  padding: 2px 4px 2px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ef-label-jump:hover,
+.ef-label-jump[aria-expanded='true'] {
+  background: var(--accent-soft);
+}
+
+.ef-label-jump .ef-jump-caret {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
 .ef-subtitle {
   overflow-wrap: anywhere;
 }

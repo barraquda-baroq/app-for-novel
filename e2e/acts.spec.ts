@@ -560,6 +560,37 @@ test.describe('セパレート（幕）', () => {
     await expect(page.getByTestId('trash-row').first()).toContainText('各幕の採用していなかった稿（1稿）')
   })
 
+  test('話の一覧: 幕の画面の「第1話」から開くと今の幕に印。別の幕・幕に分けた話（幕の一覧）・次の話へ移れる', async ({
+    page,
+  }) => {
+    const ids = await seedWork(page)
+    const acts = await seedSplit(page, ids)
+    await openApp(page, `/t/${ids.titleId}/p/${acts[1]}`)
+    await expect(page.getByTestId('act-label')).toHaveText('第2幕')
+    const list = page.getByTestId('piece-jump-list')
+    const current = list.locator('a[aria-current="page"]')
+    await page.getByTestId('piece-jump').click()
+    await expect(list.getByTestId('toc-act-link')).toHaveText(['第1幕', '第2幕', '第3幕'])
+    await expect(current).toHaveText('第2幕')
+    await expect(current).toBeFocused()
+    await list.getByTestId('toc-act-link').nth(2).click()
+    await expect(page).toHaveURL(new RegExp(`/p/${acts[2]}$`))
+    await expect(page.getByTestId('act-label')).toHaveText('第3幕')
+    await expect(list).toHaveCount(0)
+
+    // 幕に分けた話を選ぶと幕の一覧。そこの見出しの「第1話」からも開ける
+    await page.getByTestId('piece-jump').click()
+    await list.getByTestId('toc-link').first().click()
+    await expect(page).toHaveURL(new RegExp(`/p/${ids.pieceId}$`))
+    await expect(page.getByTestId('episode-folder')).toBeVisible()
+    await page.getByTestId('piece-jump').click()
+    await expect(current).toContainText('第1話')
+    await expect(current).toContainText('雨の日')
+    await list.getByTestId('toc-link').nth(1).click()
+    await expect(page).toHaveURL(new RegExp(`/p/${ids.secondId}$`))
+    await expect(page.getByTestId('piece-label')).toHaveText('第2話')
+  })
+
   test('通し読み: 幕に分けた話は幕の見出し（第1幕…）の下に各幕を出し、目次にも幕が並ぶ', async ({ page }) => {
     const ids = await seedWork(page)
     const acts = await seedSplit(page, ids)

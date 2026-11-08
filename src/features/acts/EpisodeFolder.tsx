@@ -1,6 +1,7 @@
 // 幕に分けた話の画面（フォルダ）: 幕の一覧（第1幕…と採用稿・文字数）、合計の文字数、セパレート解除。
 // 話の本文は各幕の採用稿をつないだもので、ここでは編集しない（幕の画面で編集する）。
 // 話自身の稿（分けた時の採用稿など）は、セパレートを解除するまで変えられないので、読み取り専用で見られるようにする。
+// 見出しの「第n話」を押すと、原稿画面と同じ話の一覧が開き、選んだ話・幕へ移る（piece/PieceJump.tsx）。
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { missingActiveLabel } from '../../domain/entityOps'
@@ -15,9 +16,10 @@ import { attempt } from '../../store/uiStore'
 import { formatDateTime } from '../../ui/browser'
 import { promptDialog } from '../../ui/dialogs'
 import { useDocumentTitle } from '../../ui/hooks'
-import { BookIcon, ChevronLeftIcon, ChevronRightIcon, EditIcon } from '../../ui/icons'
+import { BookIcon, ChevronLeftIcon, ChevronRightIcon, DownIcon, EditIcon } from '../../ui/icons'
 import { AppHeader, type Crumb } from '../../ui/Layout'
 import { neighborPieces, versionDisplayName, versionsNewestFirst } from '../piece/logic'
+import { PieceJump } from '../piece/PieceJump'
 import { ActRow } from '../title/story/ActRow'
 import { RowMenuProvider } from '../title/story/RowMenu'
 import { actRows } from '../title/story/storyLogic'
@@ -119,9 +121,17 @@ export function EpisodeFolder({ title, piece }: { title: Title; piece: Piece }) 
             幕に分けた話
           </span>
           <h1 className="ef-title">
-            <span className="ef-label" data-testid="folder-label">
-              {label}
-            </span>
+            <PieceJump
+              titleId={title.id}
+              currentId={piece.id}
+              onPick={(id) => navigate(paths.piece(title.id, id))}
+              className="ef-label ef-label-jump"
+              ariaLabel={`${label}　話の一覧を開く`}
+              title="話の一覧を開く"
+            >
+              <span data-testid="folder-label">{label}</span>
+              <DownIcon className="icon ef-jump-caret" />
+            </PieceJump>
             {piece.subtitle.trim() ? (
               <span className="ef-subtitle" data-testid="folder-subtitle">
                 {piece.subtitle.trim()}
