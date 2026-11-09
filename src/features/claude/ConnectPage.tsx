@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { claudeAccessOf, CLAUDE_ACCESS_OPTIONS } from '../../claude/visibility'
 import { sortedTitles } from '../../domain/entityOps'
+import { TRASH_RETENTION_DAYS } from '../../domain/trash'
 import type { ClaudeAccess, ID } from '../../domain/types'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
@@ -492,8 +493,10 @@ function ApproveForm({
         <span>
           推敲案などの書き込みも許可
           <span className="tiny faint cn-writes-hint">
-            （Claude が推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果を足せます。本文は書き換えません。後から 設定 → Claude
-            連携 で止められます）
+            （Claude
+            が推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果・相対比較の分析・資料の記録を足せます。頼んだ時だけ、Claude
+            が足した相対比較の分析・資料の記録をゴミ箱へ移せます（{TRASH_RETENTION_DAYS}
+            日は戻せます）。本文は書き換えません。後から 設定 → Claude 連携 で止められます）
           </span>
         </span>
       </label>

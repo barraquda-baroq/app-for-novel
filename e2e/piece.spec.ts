@@ -981,6 +981,56 @@ test.describe('話の一覧（左上の「第n話」から開く）', () => {
     await expect(jumpCurrent(page)).toContainText('プロローグ')
     await noHorizontalScroll(page)
   })
+
+  test('スマホ: 特殊ブロックの「特殊」の札は、見た目はそのままで押せる所が指の大きさ（高さ34px・幅44px 以上）。隣の見出しの欄は取らない', async ({
+    page,
+  }, info) => {
+    test.skip(isDesktop(info), 'スマホのみ')
+    await page.setViewportSize({ width: 360, height: 780 })
+    const { titleId, prologue } = await seedJumpStory(page)
+    await openPiece(page, titleId, prologue)
+    const badge = page.getByTestId('piece-jump')
+    await expect(badge).toHaveText('特殊')
+    // 札の真ん中を通る縦・横の線の上で、札（の押せる所）に当たる長さを 1px ずつ数える
+    const hit = await badge.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      const label = el.parentElement!.getBoundingClientRect()
+      const input = document.querySelector('[data-testid="special-label-input"]')!
+      const ir = input.getBoundingClientRect()
+      const cx = r.left + r.width / 2
+      const cy = r.top + r.height / 2
+      const on = (x: number, y: number) => el.contains(document.elementFromPoint(x, y))
+      let height = 0
+      for (let y = Math.floor(label.top) - 6; y <= label.bottom + 6; y++) if (on(cx, y + 0.5)) height++
+      let width = 0
+      for (let x = Math.floor(label.left) - 6; x <= ir.right; x++) if (on(x + 0.5, cy)) width++
+      return {
+        height,
+        width,
+        pill: r.height,
+        label: label.height,
+        below: r.bottom + 3,
+        cx,
+        cy,
+        inputLeft: ir.left,
+        inputHit: document.elementFromPoint(ir.left + 1, cy) === input,
+      }
+    })
+    expect(hit.height).toBeGreaterThanOrEqual(34)
+    expect(hit.width).toBeGreaterThanOrEqual(44)
+    // 見た目の札は、見出しの枠の中に収まる小さな札のまま
+    expect(hit.pill).toBeLessThan(hit.label)
+    expect(hit.inputHit).toBe(true)
+    // 札の少し下（札の外）を押しても一覧が開く
+    await page.touchscreen.tap(hit.cx, hit.below)
+    await expect(page.getByRole('dialog', { name: '話の一覧' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: '話の一覧' })).toHaveCount(0)
+    // 見出しの欄の左端を押すと、一覧は開かずに見出しの欄に入る
+    await page.touchscreen.tap(hit.inputLeft + 2, hit.cy)
+    await expect(page.getByTestId('special-label-input')).toBeFocused()
+    await expect(page.getByRole('dialog', { name: '話の一覧' })).toHaveCount(0)
+  })
 })
 
 test.describe('スマホでの表示', () => {

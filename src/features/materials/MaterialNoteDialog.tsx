@@ -1,6 +1,6 @@
 // 資料の記録を手で足す・直す（項目・日付・Markdown の本文）。項目は決まった4つ（要約・創作に役立つ知識・描写に使える部分・
 // サンプルシーン）と、すべての資料の記録で使ったことのある項目から選べる（資料をまたいで同じ名前にそろえやすいように）。
-// 保存は［保存］を押した時。相対比較の AnalysisDialog と同じ作り。
+// 保存は［保存］を押した時。相対比較の AnalysisDialog と同じ作り（既にある記録を直している間は、Claude の「ゴミ箱へ移す依頼」を当てない）。
 import { useId, useMemo, useState } from 'react'
 import { jstDate } from '../../claude/dates'
 import { MATERIAL_LIMITS, materialSectionSuggestions } from '../../domain/materialOps'
@@ -9,6 +9,7 @@ import { actions } from '../../store/actions'
 import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { Modal } from '../../ui/Modal'
+import { useHoldTrashRequests } from '../claude/ClaudeTrashRequests'
 import './materials.css'
 
 /** 項目の候補のチップの数 */
@@ -34,6 +35,7 @@ export function MaterialNoteDialog({ materialId, note, section: initialSection, 
   const [body, setBody] = useState(note?.body ?? '')
   const [tried, setTried] = useState(false)
   const missing = !section.trim()
+  useHoldTrashRequests(note !== null)
 
   const save = () => {
     setTried(true)

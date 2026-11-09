@@ -1,5 +1,6 @@
 // 相対比較の作品の分析を手で足す・直す（観点・日付・Markdown の本文）。観点はすべての作品の分析の観点から選べる
 // （作品をまたいで同じ名前にそろえると、観点ごとに比べやすい）。保存は［保存］を押した時。
+// 既にある分析を直している間は、Claude の「ゴミ箱へ移す依頼」を当てない（開いている編集の下でカードが消えないように）。
 import { useId, useMemo, useState } from 'react'
 import { jstDate } from '../../claude/dates'
 import { BENCH_LIMITS, benchViewpointSuggestions } from '../../domain/benchOps'
@@ -9,6 +10,7 @@ import { actions } from '../../store/actions'
 import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { Modal } from '../../ui/Modal'
+import { useHoldTrashRequests } from '../claude/ClaudeTrashRequests'
 import './bench.css'
 
 export interface AnalysisDialogProps {
@@ -32,6 +34,7 @@ export function AnalysisDialog({ workId, analysis, onClose, onAdded }: AnalysisD
   const [body, setBody] = useState(analysis?.body ?? '')
   const [tried, setTried] = useState(false)
   const missing = !viewpoint.trim()
+  useHoldTrashRequests(analysis !== null)
 
   const save = () => {
     setTried(true)

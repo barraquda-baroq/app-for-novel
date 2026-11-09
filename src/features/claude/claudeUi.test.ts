@@ -3,7 +3,8 @@ import { setChaptersEnabled } from '../../domain/storyOps'
 import { novel } from '../../test/claudeFixture'
 import { WRITE_TOOL_LABELS } from '../../claude/records'
 import { CLAUDE_ACCESS_HINTS } from './ClaudeAccessControl'
-import { CLAUDE_CAN, itemStatusTone, manualFileName, resolveRange, sourceLabel } from './claudeUi'
+import { TRASH_RETENTION_DAYS } from '../../domain/trash'
+import { CLAUDE_CAN, CLAUDE_CANNOT, itemStatusTone, manualFileName, resolveRange, sourceLabel } from './claudeUi'
 
 describe('手動連携の範囲', () => {
   it('タイトル全体・章・話の範囲（番号は範囲の中に収め、逆なら入れ替える）', () => {
@@ -63,5 +64,22 @@ describe('Claude ができること（同意・設定の画面）', () => {
       if (s !== '相対比較に分析' && s !== '資料に記録') expect(CLAUDE_ACCESS_HINTS.write, s).toContain(s)
       expect(can, s).toContain(s)
     }
+  })
+
+  it('Claude が足したカードをゴミ箱へ移せること（2.7）と、ほかの削除はできないことを書く', () => {
+    const trash = CLAUDE_CAN.find((t) => t.includes('ゴミ箱へ移す'))
+    expect(trash).toBeDefined()
+    for (const word of [
+      '作者が頼んだ時だけ',
+      'Claude がコネクタで足した',
+      '相対比較の分析',
+      '資料の記録',
+      `${TRASH_RETENTION_DAYS}日`,
+      '「書き込みを許可」の時だけ',
+    ])
+      expect(trash, word).toContain(word)
+    const cannot = CLAUDE_CANNOT.join('\n')
+    expect(cannot).toContain('ゴミ箱へ移すこと以外の削除はできません')
+    expect(cannot).not.toContain('削除もアプリでだけ')
   })
 })

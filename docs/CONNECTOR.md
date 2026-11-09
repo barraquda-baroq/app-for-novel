@@ -7,7 +7,7 @@ Cloudflare の無料プラン（Workers Free）に、あなた専用のコネク
 - Claude ができること: 「Claude に見せる」にしたタイトルの採用原稿・目次・設定・メモ・アイデア・戦略・作品批評を読む／本文を検索する／
   推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果を**足す**／ホームの「相対比較」（比べるために読む既存の作品。2.5）の作品と分析を読む・分析を**足す**／ホームの「資料」（創作のために読む資料。主に買った書籍。2.6）の
   資料と記録を読む・記録を**足す**（資料のタグは読めるが付けない。タグは作者がアプリで付けて管理します）／作者が頼んだ時だけ、
-  Claude がコネクタで足した相対比較の分析・資料の記録を、アプリの**ゴミ箱へ移す**（2.7。30日はアプリのゴミ箱から戻せます）
+  Claude がコネクタで足した相対比較の分析・資料の記録を、アプリの**ゴミ箱へ移す**（2.7。30日はアプリのゴミ箱から戻せます。「書き込みを許可」の時だけ）
 - Claude ができないこと: 本文（稿）・全体戦略・応募計画の書き換え、ゴミ箱へ移すこと以外の削除（作者が書いた・直したカード、作品・資料そのもの、
   ほかの種類の記録は移せません）、見せていないタイトルを見ること、
   ゴミ箱・応募時の原稿の控えを見ること、端末で保存していない・まだ送っていない編集を見ること
@@ -276,7 +276,7 @@ npm run deploy
 | したいこと | 方法 |
 | --- | --- |
 | すぐに止める | アプリの 設定 → Claude 連携 →［連携を解除］（その場でコネクタは何も読めなくなる。もう一度使う時は claude.ai で接続し直す） |
-| 書き込みだけ止める | 同じ画面の「書き込みを許可」をオフ（読むのは続く。アクセスルールで止まる） |
+| 書き込みだけ止める | 同じ画面の「書き込みを許可」をオフ（読むのは続く。ゴミ箱へ移す依頼も止まる。アクセスルールで止まる） |
 | あるタイトルだけ見せない | タイトル画面の「Claude に見せる」のチップで「見せない」を選ぶ |
 | claude.ai から外す | 「カスタマイズ → コネクタ → Novel Studio」でコネクタを削除 |
 | コネクタそのものを消す | リポジトリの直下で、次の3つ: ① `npx --prefix connector wrangler delete --name novel-studio-connector`（Cloudflare から Worker が消える）② OAuth 用の KV `novel-studio-connector-oauth-kv` を消す（Cloudflare のダッシュボードの「ストレージとデータベース → KV」で削除。または `npx --prefix connector wrangler kv namespace list` で id を調べて `npx --prefix connector wrangler kv namespace delete --namespace-id <id>`）③ `connector.local.json` を消す（PowerShell は `Remove-Item connector.local.json`、Mac は `rm connector.local.json`）。その後で一度 `npm run deploy`（アプリからコネクタの URL を外す）。鍵を消すだけなら `npx --prefix connector wrangler secret delete TOKEN_ENC_KEY --name novel-studio-connector` |

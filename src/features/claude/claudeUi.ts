@@ -3,6 +3,7 @@ import type { ReadSelection } from '../../claude/view'
 import type { ItemStatus } from '../../claude/records'
 import type { ManualTask } from '../../claude/prompts'
 import { chaptersOf } from '../../domain/structure'
+import { TRASH_RETENTION_DAYS } from '../../domain/trash'
 import type { AppData, ClaudeSource, ID } from '../../domain/types'
 import { readingOrder } from '../../claude/refs'
 
@@ -92,11 +93,12 @@ export const CLAUDE_CAN: readonly string[] = [
   '推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果を新しく足す（「書き込みを許可」と、タイトルの「読む＋書き込む」の時だけ）',
   'ホームの「相対比較」（比べるために読む既存の作品）の作品と分析を読み、相対比較に分析を追加する（タイトルの設定とは関係なく。足すのは「書き込みを許可」の時だけ）',
   'ホームの「資料」（創作のために読む資料）の資料と記録を読み、資料に記録を追加する（タイトルの設定とは関係なく。足すのは「書き込みを許可」の時だけ）',
+  `作者が頼んだ時だけ、Claude がコネクタで足した相対比較の分析・資料の記録（作者が直していないもの）をアプリのゴミ箱へ移す（${TRASH_RETENTION_DAYS}日はゴミ箱から戻せます。「書き込みを許可」の時だけ）`,
 ]
 
 /** Claude（コネクタ）ができないこと */
 export const CLAUDE_CANNOT: readonly string[] = [
-  '本文・稿・話・設定などを書き換える・削除する（足した推敲案などの書き換え・削除もアプリでだけ）',
+  '本文・稿・話・設定などを書き換える・削除する（ゴミ箱へ移すこと以外の削除はできません。作者が書いた・直したカード、作品・資料そのもの、推敲案などほかの記録は移せず、足した記録の書き換えもアプリでだけ）',
   '「見せない」にしたタイトル・ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアを読む',
   'あなたの Google アカウントを使う（コネクタは自分専用の匿名のアカウントで、ルールで許された所だけを読み書きします）',
 ]
