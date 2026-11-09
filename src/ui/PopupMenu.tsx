@@ -3,19 +3,11 @@
 // 外側を押して閉じた時は閉じるだけ（下にある行のリンクなどは開かない）。
 // 押せない項目は aria-disabled にして（フォーカスは移せる）、押すと理由（hint）を知らせる。
 // 記号バーの「括弧」のように、本文にカーソルを置いたまま開くメニュー（autoFocus・keepFocus）にも使う。
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  type CSSProperties,
-  type KeyboardEvent,
-  type ReactNode,
-  type SyntheticEvent,
-} from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { onNativeKeyboard } from '../platform/keyboard'
 import { notifyError } from '../store/uiStore'
+import { keepFocus as keepFocusHandler } from './keys'
 import './menu.css'
 
 export interface PopupMenuItem {
@@ -85,9 +77,6 @@ function swallowNextClick(): void {
 
 /** 置く位置を測るまでは見せない（位置は描いた後に直接置く） */
 const HIDDEN = { left: 0, top: 0, visibility: 'hidden' } as const
-
-/** 押してもフォーカスを動かさない（入力欄にカーソルを残し、スマホのキーボードを閉じない） */
-const keepFocusHandler = (e: SyntheticEvent) => e.preventDefault()
 
 export function PopupMenu({
   label,

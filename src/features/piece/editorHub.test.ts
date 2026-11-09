@@ -48,6 +48,23 @@ describe('記号バーの働き先', () => {
     expect(hub.getTarget()).toBeNull()
   })
 
+  it('blurTarget（欄ごとの検索窓にフォーカスした時）は働き先を外して知らせ、欄に戻ると働き先も戻る', () => {
+    const hub = new EditorHub(new EditSession('p'))
+    const listener = vi.fn()
+    hub.subscribe(listener)
+    const body = handle(versionField('v', 'body'), textarea(true))
+    hub.register(body)
+    hub.blurTarget()
+    expect(listener).not.toHaveBeenCalled()
+    hub.focused(body)
+    listener.mockClear()
+    hub.blurTarget()
+    expect(hub.getTarget()).toBeNull()
+    expect(listener).toHaveBeenCalledTimes(1)
+    hub.focused(body)
+    expect(hub.getTarget()).toBe(body)
+  })
+
   it('isFieldVisible: 画面から外れた欄は見えていない。checkVisibility の無いブラウザでは見えているとみなす', () => {
     const el = document.createElement('textarea')
     expect(isFieldVisible(el)).toBe(false)

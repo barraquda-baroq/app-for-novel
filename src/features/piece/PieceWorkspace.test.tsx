@@ -15,6 +15,7 @@ import { AppFrame } from '../../ui/Layout'
 import { draftKey, ownerLockName, readCrashDraft, writeCrashDraft } from './crashDraft'
 import { JUMP_SHEET_QUERY } from './logic'
 import { PieceWorkspace } from './PieceWorkspace'
+import { resetFieldSearchForTests, useFieldSearchStore } from './searchStore'
 import { pieceField, versionField } from './session'
 
 // 差分の計算が「いつ」行われるかを数える（描画の中で計算していないことを確かめる）
@@ -88,6 +89,7 @@ beforeEach(async () => {
 afterEach(() => {
   cancelAllDialogs()
   cleanup()
+  resetFieldSearchForTests()
   resetStoreForTests()
   usePrefs.getState().setPrefs({ showDiff: false })
   useToasts.setState({ toasts: [] })
@@ -1011,6 +1013,251 @@ describe('括弧（記号バーの「括弧」）', () => {
     await user.click(screen.getByTestId('bracket-maru'))
     expect(note.value).toBe('（）')
     expect(document.activeElement).toBe(note)
+  })
+})
+
+describe('欄ごとの検索', () => {
+  const RUBY_BODY = '彼は｜漢字《かんじ》を書く。\n漢字の練習。ＡＢＣ漢字'
+  const count = (slot: 'active' | 'compare') => screen.getByTestId(`${slot}-search-count`).textContent
+  const hitRange = (slot: 'active' | 'compare') => {
+    const el = screen.getByTestId(`${slot}-search-hit`)
+    return [Number(el.dataset.start), Number(el.dataset.end)]
+  }
+
+  it('本文欄の Ctrl+F で開いて検索窓にフォーカスし、ルビの親文字で見つける。Enter・Shift+Enter で移り（端で反対の端へ）、Esc で本文欄に戻って見つけた所を選ぶ', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: RUBY_BODY }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    expect(screen.queryByTestId('active-search')).toBeNull()
+    await user.click(editor)
+    editor.setSelectionRange(0, 0)
+    await user.keyboard('{Control>}f{/Control}')
+    const input = screen.getByTestId('active-search-input') as HTMLInputElement
+    expect(document.activeElement).toBe(input)
+    expect(screen.getByTestId('active-search-toggle').getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('search', { name: '採用原稿の検索' })).toBeTruthy()
+
+    await user.keyboard('漢字')
+    expect(count('active')).toBe('1／3')
+    // 印は元の本文（記法込み）の位置で、親文字だけ
+    expect(hitRange('active')).toEqual([3, 5])
+    await user.keyboard('{Enter}')
+    expect(count('active')).toBe('2／3')
+    expect(hitRange('active')).toEqual([15, 17])
+    await user.keyboard('{Enter}')
+    expect(count('active')).toBe('3／3')
+    expect(hitRange('active')).toEqual([24, 26])
+    await user.keyboard('{Enter}')
+    expect(count('active')).toBe('1／3')
+    await user.keyboard('{Shift>}{Enter}{/Shift}')
+    expect(count('active')).toBe('3／3')
+    // 読みでは見つからない。全角と半角・大文字と小文字は同じ
+    await user.clear(input)
+    await user.type(input, 'かんじ')
+    expect(count('active')).toBe('見つかりません')
+    await user.clear(input)
+    await user.type(input, 'abc')
+    expect(count('active')).toBe('1／1')
+    expect(hitRange('active')).toEqual([21, 24])
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('active-search')).toBeNull()
+    expect(document.activeElement).toBe(editor)
+    expect([editor.selectionStart, editor.selectionEnd]).toEqual([21, 24])
+    // 本文は変えない（保存していない編集にもならない）
+    expect(editor.value).toBe(RUBY_BODY)
+    expect(screen.getByTestId('save-button')).toHaveProperty('disabled', true)
+  })
+
+  it('選んでいる文字があれば語にする。前へ・次へを押しても検索窓のフォーカスは外れず、× でも閉じる', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: RUBY_BODY }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    await user.click(editor)
+    editor.setSelectionRange(15, 17)
+    await user.keyboard('{Control>}f{/Control}')
+    const input = screen.getByTestId('active-search-input') as HTMLInputElement
+    expect(input.value).toBe('漢字')
+    expect(count('active')).toBe('2／3')
+    await user.click(screen.getByTestId('active-search-next'))
+    expect(count('active')).toBe('3／3')
+    expect(document.activeElement).toBe(input)
+    await user.click(screen.getByTestId('active-search-prev'))
+    expect(count('active')).toBe('2／3')
+    // 検索窓の中の Ctrl+F は語を選び直す（ブラウザの検索は開かない）
+    input.setSelectionRange(2, 2)
+    expect(fireEvent.keyDown(input, { key: 'f', ctrlKey: true })).toBe(false)
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 2])
+    // 本文欄にフォーカスしている時の Esc も検索窓を閉じる（本文の選択はそのまま）
+    await user.click(editor)
+    editor.setSelectionRange(1, 1)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('active-search')).toBeNull()
+    expect([editor.selectionStart, editor.selectionEnd]).toEqual([1, 1])
+    // 「検索」で開き直すと語は残っていて、カーソルの後ろの最初の一致へ
+    await user.click(screen.getByTestId('active-search-toggle'))
+    expect(document.activeElement).toBe(screen.getByTestId('active-search-input'))
+    expect(count('active')).toBe('3件')
+    await user.keyboard('{Enter}')
+    expect(count('active')).toBe('1／3')
+    await user.click(screen.getByTestId('active-search-close'))
+    expect(screen.queryByTestId('active-search')).toBeNull()
+    expect(document.activeElement).toBe(editor)
+    expect([editor.selectionStart, editor.selectionEnd]).toEqual([3, 5])
+  })
+
+  it('推敲メモ・稿の名前・話の題での Ctrl+F はブラウザの検索のまま（開かない）', async () => {
+    const { titleId, pieceId, v2 } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('note-toggle'))
+    for (const id of ['version-note', 'active-version-name', 'selected-version-name', 'subtitle-input']) {
+      const el = screen.getByTestId(id)
+      act(() => el.focus())
+      expect(fireEvent.keyDown(el, { key: 'f', ctrlKey: true })).toBe(true)
+    }
+    expect(screen.queryByTestId('active-search')).toBeNull()
+    expect(screen.queryByTestId('compare-search')).toBeNull()
+  })
+
+  it('推敲バージョンの検索は採用原稿とは別の語と件数を持つ。採用中の稿（読み取り専用の本文）でも探せる', async () => {
+    const { titleId, pieceId, v1, v2 } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    await screen.findByTestId('compare-editor')
+    await user.click(screen.getByTestId('active-search-toggle'))
+    await user.keyboard('山際')
+    expect(count('active')).toBe('1／1')
+    await user.click(screen.getByTestId('compare-search-toggle'))
+    expect(document.activeElement).toBe(screen.getByTestId('compare-search-input'))
+    expect(screen.getByRole('search', { name: '推敲バージョンの検索' })).toBeTruthy()
+    await user.keyboard('白く')
+    expect(count('compare')).toBe('1／1')
+    expect(hitRange('compare')).toEqual([9, 11])
+    expect((screen.getByTestId('active-search-input') as HTMLInputElement).value).toBe('山際')
+    expect(count('active')).toBe('1／1')
+
+    // 採用中の稿を選ぶと読み取り専用の本文。今の一致は外れ、件数だけ出す
+    await user.selectOptions(screen.getByTestId('version-select'), v1)
+    const readonly = (await screen.findByTestId('compare-readonly')) as HTMLTextAreaElement
+    expect(count('compare')).toBe('1件')
+    await user.click(screen.getByTestId('compare-search-input'))
+    await user.keyboard('{Enter}')
+    expect(count('compare')).toBe('1／1')
+    expect(hitRange('compare')).toEqual([readonly.value.indexOf('白く'), readonly.value.indexOf('白く') + 2])
+    await user.keyboard('{Escape}')
+    expect(document.activeElement).toBe(readonly)
+    expect(readonly.value.slice(readonly.selectionStart, readonly.selectionEnd)).toBe('白く')
+    expect(getData().versions[v1].body).toBe(readonly.value)
+  })
+
+  it('差分の表示中は、画面に出ている文字（削除された文字も含む）で探し、その所を印で包む。Esc で差分の表示のその所を選ぶ', async () => {
+    const { titleId, pieceId, v1, v2 } = seed()
+    act(() => {
+      actions.updateVersion(v1, { body: '同じ行。\n消去された一文' })
+      actions.updateVersion(v2, { body: '同じ行。\n足してみる' })
+    })
+    usePrefs.getState().setPrefs({ showDiff: true })
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    const view = await screen.findByTestId('diff-view')
+    await waitFor(() => expect(view.querySelector('.diff-del')).not.toBeNull())
+    const marks = () => [...view.querySelectorAll('mark.pw-hit')].map((m) => `${m.parentElement!.tagName}:${m.textContent}`)
+    await user.click(screen.getByTestId('compare-search-toggle'))
+    // 削除された文字（採用原稿にだけある）
+    await user.keyboard('消去された')
+    expect(count('compare')).toBe('1／1')
+    expect(screen.getByTestId('diff-search-hit').textContent).toBe('消去された')
+    expect(marks()).toEqual(['DEL:消去された'])
+    // 削除と追加をまたぐ一致は、それぞれの色のまま印を付ける
+    const input = screen.getByTestId('compare-search-input')
+    await user.clear(input)
+    await user.type(input, '一文足して')
+    expect(count('compare')).toBe('1／1')
+    expect(marks()).toEqual(['DEL:一文', 'INS:足して'])
+    await user.keyboard('{Escape}')
+    expect(view.querySelector('mark.pw-hit')).toBeNull()
+    expect(document.activeElement).toBe(view)
+    expect(window.getSelection()?.toString()).toBe('一文足して')
+    // 差分の表示にフォーカスがある時の Ctrl+F でも開き、選んでいた文字を語にする
+    await user.keyboard('{Control>}f{/Control}')
+    expect(document.activeElement).toBe(screen.getByTestId('compare-search-input'))
+    expect(screen.getByTestId('compare-search-input')).toHaveProperty('value', '一文足して')
+    expect(count('compare')).toBe('1／1')
+  })
+
+  it('次の話へ移っても語と窓が残り、移った先の本文で数え直す（自動では移らない）', async () => {
+    const titleId = actions.createTitle('猫の作品')
+    const first = actions.addEpisode(titleId)
+    const second = actions.addEpisode(titleId)
+    actions.updateVersion(getData().pieces[first].versionIds[0], { body: '猫が鳴く。猫が寝る。' })
+    actions.updateVersion(getData().pieces[second].versionIds[0], { body: '猫と犬と猫と猫。' })
+    renderAt(`/t/${titleId}/p/${first}`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('active-search-toggle'))
+    await user.keyboard('猫')
+    expect(count('active')).toBe('1／2')
+    await user.click(screen.getByTestId('next-piece'))
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe(`/t/${titleId}/p/${second}`))
+    await waitFor(() => expect(screen.getByTestId('active-editor')).toHaveProperty('value', '猫と犬と猫と猫。'))
+    expect((screen.getByTestId('active-search-input') as HTMLInputElement).value).toBe('猫')
+    expect(count('active')).toBe('3件')
+    expect(screen.queryByTestId('active-search-hit')).toBeNull()
+    await user.click(screen.getByTestId('active-search-input'))
+    await user.keyboard('{Enter}')
+    expect(count('active')).toBe('1／3')
+    expect(useFieldSearchStore.getState().active).toEqual({ open: true, query: '猫' })
+  })
+
+  it('検索窓にいる間は記号バーの記号・巻き戻しが本文に働かず、開いていた括弧の一覧も閉じる。本文に戻ると働く', async () => {
+    const { titleId, pieceId } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    await user.click(editor)
+    await user.keyboard('{Control>}{End}{/Control}あ')
+    expect(screen.getByTestId('undo-button')).toHaveProperty('disabled', false)
+    await user.click(screen.getByTestId('symbol-brackets'))
+    expect(screen.getByTestId('bracket-menu')).toBeTruthy()
+    await user.keyboard('{Control>}f{/Control}')
+    expect(document.activeElement).toBe(screen.getByTestId('active-search-input'))
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(screen.getByTestId('symbol-dash')).toHaveProperty('disabled', true)
+    expect(screen.getByTestId('undo-button')).toHaveProperty('disabled', true)
+    expect(screen.getByTestId('symbol-brackets')).toHaveProperty('disabled', true)
+    await user.keyboard('{Escape}')
+    expect(document.activeElement).toBe(editor)
+    expect(screen.getByTestId('symbol-dash')).toHaveProperty('disabled', false)
+    expect(screen.getByTestId('undo-button')).toHaveProperty('disabled', false)
+  })
+
+  it('1回の Esc で閉じるのは一番上の1つだけ（括弧の一覧 → 検索窓）。Android の「戻る」でも閉じる', async () => {
+    const { titleId, pieceId } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    await user.click(screen.getByTestId('active-search-toggle'))
+    await user.keyboard('曙')
+    await user.click(editor)
+    await user.click(screen.getByTestId('symbol-brackets'))
+    expect(screen.getByTestId('bracket-menu')).toBeTruthy()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(screen.getByTestId('active-search')).toBeTruthy()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('active-search')).toBeNull()
+
+    // Android の「戻る」（closeTopLayer が × を押す）
+    await user.click(screen.getByTestId('active-search-toggle'))
+    expect(screen.getByTestId('active-search')).toBeTruthy()
+    act(() => {
+      expect(closeTopLayer()).toBe(true)
+    })
+    expect(screen.queryByTestId('active-search')).toBeNull()
   })
 })
 

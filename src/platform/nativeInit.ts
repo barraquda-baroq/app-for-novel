@@ -1,7 +1,7 @@
 // アプリ（iPhone / Android）の起動時の準備。src/main.tsx から呼ぶ（ブラウザでは何もしない）。
 // - 裏に回る（pause）: 書きかけも含めてすぐ保存し、同期は待たずに送る。表に戻る（resume）: 長く裏にあったら同期を購読し直す
 //   （WebView の visibilitychange が届かないことがあるので、アプリの知らせでも同じことをする。二重に届いても害はない）
-// - Android の「戻る」: メニュー・ダイアログ・原稿画面のポップオーバー・推敲案の一覧が開いていれば閉じる（Esc と同じ）、戻れる画面があれば戻る、
+// - Android の「戻る」: メニュー・ダイアログ・原稿画面のポップオーバー・推敲案の一覧・欄ごとの検索窓が開いていれば閉じる（Esc と同じ）、戻れる画面があれば戻る、
 //   いちばん最初の画面なら保存してからアプリを裏に回す（閉じない）
 // - iPhone: キーボードの高さを受け取る（src/platform/keyboard.ts）
 // - 起動の画面（スプラッシュ。ロゴの無い無地）: 起動アニメーション（src/launch/launch.js）を出す時は、アニメーションが最初の絵を描いた時に
@@ -15,7 +15,8 @@ import { startIosKeyboard } from './keyboard'
 import { nativePlatform } from './platform'
 
 /**
- * いちばん上の重なり（メニュー → ダイアログ → 原稿画面のポップオーバー → 推敲案の一覧）を閉じる（それぞれの Esc の扱いをそのまま使う）。
+ * いちばん上の重なり（メニュー → ダイアログ → 原稿画面のポップオーバー（表示の設定・「…」・話の一覧）→ 推敲案の一覧・欄ごとの検索窓）を
+ * 1つだけ閉じる（それぞれの Esc の扱いをそのまま使う）。
  * 原稿画面のものは data-back-close の印で見つける（esc = Esc を送る、click = その閉じるボタンを押す）。
  * 開いているものが無ければ false
  */
@@ -35,8 +36,10 @@ export function closeTopLayer(doc: Document = document): boolean {
     esc(pop)
     return true
   }
-  // 推敲案の一覧（スマホでは下から出る。Esc はフォーカスが中にある時だけなので、閉じるボタンを押す）。ダイアログの下にあることもある
-  const btn = doc.querySelector<HTMLElement>('[data-back-close="click"]')
+  // 推敲案の一覧（スマホでは下から出る。Esc はフォーカスが中にある時だけなので、閉じるボタンを押す）と、欄ごとの検索窓の ×。
+  // ダイアログの下にあることもある。後ろに並ぶもの（下から出た推敲案の一覧は検索窓より後ろ）ほど上に重なるので、最後のものから閉じる
+  const buttons = doc.querySelectorAll<HTMLElement>('[data-back-close="click"]')
+  const btn = buttons[buttons.length - 1]
   if (btn) {
     btn.click()
     return true

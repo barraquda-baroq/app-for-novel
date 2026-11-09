@@ -890,6 +890,85 @@
   text-decoration-thickness: 1px;
 }
 
+/* ---------- 欄ごとの検索（FieldSearchBar・SearchHitLayer） ---------- */
+/* 検索窓はペインのヘッダーと本文の間（欄のすぐ上）。画面全体がキーボードの分だけ詰まるので、スマホでもキーボードと重ならない */
+.pw-root .pw-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  flex: none;
+}
+
+.pw-root .pw-search-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  color: var(--text-faint);
+}
+
+/* 文字の大きさは .input の 16px のまま（iPhone で欄を押した時に拡大されないように） */
+.pw-root .pw-search-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding-block: 4px;
+}
+
+.pw-root .pw-search-count {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pw-root .pw-search-nav {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+}
+
+.pw-root .pw-search-toggle.is-open {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 今の一致1か所の印（本文欄にフォーカスが無い間だけ。本文欄の上に重ね、本文欄のスクロールに付いていく） */
+.pw-root .pw-hit-layer {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.pw-root .pw-hit-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.pw-root .pw-hit-rect {
+  position: absolute;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+/* 差分の表示の中の今の一致（mark の黄色は使わない） */
+.pw-root .pw-diff .pw-hit {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: 0 0 0 1.5px var(--accent);
+  color: inherit;
+}
+
 /* 推敲メモ */
 .pw-root .pw-note {
   flex: none;
@@ -987,6 +1066,21 @@
   .pw-root .pw-tools .pw-tbtn {
     min-width: 36px;
     padding: 4px 8px;
+  }
+
+  /* 比較のヘッダーの「検索」は .pw-tools の外にあるので、ここで文字を隠す */
+  .pw-root .pw-chead > .pw-search-toggle {
+    min-width: 36px;
+    padding: 4px 8px;
+  }
+
+  .pw-root .pw-chead > .pw-search-toggle .pw-tlabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   /* よく使う操作は短い文字を残す（指で操作する端末ではツールチップが出ないので、アイコンだけにしない） */
@@ -1199,6 +1293,16 @@
 @container pw-pane (max-width: 340px) {
   .pw-root .pw-ahead > .pw-meta {
     display: none;
+  }
+
+  /* 検索窓の先頭の虫眼鏡も省いて、語の欄を広く取る */
+  .pw-root .pw-search-icon {
+    display: none;
+  }
+
+  .pw-root .pw-search {
+    gap: 4px;
+    padding-inline: 6px;
   }
 
   .pw-root .pw-adopt {
@@ -1523,6 +1627,11 @@
     padding-top: 8px;
   }
 
+  .pw-root .pw-search {
+    min-height: 36px;
+    padding-block: 2px;
+  }
+
   .pw-root .pw-notice {
     padding-block: 3px;
   }
@@ -1543,18 +1652,26 @@
 
 /* ---------- 指で操作する端末: 境界の広い当たり判定（共通 CSS）がボタンに重ならないようにする ---------- */
 @media (pointer: coarse) {
+  /* 検索窓の前へ・次へ・閉じるは指で押しやすい大きさに */
+  .pw-root .pw-search .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
   /* 上下に分けた時: 下（推敲バージョンのヘッダー）にはほとんど広げず、上（本文の下余白）に広げる */
   .pw-root .pw-split.vertical > .split-divider::before {
     inset: -22px 0 -3px;
   }
 
   /* 左右に分けた時: 境界の両側の余白を当たり判定より広くする */
-  .pw-root .pw-split.horizontal > .split-pane:first-child .pw-head {
+  .pw-root .pw-split.horizontal > .split-pane:first-child .pw-head,
+  .pw-root .pw-split.horizontal > .split-pane:first-child .pw-search {
     padding-right: 20px;
   }
 
   .pw-root .pw-split.horizontal > .split-pane:last-child .pw-head,
   .pw-root .pw-split.horizontal > .split-pane:last-child .pw-notice,
+  .pw-root .pw-split.horizontal > .split-pane:last-child .pw-search,
   .pw-root .pw-split.horizontal > .split-pane:last-child .pw-note summary {
     padding-left: 20px;
   }

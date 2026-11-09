@@ -5,20 +5,17 @@
 // （キーボードで開いた時だけ一覧にフォーカスを移す）。
 // デスクトップは編集画面のいちばん下、スマホはキーボードのすぐ上（閉じている時は画面の下）に常に出す。
 // iPhone のアプリは原稿画面でキーボードの「完了」の帯を消すので（src/platform/keyboard.ts）、代わりに「キーボードを閉じる」を出す。
-import { useEffect, useMemo, useState, useSyncExternalStore, type SyntheticEvent } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { isNativeIos } from '../../platform/platform'
+import { IS_MAC, keepFocus } from '../../ui/keys'
 import { PopupMenu, type MenuPlacement } from '../../ui/PopupMenu'
 import { isFieldVisible, useHubTarget, type EditorHub, type FieldHandle } from './editorHub'
 import { HistoryRedoIcon, HistoryUndoIcon, KeyboardHideIcon } from './pieceIcons'
 import type { FieldKey } from './session'
 import { BRACKETS, SYMBOLS, TOOLBAR } from './symbols'
 
-/** フォーカスを動かさない（入力欄にカーソルを残し、キーボードを閉じない） */
-const keepFocus = (e: SyntheticEvent) => e.preventDefault()
-
-const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
-const UNDO_KEY = MAC ? '⌘Z' : 'Ctrl+Z'
-const REDO_KEY = MAC ? '⌘⇧Z' : 'Ctrl+Y'
+const UNDO_KEY = IS_MAC ? '⌘Z' : 'Ctrl+Z'
+const REDO_KEY = IS_MAC ? '⌘⇧Z' : 'Ctrl+Y'
 
 const SYMBOL_OF = new Map(SYMBOLS.map((s) => [s.kind, s]))
 const BRACKETS_TITLE = '括弧を入れる（選んだ文字は括弧で囲む）'

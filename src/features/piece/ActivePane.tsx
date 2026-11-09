@@ -11,10 +11,13 @@ import { confirmDialog } from '../../ui/dialogs'
 import { CopyIcon, MoreIcon, PlusIcon } from '../../ui/icons'
 import { tryRun, useDismiss } from './editing'
 import { useSessionValue } from './editorHub'
+import { FieldSearchBar, SearchToggle } from './FieldSearchBar'
 import { formatStats, liveStats, withHeading } from './logic'
 import { ReviseIcon, UnadoptIcon } from './pieceIcons'
+import { SearchHitLayer } from './SearchHitLayer'
 import { versionField } from './session'
 import { SessionInput, SessionTextarea } from './SessionField'
+import { useFieldSearch } from './useFieldSearch'
 import type { WorkspaceApi } from './VersionsPane'
 
 /** extra: 採用原稿の操作の先頭に置くもの（「推敲案 n」） */
@@ -32,6 +35,17 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
   // 保存済みの本文と同じなら稿ごとにキャッシュした値を使い、書いている間だけ数え直す（ルビの記号と読みは数えない）
   const stats = useMemo(() => formatStats(liveStats(active, deferred)), [active, deferred])
   const updated = formatUpdated(active.updatedAt)
+  // 欄ごとの検索（保存していない編集も含めた本文で探す）
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const search = useFieldSearch({
+    slot: 'active',
+    text: live,
+    kind: 'textarea',
+    bodyRef,
+    sourceKey: active.id,
+    fieldKey: bodyKey,
+    hub,
+  })
 
   // 狭いペインでは、使う頻度の低い操作（コピー・採用を解除）を「…」のメニューにしまう
   const [moreOpen, setMoreOpen] = useState(false)
@@ -97,6 +111,7 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
         />
         <div className="pw-tools" role="group" aria-label="採用原稿の操作">
           {extra}
+          <SearchToggle search={search} />
           <button
             type="button"
             className="btn pw-tbtn"
@@ -166,7 +181,8 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
           <span className="faint pw-meta-hint">通し読みに反映されます</span>
         </div>
       </div>
-      <div className="pw-body">
+      {search.open ? <FieldSearchBar search={search} label="採用原稿の検索" placeholder="採用原稿を検索" /> : null}
+      <div className="pw-body" ref={bodyRef}>
         <SessionTextarea
           key={active.id}
           hub={hub}
@@ -178,8 +194,18 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
           placeholder="ここに本文を書きます"
           aria-label="採用原稿の本文"
           spellCheck={false}
+          onKeyDown={search.onFieldKeyDown}
           data-testid="active-editor"
           data-scroll-sync="active"
+        />
+        <SearchHitLayer
+          slot="active"
+          bodyRef={bodyRef}
+          hit={search.hit}
+          revealSeq={search.revealSeq}
+          value={live}
+          fieldKey={bodyKey}
+          hub={hub}
         />
       </div>
     </div>

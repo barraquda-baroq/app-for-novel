@@ -29,6 +29,7 @@ import { confirmDialog } from '../../ui/dialogs'
 import { useDocumentTitle, useMediaQuery } from '../../ui/hooks'
 import { XIcon } from '../../ui/icons'
 import { AppHeader, type Crumb } from '../../ui/Layout'
+import { keepFocus } from '../../ui/keys'
 import { NotFound } from '../../ui/NotFound'
 import { COPIED } from '../piece/caret'
 import { useIosEditorKeyboard } from '../../platform/keyboard'
@@ -49,9 +50,6 @@ export function SeparatePage() {
   }
   return <SeparateView key={piece.id} title={title} piece={piece} />
 }
-
-/** 押してもフォーカスを動かさない（入力欄のカーソルを残す） */
-const keepFocus = (e: SyntheticEvent) => e.preventDefault()
 
 /** 古い版のアプリについての案内を、この端末で出したか（端末ごとに一度だけ出す） */
 const OTHER_DEVICES_NOTICE_KEY = 'novel-studio:acts-other-devices-notice'

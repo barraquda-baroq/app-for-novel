@@ -68,6 +68,16 @@ export class EditorHub {
     this.emit()
   }
 
+  /**
+   * 記号バー・巻き戻しの働き先を外す（欄ごとの検索窓にフォーカスした時。記号・巻き戻し・進むは押せなくなり、
+   * 本文欄に戻ると働き先も戻る）
+   */
+  blurTarget(): void {
+    if (!this.target) return
+    this.target = null
+    this.emit()
+  }
+
   /** 働き先の欄が見えなくなっていたら（しまった「…」の中など）外す */
   releaseHidden(): void {
     const el = this.target?.element()

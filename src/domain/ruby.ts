@@ -177,29 +177,83 @@ export function stripRubyMap(text: string): StrippedMap {
     }
     return { text, start, end }
   }
+  const r = scanRuby(text, false)
+  return { text: r.text, start: Int32Array.from(r.start), end: Int32Array.from(r.end) }
+}
+
+/** 記号とルビの読みを除いた本文と、その各文字が元の本文の何文字目か（stripRubyPositions） */
+export interface StrippedPositions {
+  /** stripRuby(text) と同じ文字列 */
+  text: string
+  /**
+   * text の i 文字目（UTF-16）が元の本文の何文字目か（raw[at[i]] === text[i]。前から順に増える）。
+   * ルビの親文字・傍点の文字は記法の中のその文字、｜《 の《は《の位置を指す（原稿画面の欄ごとの検索で、親文字だけを選ぶため）
+   */
+  at: Int32Array
+}
+
+/**
+ * stripRuby と同じ規則で記号とルビの読みを除き、残った各文字の元の本文での位置を返す（原稿画面の欄ごとの検索で使う）。
+ * parseRuby・stripRubyMap と同じ規則（scanRuby を共有）。読み・｜・《》・《《》》は text に出ない
+ */
+export function stripRubyPositions(text: string): StrippedPositions {
+  const n = text.length
+  if (!hasRubyMarkup(text)) {
+    const at = new Int32Array(n)
+    for (let i = 0; i < n; i++) at[i] = i
+    return { text, at }
+  }
+  const r = scanRuby(text, true)
+  return { text: r.text, at: Int32Array.from(r.at) }
+}
+
+/**
+ * 記号とルビの読みを除きながら、残った各文字の元の本文との対応を作る（stripRubyMap・stripRubyPositions が共有する）。
+ * wantAt なら各文字の位置（at）、そうでなければ各文字が占める範囲（記法の文字は記法全体。start・end）だけを作る
+ */
+function scanRuby(text: string, wantAt: boolean): { text: string; at: number[]; start: number[]; end: number[] } {
+  const n = text.length
   let out = ''
+  const ats: number[] = []
   const starts: number[] = []
   const ends: number[] = []
-  // まだ確定していない地の文（ルビの親文字として後ろの漢字を取られることがある）と、その元の位置
+  // まだ確定していない地の文（ルビの親文字として後ろの漢字を取られることがある）と、その元の位置・範囲
   let buf = ''
+  let bufAt: number[] = []
   let bufStart: number[] = []
   let bufEnd: number[] = []
   const flush = () => {
     out += buf
-    for (let k = 0; k < bufStart.length; k++) {
-      starts.push(bufStart[k])
-      ends.push(bufEnd[k])
+    for (let k = 0; k < bufAt.length; k++) {
+      if (wantAt) ats.push(bufAt[k])
+      else {
+        starts.push(bufStart[k])
+        ends.push(bufEnd[k])
+      }
     }
     buf = ''
+    bufAt = []
     bufStart = []
     bufEnd = []
   }
-  /** 記法 [s, e) の中の文字 chars を、記法全体を指す文字として足す */
-  const pushUnit = (chars: string, s: number, e: number) => {
+  /** 地の文の1文字（元の本文の at の文字。範囲は [s, e)） */
+  const pushPlain = (ch: string, at: number, s: number, e: number) => {
+    buf += ch
+    bufAt.push(at)
+    if (!wantAt) {
+      bufStart.push(s)
+      bufEnd.push(e)
+    }
+  }
+  /** 記法 [s, e) の中の文字 chars（元の本文の from 文字目から続く）を、記法全体を指す文字として足す */
+  const pushUnit = (chars: string, from: number, s: number, e: number) => {
     out += chars
     for (let k = 0; k < chars.length; k++) {
-      starts.push(s)
-      ends.push(e)
+      if (wantAt) ats.push(from + k)
+      else {
+        starts.push(s)
+        ends.push(e)
+      }
     }
   }
   let i = 0
@@ -209,16 +263,14 @@ export function stripRubyMap(text: string): StrippedMap {
       const close = text.indexOf('》》', i + 2)
       if (close > i + 2 && !hasNewline(text, i, close)) {
         flush()
-        pushUnit(text.slice(i + 2, close), i, close + 2)
+        pushUnit(text.slice(i + 2, close), i + 2, i, close + 2)
         i = close + 2
         continue
       }
     }
     if (ch === '｜' || ch === '|') {
       if (text[i + 1] === '《') {
-        buf += '《'
-        bufStart.push(i)
-        bufEnd.push(i + 2)
+        pushPlain('《', i + 1, i, i + 2)
         i += 2
         continue
       }
@@ -233,7 +285,7 @@ export function stripRubyMap(text: string): StrippedMap {
         !hasNewline(text, i, close)
       ) {
         flush()
-        pushUnit(text.slice(i + 1, open), i, close + 1)
+        pushUnit(text.slice(i + 1, open), i + 1, i, close + 1)
         i = close + 1
         continue
       }
@@ -242,22 +294,31 @@ export function stripRubyMap(text: string): StrippedMap {
       const close = text.indexOf('》', i + 1)
       const run = trailingKanji(buf)
       if (run > 0 && close > i + 1 && close - i - 1 <= MAX_READING && !hasNewline(text, i, close)) {
-        const base = buf.slice(buf.length - run)
-        const baseStart = bufStart[bufStart.length - run]
-        buf = buf.slice(0, buf.length - run)
-        bufStart = bufStart.slice(0, bufStart.length - run)
-        bufEnd = bufEnd.slice(0, bufEnd.length - run)
+        const keep = buf.length - run
+        const base = buf.slice(keep)
+        // 親文字は、地の文として控えた時の位置のまま（範囲は記法全体）
+        const baseAt = bufAt.slice(keep)
+        const baseStart = wantAt ? 0 : bufStart[keep]
+        buf = buf.slice(0, keep)
+        bufAt = bufAt.slice(0, keep)
+        bufStart = bufStart.slice(0, keep)
+        bufEnd = bufEnd.slice(0, keep)
         flush()
-        pushUnit(base, baseStart, close + 1)
+        out += base
+        for (let k = 0; k < run; k++) {
+          if (wantAt) ats.push(baseAt[k])
+          else {
+            starts.push(baseStart)
+            ends.push(close + 1)
+          }
+        }
         i = close + 1
         continue
       }
     }
-    buf += ch
-    bufStart.push(i)
-    bufEnd.push(i + 1)
+    pushPlain(ch, i, i, i + 1)
     i += 1
   }
   flush()
-  return { text: out, start: Int32Array.from(starts), end: Int32Array.from(ends) }
+  return { text: out, at: ats, start: starts, end: ends }
 }

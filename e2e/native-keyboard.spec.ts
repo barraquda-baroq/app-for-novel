@@ -145,3 +145,38 @@ test('ほかの画面: いちばん下の欄までキーボードの上にスク
   await setKeyboard(page, 0)
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBe(before)
 })
+
+test('原稿画面: 検索窓と見つけた所がキーボードの上にある', async ({ page }) => {
+  await openApp(page)
+  const ids = await seed(page, ({ actions, getData }) => {
+    const titleId = actions.createTitle('猫の物語')
+    const pieceId = actions.addEpisode(titleId)
+    const lines = Array.from({ length: 120 }, (_, i) => `${i + 1}行目の文章です。`)
+    lines[90] = '91行目に目印がある。'
+    actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body: lines.join('\n') })
+    return { titleId, pieceId }
+  })
+  await openApp(page, `/t/${ids.titleId}/p/${ids.pieceId}`)
+  // WebKit（Desktop Safari の UA は Mac なので ⌘F になる）でも同じに動くよう、ショートカットではなくボタンで開く
+  await page.getByTestId('active-search-toggle').click()
+  const input = page.getByTestId('active-search-input')
+  await expect(input).toBeFocused()
+  await page.keyboard.type('目印')
+  await expect(page.getByTestId('active-search-count')).toHaveText('1／1')
+  await setKeyboard(page, KB)
+  const bar = page.getByTestId('symbol-bar')
+  await expect.poll(() => bottomOf(bar)).toBe(H - KB)
+  expect(await bottomOf(page.getByTestId('active-search'))).toBeLessThanOrEqual(H - KB)
+  // キーボードが出て本文欄が縮んでも、見つけた所は本文欄の見えている所（キーボードの上）にある
+  const rect = page.getByTestId('active-search-hit').locator('.pw-hit-rect')
+  const editor = page.getByTestId('active-editor')
+  await expect
+    .poll(async () => {
+      const r = await rect.boundingBox()
+      const e = await editor.boundingBox()
+      return r !== null && e !== null && r.y >= e.y && r.y + r.height <= e.y + e.height && r.y + r.height <= H - KB
+    })
+    .toBe(true)
+  await expect(input).toBeFocused()
+  await setKeyboard(page, 0)
+})

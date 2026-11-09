@@ -14,6 +14,7 @@ import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, MoreIcon, NoteI
 import { DiffView } from './DiffView'
 import { tryRun, useDismiss } from './editing'
 import { useNamesRevision, useSessionField, useSessionValue, type EditorHub } from './editorHub'
+import { FieldSearchBar, SearchToggle } from './FieldSearchBar'
 import {
   firstLine,
   formatCharDelta,
@@ -27,9 +28,11 @@ import {
   withHeading,
 } from './logic'
 import { ReviseIcon } from './pieceIcons'
+import { SearchHitLayer } from './SearchHitLayer'
 import { versionField, type EditSession } from './session'
 import { SessionInput, SessionTextarea } from './SessionField'
 import { useDiff } from './useDiff'
+import { useFieldSearch } from './useFieldSearch'
 
 /** 原稿画面の各ペインが共有するもの */
 export interface WorkspaceApi {
@@ -308,6 +311,21 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
   const diff = useDiff(selected.id, active ? activeBody : null, live, diffMode)
   const summary = useMemo(() => (diff.segments ? diffSummary(diff.segments) : null), [diff.segments])
 
+  // 欄ごとの検索。差分の表示中は画面に出ている文字（削除された文字も含む）で探す。採用中の稿・差分の表示では読み取り専用の本文で探す
+  const showingDiff = diffMode && active !== null
+  const editable = !isActive && !diffMode
+  const diffText = useMemo(() => diff.segments?.map((s) => s.text).join('') ?? null, [diff.segments])
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const search = useFieldSearch({
+    slot: 'compare',
+    text: showingDiff ? diffText : live,
+    kind: showingDiff ? 'diff' : 'textarea',
+    bodyRef,
+    sourceKey: `${selected.id}|${showingDiff ? 'diff' : 'textarea'}|${isActive ? 1 : 0}`,
+    fieldKey: editable ? bodyKey : undefined,
+    hub,
+  })
+
   const side = api.orientation === 'horizontal' ? '左' : '上'
 
   const adopt = async () => {
@@ -395,6 +413,7 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           <CheckIcon />
           <span className="pw-adopt-label">{isActive ? '採用中' : '採用する'}</span>
         </button>
+        <SearchToggle search={search} />
         <button
           ref={moreToggleRef}
           type="button"
@@ -506,25 +525,34 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
         </div>
       ) : null}
 
-      <div className="pw-body">
+      {search.open ? <FieldSearchBar search={search} label="推敲バージョンの検索" placeholder="この稿を検索" /> : null}
+      <div className="pw-body" ref={bodyRef}>
         {isActive ? (
           <textarea
             key={selected.id}
             className="manuscript"
             value={live}
             readOnly
+            onKeyDown={search.onFieldKeyDown}
             aria-label="採用中のバージョンの本文（読み取り専用）"
             data-testid="compare-readonly"
             data-scroll-sync="compare"
           />
-        ) : diffMode && active ? (
-          <DiffView segments={diff.segments} />
+        ) : showingDiff ? (
+          <DiffView
+            segments={diff.segments}
+            hitStart={search.hit?.start}
+            hitEnd={search.hit?.end}
+            revealSeq={search.revealSeq}
+            onKeyDown={search.onFieldKeyDown}
+          />
         ) : diffMode ? (
           <textarea
             key={selected.id}
             className="manuscript"
             value={live}
             readOnly
+            onKeyDown={search.onFieldKeyDown}
             aria-label="推敲バージョンの本文（読み取り専用）"
             data-testid="compare-readonly"
             data-scroll-sync="compare"
@@ -541,8 +569,20 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
             placeholder="推敲中の本文"
             aria-label="推敲バージョンの本文"
             spellCheck={false}
+            onKeyDown={search.onFieldKeyDown}
             data-testid="compare-editor"
             data-scroll-sync="compare"
+          />
+        )}
+        {showingDiff ? null : (
+          <SearchHitLayer
+            slot="compare"
+            bodyRef={bodyRef}
+            hit={search.hit}
+            revealSeq={search.revealSeq}
+            value={live}
+            fieldKey={editable ? bodyKey : undefined}
+            hub={hub}
           />
         )}
       </div>

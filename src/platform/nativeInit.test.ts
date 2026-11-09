@@ -71,6 +71,25 @@ describe('closeTopLayer', () => {
     expect(clicked).toHaveBeenCalledTimes(1)
   })
 
+  it('閉じるボタンが2つある時（欄ごとの検索窓と、下から出た推敲案の一覧）は、後ろ（上に重なっている方）を先に押す', () => {
+    document.body.innerHTML =
+      '<div role="search"><button type="button" data-back-close="click" id="search-close"></button></div>' +
+      '<aside><button type="button" data-back-close="click" id="proof-close"></button></aside>'
+    const clicked: string[] = []
+    for (const id of ['search-close', 'proof-close']) {
+      const b = document.getElementById(id)!
+      b.addEventListener('click', () => {
+        clicked.push(id)
+        b.remove()
+      })
+    }
+    expect(closeTopLayer()).toBe(true)
+    expect(clicked).toEqual(['proof-close'])
+    expect(closeTopLayer()).toBe(true)
+    expect(clicked).toEqual(['proof-close', 'search-close'])
+    expect(closeTopLayer()).toBe(false)
+  })
+
   it('ポップオーバーは推敲案の一覧より先、ダイアログはどちらよりも先に閉じる', () => {
     document.body.innerHTML =
       '<aside><button type="button" data-back-close="click" id="close"></button></aside>' +
