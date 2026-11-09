@@ -850,6 +850,170 @@ describe('巻き戻し・記号', () => {
   })
 })
 
+describe('括弧（記号バーの「括弧」）', () => {
+  it('空白とルビの間にあり、本文を書くまでは押せない。開くと5つの組が並び、フォーカスは本文のまま', async () => {
+    const { titleId, pieceId } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const ids = within(screen.getByTestId('symbol-bar'))
+      .getAllByRole('button')
+      .map((b) => b.dataset.testid)
+    expect(ids.slice(ids.indexOf('symbol-space'), ids.indexOf('symbol-ruby') + 1)).toEqual([
+      'symbol-space',
+      'symbol-brackets',
+      'symbol-ruby',
+    ])
+    const brackets = screen.getByTestId('symbol-brackets')
+    expect(brackets).toHaveProperty('disabled', true)
+    expect(brackets.getAttribute('aria-haspopup')).toBe('menu')
+    await user.click(editor)
+    expect(brackets).toHaveProperty('disabled', false)
+    await user.click(brackets)
+    const menu = screen.getByRole('menu', { name: '括弧' })
+    expect(brackets.getAttribute('aria-expanded')).toBe('true')
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((b) => b.textContent),
+    ).toEqual(['「」', '『』', '（）', '〈〉', '〝〟'])
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((b) => b.dataset.testid),
+    ).toEqual(['bracket-kagi', 'bracket-nijukagi', 'bracket-maru', 'bracket-yama', 'bracket-nonome'])
+    expect(screen.getByRole('menuitem', { name: 'ちょんちょん括弧（〝〟）' })).toBeTruthy()
+    expect(document.activeElement).toBe(editor)
+    // もう一度押すと閉じる
+    await user.click(brackets)
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(brackets.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('選んでいない時は組を入れてカーソルを間に、選んでいる時は囲む。巻き戻し・進むは1手', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: '彼は猫だ' }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    await user.click(editor)
+    editor.setSelectionRange(4, 4)
+    await user.click(screen.getByTestId('symbol-brackets'))
+    await user.click(screen.getByTestId('bracket-kagi'))
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(editor.value).toBe('彼は猫だ「」')
+    expect([editor.selectionStart, editor.selectionEnd]).toEqual([5, 5])
+    expect(document.activeElement).toBe(editor)
+    await user.keyboard('はい')
+    expect(editor.value).toBe('彼は猫だ「はい」')
+
+    editor.setSelectionRange(2, 3)
+    await user.click(screen.getByTestId('symbol-brackets'))
+    await user.click(screen.getByTestId('bracket-nijukagi'))
+    expect(editor.value).toBe('彼は『猫』だ「はい」')
+    expect([editor.selectionStart, editor.selectionEnd]).toEqual([5, 5])
+    await user.click(screen.getByTestId('undo-button'))
+    expect(editor.value).toBe('彼は猫だ「はい」')
+    expect([editor.selectionStart, editor.selectionEnd]).toEqual([2, 3])
+    await user.click(screen.getByTestId('redo-button'))
+    expect(editor.value).toBe('彼は『猫』だ「はい」')
+    expect([editor.selectionStart, editor.selectionEnd]).toEqual([5, 5])
+    // 保存していない編集になる（保存すると入る）
+    await user.click(screen.getByTestId('save-button'))
+    expect(bodyOf(v1)).toBe('彼は『猫』だ「はい」')
+  })
+
+  it('開いたまま別の記号を押しても1回で入る。本文を打ち始めた・Esc でも閉じる（Esc は本文に届かない）', async () => {
+    const { titleId, pieceId } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const start = editor.value
+    await user.click(editor)
+    await user.keyboard('{Control>}{End}{/Control}')
+    await user.click(screen.getByTestId('symbol-brackets'))
+    await user.click(screen.getByTestId('symbol-dash'))
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(editor.value).toBe(`${start}――`)
+
+    await user.click(screen.getByTestId('symbol-brackets'))
+    expect(screen.getByTestId('bracket-menu')).toBeTruthy()
+    await user.keyboard('あ')
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(editor.value).toBe(`${start}――あ`)
+
+    const escapes = vi.fn()
+    editor.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') escapes()
+    })
+    await user.click(screen.getByTestId('symbol-brackets'))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(escapes).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(editor)
+
+    // Android の「戻る」でも閉じる
+    await user.click(screen.getByTestId('symbol-brackets'))
+    act(() => {
+      closeTopLayer()
+    })
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(document.activeElement).toBe(editor)
+  })
+
+  it('キーボードで開くと一覧にフォーカスし、←→ と Enter で入れて本文へ。Esc では括弧のボタンへ戻る', async () => {
+    const { titleId, pieceId } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const start = editor.value
+    await user.click(editor)
+    await user.keyboard('{Control>}{End}{/Control}')
+    const brackets = screen.getByTestId('symbol-brackets')
+    brackets.focus()
+    await user.keyboard('{Enter}')
+    expect(document.activeElement).toBe(screen.getByTestId('bracket-kagi'))
+    await user.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}')
+    expect(document.activeElement).toBe(screen.getByTestId('bracket-yama'))
+    await user.keyboard('{Enter}')
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(editor.value).toBe(`${start}〈〉`)
+    expect(document.activeElement).toBe(editor)
+    expect(editor.selectionStart).toBe(start.length + 1)
+
+    brackets.focus()
+    await user.keyboard('{Enter}')
+    expect(document.activeElement).toBe(screen.getByTestId('bracket-kagi'))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(document.activeElement).toBe(brackets)
+  })
+
+  it('話の題（1行の欄）に移ると押せなくなり、開いていた一覧も閉じる。推敲メモでは使える', async () => {
+    const { titleId, pieceId, v2 } = seed()
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    await user.click(editor)
+    await user.click(screen.getByTestId('symbol-brackets'))
+    expect(screen.getByTestId('bracket-menu')).toBeTruthy()
+    act(() => screen.getByTestId('subtitle-input').focus())
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    expect(screen.getByTestId('symbol-brackets')).toHaveProperty('disabled', true)
+
+    // 推敲メモ（働き先が変わると、本文で開いた一覧は閉じる）
+    await user.click(editor)
+    await user.click(screen.getByTestId('symbol-brackets'))
+    const note = (await screen.findByTestId('version-note')) as HTMLTextAreaElement
+    await user.click(note)
+    expect(screen.queryByTestId('bracket-menu')).toBeNull()
+    await user.click(screen.getByTestId('symbol-brackets'))
+    await user.click(screen.getByTestId('bracket-maru'))
+    expect(note.value).toBe('（）')
+    expect(document.activeElement).toBe(note)
+  })
+})
+
 describe('端末内の控え', () => {
   it('編集は少し待ってから端末内に控え、保存したら消す', async () => {
     const { titleId, pieceId, v1 } = seed()

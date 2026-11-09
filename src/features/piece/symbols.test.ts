@@ -2,7 +2,8 @@
 import { describe, expect, it } from 'vitest'
 import { parseRuby } from '../../domain/ruby'
 import { countChars } from '../../domain/text'
-import { applySymbol, DASH, ELLIPSIS, FULL_SPACE } from './symbols'
+import { EMPTY_HISTORY, record, redo, undo } from './history'
+import { applySymbol, BRACKETS, DASH, ELLIPSIS, FULL_SPACE, isBracketKind, TOOLBAR, type InsertKind } from './symbols'
 
 describe('記号の挿入', () => {
   it('ダッシュは U+2015 を2つ、三点リーダーは U+2026 を2つ、全角空白は U+3000', () => {
@@ -54,5 +55,90 @@ describe('記号の挿入', () => {
   it('逆向きの選択・範囲外の位置も扱う', () => {
     expect(applySymbol('あいう', 2, 1, 'bouten').value).toBe('あ《《い》》う')
     expect(applySymbol('あ', 9, 9, 'dash').value).toBe('あ――')
+  })
+})
+
+describe('括弧', () => {
+  it('5種類をこの順で固定して持つ（《》は入れない）', () => {
+    expect(BRACKETS.map((b) => b.kind)).toEqual(['kagi', 'nijukagi', 'maru', 'yama', 'nonome'])
+    expect(BRACKETS.map((b) => [b.open.codePointAt(0), b.close.codePointAt(0)])).toEqual([
+      [0x300c, 0x300d],
+      [0x300e, 0x300f],
+      [0xff08, 0xff09],
+      [0x3008, 0x3009],
+      [0x301d, 0x301f],
+    ])
+    expect(BRACKETS.map((b) => b.open + b.close).join('')).toBe('「」『』（）〈〉〝〟')
+    expect(BRACKETS.some((b) => b.open === '《' || b.close === '》')).toBe(false)
+    expect(BRACKETS.map((b) => b.name)).toEqual(['かぎ括弧', '二重かぎ括弧', '丸括弧', '山括弧', 'ちょんちょん括弧'])
+    expect(isBracketKind('kagi')).toBe(true)
+    expect(isBracketKind('ruby')).toBe(false)
+  })
+
+  it('記号バーの並びでは、空白とルビの間に「括弧」を置く', () => {
+    expect(TOOLBAR).toEqual(['dash', 'ellipsis', 'space', 'brackets', 'ruby', 'bouten'])
+  })
+
+  it('選んでいない時は組を入れ、カーソルは間', () => {
+    const r = applySymbol('あいう', 1, 1, 'kagi')
+    expect(r.value).toBe('あ「」いう')
+    expect(r.selection).toEqual({ start: 2, end: 2 })
+    expect(r.splice).toEqual({ start: 1, removed: '', inserted: '「」' })
+    expect(applySymbol('', 0, 0, 'nonome')).toMatchObject({ value: '〝〟', selection: { start: 1, end: 1 } })
+    expect(applySymbol('あ', 1, 1, 'maru')).toMatchObject({ value: 'あ（）', selection: { start: 2, end: 2 } })
+  })
+
+  it('選んでいる時は選んだ文字を囲み、カーソルは閉じ括弧の後ろ', () => {
+    const r = applySymbol('彼は猫だ', 2, 3, 'nijukagi')
+    expect(r.value).toBe('彼は『猫』だ')
+    expect(r.selection).toEqual({ start: 5, end: 5 })
+    expect(r.splice).toEqual({ start: 2, removed: '猫', inserted: '『猫』' })
+    // ルビ・傍点の記法を含んでいても、そのまま囲む
+    expect(applySymbol('｜漢字《かんじ》', 0, 8, 'yama').value).toBe('〈｜漢字《かんじ》〉')
+  })
+
+  it('逆向きの選択・範囲外の位置も扱う', () => {
+    expect(applySymbol('あいう', 2, 1, 'kagi')).toMatchObject({ value: 'あ「い」う', selection: { start: 4, end: 4 } })
+    expect(applySymbol('あ', 9, 9, 'kagi')).toMatchObject({ value: 'あ「」', selection: { start: 2, end: 2 } })
+    expect(applySymbol('あいう', -3, 99, 'maru').value).toBe('（あいう）')
+  })
+
+  it('選んだ範囲の終わりの改行は囲まずに、閉じ括弧の後ろに残す', () => {
+    const r = applySymbol('一行目\n二行目\n', 0, 4, 'kagi')
+    expect(r.value).toBe('「一行目」\n二行目\n')
+    expect(r.selection).toEqual({ start: 5, end: 5 })
+    expect(r.splice).toEqual({ start: 0, removed: '一行目', inserted: '「一行目」' })
+    // 続いた改行もすべて外に残す。途中の改行は囲む
+    expect(applySymbol('あ\nい\n\nう', 0, 5, 'maru').value).toBe('（あ\nい）\n\nう')
+    // 改行だけを選んでいた時は、改行を消さずに範囲の初めに組を入れる
+    expect(applySymbol('あ\n\nい', 1, 3, 'kagi')).toMatchObject({ value: 'あ「」\n\nい', selection: { start: 2, end: 2 } })
+  })
+
+  it('入れた手を巻き戻すと元の文字と選んでいた範囲に戻り、進むと囲んだ文字とカーソルに戻る', () => {
+    const before = '彼は猫だ'
+    const sel = { start: 2, end: 3 }
+    for (const kind of BRACKETS.map((b) => b.kind) as InsertKind[]) {
+      const r = applySymbol(before, sel.start, sel.end, kind)
+      const h = record(EMPTY_HISTORY, {
+        before,
+        after: r.value,
+        selBefore: sel,
+        selAfter: r.selection,
+        kind: 'symbol',
+        splice: r.splice,
+        at: 0,
+      })
+      const back = undo(h, r.value)!
+      expect(back.value).toBe(before)
+      expect(back.selection).toEqual(sel)
+      const again = redo(back.history, back.value)!
+      expect(again.value).toBe(r.value)
+      expect(again.selection).toEqual(r.selection)
+    }
+  })
+
+  it('今の記号の動きは変えない', () => {
+    expect(applySymbol('あいう', 1, 2, 'space')).toMatchObject({ value: 'あ　う', selection: { start: 2, end: 2 } })
+    expect(applySymbol('あ\n', 0, 2, 'bouten').value).toBe('《《あ\n》》')
   })
 })

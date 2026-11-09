@@ -2,13 +2,26 @@
 // 外側を押す・Esc・Tab・スクロール・画面の幅の変更で閉じ、矢印キーで項目を移動できる。閉じたら開く前の要素へフォーカスを戻す。
 // 外側を押して閉じた時は閉じるだけ（下にある行のリンクなどは開かない）。
 // 押せない項目は aria-disabled にして（フォーカスは移せる）、押すと理由（hint）を知らせる。
-import { useEffect, useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+// 記号バーの「括弧」のように、本文にカーソルを置いたまま開くメニュー（autoFocus・keepFocus）にも使う。
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+  type SyntheticEvent,
+} from 'react'
 import { createPortal } from 'react-dom'
+import { onNativeKeyboard } from '../platform/keyboard'
 import { notifyError } from '../store/uiStore'
 import './menu.css'
 
 export interface PopupMenuItem {
   label: string
+  /** 読み上げの名前（省くと label） */
+  ariaLabel?: string
   onSelect: () => void
   icon?: ReactNode
   danger?: boolean
@@ -19,8 +32,11 @@ export interface PopupMenuItem {
   testId?: string
 }
 
-/** 開く位置。point は画面上の座標、anchor は下に開く要素 */
-export type MenuPlacement = { point: { x: number; y: number } } | { anchor: Element }
+/**
+ * 開く位置。point は画面上の座標、anchor はその要素の下（右端を揃える）。
+ * side: 'above' はその要素の上（真ん中を揃える。上に入らなければ下）。開いている間に画面の高さが変わったら（キーボードの開閉）置き直す
+ */
+export type MenuPlacement = { point: { x: number; y: number } } | { anchor: Element; side?: 'below' | 'above' }
 
 export interface PopupMenuProps {
   label: string
@@ -29,11 +45,21 @@ export interface PopupMenuProps {
   onClose: () => void
   /** 閉じた後にフォーカスを戻す要素（省くと開く前にフォーカスしていた要素） */
   returnFocus?: HTMLElement | null
+  /** 開いた時に最初の項目へフォーカスする（既定 true）。false なら今のフォーカス（本文など）を動かさない */
+  autoFocus?: boolean
+  /** 押してもフォーカスを奪わない（本文のカーソル・スマホのキーボードを残す。記号バーと同じ） */
+  keepFocus?: boolean
+  /** 外側を押して閉じた時に、続くクリックを取り消す（既定 true）。false なら、押した外側のボタンもそのまま働く */
+  swallowOutsideClick?: boolean
+  /** 項目の並び（row は横一列。←→ でも動く） */
+  layout?: 'column' | 'row'
   testId?: string
 }
 
 /** 画面の端からの余白 */
 const EDGE = 8
+/** 上に開く時の、押した要素との間 */
+const ABOVE_GAP = 8
 
 /**
  * 外側を押してメニューを閉じた時は、続けて届くクリック（下にある行のリンクなど）を取り消す（閉じるだけにする。
@@ -60,7 +86,21 @@ function swallowNextClick(): void {
 /** 置く位置を測るまでは見せない（位置は描いた後に直接置く） */
 const HIDDEN = { left: 0, top: 0, visibility: 'hidden' } as const
 
-export function PopupMenu({ label, items, placement, onClose, returnFocus, testId }: PopupMenuProps) {
+/** 押してもフォーカスを動かさない（入力欄にカーソルを残し、スマホのキーボードを閉じない） */
+const keepFocusHandler = (e: SyntheticEvent) => e.preventDefault()
+
+export function PopupMenu({
+  label,
+  items,
+  placement,
+  onClose,
+  returnFocus,
+  autoFocus = true,
+  keepFocus = false,
+  swallowOutsideClick = true,
+  layout = 'column',
+  testId,
+}: PopupMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   const menuId = useId()
   const closeRef = useRef(onClose)
@@ -68,10 +108,12 @@ export function PopupMenu({ label, items, placement, onClose, returnFocus, testI
   const previous = useRef<Element | null>(typeof document === 'undefined' ? null : document.activeElement)
   const focusBack = useRef(returnFocus)
   focusBack.current = returnFocus
+  const options = useRef({ autoFocus, swallowOutsideClick })
 
   // 画面からはみ出さない位置に置く（右・下にはみ出す時は左・上へ寄せる）。
   // 描き直さずに直接置く（隠れたままだとフォーカスを移せないので、描いた直後に見えるようにする）
-  useLayoutEffect(() => {
+  const place = useRef(() => {})
+  place.current = () => {
     const el = ref.current
     if (!el) return
     const w = el.offsetWidth
@@ -82,9 +124,16 @@ export function PopupMenu({ label, items, placement, onClose, returnFocus, testI
     let y: number
     if ('anchor' in placement) {
       const r = placement.anchor.getBoundingClientRect()
-      x = r.right - w
-      y = r.bottom + 4
-      if (y + h > vh - EDGE) y = r.top - h - 4
+      if (placement.side === 'above') {
+        // 下のボタンの並び（記号バー）の上端にも重ならないよう、少し離す
+        x = r.left + r.width / 2 - w / 2
+        y = r.top - h - ABOVE_GAP
+        if (y < EDGE) y = r.bottom + 4
+      } else {
+        x = r.right - w
+        y = r.bottom + 4
+        if (y + h > vh - EDGE) y = r.top - h - 4
+      }
     } else {
       x = placement.point.x
       y = placement.point.y
@@ -94,40 +143,67 @@ export function PopupMenu({ label, items, placement, onClose, returnFocus, testI
     el.style.left = `${Math.max(EDGE, Math.min(x, vw - w - EDGE))}px`
     el.style.top = `${Math.max(EDGE, Math.min(y, vh - h - EDGE))}px`
     el.style.visibility = 'visible'
-  }, [placement])
+  }
+  useLayoutEffect(() => place.current(), [placement])
 
   useEffect(() => {
     const el = ref.current
-    const first = el?.querySelector<HTMLButtonElement>('[role="menuitem"]')
-    first?.focus({ preventScroll: true })
+    if (options.current.autoFocus) {
+      el?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true })
+    }
     // 開いたボタン（anchor）を押した時は、そのボタンの操作（開く・閉じる）に任せる
     const anchor = 'anchor' in placement ? placement.anchor : null
+    const above = 'anchor' in placement && placement.side === 'above'
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node
       if (anchor?.contains(target)) return
       if (ref.current && !ref.current.contains(target)) {
         // 外側を押して閉じる時は、閉じるだけにする（下にある行のリンクなどを開かない）
-        swallowNextClick()
+        if (options.current.swallowOutsideClick) swallowNextClick()
         closeRef.current()
       }
+    }
+    // Esc は document の捕捉の段階で受けて止める（フォーカスが本文にあっても閉じられ、
+    // 同じ1回の Esc で本文の側の部品（検索窓など）まで閉じない。いちばん上のメニューだけが閉じる）
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.isComposing) return
+      e.preventDefault()
+      e.stopPropagation()
+      closeRef.current()
     }
     const onScroll = (e: Event) => {
       if (ref.current && e.target instanceof Node && ref.current.contains(e.target)) return
       closeRef.current()
     }
     // 画面キーボードの開閉（Android は interactive-widget=resizes-content で高さだけが変わる）では閉じない。
-    // 回転・ウィンドウの幅の変更の時だけ閉じる（置いた位置がずれるので）
+    // 回転・ウィンドウの幅の変更の時だけ閉じる（置いた位置がずれるので）。
+    // 上に開くメニュー（記号バーの括弧）は、キーボードの開閉で動いたボタンの上に置き直す（--kb-inset を入れた後に測る）。
+    // iPhone のアプリは画面が縮まないので、アプリから届くキーボードの高さの変化でも置き直す
     const openWidth = window.innerWidth
+    let frame = 0
+    const follow = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => place.current())
+    }
     const onResize = () => {
       if (window.innerWidth !== openWidth) closeRef.current()
+      else if (above) follow()
     }
+    const vv = above ? window.visualViewport : null
     document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', onResize)
+    vv?.addEventListener('resize', follow)
+    const offNative = above ? onNativeKeyboard(follow) : null
     return () => {
+      cancelAnimationFrame(frame)
+      offNative?.()
       document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onResize)
+      vv?.removeEventListener('resize', follow)
       // 閉じた後は開く前の場所へ（確認ダイアログを開いた時は、ダイアログが閉じた後にここへ戻る）
       const back = focusBack.current ?? (previous.current instanceof HTMLElement ? previous.current : null)
       const active = document.activeElement
@@ -137,15 +213,17 @@ export function PopupMenu({ label, items, placement, onClose, returnFocus, testI
     }
   }, [])
 
+  const row = layout === 'row'
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const buttons = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])
     const i = buttons.indexOf(document.activeElement as HTMLButtonElement)
     let j = -1
-    if (e.key === 'ArrowDown') j = (i + 1) % buttons.length
-    else if (e.key === 'ArrowUp') j = (i - 1 + buttons.length) % buttons.length
+    if (e.key === 'ArrowDown' || (row && e.key === 'ArrowRight')) j = (i + 1) % buttons.length
+    else if (e.key === 'ArrowUp' || (row && e.key === 'ArrowLeft')) j = (i - 1 + buttons.length) % buttons.length
     else if (e.key === 'Home') j = 0
     else if (e.key === 'End') j = buttons.length - 1
-    else if (e.key === 'Escape' || e.key === 'Tab') {
+    // Esc は上の document の捕捉の段階で受ける
+    else if (e.key === 'Tab') {
       e.preventDefault()
       e.stopPropagation()
       closeRef.current()
@@ -159,14 +237,17 @@ export function PopupMenu({ label, items, placement, onClose, returnFocus, testI
   return createPortal(
     <div
       ref={ref}
-      className="pm-menu"
+      className={`pm-menu${row ? ' is-row' : ''}`}
       role="menu"
       id={menuId}
       aria-label={label}
+      aria-orientation={row ? 'horizontal' : undefined}
       onKeyDown={onKey}
       // 右クリックでメニューの上にブラウザのメニューを重ねない
       onContextMenu={(e) => e.preventDefault()}
-      style={HIDDEN}
+      onPointerDown={keepFocus ? keepFocusHandler : undefined}
+      onMouseDown={keepFocus ? keepFocusHandler : undefined}
+      style={row ? ({ ...HIDDEN, '--pm-cols': items.length } as CSSProperties) : HIDDEN}
       data-testid={testId ?? 'popup-menu'}
     >
       <p className="pm-title" aria-hidden="true">
@@ -179,6 +260,7 @@ export function PopupMenu({ label, items, placement, onClose, returnFocus, testI
           role="menuitem"
           className={`pm-item${it.danger ? ' is-danger' : ''}${it.disabled ? ' is-disabled' : ''}`}
           aria-disabled={it.disabled || undefined}
+          aria-label={it.ariaLabel}
           onClick={() => {
             if (it.disabled) {
               if (it.hint) notifyError(it.hint)

@@ -115,6 +115,12 @@
   min-width: 4px;
 }
 
+/* 「括弧」: 一覧を開いている間は押した印を出す */
+.pw-root .pw-sym-brackets[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
 /* 記号バーの保存ボタンは、スマホで書いている間（画面上部を畳んでいる間）だけ出す */
 .pw-root .pw-sym-save {
   display: none;
@@ -1310,16 +1316,17 @@
   }
 }
 
-/* 幅 360〜420px のスマホ: 8つのボタン（巻き戻し・進む・記号5つ・保存）を1行に収める */
-@media (max-width: 420px) {
+/* 幅 360〜460px のスマホ: 9つのボタン（巻き戻し・進む・記号5つ・括弧・保存）と、iPhone のアプリの「キーボードを閉じる」を
+   1行に収める（幅 375px の iPhone でも。e2e/editing.spec.ts で幅を測って確かめる） */
+@media (max-width: 460px) {
   .pw-root .pw-symbols {
-    gap: 2px;
-    padding-inline: 6px;
+    gap: 1px;
+    padding-inline: 4px;
   }
 
   .pw-root .pw-sym {
     min-width: 34px;
-    padding-inline: 4px;
+    padding-inline: 3px;
     font-size: 13px;
   }
 
@@ -1332,8 +1339,19 @@
     margin-inline: 2px;
   }
 
+  .pw-root .pw-sym-fill {
+    min-width: 0;
+  }
+
   .pw-root.is-focus-mode .pw-sym-save {
-    min-width: 46px;
+    min-width: 42px;
+  }
+}
+
+/* 幅 380px 以下は区切り線も省く */
+@media (max-width: 380px) {
+  .pw-root .pw-sym-sep {
+    display: none;
   }
 }
 

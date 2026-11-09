@@ -88,6 +88,17 @@ const CARET_MODULE = '/src/features/piece/caret.ts'
 type CaretModule = typeof import('../src/features/piece/caret')
 
 /** 本文欄のカーソルの行（見えない要素で測る）が、本文欄の見えている範囲に入っているか */
+/** 要素の下端（画面の上からの距離） */
+async function bottomOf(l: Locator): Promise<number> {
+  const b = (await l.boundingBox())!
+  return b.y + b.height
+}
+
+/** 開く時の動き（pop-in の拡大・移動）が終わるまで待つ（途中で測ると少し小さく・下にずれる） */
+async function settled(l: Locator): Promise<void> {
+  await l.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+}
+
 async function caretLineVisible(editor: Locator): Promise<boolean> {
   return editor.evaluate(async (el: HTMLTextAreaElement, url: string) => {
     const { caretLine } = (await import(/* @vite-ignore */ url)) as CaretModule
@@ -565,6 +576,106 @@ test.describe('記号バー', () => {
     await expect(page.getByTestId('subtitle-input')).toHaveValue('旅立ち')
   })
 
+  test('括弧: 一覧が記号バーの上に開き、組を入れてカーソルを間に置く・選んだ文字を囲む（フォーカスは本文のまま）', async ({
+    page,
+  }, info) => {
+    test.skip(!isDesktop(info), 'スマホは別のテストで確かめる')
+    const ids = await seedWork(page)
+    await openPiece(page, ids, ids.pieceId)
+    const bar = page.getByTestId('symbol-bar')
+    const editor = page.getByTestId('active-editor')
+    const brackets = page.getByTestId('symbol-brackets')
+    const menu = page.getByTestId('bracket-menu')
+    // 並びは 空白 → 括弧 → ルビ
+    const order = await bar
+      .locator('button')
+      .evaluateAll((bs) => bs.map((b) => (b as HTMLElement).dataset.testid).filter((id) => id?.startsWith('symbol-')))
+    expect(order.slice(0, 6)).toEqual([
+      'symbol-dash',
+      'symbol-ellipsis',
+      'symbol-space',
+      'symbol-brackets',
+      'symbol-ruby',
+      'symbol-bouten',
+    ])
+    await expect(brackets).toBeDisabled()
+
+    await editor.click()
+    await page.keyboard.press('ControlOrMeta+End')
+    await brackets.click()
+    await expect(menu).toBeVisible()
+    await expect(brackets).toHaveAttribute('aria-expanded', 'true')
+    await expect(editor).toBeFocused()
+    // 5つの組がこの順で、記号バーより上に開く
+    await expect(menu.getByRole('menuitem')).toHaveText(['「」', '『』', '（）', '〈〉', '〝〟'])
+    await settled(menu)
+    expect(await bottomOf(menu)).toBeLessThanOrEqual((await bar.boundingBox())!.y + 1)
+
+    // 選んでいない時は組を入れ、カーソルは間（続けて打つと括弧の中に入る）
+    await page.getByTestId('bracket-kagi').click()
+    await expect(menu).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    await page.keyboard.type('はい')
+    await expect(editor).toHaveValue(`${BODY}「はい」`)
+
+    // 選んだ文字を囲む（カーソルは閉じ括弧の後ろ）
+    await editor.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(3, 4))
+    await brackets.click()
+    await page.getByTestId('bracket-yama').click()
+    await expect(editor).toHaveValue(`吾輩は〈猫〉である。名前はまだ無い。「はい」`)
+    expect(await editor.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd])).toEqual([6, 6])
+    // 巻き戻すと元の文字と選んでいた範囲に戻り、進むと囲んだ値に戻る
+    await page.getByTestId('undo-button').click()
+    await expect(editor).toHaveValue(`${BODY}「はい」`)
+    expect(await editor.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.selectionEnd])).toEqual([3, 4])
+    await page.getByTestId('redo-button').click()
+    await expect(editor).toHaveValue(`吾輩は〈猫〉である。名前はまだ無い。「はい」`)
+
+    // 一覧を開いたまま別の記号を押しても、1回で入る（閉じるだけにしない）
+    await page.keyboard.press('ControlOrMeta+End')
+    await brackets.click()
+    await expect(menu).toBeVisible()
+    await page.getByTestId('symbol-dash').click()
+    await expect(menu).toHaveCount(0)
+    await expect(editor).toHaveValue(/「はい」――$/)
+
+    // Esc は一覧だけを閉じる（本文のフォーカスと値はそのまま）。押した括弧のボタンでも閉じる
+    await brackets.click()
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    await brackets.click()
+    await expect(menu).toBeVisible()
+    await brackets.click()
+    await expect(menu).toHaveCount(0)
+
+    // キーボードで開くと一覧にフォーカスが移り、←→ で動いて Enter で入れる（入れた後は本文へ）
+    await brackets.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('bracket-kagi')).toBeFocused()
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('ArrowRight')
+    await expect(page.getByTestId('bracket-maru')).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(editor).toBeFocused()
+    await expect(editor).toHaveValue(/――（）$/)
+    // Esc で閉じると括弧のボタンへ戻る
+    await brackets.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('bracket-kagi')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect(brackets).toBeFocused()
+
+    // 話の題（1行の欄）では使えない。開いていた一覧も閉じる
+    await editor.click()
+    await brackets.click()
+    await expect(menu).toBeVisible()
+    await page.getByTestId('subtitle-input').focus()
+    await expect(menu).toHaveCount(0)
+    await expect(brackets).toBeDisabled()
+  })
+
   test.describe('スマホ', () => {
     test.skip(({ isMobile }) => !isMobile, 'スマホ（タッチ操作）のみ')
 
@@ -592,10 +703,6 @@ test.describe('記号バー', () => {
       await openPiece(page, ids, ids.pieceId)
       const bar = page.getByTestId('symbol-bar')
       const editor = page.getByTestId('active-editor')
-      const bottomOf = async (l: Locator) => {
-        const b = (await l.boundingBox())!
-        return b.y + b.height
-      }
       expect(Math.abs((await bottomOf(bar)) - 780)).toBeLessThan(1)
 
       // Android: キーボードの分だけ画面が縮む
@@ -609,20 +716,85 @@ test.describe('記号バー', () => {
       await expect(editor).toBeFocused()
       await expect(page.getByTestId('piece-workspace')).toHaveClass(/is-focus-mode/)
       await expect(editor).toHaveValue(`${BODY}……`)
-      for (const id of ['undo-button', 'symbol-dash', 'symbol-ruby', 'symbol-bouten', 'symbol-save']) {
+      for (const id of ['undo-button', 'symbol-dash', 'symbol-brackets', 'symbol-ruby', 'symbol-bouten', 'symbol-save']) {
         const b = (await page.getByTestId(id).boundingBox())!
         expect(b.height).toBeGreaterThanOrEqual(34)
         expect(b.width).toBeGreaterThanOrEqual(34)
         // 幅 360px でも1行に収まる（記号バーの中でも横にはみ出さない）
         expect(b.x + b.width).toBeLessThanOrEqual(360)
       }
+      // 括弧の一覧はキーボードのすぐ上の記号バーの上に開き、押しても本文のフォーカス（キーボード）は外れない
+      await page.getByTestId('symbol-brackets').tap()
+      const menu = page.getByTestId('bracket-menu')
+      await expect(menu).toBeVisible()
+      await expect(editor).toBeFocused()
+      await settled(menu)
+      expect(await bottomOf(menu)).toBeLessThanOrEqual((await bar.boundingBox())!.y + 1)
+      expect((await menu.boundingBox())!.y).toBeGreaterThanOrEqual(0)
+      for (const item of await menu.getByRole('menuitem').all()) {
+        const b = (await item.boundingBox())!
+        expect(b.width).toBeGreaterThanOrEqual(44)
+        expect(b.height).toBeGreaterThanOrEqual(44)
+        expect(b.x).toBeGreaterThanOrEqual(0)
+        expect(b.x + b.width).toBeLessThanOrEqual(360)
+      }
+      await page.getByTestId('bracket-nijukagi').tap()
+      await expect(menu).toHaveCount(0)
+      await expect(editor).toBeFocused()
+      await expect(page.getByTestId('piece-workspace')).toHaveClass(/is-focus-mode/)
+      await page.keyboard.type('本')
+      await expect(editor).toHaveValue(`${BODY}……『本』`)
+      // 開いたまま別の記号を押しても1回で入る
+      await page.getByTestId('symbol-brackets').tap()
+      await expect(menu).toBeVisible()
+      await page.getByTestId('symbol-space').tap()
+      await expect(menu).toHaveCount(0)
+      await expect(editor).toHaveValue(`${BODY}……『本　』`)
+      await page.keyboard.press('ControlOrMeta+End')
       // 画面上部を畳んでいる間も保存できる
       await page.getByTestId('symbol-save').tap()
       await expect(editor).toBeFocused()
-      expect(await storedBody(page, ids.v1)).toBe(`${BODY}……`)
+      expect(await storedBody(page, ids.v1)).toBe(`${BODY}……『本　』`)
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
       ).toBeLessThanOrEqual(0)
+    })
+
+    test('幅 360〜460px で、記号バーのボタンが1行に収まる（iPhone のアプリの「キーボードを閉じる」がある時は 375px から）', async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 360, height: 780 })
+      const ids = await seedWork(page)
+      await openPiece(page, ids, ids.pieceId)
+      const editor = page.getByTestId('active-editor')
+      await editor.tap()
+      await page.keyboard.press('ControlOrMeta+End')
+      await page.keyboard.type('あ')
+      // 書いている間（保存ボタンも出る）がいちばん混む
+      await expect(page.getByTestId('piece-workspace')).toHaveClass(/is-focus-mode/)
+      const overflow = (width: number) =>
+        page.evaluate((w) => {
+          const bar = document.querySelector<HTMLElement>('[data-testid="symbol-bar"]')!
+          const right = Math.max(...[...bar.querySelectorAll('button')].map((b) => b.getBoundingClientRect().right))
+          return { scroll: bar.scrollWidth - bar.clientWidth, right: right - w }
+        }, width)
+      for (const width of [360, 375, 390, 412, 430, 460]) {
+        await page.setViewportSize({ width, height: 460 })
+        await expect.poll(() => overflow(width)).toEqual({ scroll: 0, right: expect.any(Number) })
+        expect((await overflow(width)).right).toBeLessThanOrEqual(0)
+      }
+      // iPhone のアプリは「キーボードを閉じる」も並ぶ（ブラウザでは出ないので、同じ形のボタンを足して測る）
+      await page.evaluate(() => {
+        const bar = document.querySelector('[data-testid="symbol-bar"]')!
+        const stand = bar.querySelector('[data-testid="undo-button"]')!.cloneNode(true) as HTMLElement
+        stand.dataset.testid = 'stand-in-close-keyboard'
+        bar.appendChild(stand)
+      })
+      for (const width of [375, 390, 430, 460]) {
+        await page.setViewportSize({ width, height: 460 })
+        await expect.poll(() => overflow(width)).toEqual({ scroll: 0, right: expect.any(Number) })
+        expect((await overflow(width)).right).toBeLessThanOrEqual(0)
+      }
     })
 
     test('iPhone: 画面は縮まず見えている範囲（visualViewport）だけが縮んでも、記号バーをキーボードのすぐ上に出す', async ({
@@ -672,7 +844,32 @@ test.describe('記号バー', () => {
       expect(e.y + e.height).toBeLessThanOrEqual((await bar.boundingBox())!.y + 1)
       await page.getByTestId('symbol-dash').tap()
       await expect(editor).toBeFocused()
+      // 括弧の一覧も、キーボードの上に出た記号バーの上に開く（画面の下に隠れない）
+      await page.getByTestId('symbol-brackets').tap()
+      const menu = page.getByTestId('bracket-menu')
+      await expect(menu).toBeVisible()
+      await expect(editor).toBeFocused()
+      await expect.poll(() => bottomOf(menu)).toBeLessThanOrEqual((await bar.boundingBox())!.y + 1)
+      await page.getByTestId('bracket-kagi').tap()
+      await expect(editor).toHaveValue(/――「」/)
+      // 開いている間にキーボードが閉じても、下へ動いた記号バーの上に置き直す
+      await page.getByTestId('symbol-brackets').tap()
+      await expect(menu).toBeVisible()
+      await page.evaluate(() => (window as unknown as { __setKeyboard: (px: number) => void }).__setKeyboard(0))
+      await expect.poll(async () => Math.round((await bar.boundingBox())!.y + (await bar.boundingBox())!.height)).toBe(844)
+      await expect.poll(() => bottomOf(menu)).toBeGreaterThan(844 - 330)
+      await expect.poll(async () => (await bottomOf(menu)) - (await bar.boundingBox())!.y).toBeLessThanOrEqual(1)
+      await page.keyboard.press('Escape')
+      await expect(menu).toHaveCount(0)
+      await expect(editor).toBeFocused()
       // キーボードを閉じると画面の下に戻る
+      await page.evaluate(() => (window as unknown as { __setKeyboard: (px: number) => void }).__setKeyboard(330))
+      await expect
+        .poll(async () => {
+          const b = (await bar.boundingBox())!
+          return Math.round(b.y + b.height)
+        })
+        .toBe(844 - 330)
       await page.evaluate(() => (window as unknown as { __setKeyboard: (px: number) => void }).__setKeyboard(0))
       await expect
         .poll(async () => {

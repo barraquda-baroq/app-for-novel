@@ -53,6 +53,70 @@ test('原稿画面: 記号バーがキーボードのすぐ上に来て、閉じ
   await expect.poll(() => bottomOf(bar)).toBe(H)
 })
 
+test('原稿画面: 括弧の一覧はキーボードの上の記号バーの上に開き、「キーボードを閉じる」があっても記号バーは1行に収まる', async ({
+  page,
+}) => {
+  await openApp(page)
+  const ids = await seed(page, ({ actions, getData }) => {
+    const titleId = actions.createTitle('猫の物語')
+    const pieceId = actions.addEpisode(titleId)
+    actions.updateVersion(getData().pieces[pieceId].versionIds[0], { body: '吾輩は猫である。' })
+    return { titleId, pieceId }
+  })
+  await openApp(page, `/t/${ids.titleId}/p/${ids.pieceId}`)
+  const bar = page.getByTestId('symbol-bar')
+  const editor = page.getByTestId('active-editor')
+  await editor.click()
+  await page.keyboard.press('ControlOrMeta+End')
+  await page.keyboard.type('あ')
+  await setKeyboard(page, KB)
+  await expect.poll(() => bottomOf(bar)).toBe(H - KB)
+
+  await page.getByTestId('symbol-brackets').click()
+  const menu = page.getByTestId('bracket-menu')
+  await expect(menu).toBeVisible()
+  await expect(editor).toBeFocused()
+  await menu.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+  const barTop = Math.round((await bar.boundingBox())!.y)
+  expect(await bottomOf(menu)).toBeLessThanOrEqual(barTop)
+  expect((await menu.boundingBox())!.y).toBeGreaterThanOrEqual(0)
+  await page.getByTestId('bracket-kagi').click()
+  await expect(editor).toHaveValue('吾輩は猫である。あ「」')
+  await expect(editor).toBeFocused()
+  // 開いている間にキーボードが閉じたら（下へ動いた）記号バーの上に置き直す
+  await page.getByTestId('symbol-brackets').click()
+  await expect(menu).toBeVisible()
+  await setKeyboard(page, 0)
+  await expect.poll(() => bottomOf(bar)).toBe(H)
+  await expect.poll(async () => (await bottomOf(menu)) - Math.round((await bar.boundingBox())!.y)).toBeLessThanOrEqual(0)
+  await expect.poll(() => bottomOf(menu)).toBeGreaterThan(H - KB)
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await setKeyboard(page, KB)
+
+  // iPhone のアプリでは「キーボードを閉じる」も並ぶ（ブラウザでは出ないので、同じ形のボタンを足して測る）。
+  // 幅 375（SE・mini）と 390 でも、どのボタンも記号バーからはみ出さない
+  await page.evaluate(() => {
+    const b = document.querySelector('[data-testid="symbol-bar"]')!
+    const stand = b.querySelector('[data-testid="undo-button"]')!.cloneNode(true) as HTMLElement
+    stand.dataset.testid = 'stand-in-close-keyboard'
+    b.appendChild(stand)
+  })
+  for (const width of [W, 375]) {
+    await page.setViewportSize({ width, height: H })
+    await expect
+      .poll(() =>
+        page.evaluate((w) => {
+          const b = document.querySelector<HTMLElement>('[data-testid="symbol-bar"]')!
+          const right = Math.max(...[...b.querySelectorAll('button')].map((x) => x.getBoundingClientRect().right))
+          return b.scrollWidth <= b.clientWidth && right <= w
+        }, width),
+      )
+      .toBe(true)
+  }
+  await setKeyboard(page, 0)
+})
+
 test('ダイアログ: 背景とダイアログの下端がキーボードの上に来る', async ({ page }) => {
   await openApp(page)
   await page.locator('[data-testid="idea-section"][data-section="none"]').getByTestId('idea-add').click()

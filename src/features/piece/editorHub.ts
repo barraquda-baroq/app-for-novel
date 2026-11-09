@@ -2,14 +2,15 @@
 // 最後にフォーカスした欄を覚えておく。編集の中身は EditSession が持つ。
 import { useSyncExternalStore } from 'react'
 import type { EditSession, FieldKey, FieldState } from './session'
-import type { SymbolKind } from './symbols'
+import type { InsertKind } from './symbols'
 
 export interface FieldHandle {
   key: FieldKey
   /** 記号を入れられる欄（本文・推敲メモ） */
   symbols: boolean
   element: () => HTMLTextAreaElement | HTMLInputElement | null
-  insert: (kind: SymbolKind) => void
+  /** 記号・括弧を入れる（巻き戻しの1手になる） */
+  insert: (kind: InsertKind) => void
   undo: () => void
   redo: () => void
 }

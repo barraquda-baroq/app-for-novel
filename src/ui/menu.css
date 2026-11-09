@@ -92,3 +92,28 @@
   color: var(--text-muted);
   white-space: normal;
 }
+
+/* 横一列のメニュー（記号バーの「括弧」）: 見出しの下に、指で押せる大きさの項目を並べる（列の数は --pm-cols） */
+.pm-menu.is-row {
+  display: grid;
+  grid-template-columns: repeat(var(--pm-cols, 5), minmax(44px, auto));
+  min-width: 0;
+}
+
+.pm-menu.is-row .pm-title {
+  grid-column: 1 / -1;
+}
+
+.pm-menu.is-row .pm-item {
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 4px;
+  font-family: var(--editor-font);
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.pm-menu.is-row .pm-text {
+  align-items: center;
+}
