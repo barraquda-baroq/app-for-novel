@@ -17,6 +17,7 @@ import { JUMP_SHEET_QUERY } from './logic'
 import { PieceWorkspace } from './PieceWorkspace'
 import { resetFieldSearchForTests, useFieldSearchStore } from './searchStore'
 import { pieceField, versionField } from './session'
+import { selectDisplayRange } from './useFieldSearch'
 
 // 差分の計算が「いつ」行われるかを数える（描画の中で計算していないことを確かめる）
 const diffCalls = vi.hoisted(() => ({ count: 0 }))
@@ -1258,6 +1259,144 @@ describe('欄ごとの検索', () => {
       expect(closeTopLayer()).toBe(true)
     })
     expect(screen.queryByTestId('active-search')).toBeNull()
+  })
+
+  it('本文欄で今の一致を打ち直してから次へを押しても、次の一致を飛ばさない（直した一致を今の一致として数えない）。検索窓の Enter でも', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: 'あ猫い猫う猫え猫' }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const sel = () => [editor.selectionStart, editor.selectionEnd]
+    await user.click(editor)
+    editor.setSelectionRange(0, 0)
+    await user.keyboard('{Control>}f{/Control}')
+    await user.keyboard('猫')
+    expect(count('active')).toBe('1／4')
+    expect(hitRange('active')).toEqual([1, 2])
+    // 本文欄へ戻って今の一致を選んだまま次へ（前へ・次へは本文欄のフォーカスを奪わない）
+    await user.click(editor)
+    editor.setSelectionRange(1, 2)
+    await user.click(screen.getByTestId('active-search-next'))
+    expect(document.activeElement).toBe(editor)
+    expect(sel()).toEqual([3, 4])
+    expect(count('active')).toBe('2／4')
+    // 今の一致を打ち直すと、今の一致は無くなる（次の一致を今の一致として数えない）
+    await user.keyboard('犬')
+    expect(editor.value).toBe('あ猫い犬う猫え猫')
+    expect(count('active')).toBe('3件')
+    await user.click(screen.getByTestId('active-search-next'))
+    expect(sel()).toEqual([5, 6])
+    expect(count('active')).toBe('2／3')
+    // もう一度直してから検索窓へ移り、Enter で次へ（直した所の次の一致）
+    await user.keyboard('犬')
+    expect(editor.value).toBe('あ猫い犬う犬え猫')
+    expect(count('active')).toBe('2件')
+    await user.click(screen.getByTestId('active-search-input'))
+    await user.keyboard('{Enter}')
+    expect(count('active')).toBe('2／2')
+    expect(hitRange('active')).toEqual([7, 8])
+    // 端では先頭へ戻る
+    await user.keyboard('{Enter}')
+    expect(count('active')).toBe('1／2')
+    expect(hitRange('active')).toEqual([1, 2])
+  })
+
+  it('本文欄で今の一致を打ち直してから前へを押しても、前の一致を飛ばさない。カーソルが今の一致の端にある時はその前へ', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: 'あ猫い猫う猫え猫' }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const sel = () => [editor.selectionStart, editor.selectionEnd]
+    await user.click(editor)
+    editor.setSelectionRange(0, 0)
+    await user.keyboard('{Control>}f{/Control}')
+    await user.keyboard('猫')
+    await user.keyboard('{Shift>}{Enter}{/Shift}')
+    expect(count('active')).toBe('4／4')
+    expect(hitRange('active')).toEqual([7, 8])
+    // 印の終わりを押して本文欄へ（カーソルは今の一致の端）
+    await user.click(editor)
+    editor.setSelectionRange(8, 8)
+    await user.click(screen.getByTestId('active-search-prev'))
+    expect(document.activeElement).toBe(editor)
+    expect(sel()).toEqual([5, 6])
+    expect(count('active')).toBe('3／4')
+    await user.keyboard('犬')
+    expect(count('active')).toBe('3件')
+    await user.click(screen.getByTestId('active-search-prev'))
+    expect(sel()).toEqual([3, 4])
+    expect(count('active')).toBe('2／3')
+    await user.keyboard('犬')
+    expect(editor.value).toBe('あ猫い犬う犬え猫')
+    await user.click(screen.getByTestId('active-search-prev'))
+    expect(sel()).toEqual([1, 2])
+    expect(count('active')).toBe('1／2')
+    // 端では末尾へ戻る
+    await user.keyboard('犬')
+    expect(count('active')).toBe('1件')
+    await user.click(screen.getByTestId('active-search-prev'))
+    expect(sel()).toEqual([7, 8])
+    expect(count('active')).toBe('1／1')
+  })
+
+  it('本文欄でカーソルをほかの所へ移してから次へ・前へを押すと、そのカーソルから移る（カーソルを中に含む一致も飛ばさない）', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: 'あ白くい白くう白く' }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const sel = () => [editor.selectionStart, editor.selectionEnd]
+    await user.click(editor)
+    editor.setSelectionRange(0, 0)
+    await user.keyboard('{Control>}f{/Control}')
+    await user.keyboard('白く')
+    expect(count('active')).toBe('1／3')
+    await user.click(editor)
+    // 3番目の一致の中
+    editor.setSelectionRange(8, 8)
+    await user.click(screen.getByTestId('active-search-next'))
+    expect(sel()).toEqual([7, 9])
+    expect(count('active')).toBe('3／3')
+    // 2番目の一致の中
+    editor.setSelectionRange(5, 5)
+    await user.click(screen.getByTestId('active-search-prev'))
+    expect(sel()).toEqual([4, 6])
+    expect(count('active')).toBe('2／3')
+    // 一致の始まり（次へはその一致、前へはその前）
+    editor.setSelectionRange(7, 7)
+    await user.click(screen.getByTestId('active-search-next'))
+    expect(sel()).toEqual([7, 9])
+    editor.setSelectionRange(4, 4)
+    await user.click(screen.getByTestId('active-search-prev'))
+    expect(sel()).toEqual([1, 3])
+  })
+
+  it('差分の表示で選んだ文字の Ctrl+F は、選んだ所を今の一致にする', async () => {
+    const { titleId, pieceId, v1, v2 } = seed()
+    act(() => {
+      actions.updateVersion(v1, { body: 'あ猫い猫う猫え' })
+      actions.updateVersion(v2, { body: 'あ猫い猫う猫え。' })
+    })
+    usePrefs.getState().setPrefs({ showDiff: true })
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    const view = await screen.findByTestId('diff-view')
+    await waitFor(() => expect(view.querySelector('.diff-add')).not.toBeNull())
+    act(() => view.focus())
+    selectDisplayRange(view, 5, 6)
+    expect(window.getSelection()?.toString()).toBe('猫')
+    await user.keyboard('{Control>}f{/Control}')
+    expect(screen.getByTestId('compare-search-input')).toHaveProperty('value', '猫')
+    expect(count('compare')).toBe('3／3')
+    // 印は3番目の猫（表示の文字で5文字目から）
+    const mark = screen.getByTestId('diff-search-hit')
+    const before = document.createRange()
+    before.setStart(view, 0)
+    before.setEndBefore(mark)
+    expect(before.toString()).toBe('あ猫い猫う')
+    expect(mark.textContent).toBe('猫')
   })
 })
 

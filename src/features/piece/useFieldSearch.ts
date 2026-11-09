@@ -1,6 +1,9 @@
 // 原稿画面の欄1つ分（採用原稿・推敲バージョン）の検索の動き。
 // - 開くのはペインのヘッダーの「検索」か、その本文欄にフォーカスがある時の Ctrl+F（Mac は ⌘F）。ほかの所ではブラウザの検索のまま
 // - 語を変えると、起点（欄のカーソルの位置か、今の一致）から後ろの最初の一致へ移る。Enter・次へで次、Shift+Enter・前へで前（端で反対の端へ）
+// - 今の一致は、見つけた所の位置に留める。本文を直してそこから始まる一致が無くなったら、今の一致は無し（件数は「n件」。検索窓からは直した所から移る）
+// - 本文欄にフォーカスがある時の前へ・次へは、今の一致を選んでいれば（カーソルがその中・端にあれば）その次・前、
+//   離れていれば（今の一致を直した・ほかの所へ移った）欄のカーソルから移る（直した後の次の一致を飛ばさない）
 // - 見つけた所は、検索窓にフォーカスを残したまま印（SearchHitLayer・差分の <mark>）で見せ、閉じた時（Esc・×）に本文欄で本当に選ぶ
 // - 日本語入力の変換中は探さない（確定してから）。語と窓が開いているかは searchStore.ts（話を移っても残る）
 import {
@@ -19,6 +22,7 @@ import type { EditorHub } from './editorHub'
 import {
   buildSearchIndex,
   findHits,
+  firstEndingAfter,
   firstFrom,
   foldQuery,
   hitStatus,
@@ -110,8 +114,11 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
 
   /** 実際に探す語（変換中は変えない） */
   const [committed, setCommitted] = useState(query)
-  /** 起点（元の位置）と、今の一致を選んでいるか（今の一致は起点から後ろの最初の一致） */
-  const [pos, setPos] = useState({ anchor: 0, active: false })
+  /**
+   * 起点（元の位置）と、今の一致を選んでいるか。今の一致は、exact でなければ起点から後ろの最初の一致（語を変えた・開いた時）、
+   * exact なら起点ちょうどから始まる一致（見つけた所に留めた後。無くなったら今の一致は無し）
+   */
+  const [pos, setPos] = useState({ anchor: 0, active: false, exact: false })
   const [revealSeq, setRevealSeq] = useState(0)
   /** 欄で打ちながら前へ・次へを押した時に、遅らせずに作り直した対応表の元の文字 */
   const [pinned, setPinned] = useState<string | null>(null)
@@ -123,7 +130,7 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
   const [seenSource, setSeenSource] = useState(sourceKey)
   if (seenSource !== sourceKey) {
     setSeenSource(sourceKey)
-    setPos({ anchor: 0, active: false })
+    setPos({ anchor: 0, active: false, exact: false })
   }
   useEffect(() => {
     touched.current = false
@@ -145,7 +152,18 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
   const index = useMemo(() => (source === null ? null : buildSearchIndex(source)), [source])
   const needle = useMemo(() => foldQuery(committed), [committed])
   const result = useMemo(() => (index && needle ? findHits(index, needle) : NO_HITS), [index, needle])
-  const current = pos.active ? firstFrom(result.hits, pos.anchor) : null
+  /** hits の中の今の一致の番号 */
+  const currentIn = (hits: readonly Hit[]): number | null => {
+    if (!pos.active) return null
+    const i = firstFrom(hits, pos.anchor)
+    return i !== null && (!pos.exact || hits[i].start === pos.anchor) ? i : null
+  }
+  const current = currentIn(result.hits)
+  // 語を変えた・開いた時に見つけた一致は、その位置に留める（本文を直してその一致が無くなった時に、まだ見せていない次の一致を今の一致にしない）。
+  // 打っている途中の古い本文の対応表では留めない
+  if (current !== null && !pos.exact && source === text) {
+    setPos({ anchor: result.hits[current].start, active: true, exact: true })
+  }
   const hit = current === null ? null : result.hits[current]
   const pending = open && kind === 'diff' && text === null
   const status = hitStatus({ query: committed, total: result.hits.length, current, capped: result.capped, pending })
@@ -154,7 +172,7 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
 
   const commit = (q: string) => {
     setCommitted(q)
-    setPos((p) => ({ anchor: p.anchor, active: q !== '' }))
+    setPos((p) => ({ anchor: p.anchor, active: q !== '', exact: false }))
     setRevealSeq((n) => n + 1)
   }
 
@@ -178,20 +196,32 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
     let hits = result.hits
     // 欄で打ちながら押した時（前へ・次へはフォーカスを奪わない）は、今の本文で作り直してから選ぶ
     const el = fieldEl()
-    if (text !== null && source !== null && source !== text && el && document.activeElement === el) {
+    const inField = el !== null && document.activeElement === el
+    if (text !== null && source !== null && source !== text && inField) {
       hits = findHits(buildSearchIndex(text), needle).hits
       setPinned(text)
     }
-    if (hits.length === 0) return
-    const cur = pos.active ? firstFrom(hits, pos.anchor) : null
-    const idx =
-      cur === null
-        ? dir > 0
-          ? firstFrom(hits, pos.anchor)!
-          : lastBefore(hits, pos.anchor)!
-        : (cur + dir + hits.length) % hits.length
-    setPos({ anchor: hits[idx].start, active: true })
-    setRevealSeq((n) => n + 1)
+    const n = hits.length
+    if (n === 0) return
+    const cur = currentIn(hits)
+    let idx: number
+    if (
+      inField &&
+      el instanceof HTMLTextAreaElement &&
+      !(cur !== null && el.selectionStart <= hits[cur].end && el.selectionEnd >= hits[cur].start)
+    ) {
+      // 本文欄で今の一致から離れた時（今の一致を直した・ほかの所へ移った）は、欄の選択から移る。
+      // 次へは選択の終わりから、前へは始まりから（カーソルを中に含む一致は飛ばさない）
+      idx = dir > 0 ? firstEndingAfter(hits, el.selectionEnd)! : lastBefore(hits, el.selectionStart)!
+    } else if (cur !== null) {
+      // 今の一致を選んでいる（カーソルがその中・端にある）時と、検索窓・差分の表示からは、今の一致の次・前
+      idx = (cur + dir + n) % n
+    } else {
+      // 今の一致が無い（直して無くなった・まだ移っていない）時は、起点から
+      idx = dir > 0 ? firstFrom(hits, pos.anchor)! : lastBefore(hits, pos.anchor)!
+    }
+    setPos({ anchor: hits[idx].start, active: true, exact: true })
+    setRevealSeq((k) => k + 1)
   }
 
   /** ヘッダーの「検索」で開く（iPhone でキーボードが出るよう、描いてから同じタップの中でフォーカスする） */
@@ -200,7 +230,7 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
     const anchor = touched.current && el instanceof HTMLTextAreaElement ? el.selectionStart : 0
     flushSync(() => {
       setSlot(slot, { open: true })
-      setPos({ anchor, active: false })
+      setPos({ anchor, active: false, exact: false })
     })
     focusInput()
   }
@@ -217,6 +247,14 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
       if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
         const t = sel.toString()
         q = queryFromSelection(t, 0, t.length)
+        // 起点は、差分の表示の文字をつないだ上の選んだ所の始まり（selectDisplayRange と同じ数え方）
+        const r = sel.getRangeAt(0)
+        if (el.contains(r.startContainer)) {
+          const before = document.createRange()
+          before.setStart(el, 0)
+          before.setEnd(r.startContainer, r.startOffset)
+          anchor = before.toString().length
+        }
       }
     }
     touched.current = true
@@ -224,11 +262,11 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
       if (q !== null) {
         setSlot(slot, { open: true, query: q })
         setCommitted(q)
-        setPos({ anchor, active: true })
+        setPos({ anchor, active: true, exact: false })
         setRevealSeq((n) => n + 1)
       } else {
         setSlot(slot, { open: true })
-        setPos({ anchor, active: false })
+        setPos({ anchor, active: false, exact: false })
       }
     })
     focusInput()
@@ -239,7 +277,7 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
     const el = fieldEl()
     flushSync(() => {
       setSlot(slot, { open: false })
-      setPos((p) => ({ anchor: p.anchor, active: false }))
+      setPos((p) => ({ ...p, active: false }))
     })
     if (!toField || !el) return
     el.focus({ preventScroll: true })

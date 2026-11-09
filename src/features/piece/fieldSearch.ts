@@ -142,6 +142,23 @@ export function firstFrom(hits: readonly Hit[], offset: number): number | null {
   return lo < hits.length ? lo : 0
 }
 
+/**
+ * end が offset より後ろの最初の一致の番号（offset を中に含む一致か、offset 以降の最初の一致。無ければ先頭に戻って 0。一致が無ければ null）。
+ * 本文欄のカーソルから次へ移る時に使う（カーソルのある一致を飛ばさない）
+ */
+export function firstEndingAfter(hits: readonly Hit[], offset: number): number | null {
+  if (hits.length === 0) return null
+  // 重ならない一致を前から並べているので、end も前から順に増える
+  let lo = 0
+  let hi = hits.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (hits[mid].end <= offset) lo = mid + 1
+    else hi = mid
+  }
+  return lo < hits.length ? lo : 0
+}
+
 /** start が offset より前の最後の一致の番号（無ければ末尾に戻る。一致が無ければ null） */
 export function lastBefore(hits: readonly Hit[], offset: number): number | null {
   if (hits.length === 0) return null
@@ -169,7 +186,12 @@ export function hitStatus(s: {
 /** 検索の語にする選んだ文字の長さの上限 */
 const MAX_SELECTION_QUERY = 100
 
-/** 欄で選んだ文字を検索の語にする（1字以上100字以下で、改行を含まない時だけ。記法は除く） */
+/**
+ * 欄で選んだ文字を検索の語にする（1字以上100字以下で、改行を含まない時だけ。記法は除く）。
+ * 語は探す時にもう一度記法として読む（foldQuery）。記法を除いた後の文字がもう一度読んでも変わらない時（《が無い・スキル《鑑定》 のように記法にならない《だけの時）は、そのまま語にする。
+ * 変わる時（漢字｜《かな》 が 漢字《かな》 になり、探す時にルビと読まれて 漢字 だけを探してしまう時など）は、残った《を ｜《 に戻す。
+ * 戻しても同じに読めない時（残った ｜ の後ろに《…》が続き、ルビの始まりと読まれる。｜ には書き分けが無い）と、戻すと100字を超える時は、選んだ文字をそのまま語にする
+ */
 export function queryFromSelection(raw: string, start: number, end: number): string | null {
   const s = Math.min(start, end)
   const e = Math.max(start, end)
@@ -177,7 +199,10 @@ export function queryFromSelection(raw: string, start: number, end: number): str
   const picked = raw.slice(s, e)
   if (/[\r\n]/.test(picked)) return null
   const q = stripRuby(picked)
-  return q ? q : null
+  if (!q) return null
+  if (stripRuby(q) === q) return q
+  const escaped = q.replace(/《/g, '｜《')
+  return escaped.length <= MAX_SELECTION_QUERY && stripRuby(escaped) === q ? escaped : picked
 }
 
 /**

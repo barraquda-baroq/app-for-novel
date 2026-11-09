@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { stripRuby } from '../../domain/ruby'
 import {
   buildSearchIndex,
   findHits,
+  firstEndingAfter,
   firstFrom,
   foldQuery,
   foldText,
@@ -109,6 +111,25 @@ describe('前へ・次へ（firstFrom・lastBefore）', () => {
     expect(firstFrom([], 0)).toBeNull()
     expect(lastBefore([], 0)).toBeNull()
   })
+
+  it('本文欄のカーソルから次へ（firstEndingAfter）は、カーソルを中に含む一致か、その後ろの最初。端では先頭へ戻る', () => {
+    const wide: Hit[] = [
+      { start: 2, end: 4 },
+      { start: 6, end: 9 },
+    ]
+    expect(firstEndingAfter(wide, 0)).toBe(0)
+    // 一致の始まり・中はその一致、終わりは次の一致
+    expect(firstEndingAfter(wide, 2)).toBe(0)
+    expect(firstEndingAfter(wide, 3)).toBe(0)
+    expect(firstEndingAfter(wide, 4)).toBe(1)
+    expect(firstEndingAfter(wide, 7)).toBe(1)
+    expect(firstEndingAfter(wide, 9)).toBe(0)
+    expect(firstEndingAfter(wide, 20)).toBe(0)
+    expect(firstEndingAfter([], 0)).toBeNull()
+    // 前へは lastBefore（カーソルを中に含む一致はその一致、一致の始まりはその前）
+    expect(lastBefore(wide, 7)).toBe(1)
+    expect(lastBefore(wide, 6)).toBe(0)
+  })
 })
 
 describe('件数の表記（hitStatus）', () => {
@@ -155,5 +176,64 @@ describe('選んだ文字を検索の語にする（queryFromSelection）', () =
     expect(queryFromSelection(raw, 11, 15)).toBeNull()
     expect(queryFromSelection('あ'.repeat(101), 0, 101)).toBeNull()
     expect(queryFromSelection('あ'.repeat(100), 0, 100)).toBe('あ'.repeat(100))
+  })
+
+  it('記法を除いた後に残った《は ｜《 に戻し、探す時にもう一度記法として読んでも、選んだ所の親文字と同じ語になる', () => {
+    const raw = '前に漢字｜《かな》と書く。漢字だけ。'
+    const q = queryFromSelection(raw, 2, 9)!
+    expect(q).toBe('漢字｜《かな》')
+    expect(foldQuery(q)).toBe('漢字《かな》')
+    expect(findHits(buildSearchIndex(raw), foldQuery(q)).hits).toEqual([{ start: 2, end: 9 }])
+    const skill = '発動｜《鑑定》。発動した。'
+    expect(ranges(skill, queryFromSelection(skill, 0, 7)!)).toEqual([[0, 7]])
+    // 傍点の中の ｜ の後ろに《…》が続く時は、｜《 に戻すとルビと読まれるので、選んだ文字のまま
+    expect(queryFromSelection('《《｜あ《い》》》', 0, 9)).toBe('《《｜あ《い》》》')
+  })
+
+  it('漢字の後ろでない《…》（記法ではない）は、もう一度読んでも変わらないので ｜ を足さず、選んだ文字のまま', () => {
+    expect(queryFromSelection('あ《い》う', 0, 5)).toBe('あ《い》う')
+    const raw = '彼は「スキル《鑑定》」を使った'
+    const q = queryFromSelection(raw, 3, 10)!
+    expect(q).toBe('スキル《鑑定》')
+    expect(ranges(raw, q)).toEqual([[3, 10]])
+  })
+
+  it('語は100字を超えない（検索窓に打てる長さ）', () => {
+    const plain = 'あ《い》'.repeat(25)
+    expect(queryFromSelection(plain, 0, 100)).toBe(plain)
+    // ｜《 に戻す《と、記法ではない《が混ざっていて、戻すと100字を超える時は、選んだ文字のまま
+    const mixed = '漢｜《か》' + 'あ《い》'.repeat(23)
+    expect(mixed.length).toBeLessThanOrEqual(100)
+    const q = queryFromSelection(mixed, 0, mixed.length)!
+    expect(q).toBe(mixed)
+    expect(foldQuery(q)).toBe(foldText(stripRuby(mixed)).text)
+    // 戻しても100字以内なら ｜《 に戻す
+    expect(queryFromSelection('漢｜《か》あ《い》', 0, 9)).toBe('漢｜《か》あ｜《い》')
+  })
+
+  it('どこを選んでも、語をそろえたものは選んだ所の記法を除いてそろえたものと同じ', () => {
+    const samples = [
+      '前に漢字｜《かな》と書く',
+      '彼は｜漢字《かんじ》を書く',
+      '《《強調》》と《《｜《》》',
+      '《《漢字《かな》》》後',
+      '｜あ｜《い》う',
+      'a|《b》|c《d》',
+      '漢《かな》｜｜《x》',
+      '東京《とうきょう》へ《行く》',
+      '「スキル《鑑定》」と漢｜《か》',
+    ]
+    for (const raw of samples) {
+      for (let s = 0; s < raw.length; s++) {
+        for (let e = s + 1; e <= raw.length; e++) {
+          const q = queryFromSelection(raw, s, e)
+          const base = stripRuby(raw.slice(s, e))
+          if (!base) expect(q).toBeNull()
+          else expect([raw, s, e, foldQuery(q!)]).toEqual([raw, s, e, foldText(base).text])
+          // もう一度読んでも変わらない時は、記法を除いた文字のまま（｜ を足さない）
+          if (base && stripRuby(base) === base) expect([raw, s, e, q]).toEqual([raw, s, e, base])
+        }
+      }
+    }
   })
 })
