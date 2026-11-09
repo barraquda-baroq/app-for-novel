@@ -6,14 +6,14 @@ import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/server/valida
 import type { ToolResult } from '../vault/tools/common'
 import { CONNECTOR_VERSION } from '../version'
 import { SERVER_INSTRUCTIONS } from './instructions'
-import { TOOL_SCHEMAS, WRITE_OUTPUT_SCHEMA, type ToolName } from './schemas.gen'
+import { TOOL_SCHEMAS, TRASH_OUTPUT_SCHEMA, WRITE_OUTPUT_SCHEMA, type ToolName } from './schemas.gen'
 import { TOOL_DEFS } from './tools'
 
 export type CallTool = (name: ToolName, args: Record<string, unknown>, opts: { client?: string }) => Promise<ToolResult>
 
 const validator = new CfWorkerJsonSchemaValidator()
 let compiled: Map<ToolName, StandardSchemaWithJSON> | null = null
-let output: StandardSchemaWithJSON | null = null
+const outputs = new Map<'write' | 'trash', StandardSchemaWithJSON>()
 
 /** JSON Schema をツールの入力の形にする（Worker の中で1回だけ） */
 function schemaOf(name: ToolName): StandardSchemaWithJSON {
@@ -26,9 +26,14 @@ function schemaOf(name: ToolName): StandardSchemaWithJSON {
   return s
 }
 
-function outputSchema(): StandardSchemaWithJSON {
-  if (!output) output = fromJsonSchema(WRITE_OUTPUT_SCHEMA as never, validator) as StandardSchemaWithJSON
-  return output
+/** 結果（structuredContent）の形（書き込みツールと、ゴミ箱へ移すツール） */
+function outputSchema(kind: 'write' | 'trash'): StandardSchemaWithJSON {
+  let s = outputs.get(kind)
+  if (!s) {
+    s = fromJsonSchema((kind === 'write' ? WRITE_OUTPUT_SCHEMA : TRASH_OUTPUT_SCHEMA) as never, validator) as StandardSchemaWithJSON
+    outputs.set(kind, s)
+  }
+  return s
 }
 
 /** 呼び出したクライアントの名前（2026-07-28 の呼び出しは _meta の clientInfo、古い呼び出しは HTTP の User-Agent） */
@@ -44,13 +49,14 @@ export function createServer(call: CallTool, info: { userAgent?: string } = {}):
     { instructions: SERVER_INSTRUCTIONS, capabilities: { tools: {} } },
   )
   for (const def of TOOL_DEFS) {
+    const structured = def.kind === 'write' || def.kind === 'trash' ? def.kind : null
     server.registerTool(
       def.name,
       {
         title: def.title,
         description: def.description,
         inputSchema: schemaOf(def.name),
-        ...(def.kind === 'write' ? { outputSchema: outputSchema() } : {}),
+        ...(structured ? { outputSchema: outputSchema(structured) } : {}),
         annotations: def.annotations,
       },
       async (args: unknown, ctx: unknown) => {
@@ -58,7 +64,7 @@ export function createServer(call: CallTool, info: { userAgent?: string } = {}):
         return {
           content: [{ type: 'text' as const, text: r.text }],
           ...(r.isError ? { isError: true } : {}),
-          ...(def.kind === 'write' && r.structured && !r.isError ? { structuredContent: r.structured } : {}),
+          ...(structured && r.structured && !r.isError ? { structuredContent: r.structured } : {}),
         }
       },
     )

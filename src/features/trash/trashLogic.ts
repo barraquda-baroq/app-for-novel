@@ -67,6 +67,8 @@ export interface TrashRow {
   time: string
   daysLeft: number
   conflict: boolean
+  /** Claude の依頼でアプリがゴミ箱へ移した（2.7） */
+  byClaude: boolean
 }
 
 export interface TrashDay {
@@ -94,6 +96,7 @@ export function trashDays(entries: TrashEntry[], records: AppData['trashRecords'
       time: timeLabel(entry.deletedAt),
       daysLeft: trashDaysLeft(entry, nowTs),
       conflict: entry.reason === 'conflict',
+      byClaude: entry.by === 'claude',
     })
   }
   return days
@@ -115,6 +118,9 @@ export function restoredMessage(
   if (r.copied) return `${name}を複製として元の場所に戻しました（同じものが残っていたため）${note}`
   return `${name}を元の場所に戻しました${note}`
 }
+
+/** Claude の依頼で移したカードの札の説明 */
+export const BY_CLAUDE_HELP = 'Claude に頼んでゴミ箱へ移したカード'
 
 /** 同期の競合で残した内容の説明 */
 export const CONFLICT_HELP =

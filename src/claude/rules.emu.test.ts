@@ -313,8 +313,62 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       'benchAnalyses',
       'materials',
       'materialNotes',
+      // 2.7: ゴミ箱へ移す依頼
+      'trashRequests',
     ])
       expect([table, await connectorCommit(anon, owner.uid, [connectorRecord(table, `c-${table}`)])]).toEqual([table, 200])
+  })
+
+  it('ゴミ箱へ移す依頼（2.7）: 作れるのは新しい依頼だけ。カードの削除・書き換え・ゴミ箱の表への作成は今までどおり拒む', async () => {
+    // コネクタが作ったカードと、そのカードの依頼
+    const card = connectorRecord('benchAnalyses', 'ca-trash', { workId: 'cw-1', viewpoint: '構成', body: '## 構成' })
+    expect(await connectorCommit(anon, owner.uid, [card])).toBe(200)
+    const req = connectorRecord('trashRequests', 'cz-1', {
+      table: 'benchAnalyses',
+      targetId: 'ca-trash',
+      parentId: 'cw-1',
+      targetUpdatedAt: 1,
+      label: '『銀河の果て』の「構成」（2026-10-30）',
+    })
+    expect(await connectorCommit(anon, owner.uid, [req])).toBe(200)
+    const snap = await getDoc(doc(owner.fs, 'users', owner.uid, 'records', 'trashRequests:cz-1'))
+    expect(decodeRecord(snap.data() as RecordDoc, () => undefined)).toMatchObject({ id: 'cz-1', targetId: 'ca-trash' })
+    // もうあれば作れない。書き換え・削除はできない
+    expect(await connectorCommit(anon, owner.uid, [req])).not.toBe(200)
+    expect(await connectorCommit(anon, owner.uid, [{ ...req, noPrecondition: true }])).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'trashRequests:cz-1')).toBe(403)
+    const denied: [string, ConnectorWrite][] = [
+      ['json が 2,000 字を超える', { ...connectorRecord('trashRequests', 'cz-long'), json: 'x'.repeat(2_001) }],
+      ['削除の印', { ...connectorRecord('trashRequests', 'cz-del'), extra: { deleted: true } }],
+      ['分割（chunks）', { ...connectorRecord('trashRequests', 'cz-chunks'), extra: { chunks: 1 } }],
+      ['表の名前が違う', { ...connectorRecord('trashRequests', 'cz-table'), docId: 'benchAnalyses:cz-table' }],
+      ['ゴミ箱の件', connectorRecord('trashEntries', 'te-cz-1')],
+      ['ゴミ箱の中身', connectorRecord('trashRecords', 'tr-cz-1')],
+      // カードをコネクタが削除の印にする（書き換え）のも、消すのもできない
+      ['カードの削除の印', { ...card, noPrecondition: true, extra: { deleted: true } }],
+    ]
+    for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
+    expect(await connectorDelete(anon, owner.uid, 'benchAnalyses:ca-trash')).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'titles:t1')).toBe(403)
+    // 2,000 字ちょうどは作れる
+    const edge = connectorRecord('trashRequests', 'cz-edge')
+    expect(
+      await connectorCommit(anon, owner.uid, [
+        { ...edge, json: `${edge.json.slice(0, -1)}${' '.repeat(2_000 - edge.json.length)}}` },
+      ]),
+    ).toBe(200)
+    // 持ち主（アプリ）は依頼を処理できる: カードとゴミ箱の記録を書き、依頼とカードを削除の印にする
+    const ownRef = (docId: string) => doc(owner.fs, 'users', owner.uid, 'records', docId)
+    await setDoc(
+      ownRef('trashRecords:tr-cz-1'),
+      recordDoc('trashRecords', 'tr-cz-1', { entryId: 'te-cz-1', table: 'benchAnalyses' }),
+    )
+    await setDoc(ownRef('trashEntries:te-cz-1'), recordDoc('trashEntries', 'te-cz-1', { kind: 'benchAnalysis', by: 'claude' }))
+    for (const docId of ['benchAnalyses:ca-trash', 'trashRequests:cz-1'])
+      await updateDoc(ownRef(docId), { json: null, deleted: true, hash: '', updated: serverTimestamp(), device: 'owner-device' })
+    expect((await getDoc(ownRef('trashRequests:cz-1'))).data()?.deleted).toBe(true)
+    // 削除の印になった依頼を、コネクタは作り直せない（別の id の依頼にする）
+    expect(await connectorCommit(anon, owner.uid, [req])).not.toBe(200)
   })
 
   it('相対比較の作品とその分析: 作れるのは新しい記録だけ（書き換え・削除・決まった形でない作成は拒む）', async () => {

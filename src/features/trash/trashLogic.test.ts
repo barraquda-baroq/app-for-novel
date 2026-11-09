@@ -126,4 +126,20 @@ describe('ゴミ箱の一覧の表記', () => {
     expect(days[1].rows.map((r) => [r.kind, r.label, r.daysLeft])).toEqual([['特殊ブロック', 'プロローグ', 29]])
     expect(trashKindLabel(episode, data.trashRecords)).toBe('話')
   })
+
+  it('Claude の依頼で移した件だけ byClaude（2.7。一覧の「Claude の依頼」の札）', () => {
+    const now = at(2026, 11, 9, 12)
+    const days = trashDays(
+      [
+        entry({ id: 'a', kind: 'benchAnalysis', by: 'claude', deletedAt: now - 1 }),
+        entry({ id: 'b', kind: 'benchAnalysis', deletedAt: now - 2 }),
+      ],
+      {},
+      now,
+    )
+    expect(days[0].rows.map((r) => [r.id, r.byClaude])).toEqual([
+      ['a', true],
+      ['b', false],
+    ])
+  })
 })

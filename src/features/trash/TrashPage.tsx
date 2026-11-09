@@ -11,7 +11,7 @@ import { confirmDialog } from '../../ui/dialogs'
 import { useDocumentTitle } from '../../ui/hooks'
 import { TrashIcon, UndoIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
-import { CONFLICT_HELP, TRASH_LEAD, daysLeftLabel, restoredMessage, trashDays, type TrashRow } from './trashLogic'
+import { BY_CLAUDE_HELP, CONFLICT_HELP, TRASH_LEAD, daysLeftLabel, restoredMessage, trashDays, type TrashRow } from './trashLogic'
 import './trash.css'
 
 /** 残り日数の表示を進めるため、ときどき今の時刻を取り直す */
@@ -159,6 +159,11 @@ function TrashRowView({
           {row.conflict ? (
             <span className="badge badge-missing" title={CONFLICT_HELP} data-testid="trash-conflict">
               同期の競合で残した内容
+            </span>
+          ) : null}
+          {row.byClaude ? (
+            <span className="badge" title={BY_CLAUDE_HELP} data-testid="trash-by-claude">
+              Claude の依頼
             </span>
           ) : null}
         </div>

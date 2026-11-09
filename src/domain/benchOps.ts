@@ -21,7 +21,7 @@ import {
   tagsInUse,
   type TagUse,
 } from './tags'
-import { orderOrigin, putInTrash, trashLabel } from './trash'
+import { orderOrigin, putInTrash, trashLabel, type TrashSpec } from './trash'
 import { transact, type Tx } from './tx'
 import { DomainError, type AppData, type BenchAnalysis, type BenchWork, type ID, type Title } from './types'
 import { byOrder, newId, nextOrder, now, stepOrder } from './util'
@@ -390,16 +390,27 @@ export function deleteBenchAnalysis(data: AppData, id: ID): AppData {
   return transact(data, (tx) => {
     const a = tx.get('benchAnalyses', id)
     if (!a) return
-    const work = tx.get('benchWorks', a.workId)
-    putInTrash(tx, {
-      kind: 'benchAnalysis',
-      label: trashLabel.benchAnalysis(a),
-      titleName: '',
-      ...(work ? { parentLabel: trashLabel.benchWork(work) } : {}),
-      origin: { titleId: null, index: -1, workId: a.workId },
-      records: [{ table: 'benchAnalyses', record: a }],
-    })
+    trashBenchAnalysis(tx, a)
   }).data
+}
+
+/** ゴミ箱へ入れる時の決まり（Claude の依頼で移す時の時刻・ゴミ箱の id・印。src/domain/claudeTrash.ts） */
+export type CardTrashOptions = Pick<TrashSpec, 'at' | 'entryId' | 'recordId' | 'by'>
+
+/**
+ * 分析1つをゴミ箱の1件にする（作者の削除と Claude の依頼で同じ形。作品の名前を parentLabel に、作品を origin.workId に控える）
+ */
+export function trashBenchAnalysis(tx: Tx, a: BenchAnalysis, opts: CardTrashOptions = {}): ID {
+  const work = tx.get('benchWorks', a.workId)
+  return putInTrash(tx, {
+    kind: 'benchAnalysis',
+    label: trashLabel.benchAnalysis(a),
+    titleName: '',
+    ...(work ? { parentLabel: trashLabel.benchWork(work) } : {}),
+    origin: { titleId: null, index: -1, workId: a.workId },
+    records: [{ table: 'benchAnalyses', record: a }],
+    ...opts,
+  })
 }
 
 // ---------- タイトルの比べるベンチ作品 ----------

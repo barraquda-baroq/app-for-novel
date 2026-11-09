@@ -17,8 +17,22 @@ export interface BackupFile {
   data: AppData
 }
 
+/**
+ * バックアップに入れない表。ゴミ箱へ移す依頼（2.7）は、アプリが処理するまでの一時的な記録なので書き出さず、読み込まない
+ * （バックアップから戻すと、まだ処理していない依頼は取り消しになる）。依頼の表を足しても BACKUP_SCHEMA_VERSION は上げない
+ * （上げると 2.6 のアプリが 2.7 のバックアップを読めなくなる。ゴミ箱の件の by は、知らない項目として残るだけ）
+ */
+const NOT_BACKED_UP = new Set<keyof AppData>(['trashRequests'])
+
 export function toBackup(data: AppData, exportedAt = new Date()): BackupFile {
-  return { app: BACKUP_APP_ID, schemaVersion: BACKUP_SCHEMA_VERSION, exportedAt: exportedAt.toISOString(), data }
+  const { trashRequests: _omit, ...rest } = data
+  void _omit
+  return {
+    app: BACKUP_APP_ID,
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: exportedAt.toISOString(),
+    data: rest as AppData,
+  }
 }
 
 export function parseBackup(json: string): AppData {
@@ -37,6 +51,7 @@ export function parseBackup(json: string): AppData {
   const src = (file.data ?? {}) as Partial<Record<keyof AppData, unknown>>
   const data = emptyData()
   for (const table of TABLE_NAMES) {
+    if (NOT_BACKED_UP.has(table)) continue
     const records = src[table]
     if (records === undefined) continue
     if (!records || typeof records !== 'object' || Array.isArray(records)) {

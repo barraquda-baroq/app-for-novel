@@ -18,6 +18,7 @@ export type DerivedKind =
   | 'benchAnalysis'
   | 'material'
   | 'materialNote'
+  | 'trashRequest'
 
 /** 種類ごとの1文字 */
 export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
@@ -32,6 +33,7 @@ export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
   benchAnalysis: 'a',
   material: 'd',
   materialNote: 'k',
+  trashRequest: 'z',
 }
 
 /** 比べる前に揃える（Unicode の正規化 NFC。合成済みの文字と組み合わせの文字を同じに扱う） */
@@ -137,4 +139,14 @@ export function materialId(name: string, author: string, generation = 1): ID {
 /** 資料の記録（同じ資料・項目・日付・本文なら同じ id） */
 export function materialNoteId(p: { materialId: ID; section: string; runDate: string; body: string }): ID {
   return derivedId('materialNote', [p.materialId, p.section.trim(), p.runDate, long(p.body)])
+}
+
+/**
+ * ゴミ箱へ移す依頼（2.7。1枚のカードにつき1件。同じカードを2回頼んでも1件）。generation は頼み直しの通し番号
+ * （1 = 初めて。2 以降は、前の依頼をアプリが処理して削除の印が残った後に、作者がカードをゴミ箱から戻してから、もう一度頼む時。
+ * クラウドの削除の印はコネクタからは書き換えられないので、頼み直す依頼は別の id にする。benchWorkId と同じ作り方）
+ */
+export function trashRequestId(table: string, targetId: ID, generation = 1): ID {
+  const parts = [table, targetId]
+  return derivedId('trashRequest', generation > 1 ? [...parts, generation] : parts)
 }

@@ -5,7 +5,10 @@
 // ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアは、どのタイトルの設定でも見せない。
 // ベンチ作品とその分析（2.5）はどのタイトルにも属さない利用者の覚え書きなので、タイトルの設定とは関係なく見せる。
 // 資料とその記録（2.6）も同じく、タイトルの設定とは関係なく見せる。
+// ゴミ箱へ移す依頼（2.7）は見せ、依頼の出ているカード（相対比較の分析・資料の記録）は見せない（アプリが同期してゴミ箱へ移すまで、
+// Claude からはもう無いものとして扱う。trashTargets.ts）。
 import { emptyData, type AppData, type ClaudeAccess, type TableName, type Title } from '../domain/types'
+import { pendingTrashTargets, trashTargetKey, TRASH_TARGET_TABLES } from './trashTargets'
 
 export const CLAUDE_ACCESS_VALUES: readonly ClaudeAccess[] = ['none', 'read', 'write']
 
@@ -41,13 +44,19 @@ export function canClaudeWrite(title: Pick<Title, 'claudeAccess'> | null | undef
 /** どのタイトルの設定でも見せない表 */
 const NEVER_SERVED: ReadonlySet<TableName> = new Set<TableName>(['snapshotTexts', 'trashEntries', 'trashRecords'])
 
-/** タイトルの設定と関係なく、いつも見せる表（ベンチ作品とその分析、資料とその記録） */
-const ALWAYS_SERVED: ReadonlySet<TableName> = new Set<TableName>(['benchWorks', 'benchAnalyses', 'materials', 'materialNotes'])
+/** タイトルの設定と関係なく、いつも見せる表（ベンチ作品とその分析、資料とその記録、ゴミ箱へ移す依頼） */
+const ALWAYS_SERVED: ReadonlySet<TableName> = new Set<TableName>([
+  'benchWorks',
+  'benchAnalyses',
+  'materials',
+  'materialNotes',
+  'trashRequests',
+])
 
 /**
  * コネクタに見せる内容。見せないタイトル（none）と、その配下のレコード（titleId で見る）を除き、
  * ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアも除く。共通の批評プロンプト（titleId = null）と
- * ベンチ作品・その分析、資料・その記録は見せる。
+ * ベンチ作品・その分析、資料・その記録は見せる（ゴミ箱へ移す依頼の出ているカードは除く）。
  * 変わらない表は同じオブジェクトのまま返す
  */
 export function claudeView(data: AppData): AppData {
@@ -82,6 +91,13 @@ export function claudeView(data: AppData): AppData {
       }
     out[table] = all ? rows : pick(rows, keep)
   }
+  const pending = pendingTrashTargets(data)
+  if (pending.size)
+    for (const table of TRASH_TARGET_TABLES) {
+      const rows = out[table] as Record<string, { id: string }>
+      if (Object.keys(rows).some((id) => pending.has(trashTargetKey(table, id))))
+        out[table] = pick(rows, (r) => !pending.has(trashTargetKey(table, r.id)))
+    }
   return out as unknown as AppData
 }
 

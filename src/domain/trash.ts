@@ -58,9 +58,9 @@ export function trashNotice(subject = ''): string {
 /** ゴミ箱に入れられるレコード */
 export type ContentRecord = AppData[ContentTableName][string]
 
-/** ゴミ箱以外の表（ゴミ箱に入れられるレコードの表） */
+/** ゴミ箱に入れられるレコードの表（ゴミ箱の表と、ゴミ箱へ移す依頼の表は除く） */
 export const CONTENT_TABLES: readonly ContentTableName[] = TABLE_NAMES.filter(
-  (t): t is ContentTableName => t !== 'trashEntries' && t !== 'trashRecords',
+  (t): t is ContentTableName => t !== 'trashEntries' && t !== 'trashRecords' && t !== 'trashRequests',
 )
 
 export function isContentTable(v: unknown): v is ContentTableName {
@@ -205,6 +205,14 @@ export interface TrashSpec {
   records: { table: ContentTableName; record: ContentRecord }[]
   reason?: TrashEntry['reason']
   at?: number
+  /**
+   * ゴミ箱の1件の id（無い = 新しい id）。Claude の依頼で移す時は依頼から決める（2台の端末が同じ依頼を処理しても1件になるように）
+   */
+  entryId?: ID
+  /** 中身の i 番目の id（無い = 新しい id。entryId と同じ理由） */
+  recordId?: (i: number) => ID
+  /** Claude の依頼で移した（TrashEntry.by） */
+  by?: TrashEntry['by']
 }
 
 /**
@@ -214,14 +222,15 @@ export interface TrashSpec {
  */
 export function putInTrash(tx: Tx, spec: TrashSpec): ID {
   const ts = spec.at ?? now()
-  const entryId = newId()
+  const entryId = spec.entryId ?? newId()
   const recordIds: ID[] = []
   const seen = new Set<string>()
   for (const { table, record } of spec.records) {
     const key = `${table}:${record.id}`
     if (seen.has(key)) continue
     seen.add(key)
-    const trashRecord: TrashRecord = { id: newId(), entryId, table, record, createdAt: ts, updatedAt: ts }
+    const id = spec.recordId ? spec.recordId(recordIds.length) : newId()
+    const trashRecord: TrashRecord = { id, entryId, table, record, createdAt: ts, updatedAt: ts }
     tx.put('trashRecords', trashRecord)
     recordIds.push(trashRecord.id)
     if (table !== 'snapshotTexts') tx.delete(table, record.id)
@@ -235,6 +244,7 @@ export function putInTrash(tx: Tx, spec: TrashSpec): ID {
     origin: spec.origin,
     recordIds,
     reason: spec.reason ?? 'deleted',
+    ...(spec.by ? { by: spec.by } : {}),
     deletedAt: ts,
     createdAt: ts,
     updatedAt: ts,

@@ -670,10 +670,43 @@ export interface TrashEntry {
    * （中身は1件だけ。戻す時に同じ id が残っていれば、新しい id の複製として戻す）
    */
   reason: 'deleted' | 'conflict'
+  /**
+   * claude = Claude の依頼（TrashRequest）で、アプリがゴミ箱へ移した（2.7。一覧に「Claude の依頼」の札を出す）。
+   * 無い = 作者がアプリで削除した・同期の競合で残した
+   */
+  by?: 'claude'
   deletedAt: number
   createdAt: number
   updatedAt: number
 }
+
+/**
+ * ゴミ箱へ移す依頼（2.7）。Claude（コネクタ）が、自分がコネクタで作ったカード（相対比較の分析・資料の記録）を作者に頼まれて
+ * ゴミ箱へ移す時に、1枚のカードにつき1件作る。コネクタは作るだけで、カードの削除もゴミ箱の記録も書かない（アクセスルールで
+ * 書けない）。同期を受け持つ画面がクラウドと揃った時に、アプリが確かめて（Claude が作った・作者が直していない・1日100件まで）
+ * ゴミ箱へ移し、依頼を消す（src/domain/claudeTrash.ts）。id は表とカードから作る（derivedId.ts の trashRequestId。cz-…）
+ */
+export interface TrashRequest {
+  id: ID
+  /** カードの表 */
+  table: TrashRequestTable
+  /** カードの id */
+  targetId: ID
+  /** カードの作品（benchAnalyses）か資料（materialNotes）の id */
+  parentId: ID
+  /** 依頼した時のカードの updatedAt（違えば、依頼の後に直したカードとして移さない） */
+  targetUpdatedAt: number
+  /** 依頼した時のカードの表記（『作品名』の「構成」（2026-10-30）） */
+  label: string
+  source: 'claude'
+  /** 依頼の形の版（いまは 1） */
+  v: number
+  createdAt: number
+  updatedAt: number
+}
+
+/** ゴミ箱へ移す依頼の対象の表（相対比較の分析と資料の記録だけ） */
+export type TrashRequestTable = 'benchAnalyses' | 'materialNotes'
 
 /** ゴミ箱の中身の1レコード（削除した時点の内容そのもの） */
 export interface TrashRecord {
@@ -711,14 +744,16 @@ export interface AppData {
   // 資料（2.6）
   materials: Record<ID, Material>
   materialNotes: Record<ID, MaterialNote>
+  // ゴミ箱へ移す依頼（2.7。Claude が作り、アプリが処理して消す）
+  trashRequests: Record<ID, TrashRequest>
   trashEntries: Record<ID, TrashEntry>
   trashRecords: Record<ID, TrashRecord>
 }
 
 export type TableName = keyof AppData
 
-/** ゴミ箱以外の表（ゴミ箱に入れられるレコードの表） */
-export type ContentTableName = Exclude<TableName, 'trashEntries' | 'trashRecords'>
+/** ゴミ箱に入れられるレコードの表（ゴミ箱の表と、ゴミ箱へ移す依頼の表は除く） */
+export type ContentTableName = Exclude<TableName, 'trashEntries' | 'trashRecords' | 'trashRequests'>
 
 export const TABLE_NAMES: TableName[] = [
   'titles',
@@ -741,6 +776,7 @@ export const TABLE_NAMES: TableName[] = [
   'benchAnalyses',
   'materials',
   'materialNotes',
+  'trashRequests',
   'trashEntries',
   'trashRecords',
 ]
@@ -791,6 +827,7 @@ export function emptyData(): AppData {
     benchAnalyses: {},
     materials: {},
     materialNotes: {},
+    trashRequests: {},
     trashEntries: {},
     trashRecords: {},
   }

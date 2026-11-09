@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as z from 'zod'
 import { describe, expect, it } from 'vitest'
-import { SCHEMAS, WRITE_OUTPUT } from '../../src/mcp/schemas'
+import { SCHEMAS, TRASH_OUTPUT, WRITE_OUTPUT } from '../../src/mcp/schemas'
 import { TOOL_DEFS } from '../../src/mcp/tools'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -32,6 +32,8 @@ ${names}
 export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = ${JSON.stringify(tools, null, 2)}
 
 export const WRITE_OUTPUT_SCHEMA: Record<string, unknown> = ${JSON.stringify(jsonSchema(WRITE_OUTPUT), null, 2)}
+
+export const TRASH_OUTPUT_SCHEMA: Record<string, unknown> = ${JSON.stringify(jsonSchema(TRASH_OUTPUT), null, 2)}
 `
 }
 

@@ -1,10 +1,15 @@
 // ツールの一覧（名前・日本語の題・説明・ヒント）。並びは固定（tools/list でいつも同じ順）。
 // - 名前は ASCII の novel_*（64字以内）、題（title）は日本語の「〜する」形（承認の画面・スマホの狭い画面に出る）
 // - 説明は「何をするか・いつ使うか・何を返すか・何をしないか」。Claude への指図（手順）は書かない
-//   （手順はサーバーの説明 instructions.ts と、アプリの手動連携の依頼文 src/claude/prompts.ts に書く）
+//   （手順はサーバーの説明 instructions.ts と、アプリの手動連携の依頼文 src/claude/prompts.ts に書く）。
+//   ゴミ箱へ移すツールだけは、使ってよい時（作者が頼んだ時だけ・そのチャットで登録した id だけ）も説明に書く
 // - 読むツール: readOnlyHint true。書き込みツール: 記録を足すだけで書き換え・削除はしないので destructiveHint false、
 //   同じ内容をもう一度送っても増えない（内容から作る id）ので idempotentHint true
+// - ゴミ箱へ移すツール（2.7。kind 'trash'）: カードを消すので destructiveHint true（claude.ai でこれだけ「承認が必要」にしておける）。
+//   書き込みのツールとは別（依頼の表に作るだけ。アプリが確かめてゴミ箱へ移す）。同じカードを2回頼んでも増えないので idempotentHint true
 import { MATERIAL_SECTION_GUIDE, MATERIAL_SPLIT_GUIDE } from '../../../src/claude/material'
+import { TRASH_LIMITS } from '../../../src/claude/trashRequest'
+import { TRASH_RETENTION_DAYS } from '../../../src/domain/trash'
 import { MATERIAL_SECTIONS } from '../../../src/domain/materialOps'
 import type { ToolName } from './schemas.gen'
 
@@ -20,7 +25,7 @@ export interface ToolDef {
   name: ToolName
   title: string
   description: string
-  kind: 'read' | 'write'
+  kind: 'read' | 'write' | 'trash'
   annotations: ToolAnnotations
 }
 
@@ -38,6 +43,14 @@ const write = (name: ToolName, title: string, description: string): ToolDef => (
   description,
   kind: 'write',
   annotations: { title, readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+})
+
+const trash = (name: ToolName, title: string, description: string): ToolDef => ({
+  name,
+  title,
+  description,
+  kind: 'trash',
+  annotations: { title, readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 })
 
 /** 資料の決まった項目ごとの書き方（「「要約」は資料の全体の要約（章立てに沿って）。「創作に役立つ知識」は…」。手動連携の依頼文と同じ） */
@@ -148,6 +161,11 @@ export const TOOL_DEFS: readonly ToolDef[] = [
     'novel_add_material_notes',
     '資料に記録を追加',
     `ホームの「資料」（作者が創作のために読む資料の棚。主に作者が買った書籍。作者は「参考資料」「資料本」とも呼ぶ）の資料に、項目ごとの記録（Markdown）を追加する。決まった項目は4つで、アプリはこの順に並べる（ほかの名前の項目も作れる）: ${MATERIAL_SECTION_TEXT}。material で資料を指し（d:… か資料名）、資料の棚にまだ無い資料は new_material（資料名・著者など）を付けた時だけ資料も資料の棚に追加する（資料名が同じでも著者が違えば別の資料）。タグは作者が自分で付けて管理する（Claude はタグを付けない。new_material にタグは無い）。1回20件まで。${MATERIAL_SPLIT_GUIDE}。本文の長さに上限は無いが、コネクタが書ける1件の記録は JSON にして 200,000 字まで（超える時は番号を付けて分ける分け方を答える）。同じ資料・項目・日付・本文の記録が既にあれば追加しない。以前に削除された記録は作り直さない。削除した資料は、ゴミ箱にある間は作り直さない（ゴミ箱から完全に削除した後は、別の新しい資料として作り直す）。既にある記録・資料は書き換えない。答えには、記録を足す先の資料をいつも d:…『資料名』（著者）で出す（既にある資料に足した時も。記録を1つも作れず資料も作らなかった時は d:… はまだ無い）。`,
+  ),
+  trash(
+    'novel_move_cards_to_trash',
+    'カードをゴミ箱へ移す',
+    `Claude がこのコネクタで追加した相対比較の分析（n:…）と資料の記録（k:…）を、アプリのゴミ箱へ移す。作者が削除を頼んだ時だけ使い、自分の判断では使わない（作業中にイレギュラーがあれば作者に報告し、できることをいくつか示す中で、ゴミ箱へ移すことを選択肢の1つとして提案する。作者が選んで頼んだ時だけ使う）。cards には、そのチャットで自分が追加した時の答えに出た id だけを渡す（ほかのチャットで足したカードや、作者が書いたカードの id は渡さない）。移すのは Claude がこのコネクタで作り、作者がアプリで直していないカードだけで、作者が書いた・貼り付けた・アプリで直したカード、作品・資料そのもの（w:…・d:…）、ほかの種類の記録は移さない（カードごとに理由を返す）。1回${TRASH_LIMITS.perCall}件・1日（日本時間）${TRASH_LIMITS.perDay}件まで。移すカードはすぐ Claude からは見えなくなり、アプリが同期した時にアプリのゴミ箱へ移る（${TRASH_RETENTION_DAYS}日は作者がアプリのゴミ箱から戻せる。作品・資料は棚に残る）。答えには、移すカードの id・観点（項目）・日付と作品名（資料名）を出す。同じカードをもう一度頼んでも依頼は増えない。本文（稿）は書き換えない。`,
   ),
 ]
 

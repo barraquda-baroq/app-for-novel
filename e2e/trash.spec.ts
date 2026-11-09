@@ -234,6 +234,50 @@ test.describe('ゴミ箱', () => {
     expect(bodies).toEqual(['別の端末の本文', 'この端末の本文'])
   })
 
+  test('Claude の依頼で移したカード（2.7）には「Claude の依頼」の札が付き、幅 360px でもはみ出さず、元に戻せる', async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width: 360, height: 740 })
+    await openApp(page)
+    const { workId } = await seed(page, ({ actions }) => ({
+      workId: actions.addBenchWork({ name: 'とても長い作品名の相対比較の作品をここに置いておくとどうなるか', author: '山田' }),
+    }))
+    const analysis = {
+      id: 'cn-e2e-trash',
+      workId,
+      viewpoint: 'とても長い観点の名前を付けた分析の観点',
+      body: '三幕。',
+      runDate: '2026-10-30',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    await seedTrashEntry(
+      page,
+      {
+        kind: 'benchAnalysis',
+        label: `${analysis.viewpoint}（2026-10-30）`,
+        parentLabel: 'とても長い作品名の相対比較の作品をここに置いておくとどうなるか',
+        origin: { titleId: null, index: -1, workId },
+        by: 'claude',
+      },
+      analysis as unknown as TrashRecord['record'],
+      'benchAnalyses',
+    )
+    await openApp(page, '/trash')
+    const row = trashRows(page).first()
+    await expect(row.getByTestId('trash-kind')).toHaveText('相対比較の分析')
+    await expect(row.getByTestId('trash-by-claude')).toHaveText('Claude の依頼')
+    await expect(row.getByTestId('trash-by-claude')).toHaveAttribute('title', 'Claude に頼んでゴミ箱へ移したカード')
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(0)
+    await page.screenshot({ path: `e2e/artifacts/screens/trash-claude-${info.project.name}-360.png`, fullPage: true })
+    await row.getByTestId('trash-restore').click()
+    await expect(trashRows(page)).toHaveCount(0)
+    expect(await page.evaluate((id) => window.__ns.getData().benchAnalyses[id]?.viewpoint, analysis.id)).toBe(analysis.viewpoint)
+  })
+
   test('削除してから30日たったものは、起動した時に完全に削除される', async ({ page }) => {
     await openApp(page)
     const day = 24 * 60 * 60 * 1000

@@ -9,6 +9,9 @@ import {
   isWriteTool,
   type WriteTool,
 } from '../../../src/claude/records'
+import { buildTrashRequests, TRASH_LIMITS, TRASH_TOOL, type TrashInput } from '../../../src/claude/trashRequest'
+import { liveTrashRequests, pendingTrashTargets } from '../../../src/claude/trashTargets'
+import { jstDate } from '../../../src/claude/dates'
 import { claudeView, canClaudeRead } from '../../../src/claude/visibility'
 import { repairData } from '../../../src/domain/repair'
 import type { AppData } from '../../../src/domain/types'
@@ -33,9 +36,10 @@ import { takeRate, type RateKind, type RateResult } from './ratelimit'
 import { MirrorStore, type SqlRunner } from './store'
 import { fail, type ToolResult } from './tools/common'
 import * as R from './tools/read'
+import { trashBuildError, trashResult } from './tools/trash'
 import { buildError, writeResult } from './tools/write'
 import { fromFields, timestampMillis, type Timestamp } from './values'
-import { EncodeError, groups, prepareWrite, rowsOfCommit } from './writer'
+import { EncodeError, groups, prepareWrite, rowsOfCommit, type PreparedWrite } from './writer'
 
 export interface VaultDeps {
   sql: SqlRunner
@@ -88,6 +92,12 @@ export interface CallOptions {
 export const FRESH_MS = 15_000
 /** config/connector・meta/app を読み直す間隔（書き込みの前・読むツールの前） */
 export const RECHECK_MS = 60_000
+
+/** 今日（日本時間）ゴミ箱へ移す依頼を作った数（meta 'trashDaily'。日付が変われば 0 から） */
+export interface TrashDaily {
+  day: string
+  count: number
+}
 
 const PAIRING_MESSAGES: Record<Exclude<PairingCheck, { ok: true }>['reason'], string> = {
   not_found:
@@ -417,7 +427,9 @@ export class VaultCore {
     const versions: AppData['versions'] = {}
     for (const [id, v] of Object.entries(repaired.versions))
       versions[id] = v === heads[id] && data.versions[id] ? data.versions[id] : this.mirror.lazyVersion(v, data.versions[id])
-    const raw: AppData = { ...repaired, versions }
+    // 写しは表をその場で書き換えるので、表の参照で覚える部品（benchTags.ts の analysesByWorkId。自動のタグ）が古い内容を
+    // 返さないように、相対比較の分析の表は写しが変わるたびに新しい表にする
+    const raw: AppData = { ...repaired, versions, benchAnalyses: { ...repaired.benchAnalyses } }
     const view = claudeView(raw)
     const hidden = Object.values(raw.titles).filter((t) => !canClaudeRead(t)).length
     this.#views = { version, raw, view, hidden }
@@ -435,6 +447,7 @@ export class VaultCore {
       }
       if (name === 'novel_status') return await this.#status()
       this.#requirePaired()
+      if (name === TRASH_TOOL) return await this.#trash(args)
       if (isWriteTool(name)) return await this.#write(name, args)
       // 連携の記録を1分ごとに確かめる（解除・作り直しに、写しを新しくする間隔より遅れずに気付く）
       await this.#recheckConnector()
@@ -526,6 +539,9 @@ export class VaultCore {
       `今日（太平洋時間 ${q.day}）の読み取り ${q.reads.toLocaleString('ja-JP')} / ${this.#d.config.dailyReadBudget.toLocaleString('ja-JP')}・書き込み ${q.writes.toLocaleString('ja-JP')} / ${this.#d.config.dailyWriteBudget.toLocaleString('ja-JP')}（${resetLabel(now)}に戻ります）`,
     )
     lines.push(`Claude に見せていないタイトル: ${warm.done ? this.views().hidden : '―'}件`)
+    lines.push(
+      `ゴミ箱へ移す依頼: アプリの同期待ち ${warm.done ? liveTrashRequests(this.views().raw).length.toLocaleString('ja-JP') : '―'}件・今日（日本時間）${this.#trashDaily().count} / ${TRASH_LIMITS.perDay}件`,
+    )
     return { text: lines.join('\n') }
   }
 
@@ -587,10 +603,12 @@ export class VaultCore {
       for (let attempt = 0; ; attempt++) {
         const { raw, view } = this.views()
         const trashed = trashedIdsOf(raw)
+        // ゴミ箱へ移す依頼の出ているカード（見せる内容からは外れている）と同じ内容は、作り直さずに「以前に削除」にする
+        const pending = pendingTrashTargets(raw)
         const built = buildToolCall(view, { tool, input: args } as never, {
           source: 'claude',
           now: this.#now(),
-          wasDeleted: (table, id) => this.mirror.wasDeleted(table, id) || trashed(table, id),
+          wasDeleted: (table, id) => this.mirror.wasDeleted(table, id) || trashed(table, id) || pending.has(`${table}:${id}`),
           // ゴミ箱の中（作品名を変えてから削除した作品も、ゴミ箱にある間は作り直さない）
           inTrash: trashed,
           // 手で足して削除した作品（ゴミ箱の一覧は写しでも中身を省かない）
@@ -608,46 +626,118 @@ export class VaultCore {
         }
         if (!prepared.length) return writeResult(tool, built, created)
         if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
-        try {
-          for (const g of groups(prepared)) {
-            const res = await this.fs.commit(g.map((p) => p.write))
-            this.mirror.putOwn(rowsOfCommit(g, res))
-            for (const p of g) created.add(`${p.table}:${p.id}`)
+        if ((await this.#commitPrepared(prepared, created, attempt)) === 'retry') continue
+        log('records_created', { tool, count: created.size })
+        return writeResult(tool, built, created)
+      }
+    })
+  }
+
+  /**
+   * 作る記録を書き、書けた記録を写しにも入れる（created に {表名}:{id} を足す）。同時に同じ記録が作られた・削除の印がある時は
+   * 読み直して 'retry'（3回目まで。呼び出し側で分け直す）。ほかの失敗は日本語の説明つきの失敗にする
+   */
+  async #commitPrepared(prepared: PreparedWrite[], created: Set<string>, attempt: number): Promise<'done' | 'retry'> {
+    try {
+      for (const g of groups(prepared)) {
+        const res = await this.fs.commit(g.map((p) => p.write))
+        this.mirror.putOwn(rowsOfCommit(g, res))
+        for (const p of g) created.add(`${p.table}:${p.id}`)
+      }
+      return 'done'
+    } catch (e) {
+      if (
+        e instanceof FirestoreError &&
+        (e.code === 'ALREADY_EXISTS' || e.code === 'FAILED_PRECONDITION' || e.code === 'ABORTED' || e.status === 409) &&
+        attempt < 3
+      ) {
+        // 同時に同じ記録が作られた・削除の印がある: 読み直して、重複・以前に削除として分け直す
+        log('write_retry', { code: e.code, attempt })
+        await this.#sleep(100 + Math.floor(Math.random() * 200) * (attempt + 1))
+        const out = await this.#syncStep(8)
+        if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
+        // 差分の読み取りで見えない（写しが知らない）文書は、名前を指定して確かめる
+        const left = prepared.filter((p) => !created.has(`${p.table}:${p.id}`)).map((p) => `${p.table}:${p.id}`)
+        if (left.length && this.#takeReads(left.length + 2)) {
+          try {
+            await this.mirror.fetchNames(left)
+          } catch (err) {
+            return this.#firestoreFailure(err)
           }
-          log('records_created', { tool, count: created.size })
-          return writeResult(tool, built, created)
-        } catch (e) {
-          if (
-            e instanceof FirestoreError &&
-            (e.code === 'ALREADY_EXISTS' || e.code === 'FAILED_PRECONDITION' || e.code === 'ABORTED' || e.status === 409) &&
-            attempt < 3
-          ) {
-            // 同時に同じ記録が作られた・削除の印がある: 読み直して、重複・以前に削除として分け直す
-            log('write_retry', { code: e.code, attempt })
-            await this.#sleep(100 + Math.floor(Math.random() * 200) * (attempt + 1))
-            const out = await this.#syncStep(8)
-            if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
-            // 差分の読み取りで見えない（写しが知らない）文書は、名前を指定して確かめる
-            const left = prepared.filter((p) => !created.has(`${p.table}:${p.id}`)).map((p) => `${p.table}:${p.id}`)
-            if (left.length && this.#takeReads(left.length + 2)) {
-              try {
-                await this.mirror.fetchNames(left)
-              } catch (err) {
-                return this.#firestoreFailure(err)
-              }
-            }
-            continue
-          }
-          if (e instanceof FirestoreError && e.status === 403) {
-            const writes = await this.#readConnector()
-            if (writes === null) {
-              this.#setUnpaired('connector_gone')
-              throw new ConnectorError('unpaired', MESSAGES.unpaired)
-            }
-            if (!writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
-          }
-          return this.#firestoreFailure(e)
         }
+        return 'retry'
+      }
+      if (e instanceof FirestoreError && e.status === 403) {
+        const writes = await this.#readConnector()
+        if (writes === null) {
+          this.#setUnpaired('connector_gone')
+          throw new ConnectorError('unpaired', MESSAGES.unpaired)
+        }
+        if (!writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
+      }
+      return this.#firestoreFailure(e)
+    }
+  }
+
+  // ---------- ゴミ箱へ移す依頼（2.7） ----------
+
+  /** 今日（日本時間）作った依頼の数 */
+  #trashDaily(): TrashDaily {
+    const day = jstDate(this.#now())
+    const cur = this.store.getMeta<TrashDaily>('trashDaily')
+    return cur && cur.day === day && typeof cur.count === 'number' ? cur : { day, count: 0 }
+  }
+
+  #addTrashDaily(n: number): void {
+    if (n <= 0) return
+    const cur = this.#trashDaily()
+    this.store.setMeta('trashDaily', { day: cur.day, count: cur.count + n } satisfies TrashDaily)
+  }
+
+  /**
+   * カードをゴミ箱へ移す依頼を作る（書き込みと同じく、書き込みの許可とデータの形の版を確かめ、最後まで読んでから）。
+   * 依頼を作るだけで、カードを移すのはアプリ（同期した時に確かめて移す）
+   */
+  #trash(args: Record<string, unknown>): Promise<ToolResult> {
+    return this.#mutex.run(async () => {
+      await this.#requireWrites()
+      await this.#fresh(true)
+      const owner = this.pairing().ownerUid!
+      /** 作った依頼（trashRequests:{依頼の id}） */
+      const created = new Set<string>()
+      /** 依頼の id からカード（{表名}:{カードの id}） */
+      const targetOf = new Map<string, string>()
+      const createdTargets = () => new Set([...created].map((k) => targetOf.get(k)).filter((k): k is string => Boolean(k)))
+      for (let attempt = 0; ; attempt++) {
+        const { raw, view } = this.views()
+        const built = buildTrashRequests(view, args as TrashInput, {
+          now: this.#now(),
+          trash: raw.trashRecords,
+          wasDeleted: (table, id) => this.mirror.wasDeleted(table, id),
+          dailyLeft: TRASH_LIMITS.perDay - this.#trashDaily().count,
+        })
+        if (!built.ok) return trashBuildError(built)
+        for (const r of built.records) targetOf.set(`trashRequests:${r.record.id}`, `${r.record.table}:${r.record.targetId}`)
+        let prepared
+        try {
+          prepared = built.records.map((r) => prepareWrite(this.fs, owner, r))
+        } catch (e) {
+          if (e instanceof EncodeError) return fail(e.message)
+          throw e
+        }
+        const left = () => TRASH_LIMITS.perDay - this.#trashDaily().count
+        if (!prepared.length) return trashResult(built, createdTargets(), left())
+        if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
+        const before = created.size
+        let done: 'done' | 'retry'
+        try {
+          done = await this.#commitPrepared(prepared, created, attempt)
+        } finally {
+          this.#addTrashDaily(created.size - before)
+        }
+        if (done === 'retry') continue
+        log('trash_requested', { count: created.size })
+        return trashResult(built, createdTargets(), left())
       }
     })
   }

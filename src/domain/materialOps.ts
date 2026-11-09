@@ -8,7 +8,7 @@
 // タグの決まりと部品は相対比較の作品のタグと共通（tags.ts）。資料のタグと作品のタグは別の項目で、混ぜない。
 import { jstDate, isIsoDate } from '../claude/dates'
 import { CLAUDE_RECORD_VERSION } from '../claude/visibility'
-import { viewpointKey } from './benchOps'
+import { viewpointKey, type CardTrashOptions } from './benchOps'
 import { deepEqual } from './equal'
 import {
   normalizeTags,
@@ -334,14 +334,23 @@ export function deleteMaterialNote(data: AppData, id: ID): AppData {
   return transact(data, (tx) => {
     const n = tx.get('materialNotes', id)
     if (!n) return
-    const material = tx.get('materials', n.materialId)
-    putInTrash(tx, {
-      kind: 'materialNote',
-      label: trashLabel.materialNote(n),
-      titleName: '',
-      ...(material ? { parentLabel: trashLabel.material(material) } : {}),
-      origin: { titleId: null, index: -1, materialId: n.materialId },
-      records: [{ table: 'materialNotes', record: n }],
-    })
+    trashMaterialNote(tx, n)
   }).data
+}
+
+/**
+ * 記録1つをゴミ箱の1件にする（作者の削除と Claude の依頼で同じ形。資料の名前を parentLabel に、資料を origin.materialId に
+ * 控える。相対比較の trashBenchAnalysis と同じ）
+ */
+export function trashMaterialNote(tx: Tx, n: MaterialNote, opts: CardTrashOptions = {}): ID {
+  const material = tx.get('materials', n.materialId)
+  return putInTrash(tx, {
+    kind: 'materialNote',
+    label: trashLabel.materialNote(n),
+    titleName: '',
+    ...(material ? { parentLabel: trashLabel.material(material) } : {}),
+    origin: { titleId: null, index: -1, materialId: n.materialId },
+    records: [{ table: 'materialNotes', record: n }],
+    ...opts,
+  })
 }

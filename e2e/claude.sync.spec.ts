@@ -4,13 +4,38 @@
 // 「書き込みを許可」を変えても指紋・時刻が変わらないこと、［連携を解除］で記録が消えることを確かめる。
 import { expect, test, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
-import { darkSurfaces, noHorizontalScroll, openApp, seedTitleWithEpisodes, tapSize } from './helpers'
+import { trashRequestId } from '../src/claude/derivedId'
+import { encodeRecord } from '../src/sync/codec'
+import type { Rec } from '../src/sync/merge'
+import { darkSurfaces, noHorizontalScroll, openApp, seed, seedTitleWithEpisodes, tapSize } from './helpers'
 
 const DOCS = 'http://127.0.0.1:8080/v1/projects/demo-novel-studio/databases/(default)/documents'
 // エミュレーターでアクセスルールを通さずに読み書きする
 const ADMIN = { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }
 
 type Fields = Record<string, { stringValue?: string; booleanValue?: boolean; integerValue?: string; timestampValue?: string }>
+
+/** コネクタと同じ形の記録（device: claude-connector）を、アクセスルールを通さずに置く */
+async function putConnectorRecord(uid: string, table: string, rec: Rec): Promise<void> {
+  const enc = encodeRecord(rec)
+  const res = await fetch(`${DOCS}/users/${uid}/records/${table}:${rec.id}`, {
+    method: 'PATCH',
+    headers: ADMIN,
+    body: JSON.stringify({
+      fields: {
+        table: { stringValue: table },
+        id: { stringValue: rec.id },
+        json: { stringValue: enc.json },
+        chunks: { integerValue: '0' },
+        deleted: { booleanValue: false },
+        hash: { stringValue: enc.hash },
+        updated: { timestampValue: new Date().toISOString() },
+        device: { stringValue: 'claude-connector' },
+      },
+    }),
+  })
+  expect(res.ok).toBe(true)
+}
 
 async function readDoc(path: string): Promise<Fields | null> {
   const res = await fetch(`${DOCS}/${path}`, { headers: ADMIN })
@@ -167,4 +192,76 @@ test('連携の画面: 持ち主ではないアカウントでは、コネクタ
   expect(requests).toEqual([])
   expect(await readDoc('config/connector')).toBeNull()
   await context.close()
+})
+
+test('ゴミ箱へ移す依頼（2.7）: Claude の依頼が届くと、同期の後にカードがゴミ箱へ移り、トーストと「Claude の依頼」の札が出る。戻すと作品の画面に戻る', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext()
+  const page = await ctx.newPage()
+  await openApp(page)
+  const uid = await signIn(page, `e2e-trash-${Date.now()}`)
+  const workId = await seed(page, ({ actions }) => actions.addBenchWork({ name: '銀河の果て', author: '山田' }))
+  await expect.poll(() => readDoc(`users/${uid}/records/benchWorks:${workId}`), { timeout: 20_000 }).not.toBeNull()
+  // コネクタが分析を作った
+  const card = {
+    id: 'cn-e2e.trash.1',
+    workId,
+    viewpoint: '構成',
+    body: '三幕で、第一幕の終わりに転機。',
+    runDate: '2026-10-30',
+    source: 'claude',
+    v: 1,
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+  }
+  await putConnectorRecord(uid, 'benchAnalyses', card as unknown as Rec)
+  await page.goto(`/#/bench/${workId}`)
+  await expect(page.locator(`[data-analysis-id="${card.id}"]`)).toBeVisible({ timeout: 20_000 })
+  // 作者に頼まれた Claude が、ゴミ箱へ移す依頼を作った
+  const reqId = trashRequestId('benchAnalyses', card.id)
+  await putConnectorRecord(uid, 'trashRequests', {
+    id: reqId,
+    table: 'benchAnalyses',
+    targetId: card.id,
+    parentId: workId,
+    targetUpdatedAt: card.updatedAt,
+    label: '『銀河の果て』の「構成」（2026-10-30）',
+    source: 'claude',
+    v: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  } as unknown as Rec)
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'Claude の依頼で、相対比較の分析1件をゴミ箱へ移しました（30日はゴミ箱から戻せます）' }),
+  ).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.locator(`[data-analysis-id="${card.id}"]`)).toHaveCount(0)
+  // クラウドでも、依頼とカードは削除の印になる
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/trashRequests:${reqId}`))?.deleted?.booleanValue, { timeout: 20_000 })
+    .toBe(true)
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/benchAnalyses:${card.id}`))?.deleted?.booleanValue, {
+      timeout: 20_000,
+    })
+    .toBe(true)
+  // ゴミ箱に「Claude の依頼」の札。元に戻すと作品の画面に戻る
+  await page.goto('/#/trash')
+  const row = page.getByTestId('trash-row').filter({ hasText: '構成（2026-10-30）' })
+  await expect(row.getByTestId('trash-kind')).toHaveText('相対比較の分析')
+  await expect(row.getByTestId('trash-by-claude')).toHaveText('Claude の依頼')
+  await expect(row.getByTestId('trash-place')).toHaveText('相対比較 › 銀河の果て')
+  await row.getByTestId('trash-restore').click()
+  await page.goto(`/#/bench/${workId}`)
+  await expect(page.locator(`[data-analysis-id="${card.id}"]`)).toBeVisible()
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/benchAnalyses:${card.id}`))?.deleted?.booleanValue, {
+      timeout: 20_000,
+    })
+    .toBe(false)
+  await ctx.close()
 })

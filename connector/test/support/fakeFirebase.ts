@@ -30,6 +30,8 @@ const CLAUDE_TABLES = new Set([
   'benchAnalyses',
   'materials',
   'materialNotes',
+  // 2.7: ゴミ箱へ移す依頼（作るだけ。JSON は 2,000 字まで。アクセスルールと同じ）
+  'trashRequests',
 ])
 
 export class FakeFirebase {
@@ -335,7 +337,7 @@ export class FakeFirebase {
         const pre = w.currentDocument as { exists?: boolean } | undefined
         if (pre?.exists === false && exists) return jsonRes({ error: { code: 409, status: 'ALREADY_EXISTS', message: 'exists' } }, 409)
         if (isOwner) continue
-        // コネクタ: 10の表に、決まった形で作るだけ
+        // コネクタ: 10の表とゴミ箱へ移す依頼に、決まった形で作るだけ
         const f = upd.fields
         const table = f.table?.stringValue as string
         const id = f.id?.stringValue as string
@@ -351,6 +353,7 @@ export class FakeFirebase {
           f.device?.stringValue === 'claude-connector' &&
           f.chunks?.integerValue === '0' &&
           f.deleted?.booleanValue === false &&
+          (table !== 'trashRequests' || String(f.json?.stringValue ?? '').length <= 2000) &&
           JSON.stringify(w.updateTransforms) === JSON.stringify([{ fieldPath: 'updated', setToServerValue: 'REQUEST_TIME' }])
         if (!ok) return denied()
       }

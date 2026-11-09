@@ -10,6 +10,7 @@ import { formatCount } from '../domain/text'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../domain/types'
 import { benchAnalysesOf, benchViewpointGroups } from './benchOrder'
 import { matchesId, refKey, shortId, type Resolved } from './refs'
+import { pendingTrashCount, pendingTrashLine } from './trashTargets'
 
 const norm = (s: string) => s.normalize('NFC').trim()
 
@@ -114,17 +115,20 @@ export function comparisonMaterial(data: AppData, workIds: readonly ID[]): strin
 
 /**
  * 作品の1行（一覧用。「w:…『作品名』（著者）…」の下に、タグがあれば「  タグ: 恋愛・青春」、「  分析 3件: 構成 2件（最新 …）・…」、
- * PDF の置き場所、比べるタイトル）
+ * ゴミ箱へ移す依頼中のカードの数、PDF の置き場所、比べるタイトル）。data が Claude に見せる内容（claudeView）なら、
+ * 依頼中の分析は分析の数に入らない
  */
 export function benchWorkLine(data: AppData, w: BenchWork): string {
   const analyses = benchAnalysesOf(data, w.id)
   const titles = titlesComparing(data, w.id)
   const total = analyses.reduce((n, a) => n + Array.from(a.body).length, 0)
   const tags = benchWorkTagsLine(data, w)
+  const pending = pendingTrashLine(pendingTrashCount(data, 'benchAnalyses', w.id))
   return [
     `${benchWorkRef(w)}${benchWorkBiblio(w) ? ` ${benchWorkBiblio(w)}` : ''}`,
     ...(tags ? [`  ${tags}`] : []),
     `  分析 ${analyses.length}件${analyses.length ? `（${formatCount(total)}字）: ${viewpointSummary(analyses)}` : ''}`,
+    ...(pending ? [pending] : []),
     ...(w.pdfPlace.trim() ? [`  PDF の置き場所: ${w.pdfPlace.trim()}`] : []),
     ...(titles.length ? [`  比べるタイトル: ${titles.map((t) => `『${t.name}』[${shortId('title', t.id)}]`).join('、')}`] : []),
   ].join('\n')

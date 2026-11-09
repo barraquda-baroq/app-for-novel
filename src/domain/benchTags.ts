@@ -6,10 +6,12 @@
 //   前のタグは消さないので、作者が外したタグは、新しい 14 が来るまで付き直さない
 // - 14 が読めない（2行が無い・空）時は何もしない（autoTagsFrom も進めない。作者が本文を直せば付く）
 // - 【対照】【監査】【横断】の作品には付けない。【原稿】は回ごとに別の作品なので、回ごとの 14 から付く
-// 読み込むのは benchOps・tags・claude/benchOrder・claude/parts・claude/refs だけ（同期の merge.ts からは読まない）。
+// - ゴミ箱へ移す依頼（2.7）の出ている 14 は読まない（コネクタの見せる内容からも外れているので、Claude に見えるタグと同じにする）
+// 読み込むのは benchOps・tags・claude/benchOrder・claude/parts・claude/refs・claude/trashTargets だけ（同期の merge.ts からは読まない）。
 import { sortBenchAnalyses } from '../claude/benchOrder'
 import { newestFirst } from '../claude/parts'
 import { refKey } from '../claude/refs'
+import { pendingTrashTargets, trashTargetKey } from '../claude/trashTargets'
 import { isTaglessWork } from './benchOps'
 import { displayTags, TAG_LIMITS, tagKey } from './tags'
 import { transact } from './tx'
@@ -239,13 +241,24 @@ const NONE: readonly BenchAnalysis[] = []
  * まだ取り込んでいない自動のタグを、すべての作品に付ける（付けた作品は autoTagsFrom を進め、updatedAt も進める）。
  * 付ける作品が無ければ data をそのまま返す（保存も同期も起こさない）
  */
+/** ゴミ箱へ移す依頼の出ている分析を除く（依頼が無ければ同じ並び） */
+function withoutPendingTrash(
+  data: Partial<Pick<AppData, 'trashRequests'>>,
+  list: readonly BenchAnalysis[],
+): readonly BenchAnalysis[] {
+  if (!data.trashRequests) return list
+  const pending = pendingTrashTargets({ trashRequests: data.trashRequests })
+  if (!pending.size) return list
+  return list.filter((a) => !pending.has(trashTargetKey('benchAnalyses', a.id)))
+}
+
 export function applyAutoGenreTags(data: AppData): AppData {
   const byWork = analysesByWorkId(data.benchAnalyses)
   const updates: { work: BenchWork; pending: PendingAutoTags }[] = []
   for (const work of Object.values(data.benchWorks)) {
     const list = byWork.get(work.id)
     if (!list) continue
-    const pending = pendingAutoTags(work, list)
+    const pending = pendingAutoTags(work, withoutPendingTrash(data, list))
     if (pending) updates.push({ work, pending })
   }
   if (!updates.length) return data
@@ -260,7 +273,10 @@ export function applyAutoGenreTags(data: AppData): AppData {
 }
 
 /** 作品のタグ（アプリがまだ付けていない自動のタグも含める。コネクタの一覧・絞り込み・手動連携の依頼文で見せる形） */
-export function benchWorkTagsWithAuto(data: Pick<AppData, 'benchAnalyses'>, work: BenchWork): string[] {
-  const list = analysesByWorkId(data.benchAnalyses).get(work.id) ?? NONE
+export function benchWorkTagsWithAuto(
+  data: Pick<AppData, 'benchAnalyses'> & Partial<Pick<AppData, 'trashRequests'>>,
+  work: BenchWork,
+): string[] {
+  const list = withoutPendingTrash(data, analysesByWorkId(data.benchAnalyses).get(work.id) ?? NONE)
   return pendingAutoTags(work, list)?.tags ?? displayTags(work.tags) ?? []
 }

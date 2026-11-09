@@ -9,6 +9,7 @@ import { formatCount } from '../domain/text'
 import type { AppData, Material, MaterialNote } from '../domain/types'
 import { materialNotesOf, materialSectionGroups } from './materialOrder'
 import { matchesId, refKey, shortId, type Resolved } from './refs'
+import { pendingTrashCount, pendingTrashLine } from './trashTargets'
 
 /** 資料の指し方（d:… の短い id・id・資料名）から資料を探す */
 export function resolveMaterial(data: Pick<AppData, 'materials'>, ref: string): Resolved<Material> {
@@ -100,16 +101,18 @@ export function materialNotesText(
 
 /**
  * 資料の1行（一覧用。「d:…『資料名』（著者）…」の下に、タグがあれば「  タグ: ミリタリ・現代」、
- * 「  記録 3件（…字）: 要約 1件（最新 …）・…」と PDF の置き場所）
+ * 「  記録 3件（…字）: 要約 1件（最新 …）・…」、ゴミ箱へ移す依頼中の記録の数と PDF の置き場所）
  */
-export function materialLine(data: Pick<AppData, 'materialNotes'>, m: Material): string {
+export function materialLine(data: Pick<AppData, 'materialNotes' | 'trashRequests'>, m: Material): string {
   const notes = materialNotesOf(data, m.id)
   const total = notes.reduce((n, x) => n + Array.from(x.body).length, 0)
   const tags = materialTagsLine(m)
+  const pending = pendingTrashLine(pendingTrashCount(data, 'materialNotes', m.id))
   return [
     `${materialRef(m)}${materialBiblio(m) ? ` ${materialBiblio(m)}` : ''}`,
     ...(tags ? [`  ${tags}`] : []),
     `  記録 ${notes.length}件${notes.length ? `（${formatCount(total)}字）: ${sectionSummary(notes)}` : ''}`,
+    ...(pending ? [pending] : []),
     ...(m.pdfPlace.trim() ? [`  PDF の置き場所: ${m.pdfPlace.trim()}`] : []),
   ].join('\n')
 }

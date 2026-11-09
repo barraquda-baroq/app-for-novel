@@ -6,6 +6,7 @@
 import * as z from 'zod'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_GUIDE } from '../../../src/claude/categories'
 import { RECORD_LIMITS as L } from '../../../src/claude/records'
+import { TRASH_LIMITS } from '../../../src/claude/trashRequest'
 import { BENCH_LIMITS } from '../../../src/domain/benchOps'
 import { MATERIAL_LIMITS, MATERIAL_SECTIONS } from '../../../src/domain/materialOps'
 
@@ -378,6 +379,15 @@ export const SCHEMAS = {
       .describe('記録（項目ごとに1つ。1回20件まで）'),
     model: model.optional(),
   }),
+  novel_move_cards_to_trash: z.object({
+    cards: z
+      .array(z.string().min(1).max(TRASH_LIMITS.ref))
+      .min(1)
+      .max(TRASH_LIMITS.perCall)
+      .describe(
+        `ゴミ箱へ移すカードの id（相対比較の分析 n:… か資料の記録 k:…）。そのチャットで Claude が追加した時の答えに出た id だけ。1回${TRASH_LIMITS.perCall}件まで`,
+      ),
+  }),
 } as const
 
 export type ToolName = keyof typeof SCHEMAS
@@ -386,4 +396,10 @@ export type ToolName = keyof typeof SCHEMAS
 export const WRITE_OUTPUT = z.object({
   created: z.array(z.object({ id: z.string(), label: z.string() })),
   skipped: z.array(z.object({ index: z.number().int(), reason: z.string(), hint: z.string().optional() })),
+})
+
+/** ゴミ箱へ移すツールの結果（structuredContent）の形 */
+export const TRASH_OUTPUT = z.object({
+  requested: z.array(z.object({ id: z.string(), label: z.string() })),
+  skipped: z.array(z.object({ ref: z.string(), reason: z.string(), hint: z.string().optional() })),
 })

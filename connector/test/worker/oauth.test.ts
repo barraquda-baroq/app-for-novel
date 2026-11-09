@@ -331,7 +331,7 @@ describe('連携（アプリでの許可 → /pair/callback → トークン →
     // tools/list は Vault（Firebase）を呼ばない
     const calls = fake.calls.length
     const list = await rpcJson(await mcp(t.access_token, 'tools/list'))
-    expect(list.result.tools).toHaveLength(21)
+    expect(list.result.tools).toHaveLength(22)
     expect(fake.calls.length).toBe(calls)
     // 初回の取り込みが終わるまでは「取り込み中」（alarm が続ける）。何度か呼べば読める
     let text = ''

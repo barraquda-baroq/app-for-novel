@@ -161,6 +161,8 @@ export function repairData(input: AppData): RepairResult {
     // 2.6 の表（古いバックアップ・古い形のデータには無い）
     materials: { ...(input.materials ?? {}) },
     materialNotes: { ...(input.materialNotes ?? {}) },
+    // 2.7 の表（古いバックアップ・古い形のデータには無い）
+    trashRequests: { ...(input.trashRequests ?? {}) },
     trashEntries: { ...(input.trashEntries ?? {}) },
     trashRecords: { ...(input.trashRecords ?? {}) },
   }
@@ -507,6 +509,9 @@ export function repairData(input: AppData): RepairResult {
   repairMaterials(d, fix)
 
   repairTrash(d, fix)
+
+  // 2.7: ゴミ箱へ移す依頼は、形が違っても残す（表示から外すとアプリが処理して消せず、クラウドに残り続けるため。
+  // 確かめるのは処理する時。src/domain/claudeTrash.ts）。オブジェクトでない・id の合わない依頼は、上で取り除いた
 
   return { data: fixes.length ? d : input, fixes }
 }
@@ -868,6 +873,8 @@ function repairTrash(d: AppData, fix: (m: string) => void): void {
       updatedAt: num(e.updatedAt),
     }
     if ('parentLabel' in next && typeof next.parentLabel !== 'string') delete next.parentLabel
+    // 2.7: Claude の依頼で移した印（ほかの値は外す）
+    if ('by' in next && next.by !== 'claude') delete next.by
     if (!same(next, e)) {
       d.trashEntries[e.id] = next
       fix('ゴミ箱の項目を補いました')

@@ -25,6 +25,7 @@ import { createPersistence, type ConflictNote, type Persistence } from '../db/pe
 import * as A from '../domain/acts'
 import * as B from '../domain/benchOps'
 import { applyAutoGenreTags } from '../domain/benchTags'
+import { applyTrashRequests } from '../domain/claudeTrash'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import * as M from '../domain/materialOps'
@@ -43,6 +44,7 @@ import {
   type Order,
 } from '../test/actsScenarios'
 import { previewPaste } from '../claude/paste'
+import { buildTrashRequests, trashEntryIdsOf } from '../claude/trashRequest'
 import { appModelRef, type AppModel } from './appModel'
 import { createConflictHooks } from './conflicts'
 import { encodeRecord } from './codec'
@@ -1867,6 +1869,182 @@ describe('相対比較のタグ（エミュレーター）', () => {
     await b.edit(applyAutoGenreTags)
     await settle(a, b)
     expect((await a.load()).benchWorks[workId].tags).toEqual(['恋愛', '喪失'])
+  })
+})
+
+describe('ゴミ箱へ移す依頼の同期（2.7。エミュレーター）', () => {
+  const genre14 = (genre: string, sub: string) => `- 判定したジャンル：${genre}\n- ジャンル／サブジャンル：${sub}`
+
+  /** コネクタと同じ形で記録を作る（device: claude-connector） */
+  async function connectorPut(d: Device, table: string, rec: { id: string }): Promise<void> {
+    const enc = encodeRecord(rec as never)
+    await setDoc(doc(d.fs, 'users', d.uid, 'records', `${table}:${rec.id}`), {
+      table,
+      id: rec.id,
+      json: enc.json,
+      chunks: 0,
+      deleted: false,
+      hash: enc.hash,
+      updated: serverTimestamp(),
+      device: 'claude-connector',
+    })
+  }
+
+  const analysis = (workId: string, id: string, viewpoint = '構成', body = '三幕。') => ({
+    id,
+    workId,
+    viewpoint,
+    body,
+    runDate: '2026-10-30',
+    source: 'claude' as const,
+    v: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  })
+
+  /** 2台と作品。コネクタが分析を作った（両方の端末に届いた） */
+  async function twoDevices(extra: ReturnType<typeof analysis>[] = []) {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let workId = ''
+    await a.edit((d) => {
+      const w = B.addBenchWork(d, { name: '銀河の果て', author: '山田' })
+      workId = w.result
+      return w.data
+    })
+    await settle(a, b)
+    const card = analysis(workId, 'cn-trash.1')
+    for (const rec of [card, ...extra.map((x) => ({ ...x, workId }))]) await connectorPut(a, 'benchAnalyses', rec)
+    await waitFor(async () => (await b.load()).benchAnalyses[card.id] && (await a.load()).benchAnalyses[card.id], 'カードが届く')
+    return { a, b, workId, card }
+  }
+
+  /** コネクタが依頼を作る（コネクタと同じ buildTrashRequests。両方の端末に届くまで待つ） */
+  async function request(a: Device, b: Device, cardId: string) {
+    const built = buildTrashRequests(
+      await a.load(),
+      { cards: [cardId] },
+      { now: Date.now(), trash: {}, wasDeleted: () => false, dailyLeft: 100 },
+    )
+    const req = built.records[0].record
+    await connectorPut(a, 'trashRequests', req)
+    await waitFor(async () => (await a.load()).trashRequests[req.id] && (await b.load()).trashRequests[req.id], '依頼が届く')
+    return req
+  }
+
+  const cloud = async (d: Device, docId: string) => (await getDoc(doc(d.fs, 'users', d.uid, 'records', docId))).data()
+
+  it('アプリが処理すると、カード・ゴミ箱の件と中身・依頼の削除がクラウドへ送られ、もう一方の端末にもゴミ箱の1件として届く', async () => {
+    const { a, b, card } = await twoDevices()
+    const req = await request(a, b, card.id)
+    const ids = trashEntryIdsOf(req.id)
+    await a.edit((d) => applyTrashRequests(d, Date.now()).data)
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.benchAnalyses[card.id]).toBeUndefined()
+    expect(data.trashRequests).toEqual({})
+    expect(data.trashEntries[ids.entry]).toMatchObject({ kind: 'benchAnalysis', by: 'claude', parentLabel: '銀河の果て' })
+    expect(data.trashRecords[ids.record(0)].record).toEqual(card)
+    expect((await cloud(a, `trashRequests:${req.id}`))?.deleted).toBe(true)
+    expect((await cloud(a, `benchAnalyses:${card.id}`))?.deleted).toBe(true)
+    expect(a.notes).toEqual([])
+    expect(b.notes).toEqual([])
+    // ゴミ箱から戻すと、もう一方の端末でも戻る
+    await b.edit((d) => T.restoreTrashEntry(d, ids.entry).data)
+    await settle(a, b)
+    expect((await a.load()).benchAnalyses[card.id]).toEqual(card)
+  })
+
+  it('2台が同時に処理しても、ゴミ箱の件は1つ（id を依頼から決める）', async () => {
+    const { a, b, card } = await twoDevices()
+    const req = await request(a, b, card.id)
+    a.offline()
+    b.offline()
+    await a.edit((d) => applyTrashRequests(d, Date.now()).data)
+    await b.edit((d) => applyTrashRequests(d, Date.now() + 1_000).data)
+    await a.online()
+    await b.online()
+    await settle(a, b)
+    const data = await a.load()
+    expect(Object.keys(data.trashEntries)).toEqual([trashEntryIdsOf(req.id).entry])
+    expect(Object.keys(data.trashRecords)).toEqual([trashEntryIdsOf(req.id).record(0)])
+    expect(data.benchAnalyses[card.id]).toBeUndefined()
+    expect(data.trashRequests).toEqual({})
+    expect([...a.notes, ...b.notes]).toEqual([])
+  })
+
+  it('依頼の後、処理する前に作者が別の端末で直したカードは移さず、依頼だけ消す（直した内容は両方の端末に残る）', async () => {
+    const { a, b, card } = await twoDevices()
+    const req = await request(a, b, card.id)
+    await b.edit((d) => B.updateBenchAnalysis(d, card.id, { body: '作者が直した' }))
+    await settle(a, b)
+    let statuses: string[] = []
+    await a.edit((d) => {
+      const r = applyTrashRequests(d, Date.now())
+      statuses = r.result.map((o) => o.status)
+      return r.data
+    })
+    expect(statuses).toEqual(['edited'])
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.benchAnalyses[card.id].body).toBe('作者が直した')
+    expect(data.trashRequests).toEqual({})
+    expect(Object.keys(data.trashEntries)).toEqual([])
+    expect((await cloud(a, `trashRequests:${req.id}`))?.deleted).toBe(true)
+  })
+
+  it('自動のタグは依頼中の「14 検索用タグ」を読まない（コネクタに見えるタグと同じ）', async () => {
+    const tags14 = analysis('', 'cn-genre.1', '14 検索用タグ', genre14('SF', 'SF／宇宙'))
+    const { a, b, workId } = await twoDevices()
+    // コネクタが 14 と、その依頼を続けて作った（アプリが 14 からタグを付ける前に依頼が届いた）
+    a.offline()
+    b.offline()
+    const rec = { ...tags14, workId }
+    await connectorPut(a, 'benchAnalyses', rec)
+    const before = await a.load()
+    const data0 = { ...before, benchAnalyses: { ...before.benchAnalyses, [rec.id]: rec } }
+    const req = buildTrashRequests(
+      data0,
+      { cards: [rec.id] },
+      { now: Date.now(), trash: {}, wasDeleted: () => false, dailyLeft: 100 },
+    ).records[0].record
+    await connectorPut(a, 'trashRequests', req)
+    await a.online()
+    await waitFor(async () => {
+      const d = await a.load()
+      return d.benchAnalyses[rec.id] && d.trashRequests[req.id]
+    }, '14 と依頼が届く')
+    await a.edit((d) => applyAutoGenreTags(d))
+    expect((await a.load()).benchWorks[workId].tags).toBeUndefined()
+    await a.edit((d) => applyTrashRequests(d, Date.now()).data)
+    await a.edit((d) => applyAutoGenreTags(d))
+    await b.online()
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.benchAnalyses[rec.id]).toBeUndefined()
+    expect(data.benchWorks[workId].tags).toBeUndefined()
+  })
+
+  it('同期の形の版が古い端末（2.6）は、次の同期で依頼を受け取り直す', async () => {
+    const { a, b, card } = await twoDevices()
+    b.offline()
+    const req = buildTrashRequests(
+      await a.load(),
+      { cards: [card.id] },
+      { now: Date.now(), trash: {}, wasDeleted: () => false, dailyLeft: 100 },
+    ).records[0].record
+    await connectorPut(a, 'trashRequests', req)
+    await waitFor(async () => (await a.load()).trashRequests[req.id], 'a に依頼が届く')
+    // 受け取った位置がずっと先にある端末（2.6 の端末が知らない表を飛ばして位置を進めた時と同じ）
+    await b.p.setMeta('cursor', { s: 4_000_000_000, n: 0 })
+    await b.p.setMeta('syncSchema', 4)
+    await b.online()
+    await waitFor(async () => (await b.load()).trashRequests[req.id], '受け取り直す')
+    expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
+    expect(SYNC_SCHEMA).toBe(5)
   })
 })
 

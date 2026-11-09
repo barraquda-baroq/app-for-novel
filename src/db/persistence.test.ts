@@ -1,5 +1,6 @@
 // 端末内の保存と送信待ち: 同期の規則（どちらの文章も黙って消さない）が、ほかの画面の保存・クラウドからの反映の
 // どちらでも守られること。
+import Dexie from 'dexie'
 import { describe, expect, it, vi } from 'vitest'
 import { joinActWithNext, separatePiece } from '../domain/acts'
 import { addMemo, addSubmission, createTitle, deleteSubmission, recordSubmissionSnapshot } from '../domain/entityOps'
@@ -361,6 +362,14 @@ describe('第2回の見直しで直したこと', () => {
     expect(tableSendRank('materials')).toBeLessThan(tableSendRank('settingCategories'))
   })
 
+  it('ゴミ箱へ移す依頼は、削除でもいちばん後ろに送る（カードの削除とゴミ箱の記録の後。2.7）', () => {
+    for (const t of TABLE_NAMES)
+      if (t !== 'trashRequests') expect(tableSendRank('trashRequests')).toBeGreaterThan(tableSendRank(t))
+    expect(tableSendRank('trashRequests', true)).toBeGreaterThan(tableSendRank('titles', true))
+    expect(tableSendRank('trashRequests', true)).toBeGreaterThan(tableSendRank('benchAnalyses', true))
+    expect(tableSendRank('trashRequests', true)).toBeGreaterThan(tableSendRank('trashEntries', true))
+  })
+
   it('復元を始めた後にほかの端末が書いたものは、「必ず上書き」の送信待ちがあっても 3者マージする', async () => {
     const { data, versionId, memoId } = sample()
     const p = fresh()
@@ -697,5 +706,79 @@ describe('大きな作品の反映・送信待ちの読む量', () => {
     const versions = Object.keys(data.versions).length
     expect(counts.versions?.get ?? 0).toBeLessThanOrEqual(3 * versions)
     expect(await p.load()).toEqual(data)
+  })
+})
+
+describe('端末内の DB の版（2.7）', () => {
+  it('v6（2.6）の DB を v7 に上げても、中身と送信待ちが残り、ゴミ箱へ移す依頼の表ができる', async () => {
+    const name = `persistence-upgrade-${++n}`
+    // 2.6 の形（v6）をそのまま作る
+    const v6Tables = [
+      'titles',
+      'chapters',
+      'pieces',
+      'versions',
+      'memos',
+      'ideas',
+      'settingCategories',
+      'settingEntries',
+      'submissions',
+      'snapshotTexts',
+      'trashEntries',
+      'trashRecords',
+      'proofSuggestions',
+      'proofBatches',
+      'revisionIdeas',
+      'strategyNotes',
+      'critiquePrompts',
+      'critiqueResults',
+      'benchWorks',
+      'benchAnalyses',
+      'materials',
+      'materialNotes',
+    ]
+    expect(new Set([...v6Tables, 'trashRequests'])).toEqual(new Set(TABLE_NAMES))
+    const old = new Dexie(name)
+    old.version(6).stores({ ...Object.fromEntries(v6Tables.map((t) => [t, 'id'])), _outbox: 'k', _meta: 'key' })
+    const { data } = sample()
+    const m = addMaterial(data, { name: '江戸の暮らし' })
+    for (const t of v6Tables) {
+      const rows = Object.values((m.data as unknown as Record<string, Record<string, AnyRecord>>)[t])
+      if (rows.length) await old.table(t).bulkPut(rows)
+    }
+    await old.table('_meta').put({ key: 'uid', value: 'user-1' })
+    await old.table('_outbox').put({ k: `materials/${m.result}`, t: 'materials', id: m.result, base: null, at: 1 })
+    old.close()
+
+    const p = createPersistence(name)
+    const loaded = await p.load()
+    expect(loaded.materials[m.result].name).toBe('江戸の暮らし')
+    expect(Object.keys(loaded.titles)).toEqual(Object.keys(m.data.titles))
+    expect(loaded.trashRequests).toEqual({})
+    expect(await p.getMeta('uid')).toBe('user-1')
+    expect(await p.outboxCount()).toBe(1)
+    // 新しい表に書ける（クラウドから届いた依頼を置き、処理して消す）
+    const req = {
+      id: 'cz-test',
+      table: 'benchAnalyses',
+      targetId: 'a1',
+      parentId: 'w1',
+      targetUpdatedAt: 1,
+      label: '「構成」',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    await p.applyRemote(
+      [{ table: 'trashRequests', id: req.id, record: req as unknown as AnyRecord }],
+      hooks(() => loaded),
+    )
+    expect((await p.load()).trashRequests[req.id]).toEqual(req)
+    const db = new Dexie(name)
+    await db.open()
+    expect(db.verno).toBe(7)
+    expect(db.tables.map((t) => t.name)).toContain('trashRequests')
+    db.close()
   })
 })

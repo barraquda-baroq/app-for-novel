@@ -23,6 +23,7 @@ export type ToolName =
   | 'novel_list_materials'
   | 'novel_get_material'
   | 'novel_add_material_notes'
+  | 'novel_move_cards_to_trash'
 
 export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
   "novel_status": {
@@ -1208,6 +1209,25 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       "material",
       "items"
     ]
+  },
+  "novel_move_cards_to_trash": {
+    "type": "object",
+    "properties": {
+      "cards": {
+        "minItems": 1,
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "description": "ゴミ箱へ移すカードの id（相対比較の分析 n:… か資料の記録 k:…）。そのチャットで Claude が追加した時の答えに出た id だけ。1回20件まで"
+      }
+    },
+    "required": [
+      "cards"
+    ]
   }
 }
 
@@ -1258,6 +1278,55 @@ export const WRITE_OUTPUT_SCHEMA: Record<string, unknown> = {
   },
   "required": [
     "created",
+    "skipped"
+  ]
+}
+
+export const TRASH_OUTPUT_SCHEMA: Record<string, unknown> = {
+  "type": "object",
+  "properties": {
+    "requested": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ]
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "reason"
+        ]
+      }
+    }
+  },
+  "required": [
+    "requested",
     "skipped"
   ]
 }

@@ -36,6 +36,7 @@ const EXPECTED_ORDER = [
   'novel_add_critique_result',
   'novel_add_bench_analysis',
   'novel_add_material_notes',
+  'novel_move_cards_to_trash',
 ]
 
 describe('ツールの決まり', () => {
@@ -48,14 +49,19 @@ describe('ツールの決まり', () => {
       expect(t.annotations.title).toBe(t.title)
       expect(Object.keys(t.annotations).sort()).toEqual(['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint', 'title'])
       expect(t.annotations.openWorldHint).toBe(false)
-      expect(t.annotations.destructiveHint).toBe(false)
+      // 2.7: カードを消すのはゴミ箱へ移すツールだけ（claude.ai でこれだけ「承認が必要」にしておける）
+      expect(t.annotations.destructiveHint).toBe(t.kind === 'trash')
+      expect(t.annotations.idempotentHint).toBe(true)
       expect(t.annotations.readOnlyHint).toBe(t.kind === 'read')
       expect(t.description.length).toBeGreaterThan(60)
     }
     expect(new Set(TOOL_DEFS.map((t) => t.name)).size).toBe(TOOL_DEFS.length)
-    // 2.6: 読むツール 14・書き込みツール 7
+    // 2.7: 読むツール 14・書き込みツール 7・ゴミ箱へ移すツール 1
     expect(TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(14)
     expect(TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(7)
+    expect(TOOL_DEFS.filter((t) => t.kind === 'trash').map((t) => [t.name, t.title])).toEqual([
+      ['novel_move_cards_to_trash', 'カードをゴミ箱へ移す'],
+    ])
     expect(SERVER_INSTRUCTIONS.length).toBeGreaterThan(200)
     expect(SERVER_INSTRUCTIONS.length).toBeLessThan(900)
   })
@@ -288,6 +294,31 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(TOOL_DEFS.find((t) => t.name === 'novel_get_bench_analysis')!.description).toContain('先頭に作品の書誌とタグも出す')
     expect(addBench.description).toContain('作品のタグは書けない（観点「14 検索用タグ」の「- 判定したジャンル：」「- ジャンル／サブジャンル：」の行から')
     expect(tools[2].outputSchema).toBeUndefined()
+    // ゴミ箱へ移すツール（2.7）: これだけ destructiveHint。結果の形もある。説明とサーバーの説明に、使ってよい時を書く
+    const trash = tools.find((t) => t.name === 'novel_move_cards_to_trash')!
+    expect(trash.title).toBe('カードをゴミ箱へ移す')
+    expect(trash.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false })
+    expect(trash.outputSchema).toBeTruthy()
+    expect(tools.filter((t) => t.annotations.destructiveHint).map((t) => t.name)).toEqual(['novel_move_cards_to_trash'])
+    const trashDef = TOOL_DEFS.find((t) => t.name === 'novel_move_cards_to_trash')!
+    for (const phrase of [
+      '作者が削除を頼んだ時だけ使い、自分の判断では使わない',
+      'イレギュラーがあれば作者に報告し',
+      '選択肢の1つとして提案する',
+      'そのチャットで自分が追加した時の答えに出た id だけ',
+      '作者が書いた・貼り付けた・アプリで直したカード、作品・資料そのもの',
+      '1回20件・1日（日本時間）100件まで',
+      'アプリが同期した時にアプリのゴミ箱へ移る（30日は作者がアプリのゴミ箱から戻せる',
+    ])
+      expect(trashDef.description).toContain(phrase)
+    for (const phrase of [
+      'novel_move_cards_to_trash',
+      '作者が頼んだ時だけ使い、自分の判断で使わない',
+      'イレギュラーは報告し、選択肢の1つとして提案する',
+      'そのチャットで自分が登録した id だけ',
+    ])
+      expect(instructions).toContain(phrase)
+    expect(instructions).not.toContain('何かを削除したりはしません')
     expect(calls).toBe(0)
   })
 
@@ -328,5 +359,32 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     const failed = r.json.error || r.json.result?.isError
     expect(failed).toBeTruthy()
     expect(calls).toBe(before)
+  })
+
+  it('tools/call: ゴミ箱へ移すツールは structuredContent（requested・skipped）を返し、移せない時は isError', async () => {
+    const add = await rpc(
+      'tools/call',
+      {
+        name: 'novel_add_bench_analysis',
+        arguments: { work: '銀河の果て', new_work: { name: '銀河の果て', author: '山田' }, items: [{ viewpoint: '構成', body_markdown: '三幕。' }] },
+      },
+      8,
+    )
+    const id = add.json.result.structuredContent.created[0].id as string
+    const r = await rpc('tools/call', { name: 'novel_move_cards_to_trash', arguments: { cards: [id, 'w:12345678'] } }, 9)
+    expect(r.json.result.isError).toBeFalsy()
+    expect(r.json.result.structuredContent).toEqual({
+      requested: [{ id, label: expect.stringContaining('相対比較『銀河の果て』の「構成」') }],
+      skipped: [{ ref: 'w:12345678', reason: 'shelf_item', hint: expect.any(String) }],
+    })
+    expect(r.json.result.content[0].text).toContain('30日は、作者がアプリのゴミ箱から元に戻せます')
+    const bad = await rpc('tools/call', { name: 'novel_move_cards_to_trash', arguments: { cards: ['x:12345678'] } }, 10)
+    expect(bad.json.error).toBeUndefined()
+    expect(bad.json.result.isError).toBe(true)
+    // 入力の形: 1〜20件・1つ80字まで
+    const many = await rpc('tools/call', { name: 'novel_move_cards_to_trash', arguments: { cards: Array.from({ length: 21 }, () => id) } }, 11)
+    expect(many.json.error || many.json.result?.isError).toBeTruthy()
+    const empty = await rpc('tools/call', { name: 'novel_move_cards_to_trash', arguments: { cards: [] } }, 12)
+    expect(empty.json.error || empty.json.result?.isError).toBeTruthy()
   })
 })

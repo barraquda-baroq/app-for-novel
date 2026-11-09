@@ -773,6 +773,37 @@ describe('作品のタグ（2.7。novel_list_bench_works の tags・タグの行
     expect(one).not.toContain('タグ:')
   })
 
+  it('同じコネクタで 14 を足した後の一覧にも、自動のタグが出る（写しが表をその場で書き換えても、前の一覧の覚えを使わない）', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core, clock } = await pairedCore(fake, s.data)
+    expect(await call(core, 'novel_list_bench_works')).not.toContain('タグ: ')
+    await call(core, 'novel_add_bench_analysis', {
+      work: s.workA,
+      items: [{ viewpoint: '14 検索用タグ', body_markdown: genre14('SF', 'SF／宇宙'), run_date: '2026-11-01' }],
+    })
+    clock.now += 20_000
+    expect(await call(core, 'novel_list_bench_works')).toContain('  タグ: SF・宇宙')
+  })
+
+  it('ゴミ箱へ移す依頼の出ている 14 からはタグを付けない（アプリの自動のタグと同じ。前の 14 があればそれから）', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core, clock } = await pairedCore(fake, addBenchAnalysis(s.data, s.workA, { viewpoint: '14 検索用タグ', body: genre14('恋愛', '恋愛／青春'), runDate: '2026-10-01' }).data)
+    const r = await core.callTool('novel_add_bench_analysis', {
+      work: s.workA,
+      items: [{ viewpoint: '14 検索用タグ', body_markdown: genre14('SF', 'SF／宇宙'), run_date: '2026-11-01' }],
+    })
+    clock.now += 20_000
+    expect(await call(core, 'novel_list_bench_works')).toContain('  タグ: SF・宇宙')
+    const id = (r.structured as { created: { id: string }[] }).created[0].id
+    await call(core, 'novel_move_cards_to_trash', { cards: [id] })
+    clock.now += 20_000
+    const text = await call(core, 'novel_list_bench_works')
+    expect(text).toContain('  タグ: 恋愛・青春')
+    expect(text).not.toContain('SF')
+  })
+
   it('new_work に tags・autoTagsFrom が付いていても作品に入れない（タグはアプリが 14 から付ける）', async () => {
     const fake = new FakeFirebase()
     const s = shelf()

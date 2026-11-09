@@ -46,6 +46,8 @@ import {
   searchTextView,
   titleHeadline,
 } from '../../../../src/claude/view'
+import { cardShortId } from '../../../../src/claude/trashRequest'
+import { liveTrashRequests } from '../../../../src/claude/trashTargets'
 import { claudeAccessLabel, claudeAccessOf, isNewerRecord, NEWER_RECORD_LABEL } from '../../../../src/claude/visibility'
 import {
   categoriesOf,
@@ -71,7 +73,19 @@ import {
   textLimitRange,
 } from '../../../../src/domain/submissionTexts'
 import { bodyMetrics, formatCount } from '../../../../src/domain/text'
-import type { AppData, BenchWork, ID, Material, Piece, ProofSuggestion, Submission, Title } from '../../../../src/domain/types'
+import { TRASH_RETENTION_DAYS } from '../../../../src/domain/trash'
+import type {
+  AppData,
+  BenchWork,
+  ID,
+  Material,
+  Piece,
+  ProofSuggestion,
+  Submission,
+  Title,
+  TrashRequest,
+  TrashRequestTable,
+} from '../../../../src/domain/types'
 import {
   bool,
   fail,
@@ -1043,6 +1057,10 @@ export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
   if (aid) {
     const list = benchAnalysesOf(view, work.id)
     const hits = list.filter((a) => matchesId('benchAnalysis', aid, a.id))
+    if (!hits.length) {
+      const asked = pendingRequestFor(view, 'benchAnalyses', work.id, aid)
+      if (asked) return fail(pendingMessage(asked))
+    }
     if (hits.length !== 1)
       return fail(
         `分析 '${aid}' が『${work.name}』に見つかりません`,
@@ -1059,6 +1077,15 @@ export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
   }
   return page('work', work.id, 0)
 }
+
+/** id で指したカードに、ゴミ箱へ移す依頼が出ているか（見せる内容からは外れているので、依頼の方を見る） */
+function pendingRequestFor(view: AppData, table: TrashRequestTable, parentId: ID, ref: string): TrashRequest | undefined {
+  const kind = table === 'benchAnalyses' ? 'benchAnalysis' : 'materialNote'
+  return liveTrashRequests(view).find((r) => r.table === table && r.parentId === parentId && matchesId(kind, ref, r.targetId))
+}
+
+const pendingMessage = (r: TrashRequest) =>
+  `${cardShortId(r.table, r.targetId)} ${r.label} はゴミ箱へ移す依頼中です（アプリが同期すると、アプリのゴミ箱へ移ります。${TRASH_RETENTION_DAYS}日は作者がアプリのゴミ箱から戻せます）`
 
 // ---------- R12 資料の一覧 ----------
 
@@ -1221,6 +1248,10 @@ export function getMaterial(ctx: ReadContext, args: Args): ToolResult {
   if (nid) {
     const list = materialNotesOf(view, material.id)
     const hits = list.filter((n) => matchesId('materialNote', nid, n.id))
+    if (!hits.length) {
+      const asked = pendingRequestFor(view, 'materialNotes', material.id, nid)
+      if (asked) return fail(pendingMessage(asked))
+    }
     if (hits.length !== 1)
       return fail(
         `記録 '${nid}' が『${name}』に見つかりません`,

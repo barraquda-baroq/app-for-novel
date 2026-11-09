@@ -6,10 +6,13 @@ import { appModelRef } from '../../../src/sync/appModel'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import * as B from '../../../src/domain/benchOps'
 import { applyAutoGenreTags } from '../../../src/domain/benchTags'
+import { applyTrashRequests } from '../../../src/domain/claudeTrash'
 import * as C from '../../../src/domain/claudeOps'
 import * as E from '../../../src/domain/entityOps'
 import * as M from '../../../src/domain/materialOps'
 import * as S from '../../../src/domain/storyOps'
+import { CONNECTOR_MODEL } from '../../src/version'
+import { FirestoreError } from '../../src/vault/firestore'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import { stableStringify } from '../../../src/sync/merge'
 import {
@@ -268,10 +271,10 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     const status = await tool(core, 'novel_status')
     expect(status.text).toContain('書き込み: 許可')
     expect((await tool(core, 'novel_add_revision_ideas', input)).text).toContain('追加 1件')
-    // アプリの版がコネクタより新しい（データの形 6）: 書き込まない（読むのは続く）
+    // アプリの版がコネクタより新しい（データの形がコネクタの次の版）: 書き込まない（読むのは続く）
     owner.offline()
-    await setDoc(appModelRef(owner.fs, owner.uid), { model: 6, appVersion: '2.7', updatedAt: serverTimestamp() })
-    expect((await tool(core, 'novel_status')).text).toContain('コネクタは 5。書き込みは止まります')
+    await setDoc(appModelRef(owner.fs, owner.uid), { model: CONNECTOR_MODEL + 1, appVersion: '9.9', updatedAt: serverTimestamp() })
+    expect((await tool(core, 'novel_status')).text).toContain(`コネクタは ${CONNECTOR_MODEL}。書き込みは止まります`)
     const newer = await tool(core, 'novel_add_revision_ideas', { title_id: titleId, items: [{ heading: 'c', body: 'd' }] })
     expect(newer.isError).toBe(true)
     expect(newer.text).toContain('コネクタを更新')
@@ -481,6 +484,71 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     expect((await tool(core, 'novel_get_bench_analysis', { work: '港の喫茶店' })).text.split('\n').slice(1, 3)).toEqual(['山田', 'タグ: 恋愛'])
     expect(owner.notes).toEqual([])
     expect(other.notes).toEqual([])
+  })
+
+  it('ゴミ箱へ移す（2.7）: 本番のルールで依頼が作れ、コネクタからのカードの削除・書き換えは拒まれる。端末が処理すると写しからも消え、ゴミ箱に入る', async () => {
+    const { owner, who } = await ownerWithNovel(['本文の一話目。'])
+    const other = await makeDevice('other', who)
+    await other.online()
+    let workId = ''
+    await owner.edit((d) => {
+      const w = B.addBenchWork(d, { name: '銀河の果て', author: '山田' })
+      workId = w.result
+      return w.data
+    })
+    await settle(owner, other)
+    const { core } = makeConnector()
+    await pair(core, owner)
+    const added = await tool(core, 'novel_add_bench_analysis', {
+      work: '銀河の果て',
+      items: [
+        { viewpoint: '構成', body_markdown: '## 構成\n三幕。', run_date: '2026-10-30' },
+        { viewpoint: '文体', body_markdown: '## 文体\n短い文。', run_date: '2026-10-30' },
+      ],
+    })
+    const [n1, n2] = (added.structured as { created: { id: string }[] }).created.map((c) => c.id)
+    for (const d of [owner, other])
+      await waitFor(async () => Object.keys((await d.load()).benchAnalyses).length === 2, `${d.name} に分析が届く`, 30_000)
+    const r = await tool(core, 'novel_move_cards_to_trash', { cards: [n1] })
+    expect(r.isError).toBeUndefined()
+    expect(r.text).toContain(`- 移す ${n1} 相対比較『銀河の果て』の「構成」（2026-10-30）`)
+    expect((await tool(core, 'novel_list_bench_works')).text).toContain('分析 1件')
+    // コネクタは依頼を作るだけ: カードの削除・削除の印への書き換えは、本番のルールが拒む
+    const cardId = Object.values((await owner.load()).benchAnalyses).find((a) => a.viewpoint === '構成')!.id
+    const name = core.fs.name(`users/${owner.uid}/records/benchAnalyses:${cardId}`)
+    await expect(core.fs.commit([{ delete: name }])).rejects.toSatisfy((e) => e instanceof FirestoreError && e.status === 403)
+    await expect(
+      core.fs.commit([
+        {
+          update: { name, fields: { table: { stringValue: 'benchAnalyses' }, id: { stringValue: cardId }, deleted: { booleanValue: true } } },
+          updateTransforms: [{ fieldPath: 'updated', setToServerValue: 'REQUEST_TIME' }],
+        },
+      ]),
+    ).rejects.toSatisfy((e) => e instanceof FirestoreError && e.status === 403)
+    // 端末に依頼が届き、受け持ちの端末が処理する（ClaudeTrashRequests と同じ applyTrashRequests）
+    await waitFor(async () => Object.keys((await owner.load()).trashRequests).length === 1, '依頼が端末に届く', 30_000)
+    await owner.edit((d) => applyTrashRequests(d, Date.now()).data)
+    await settle(owner, other)
+    await waitFor(async () => !(await other.load()).benchAnalyses[cardId], 'もう一方の端末からも消える', 30_000)
+    const local = await other.load()
+    expect(Object.values(local.trashEntries).map((e) => [e.kind, e.by, e.parentLabel])).toEqual([['benchAnalysis', 'claude', '銀河の果て']])
+    expect(local.trashRequests).toEqual({})
+    expect(Object.keys(local.benchAnalyses)).toHaveLength(1)
+    expect(local.benchWorks[workId]).toBeDefined()
+    expect([...owner.notes, ...other.notes]).toEqual([])
+    // 写しからもカードと依頼が消える（依頼中の行は出ない）。もう一度頼むと「もうゴミ箱にある」
+    await waitFor(
+      async () => {
+        const text = (await tool(core, 'novel_list_bench_works')).text
+        return text.includes('分析 1件') && !text.includes('依頼中')
+      },
+      'コネクタの写しから依頼が消える',
+      30_000,
+    )
+    expect(Object.keys(core.views().raw.trashRequests)).toEqual([])
+    const again = await tool(core, 'novel_move_cards_to_trash', { cards: [n1, n2] })
+    expect(again.text).toContain(`- 移さない ${n1}（もうゴミ箱にある）`)
+    expect(again.text).toContain(`- 移す ${n2}`)
   })
 
   it('コネクタが作った文書は、端末の decodeRecord で読め、device は claude-connector', async () => {
