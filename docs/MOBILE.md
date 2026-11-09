@@ -349,6 +349,9 @@ API キー（Browser key）に「ウェブサイトの制限」が付いてい�
 - `package.json` の `version`
 - `src/sync/appVersion.ts` の `APP_VERSION`（`2.4` の形）
 - `ios/App/novelstudio.xcconfig` の `MARKETING_VERSION`（`2.4.0`）と `CURRENT_PROJECT_VERSION`（`20400`）
+- `package-lock.json` の先頭の2つの `version`
+- Claude 用のコネクタの `connector/package.json`・`connector/package-lock.json` の `version` と、`connector/src/version.ts` の `CONNECTOR_VERSION`
+  （`2.4.0` の形。アプリの x.y で始まることを `connector/test/unit/basics.test.ts` が確かめます）
 
 Android の `versionCode`（`20400`）・`versionName` は `android/app/build.gradle` が `package.json` から作ります。
 

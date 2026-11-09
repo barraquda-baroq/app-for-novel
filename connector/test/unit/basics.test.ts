@@ -1,5 +1,7 @@
 // 小さな部品: 値の変換・太平洋時間の日付・暗号・書き込みの形・Firestore の失敗の扱い・接続の要求の回数の上限。
 import { createHash } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { decodeRecord } from '../../../src/sync/codec'
 import { FirestoreError, FirestoreRest } from '../../src/vault/firestore'
@@ -95,6 +97,18 @@ describe('アプリとの決まり', () => {
   it('データの形の版・版はアプリ（src/sync/appModel.ts）と同じ', () => {
     expect(CONNECTOR_MODEL).toBe(DATA_MODEL)
     expect(CONNECTOR_VERSION.startsWith(`${APP_VERSION}.`)).toBe(true)
+  })
+
+  it('コネクタの package.json・package-lock.json の版は CONNECTOR_VERSION と同じ', () => {
+    const dir = path.resolve(import.meta.dirname, '../..')
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) as { version: string }
+    const lock = JSON.parse(fs.readFileSync(path.join(dir, 'package-lock.json'), 'utf8')) as {
+      version: string
+      packages: Record<string, { version?: string }>
+    }
+    expect(pkg.version).toBe(CONNECTOR_VERSION)
+    expect(lock.version).toBe(CONNECTOR_VERSION)
+    expect(lock.packages[''].version).toBe(CONNECTOR_VERSION)
   })
 })
 

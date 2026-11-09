@@ -2,8 +2,11 @@
 // 元は package.json の version。Android は app/build.gradle がそこから versionCode / versionName を作り、
 // iPhone は ios/App/novelstudio.xcconfig の MARKETING_VERSION / CURRENT_PROJECT_VERSION を使う
 import { describe, expect, it } from 'vitest'
+import deployDoc from '../../docs/DEPLOY.md?raw'
+import spec2Doc from '../../docs/SPEC-2.md?raw'
+import packageLock from '../../package-lock.json?raw'
 import packageJson from '../../package.json?raw'
-import { APP_VERSION as MODEL_APP_VERSION } from '../sync/appModel'
+import { DATA_MODEL, APP_VERSION as MODEL_APP_VERSION } from '../sync/appModel'
 import { APP_VERSION } from '../sync/appVersion'
 
 const version = (JSON.parse(packageJson) as { version: string }).version
@@ -54,6 +57,22 @@ describe('アプリの版', () => {
     const targets = [...pbxproj.matchAll(/IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/g)].map((m) => m[1])
     expect(targets.length).toBeGreaterThan(0)
     for (const t of targets) expect(t).toBe(setting(xcconfig, 'IPHONEOS_DEPLOYMENT_TARGET'))
+  })
+
+  it('package-lock.json の版も package.json と同じ（npm ci で版が戻らない）', () => {
+    const lock = JSON.parse(packageLock) as { version: string; packages: Record<string, { version?: string }> }
+    expect(lock.version).toBe(version)
+    expect(lock.packages[''].version).toBe(version)
+  })
+
+  it('文書の版の一覧に、今の版とデータの形の版がある（docs/SPEC-2.md の 4・docs/DEPLOY.md の 4）', () => {
+    // SPEC-2 の「版の区切り」の表に、今の版の行
+    const table = spec2Doc.slice(spec2Doc.indexOf('## 4. 版の区切り'), spec2Doc.indexOf('## 5.'))
+    expect(table).toMatch(new RegExp(`^\\| ${APP_VERSION.replace('.', '\\.')} +\\|`, 'm'))
+    // データの形の版の説明（SPEC-2 の 3）と、上げた版の一覧（DEPLOY）に、今のデータの形の版
+    expect(spec2Doc).toContain(`は ${DATA_MODEL}（§`)
+    const deployList = deployDoc.split('\n').find((line) => line.startsWith('データの形の版を上げた版は'))
+    expect(deployList).toContain(`（${DATA_MODEL}。`)
   })
 
   it('ビルド番号の作り方', () => {
