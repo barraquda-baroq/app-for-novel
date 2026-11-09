@@ -24,7 +24,6 @@ import {
   OpenBookIcon,
   PlusIcon,
   SearchIcon,
-  TagIcon,
   TrashIcon,
   UpIcon,
   XIcon,
@@ -49,14 +48,13 @@ import {
   type ShelfFilter,
 } from '../materials/materialLogic'
 import { ManageTagsDialog } from '../materials/MaterialTagDialogs'
+import { TagFilterBar } from '../materials/TagFilterBar'
 import { MaterialMoveDialog } from './MaterialMoveDialog'
 
 /** カードに出す項目のチップの数（それより多ければ「ほか n」） */
 const CHIPS_SHOWN = 6
 /** カードに出すタグの数（それより多ければ「ほか n」） */
 const CARD_TAGS_SHOWN = 8
-/** 棚のタグのチップを初めから出す数（それより多ければ「すべてのタグ（n）」で開く。選んでいるタグはいつも出す） */
-const TAG_CHIPS_SHOWN = 12
 
 const NO_FILTER: ShelfFilter = { query: '', tags: [] }
 /** 棚の絞り込み（資料の画面から戻ってきても同じにする。この端末のこの起動の間だけ） */
@@ -74,7 +72,6 @@ export function MaterialShelf({ headingId }: { headingId: string }) {
   const [edit, setEdit] = useState(false)
   const [adding, setAdding] = useState(false)
   const [managing, setManaging] = useState(false)
-  const [allTags, setAllTags] = useState(false)
   const [filter, setFilter] = useState<ShelfFilter>(() => rememberedFilter)
   useEffect(() => {
     rememberedFilter = filter
@@ -104,7 +101,6 @@ export function MaterialShelf({ headingId }: { headingId: string }) {
   const shown = useMemo(() => filterMaterials(materials, effective), [materials, effective])
   const editing = edit && materials.length > 0
   const clear = () => setFilter(NO_FILTER)
-  const visibleChips = allTags ? chips : chips.filter((c, i) => i < TAG_CHIPS_SHOWN || selected.includes(c.key))
   const toggle = (key: string) =>
     setFilter((f) => ({
       ...f,
@@ -177,75 +173,16 @@ export function MaterialShelf({ headingId }: { headingId: string }) {
                 data-testid="material-search"
               />
             </label>
-            {chips.length ? (
-              <div className="home-mat-tagbar">
-                <div
-                  className="home-mat-tags"
-                  role="group"
-                  aria-label="タグで絞る（選んだタグをすべて持つ資料だけ）"
-                  data-testid="material-tags"
-                >
-                  {visibleChips.map((c) => {
-                    const on = selected.includes(c.key)
-                    return (
-                      <button
-                        key={c.key}
-                        type="button"
-                        className={`home-mat-tag${on ? ' is-on' : ''}`}
-                        aria-pressed={on}
-                        onClick={() => toggle(c.key)}
-                        data-testid="material-tag-chip"
-                        data-tag={c.tag}
-                      >
-                        <span className="home-mat-tag-name">{c.tag}</span>
-                        <span className="home-mat-tag-count">
-                          {c.count}
-                          <span className="visually-hidden">件</span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                  {chips.length > TAG_CHIPS_SHOWN ? (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm home-mat-tags-more"
-                      aria-expanded={allTags}
-                      onClick={() => setAllTags((v) => !v)}
-                      data-testid="material-tags-more"
-                    >
-                      {allTags ? 'タグを閉じる' : `すべてのタグ（${chips.length}）`}
-                    </button>
-                  ) : null}
-                </div>
-                <div className="home-mat-tag-actions">
-                  {selected.length ? (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => setFilter((f) => ({ ...f, tags: [] }))}
-                      data-testid="material-tags-clear"
-                    >
-                      <XIcon />
-                      タグの選択を解除
-                    </button>
-                  ) : null}
-                  <span className="grow" />
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setManaging(true)}
-                    data-testid="material-manage-tags-open"
-                  >
-                    <TagIcon />
-                    タグを管理
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <p className="small muted home-mat-tags-hint" data-testid="material-tags-hint">
-                資料の画面の「タグを付ける」でタグ（ミリタリ・現代など）を付けると、ここでタグで絞れます。
-              </p>
-            )}
+            <TagFilterBar
+              chips={chips}
+              selected={selected}
+              onToggle={toggle}
+              onClear={() => setFilter((f) => ({ ...f, tags: [] }))}
+              onManage={() => setManaging(true)}
+              testIdPrefix="material"
+              groupLabel="タグで絞る（選んだタグをすべて持つ資料だけ）"
+              hint="資料の画面の「タグを付ける」でタグ（ミリタリ・現代など）を付けると、ここでタグで絞れます。"
+            />
             {/* 件数は読み上げにも伝える（読み上げの領域は、絞り込む前から置いておく） */}
             <p className={`home-mat-filter-status${filtering ? '' : ' is-idle'}`}>
               <span role="status" data-testid="material-filter-count">

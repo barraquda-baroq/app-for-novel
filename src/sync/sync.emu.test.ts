@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence, type ConflictNote, type Persistence } from '../db/persistence'
 import * as A from '../domain/acts'
 import * as B from '../domain/benchOps'
+import { applyAutoGenreTags } from '../domain/benchTags'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import * as M from '../domain/materialOps'
@@ -1702,6 +1703,173 @@ describe('資料の同期（エミュレーター）', () => {
 
 // disableNetwork で切った購読の宛先を、エミュレーターがそのまま覚えていて、後で全件を消す（clearData）時に失敗する
 // （500）。全件を消すテスト（本番のアクセスルール）より後に動かすため、ファイルの最後に置く
+describe('相対比較のタグ（エミュレーター）', () => {
+  /** V29 の 02 が登録する「14 検索用タグ」の本文 */
+  const genre14 = (genre: string, sub: string) =>
+    [
+      '**結論**：検索の最短の言い方',
+      '担当：編集長（マーケター案を確定）',
+      '',
+      `- 判定したジャンル：${genre}`,
+      '- 適性のある賞（選んだ理由）：架空の新人賞（理由）',
+      `- ジャンル／サブジャンル：${sub}`,
+    ].join('\n')
+  const sorted = (tags?: readonly string[]) => [...(tags ?? [])].sort()
+
+  /** 2台と、14 のある作品（まだどの端末も自動のタグを付けていない） */
+  async function twoDevices() {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let workId = ''
+    let first = ''
+    await a.edit((d) => {
+      const w = B.addBenchWork(d, { name: '港の喫茶店', author: '山田' })
+      workId = w.result
+      const n = B.addBenchAnalysis(w.data, workId, {
+        viewpoint: '14 検索用タグ',
+        body: genre14('恋愛', '恋愛／青春・喪失'),
+        runDate: '2026-11-01',
+      })
+      first = n.result
+      return n.data
+    })
+    await settle(a, b)
+    return { a, b, workId, first }
+  }
+
+  it('2台が同時に自動のタグを付けても、タグは重ならず autoTagsFrom は同じ。2.7 を知らない書き方の更新（メモだけを書き換えたレコード）もタグを消さない', async () => {
+    const { a, b, workId, first } = await twoDevices()
+    a.offline()
+    b.offline()
+    await a.edit(applyAutoGenreTags)
+    await b.edit(applyAutoGenreTags)
+    await a.online()
+    await b.online()
+    await settle(a, b)
+    for (const dev of [a, b]) {
+      const w = (await dev.load()).benchWorks[workId]
+      expect(w.tags).toEqual(['恋愛', '青春', '喪失'])
+      expect(w.autoTagsFrom?.analysisId).toBe(first)
+    }
+    expect(a.notes.filter((n) => n.kind !== 'joined')).toEqual([])
+    // タグを知らない書き方の更新（受け取ったレコードを広げてメモだけを書き換えた。2.6 の端末と同じ）
+    await b.edit((d) => ({
+      ...d,
+      benchWorks: { ...d.benchWorks, [workId]: { ...d.benchWorks[workId], note: 'メモ', updatedAt: Date.now() } },
+    }))
+    await settle(a, b)
+    const after = (await a.load()).benchWorks[workId]
+    expect(after).toMatchObject({ note: 'メモ', tags: ['恋愛', '青春', '喪失'], autoTagsFrom: { analysisId: first } })
+  })
+
+  it('A で自動のタグを外すと、オフラインだった B がつながって自動のタグを当て直しても戻らない。オフラインの間に2台が手で付けたタグは両方残る', async () => {
+    const { a, b, workId } = await twoDevices()
+    await a.edit(applyAutoGenreTags)
+    await settle(a, b)
+    b.offline()
+    await a.edit((d) => B.setBenchWorkTags(d, workId, ['恋愛', '喪失']))
+    await settle(a)
+    await b.online()
+    await settle(a, b)
+    await b.edit(applyAutoGenreTags)
+    await settle(a, b)
+    for (const dev of [a, b]) expect((await dev.load()).benchWorks[workId].tags).toEqual(['恋愛', '喪失'])
+    // オフラインの間に、A は「港町」、B は「手紙」を手で付ける
+    b.offline()
+    await a.edit((d) => B.editBenchWorkTags(d, workId, { add: ['港町'], remove: [] }))
+    await settle(a)
+    await b.edit((d) => B.editBenchWorkTags(d, workId, { add: ['手紙'], remove: [] }))
+    await b.online()
+    await settle(a, b)
+    for (const dev of [a, b])
+      expect(sorted((await dev.load()).benchWorks[workId].tags)).toEqual(sorted(['恋愛', '喪失', '港町', '手紙']))
+  })
+
+  it('新しい 14 が届くと両方の端末で足され（前のタグは消さない）、autoTagsFrom は新しい方にそろう（古い印を持つ端末が送っても）', async () => {
+    const { a, b, workId } = await twoDevices()
+    await a.edit(applyAutoGenreTags)
+    await settle(a, b)
+    let second = ''
+    await a.edit((d) => {
+      const n = B.addBenchAnalysis(d, workId, {
+        viewpoint: '14 検索用タグ',
+        body: genre14('恋愛', '恋愛／大人'),
+        runDate: '2026-11-05',
+      })
+      second = n.result
+      return n.data
+    })
+    await settle(a, b)
+    // B はオフラインの間に 14（2回目）から付ける。A はもっと新しい 14（3回目）を足して付ける。両方とも autoTagsFrom を変えた
+    b.offline()
+    let third = ''
+    await a.edit((d) => {
+      const n = B.addBenchAnalysis(d, workId, {
+        viewpoint: '14 検索用タグ',
+        body: genre14('恋愛', '恋愛／手紙'),
+        runDate: '2026-11-08',
+      })
+      third = n.result
+      return applyAutoGenreTags(n.data)
+    })
+    await settle(a)
+    await b.edit(applyAutoGenreTags)
+    expect((await b.load()).benchWorks[workId].autoTagsFrom?.analysisId).toBe(second)
+    await b.online()
+    await settle(a, b)
+    for (const dev of [a, b]) {
+      const w = (await dev.load()).benchWorks[workId]
+      expect(sorted(w.tags)).toEqual(sorted(['恋愛', '青春', '喪失', '大人', '手紙']))
+      expect(w.autoTagsFrom?.analysisId).toBe(third)
+    }
+    // 古い印のまま、ほかの項目だけを書き換えた端末が送っても、新しい印のまま
+    b.offline()
+    await a.edit((d) => B.updateBenchWork(d, workId, { note: 'A のメモ' }))
+    await settle(a)
+    await b.edit((d) => B.updateBenchWork(d, workId, { year: '2019' }))
+    await b.online()
+    await settle(a, b)
+    expect((await a.load()).benchWorks[workId]).toMatchObject({
+      note: 'A のメモ',
+      year: '2019',
+      autoTagsFrom: { analysisId: third },
+    })
+  })
+
+  it('名前を変える・すべての作品から外すが、もう一方の端末に届く（資料のタグとは別）', async () => {
+    const { a, b, workId } = await twoDevices()
+    let other = ''
+    let material = ''
+    await a.edit((d) => {
+      const tagged = applyAutoGenreTags(d)
+      const w = B.addBenchWork(tagged, { name: '海の記憶', author: '佐藤', tags: ['青春', '家族'] })
+      other = w.result
+      const m = M.addMaterial(w.data, { name: '資料', tags: ['青春'] })
+      material = m.result
+      return m.data
+    })
+    await settle(a, b)
+    await b.edit((d) => B.renameBenchTag(d, '青春', '青春もの').data)
+    await settle(a, b)
+    const renamed = await a.load()
+    expect(renamed.benchWorks[workId].tags).toEqual(['恋愛', '青春もの', '喪失'])
+    expect(renamed.benchWorks[other].tags).toEqual(['青春もの', '家族'])
+    expect(renamed.materials[material].tags).toEqual(['青春'])
+    await a.edit((d) => B.removeBenchTag(d, '青春もの').data)
+    await settle(a, b)
+    const removed = await b.load()
+    expect(removed.benchWorks[workId].tags).toEqual(['恋愛', '喪失'])
+    expect(removed.benchWorks[other].tags).toEqual(['家族'])
+    // 外しても autoTagsFrom は進んだままなので、同じ 14 からは付き直さない
+    await b.edit(applyAutoGenreTags)
+    await settle(a, b)
+    expect((await a.load()).benchWorks[workId].tags).toEqual(['恋愛', '喪失'])
+  })
+})
+
 describe('データの形の版: オフラインから戻った時（エミュレーター）', () => {
   const APP = { model: 2, appVersion: '2.2' }
 

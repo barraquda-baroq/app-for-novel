@@ -3,6 +3,7 @@
 import type { NewRecord } from '../claude/records'
 import * as A from '../domain/acts'
 import * as B from '../domain/benchOps'
+import * as BT from '../domain/benchTags'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import * as M from '../domain/materialOps'
@@ -181,6 +182,15 @@ export const actions = {
   /** タイトルの比べるベンチ作品に足す・外す */
   addTitleBenchWork: (titleId: ID, workId: ID) => apply((d) => B.addTitleBenchWork(d, titleId, workId)),
   removeTitleBenchWork: (titleId: ID, workId: ID) => apply((d) => B.removeTitleBenchWork(d, titleId, workId)),
+  // 2.7: 作品のタグ（ジャンル）。名前を変える・外すは、そのタグの付いたすべての作品で（戻り値は直した作品の数）
+  setBenchWorkTags: (id: ID, tags: readonly string[]) => apply((d) => B.setBenchWorkTags(d, id, tags)),
+  /** 作品の画面のダイアログ: 開いた時との差分（足した・外した）を今のタグに当てる */
+  editBenchWorkTags: (id: ID, diff: { add: readonly string[]; remove: readonly string[] }) =>
+    apply((d) => B.editBenchWorkTags(d, id, diff)),
+  renameBenchTag: (from: string, to: string) => run((d) => B.renameBenchTag(d, from, to)),
+  removeBenchTag: (tag: string) => run((d) => B.removeBenchTag(d, tag)),
+  /** 「14 検索用タグ」の判定したジャンル・サブジャンルを、まだ取り込んでいない作品に付ける（付けるものが無ければ何もしない） */
+  applyAutoGenreTags: () => apply((d) => BT.applyAutoGenreTags(d)),
 
   // 2.6: 資料（ホームの棚）とその記録
   /** 戻り値は資料の id */

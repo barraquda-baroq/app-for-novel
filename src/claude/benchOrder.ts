@@ -13,10 +13,12 @@ const analysisPart: PartOf<BenchAnalysis> = (a) => {
 
 /** 作品の分析（新しい日付から。分けて記録したものは番号の順） */
 export function benchAnalysesOf(data: Pick<AppData, 'benchAnalyses'>, workId: ID): BenchAnalysis[] {
-  return newestFirstWithParts(
-    Object.values(data.benchAnalyses).filter((a) => a.workId === workId),
-    analysisPart,
-  )
+  return sortBenchAnalyses(Object.values(data.benchAnalyses).filter((a) => a.workId === workId))
+}
+
+/** 分析を、作品の分析と同じ並び（新しい日付から。分けて記録したものは番号の順）にする */
+export function sortBenchAnalyses(list: readonly BenchAnalysis[]): BenchAnalysis[] {
+  return newestFirstWithParts(list, analysisPart)
 }
 
 export interface ViewpointGroup {

@@ -500,6 +500,25 @@ export interface BenchWork {
   updatedAt: number
   /** 作ったもの（Claude のコネクタが分析と一緒に作った作品は claude。無い = アプリで手で作った） */
   source?: ClaudeSource
+  /**
+   * 作品のタグ（ジャンル。2.7。並びは付けた順。1つ20字まで・1つの作品に20個まで。refs.ts の refKey が同じものは1つ。
+   * 無い = タグなしで、全部外すと項目ごと消す）。作者が作品の画面の「ジャンル」で付けて管理し、「14 検索用タグ」の
+   * 判定したジャンル・サブジャンルはアプリが自動で付ける（benchTags.ts）。資料の Material.tags とも、書誌の genre とも別
+   */
+  tags?: string[]
+  /** 自動のタグを、どの「14 検索用タグ」まで取り込んだか（無い = まだ取り込んでいない。2.7） */
+  autoTagsFrom?: AutoTagMark
+}
+
+/**
+ * 自動のタグを取り込んだ「14 検索用タグ」の分析（id と、新しいかどうかを比べる手がかりの日付・作った時刻。
+ * その分析が後で削除されても、次に来た 14 が新しいかどうかを比べられるように）
+ */
+export interface AutoTagMark {
+  analysisId: ID
+  /** 分析した日（YYYY-MM-DD） */
+  runDate: string
+  createdAt: number
 }
 
 /** ベンチ作品の分析（1つの観点の分析。1つの作品にいくつでも） */

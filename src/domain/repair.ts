@@ -1,7 +1,8 @@
 // 読み込んだデータの整合性を直す。壊れたバックアップや、別タブとの競合で参照が切れたデータでも
 // 画面が落ちないよう、起動時とバックアップ復元時に通す。直せないものは安全側（削除・未分類）に倒す。
 import { deepEqual } from './equal'
-import { MATERIAL_LIMITS, tagKey } from './materialOps'
+import { isAutoTagMark } from './benchTags'
+import { displayTags } from './tags'
 import { textHash } from './text'
 import { TRASH_KIND_LABELS, isContentTable, isTrashKind } from './trash'
 import {
@@ -702,6 +703,7 @@ function repairClaudeRecords(d: AppData, fix: (m: string) => void): void {
 
 // ---------- 2.5: ベンチ作品 ----------
 // 表示用に足りない項目を補う（知らない項目は残す）。作品の無い分析は見えなくする（同期の途中で、作品より先に分析が届いた時など）。
+// 作品のタグ（2.7）は資料のタグと同じく表示できるものだけにし、自動のタグを取り込んだ 14 の印は形が違えば外す（書き戻さない）。
 // タイトルの比べる作品（Title.benchWorkIds）は、ある作品だけにする（持たないタイトルには足さない。書き戻さないので、
 // 作品が後から届けば、また見える）。
 
@@ -721,6 +723,18 @@ function repairBench(d: AppData, fix: (m: string) => void): void {
     if (next.source !== undefined && !SOURCES.includes(next.source)) {
       next = { ...next }
       delete next.source
+    }
+    // 作品のタグ（2.7）: 資料のタグと同じく、表示できるものだけにする（形の違うタグは項目ごと外す）
+    if (next.tags !== undefined) {
+      const tags = displayTags(next.tags)
+      next = { ...next }
+      if (tags === undefined) delete next.tags
+      else next.tags = same(tags, w.tags) ? w.tags : tags
+    }
+    // 自動のタグを取り込んだ 14 の印（2.7）: 形が違えば外す（新しい 14 から、また取り込む）
+    if (next.autoTagsFrom !== undefined && !isAutoTagMark(next.autoTagsFrom)) {
+      next = { ...next }
+      delete next.autoTagsFrom
     }
     if (!same(next, w)) {
       d.benchWorks[w.id] = next
@@ -764,23 +778,6 @@ function repairBench(d: AppData, fix: (m: string) => void): void {
 // タグは文字列の配列だけにし、空のもの・重なるもの（refKey が同じ2つ目から）・上限を超えるもの（20字を超えるタグ・21個目から）は
 // 表示から外す（書き戻さない。形の違うタグは項目ごと外す）。
 
-/** 資料のタグを表示できる形にする（配列でなければ undefined） */
-function materialTags(raw: unknown): string[] | undefined {
-  if (!Array.isArray(raw)) return undefined
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const x of raw) {
-    if (typeof x !== 'string') continue
-    const tag = x.trim()
-    const key = tagKey(tag)
-    if (!key || seen.has(key) || Array.from(tag).length > MATERIAL_LIMITS.tag) continue
-    seen.add(key)
-    out.push(tag)
-    if (out.length === MATERIAL_LIMITS.tags) break
-  }
-  return out
-}
-
 function repairMaterials(d: AppData, fix: (m: string) => void): void {
   for (const m of Object.values(d.materials)) {
     let next: Material = {
@@ -799,7 +796,7 @@ function repairMaterials(d: AppData, fix: (m: string) => void): void {
       delete next.source
     }
     if (next.tags !== undefined) {
-      const tags = materialTags(next.tags)
+      const tags = displayTags(next.tags)
       next = { ...next }
       if (tags === undefined) delete next.tags
       else next.tags = same(tags, m.tags) ? m.tags : tags

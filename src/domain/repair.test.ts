@@ -190,3 +190,47 @@ describe('同期で届いたレコード（キーが並べ替えてある）', (
     expect(r.data).toBe(sorted)
   })
 })
+
+describe('相対比較の作品のタグ（2.7）', () => {
+  function withWork(extra: Record<string, unknown>): AppData {
+    const w = {
+      id: 'w1',
+      name: '作品',
+      author: '著者',
+      pdfPlace: '',
+      note: '',
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      ...extra,
+    }
+    return { ...emptyData(), benchWorks: { w1: w as unknown as AppData['benchWorks'][string] } }
+  }
+
+  it('表示できるタグだけにする（配列でない・空・重なり・21字・21個目は外す）。中身が同じなら同じ配列のまま', () => {
+    const tags = ['恋愛', '青春']
+    const ok = withWork({ tags })
+    const r = repairData(ok)
+    expect(r.fixes).toEqual([])
+    expect(r.data.benchWorks.w1.tags).toBe(tags)
+    const many = Array.from({ length: 21 }, (_, i) => `タグ${i + 1}`)
+    const fixed = repairData(withWork({ tags: [' 恋愛 ', '', 'ＳＦ', 'SF', 'あ'.repeat(21), 3, ...many] })).data.benchWorks.w1
+      .tags
+    expect(fixed?.slice(0, 2)).toEqual(['恋愛', 'ＳＦ'])
+    expect(fixed).toHaveLength(20)
+    expect('tags' in repairData(withWork({ tags: '恋愛' })).data.benchWorks.w1).toBe(false)
+  })
+
+  it('自動のタグを取り込んだ印は、形が違えば外す。知らない項目は残す', () => {
+    const mark = { analysisId: 'n1', runDate: '2026-11-01', createdAt: 5 }
+    const good = repairData(withWork({ autoTagsFrom: mark, future: 1 }))
+    expect(good.fixes).toEqual([])
+    expect(good.data.benchWorks.w1).toMatchObject({ autoTagsFrom: mark, future: 1 })
+    for (const bad of ['n1', { analysisId: 'n1' }, { ...mark, createdAt: Number.NaN }, { ...mark, runDate: 1 }, null]) {
+      const r = repairData(withWork({ autoTagsFrom: bad, future: 1 }))
+      expect('autoTagsFrom' in r.data.benchWorks.w1).toBe(false)
+      expect(r.data.benchWorks.w1).toMatchObject({ future: 1 })
+      expect(r.fixes).toContain('相対比較の作品の項目を補いました')
+    }
+  })
+})

@@ -2,7 +2,10 @@
 // - 作品は短い id（w:3f2a9c1b）・id・作品名そのもの（前後や続く空白・全角と半角・Unicode の正規化の違いは問わない。refs.ts の
 //   refKey。タイトル名で指す時と同じ）で指せる
 // - ベンチ作品はどのタイトルにも属さない利用者の覚え書きなので、タイトルの「Claude に見せる」とは関係なく見せる
+// - 作品のタグ（ジャンル。2.7）は「タグ: 恋愛・青春」の行で見せる。「14 検索用タグ」からアプリがまだ付けていない自動のタグも
+//   含める（benchTags.ts の benchWorkTagsWithAuto。どの端末もアプリを開く前でも、アプリが付けるものと同じタグが見える）
 import { benchWorkName, sortedBenchWorks, titlesComparing } from '../domain/benchOps'
+import { benchWorkTagsWithAuto } from '../domain/benchTags'
 import { formatCount } from '../domain/text'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../domain/types'
 import { benchAnalysesOf, benchViewpointGroups } from './benchOrder'
@@ -41,6 +44,17 @@ export function benchWorkBiblio(w: BenchWork): string {
     .join('・')
 }
 
+/** 作品のタグ（付けた順。アプリがまだ付けていない「14 検索用タグ」の自動のタグも含める） */
+export function benchWorkTagList(data: Pick<AppData, 'benchAnalyses'>, w: BenchWork): string[] {
+  return benchWorkTagsWithAuto(data, w)
+}
+
+/** 「タグ: 恋愛・青春・喪失」（タグが無ければ空） */
+export function benchWorkTagsLine(data: Pick<AppData, 'benchAnalyses'>, w: BenchWork): string {
+  const tags = benchWorkTagList(data, w)
+  return tags.length ? `タグ: ${tags.join('・')}` : ''
+}
+
 /** 観点ごとの数と最新の日付（「構成 2件（最新 2026-10-30）」） */
 export function viewpointSummary(analyses: readonly BenchAnalysis[]): string {
   return benchViewpointGroups(analyses)
@@ -69,11 +83,14 @@ export function analysisText(a: BenchAnalysis): string {
 }
 
 /**
- * 作品の分析を全部つないだ文（手動連携の依頼文と、コネクタで1つの作品の分析を読む時）。観点ごとに、新しい日付から
+ * 作品の分析を全部つないだ文（手動連携の依頼文と、コネクタで1つの作品の分析を読む時）。観点ごとに、新しい日付から。
+ * 頭は見出し・書誌の行・タグの行（タグは書誌の行に入れず、別の行にする。書誌の行は「著者・出版社・刊行年・ジャンル」のまま）
  */
 export function workAnalysesText(data: Pick<AppData, 'benchAnalyses'>, work: BenchWork, viewpoints?: readonly string[]): string {
   const list = filterByViewpoints(benchAnalysesOf(data, work.id), viewpoints)
-  const head = `=== 相対比較の作品 ${benchWorkRef(work)} ===${benchWorkBiblio(work) ? `\n${benchWorkBiblio(work)}` : ''}`
+  const head = [`=== 相対比較の作品 ${benchWorkRef(work)} ===`, benchWorkBiblio(work), benchWorkTagsLine(data, work)]
+    .filter(Boolean)
+    .join('\n')
   if (!list.length) return `${head}\n（${viewpoints?.length ? 'この観点の' : ''}分析はまだありません）`
   const parts: string[] = [head]
   for (const g of benchViewpointGroups(list)) {
@@ -95,13 +112,18 @@ export function comparisonMaterial(data: AppData, workIds: readonly ID[]): strin
   return lines.join('\n')
 }
 
-/** 作品の1行（一覧用。「w:…『作品名』（著者）分析 3件: 構成 2件（最新 …）・文体 1件（…）／比べるタイトル: 『…』」） */
+/**
+ * 作品の1行（一覧用。「w:…『作品名』（著者）…」の下に、タグがあれば「  タグ: 恋愛・青春」、「  分析 3件: 構成 2件（最新 …）・…」、
+ * PDF の置き場所、比べるタイトル）
+ */
 export function benchWorkLine(data: AppData, w: BenchWork): string {
   const analyses = benchAnalysesOf(data, w.id)
   const titles = titlesComparing(data, w.id)
   const total = analyses.reduce((n, a) => n + Array.from(a.body).length, 0)
+  const tags = benchWorkTagsLine(data, w)
   return [
     `${benchWorkRef(w)}${benchWorkBiblio(w) ? ` ${benchWorkBiblio(w)}` : ''}`,
+    ...(tags ? [`  ${tags}`] : []),
     `  分析 ${analyses.length}件${analyses.length ? `（${formatCount(total)}字）: ${viewpointSummary(analyses)}` : ''}`,
     ...(w.pdfPlace.trim() ? [`  PDF の置き場所: ${w.pdfPlace.trim()}`] : []),
     ...(titles.length ? [`  比べるタイトル: ${titles.map((t) => `『${t.name}』[${shortId('title', t.id)}]`).join('、')}`] : []),

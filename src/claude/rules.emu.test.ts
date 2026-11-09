@@ -332,6 +332,23 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       ['json が長すぎる', { ...connectorRecord('benchAnalyses', 'ca-long'), json: 'x'.repeat(200_001) }],
     ]
     for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
+    // 作品のタグ（2.7）: 作者がタグを付けた作品を、コネクタは書き換えられない（タグを足した更新も。作るのは新しい記録だけ）
+    const tagged = connectorRecord('benchWorks', 'cw-1', { name: '銀河の果て', author: '山田', tags: ['SF', '宇宙'] })
+    expect(await connectorCommit(anon, owner.uid, [{ ...tagged, noPrecondition: true }])).toBe(403)
+    expect(await connectorCommit(anon, owner.uid, [{ ...connectorRecord('benchWorks', 'cw-tags'), extra: { tags: 'SF' } }])).toBe(
+      403,
+    )
+    // 持ち主はタグを付けられる
+    const workRef = doc(owner.fs, 'users', owner.uid, 'records', 'benchWorks:cw-1')
+    await updateDoc(workRef, {
+      ...recordDoc('benchWorks', 'cw-1', {
+        name: '銀河の果て',
+        author: '山田',
+        tags: ['SF', '宇宙'],
+        autoTagsFrom: { analysisId: 'ca-1', runDate: '2026-11-01', createdAt: 1 },
+      }),
+    })
+    expect(JSON.parse(String((await getDoc(workRef)).data()?.json)).tags).toEqual(['SF', '宇宙'])
     // 持ち主は今までどおり書き換え・削除できる
     const ref = doc(owner.fs, 'users', owner.uid, 'records', 'benchAnalyses:ca-1')
     await updateDoc(ref, { ...recordDoc('benchAnalyses', 'ca-1', { workId: 'cw-1', viewpoint: '構成', body: '直した' }) })

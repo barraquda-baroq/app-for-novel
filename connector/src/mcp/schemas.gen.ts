@@ -871,6 +871,17 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
           "maxLength": 80
         }
       },
+      "tags": {
+        "description": "このタグをすべて持つ作品だけを出す（作品のタグ。作者が付け、「14 検索用タグ」の判定したジャンル・サブジャンルはアプリが自動で付ける。タグの名前そのもので照らし、全角と半角・空白の違いは問わない。例: [\"恋愛\"]。10個まで）",
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        }
+      },
       "char_budget": {
         "description": "1回に返す文字数（2,000〜100,000。省略時は結果の上限の 100,000）。収まれば全部、収まらなければ作品の途中では切らずに返し、残りは 続き: cursor=\"…\"",
         "type": "integer",
@@ -878,7 +889,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "maximum": 100000
       },
       "cursor": {
-        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す（絞り込みは cursor に入っているので、cursor だけでよい）",
+        "description": "前の結果の最後にある 続き: cursor=\"…\" の値をそのまま渡す（絞り込み（tags も）は cursor に入っているので、cursor だけでよい）",
         "type": "string",
         "minLength": 1,
         "maxLength": 16000

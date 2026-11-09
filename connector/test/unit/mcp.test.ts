@@ -100,6 +100,20 @@ describe('ツールの決まり', () => {
     expect(await valid({ char_budget: 100_000 })).toBe(true)
     expect(await valid({ char_budget: 100_001 })).toBe(false)
     expect(await valid({ char_budget: 1_999 })).toBe(false)
+    // 作品のタグの絞り込み（2.7。10個・20字まで）
+    expect(await valid({ tags: ['恋愛', '喪失'], names: ['作品'] })).toBe(true)
+    expect(await valid({ tags: [] })).toBe(false)
+    expect(await valid({ tags: [''] })).toBe(false)
+    expect(await valid({ tags: ['あ'.repeat(21)] })).toBe(false)
+    expect(await valid({ tags: ['あ'.repeat(20)] })).toBe(true)
+    expect(await valid({ tags: Array.from({ length: 11 }, (_, i) => `x${i}`) })).toBe(false)
+    expect(Object.keys((TOOL_SCHEMAS.novel_list_bench_works as { properties: object }).properties)).toEqual([
+      'names',
+      'exclude_names',
+      'tags',
+      'char_budget',
+      'cursor',
+    ])
     // 資料の一覧（2.6）: 資料名の絞り込み（10個・80字まで）・タグの絞り込み（10個・20字まで）・char_budget・長い cursor
     const materials = fromJsonSchema(TOOL_SCHEMAS.novel_list_materials as never, v)
     const validMaterials = async (x: Record<string, unknown>) => {
@@ -266,6 +280,13 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(listMaterials.description).toContain('tags でそのタグをすべて持つ資料だけにする')
     expect(listMaterials.description).toContain('作者が自分で付けて管理するもの')
     for (const t of TOOL_DEFS) expect(t.description, t.name).not.toContain('分野')
+    // 相対比較の作品のタグ（2.7）: 一覧に出し tags で絞れる。追加では書けず、「14 検索用タグ」の2行からアプリが付ける
+    const listBench = TOOL_DEFS.find((t) => t.name === 'novel_list_bench_works')!
+    expect(listBench.description).toContain('作品のタグ（タグ: 恋愛・青春…。作者が管理し、「14 検索用タグ」の判定したジャンル・サブジャンルはアプリが自動で付ける')
+    expect(listBench.description).toContain('tags でそのタグをすべて持つ作品だけにする（タグの名前そのもので照らす）')
+    expect(listBench.description).toContain('タグ（作品の数）')
+    expect(TOOL_DEFS.find((t) => t.name === 'novel_get_bench_analysis')!.description).toContain('先頭に作品の書誌とタグも出す')
+    expect(addBench.description).toContain('作品のタグは書けない（観点「14 検索用タグ」の「- 判定したジャンル：」「- ジャンル／サブジャンル：」の行から')
     expect(tools[2].outputSchema).toBeUndefined()
     expect(calls).toBe(0)
   })

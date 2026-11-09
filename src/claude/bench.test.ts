@@ -5,15 +5,17 @@ import {
   addTitleBenchWork,
   deleteBenchAnalysis,
   deleteBenchWork,
+  setBenchWorkTags,
   updateBenchWork,
 } from '../domain/benchOps'
+import { applyAutoGenreTags } from '../domain/benchTags'
 import { addClaudeRecords } from '../domain/claudeOps'
 import { setTitleClaudeAccess } from '../domain/claudeOps'
 import { emptyTrash, listTrash, restoreTrashEntry } from '../domain/trash'
 import type { AppData, BenchAnalysis } from '../domain/types'
 import { decodeRecord, encodeRecord } from '../sync/codec'
 import { novel } from '../test/claudeFixture'
-import { comparisonMaterial, resolveBenchWork, workAnalysesText } from './bench'
+import { benchWorkLine, benchWorkTagsLine, comparisonMaterial, resolveBenchWork, workAnalysesText } from './bench'
 import { benchAnalysesOf, benchViewpointGroups } from './benchOrder'
 import { previewPaste } from './paste'
 import { benchAnalysisPrompt, buildManualParts, critiqueConnectorPrompt, DEFAULT_BENCH_VIEWPOINTS } from './prompts'
@@ -633,6 +635,39 @@ describe('並び・Claude に渡す形', () => {
     expect(comparisonMaterial(n.data, [n.workId, 'gone'])).toContain('=== 相対比較する作品の分析（1作品）===')
     expect(comparisonMaterial(n.data, [])).toBe('')
     expect(resolveBenchWork(n.data, 'なし').ok).toBe(false)
+  })
+
+  it('作品のタグ（2.7）: 一覧は1行目の次に「  タグ: …」、分析の文は書誌の行の次に「タグ: …」（書誌の行は変えない）。まだ付けていない自動のタグも出る', () => {
+    const n = sample()
+    let data = updateBenchWork(n.data, n.workId, { publisher: '星の出版', year: '2019', genre: '恋愛小説' })
+    data = addBenchAnalysis(data, n.workId, {
+      viewpoint: '14 検索用タグ',
+      body: '**結論**：一文\n担当：編集長\n\n- 判定したジャンル：恋愛\n- ジャンル／サブジャンル：恋愛／青春・喪失',
+      runDate: '2026-11-01',
+    }).data
+    const ref = `${shortId('benchWork', n.workId)}『銀河の果て』（山田）`
+    // アプリがまだ付けていない（autoTagsFrom が無い）自動のタグも見せる
+    expect(benchWorkLine(data, data.benchWorks[n.workId]).split('\n').slice(0, 3)).toEqual([
+      `${ref} 山田・星の出版・2019・恋愛小説`,
+      '  タグ: 恋愛・青春・喪失',
+      expect.stringMatching(/^ {2}分析 1件/),
+    ])
+    expect(workAnalysesText(data, data.benchWorks[n.workId]).split('\n').slice(0, 3)).toEqual([
+      `=== 相対比較の作品 ${ref} ===`,
+      '山田・星の出版・2019・恋愛小説',
+      'タグ: 恋愛・青春・喪失',
+    ])
+    // アプリが付けた後に作者が外したタグは出ない
+    data = setBenchWorkTags(applyAutoGenreTags(data), n.workId, ['恋愛', '港町'])
+    expect(benchWorkTagsLine(data, data.benchWorks[n.workId])).toBe('タグ: 恋愛・港町')
+    // 手動連携の作品批評の材料にもタグの行が入る
+    expect(comparisonMaterial(data, [n.workId])).toContain(
+      `=== 相対比較の作品 ${ref} ===\n山田・星の出版・2019・恋愛小説\nタグ: 恋愛・港町`,
+    )
+    // タグが無ければ行を出さない
+    const plain = sample()
+    expect(benchWorkLine(plain.data, plain.data.benchWorks[plain.workId])).not.toContain('タグ:')
+    expect(workAnalysesText(plain.data, plain.data.benchWorks[plain.workId]).split('\n')[1]).toBe('山田')
   })
 
   it('依頼文: 分析の依頼（観点・コードブロック）、手動の作品批評に分析を追加、コネクタへの批評の依頼', () => {

@@ -6,6 +6,7 @@
 import * as z from 'zod'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_GUIDE } from '../../../src/claude/categories'
 import { RECORD_LIMITS as L } from '../../../src/claude/records'
+import { BENCH_LIMITS } from '../../../src/domain/benchOps'
 import { MATERIAL_LIMITS, MATERIAL_SECTIONS } from '../../../src/domain/materialOps'
 
 const titleId = z
@@ -35,6 +36,8 @@ const itemBudgetSchema = z
   .describe('1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor="…"）')
 /** 一覧の作品名の絞り込み（src/vault/tools/read.ts の BENCH_LIST_FILTERS と同じ上限。1つの長さは作品名の上限と同じ） */
 const benchNameFilter = z.array(z.string().min(1).max(L.benchWorkName)).min(1).max(10)
+/** 一覧の作品のタグの絞り込み（2.7。1つの長さはタグの上限と同じ） */
+const benchTagFilter = z.array(z.string().min(1).max(BENCH_LIMITS.tag)).min(1).max(10)
 const runDate = z.string().max(10).describe('YYYY-MM-DD（日本時間）。省略時は今日')
 const benchWork = z
   .string()
@@ -253,6 +256,11 @@ export const SCHEMAS = {
     exclude_names: benchNameFilter
       .optional()
       .describe('作品名のどこかにこのどれかを含む作品を出さない（部分一致。例: ["【原稿】", "【横断】", "【対照】", "【監査】"] で既存の作品だけ。10個まで）'),
+    tags: benchTagFilter
+      .optional()
+      .describe(
+        'このタグをすべて持つ作品だけを出す（作品のタグ。作者が付け、「14 検索用タグ」の判定したジャンル・サブジャンルはアプリが自動で付ける。タグの名前そのもので照らし、全角と半角・空白の違いは問わない。例: ["恋愛"]。10個まで）',
+      ),
     char_budget: z
       .number()
       .int()
@@ -265,7 +273,7 @@ export const SCHEMAS = {
       .min(1)
       .max(16_000)
       .optional()
-      .describe('前の結果の最後にある 続き: cursor="…" の値をそのまま渡す（絞り込みは cursor に入っているので、cursor だけでよい）'),
+      .describe('前の結果の最後にある 続き: cursor="…" の値をそのまま渡す（絞り込み（tags も）は cursor に入っているので、cursor だけでよい）'),
   }),
   novel_get_bench_analysis: z.object({
     work: benchWork,

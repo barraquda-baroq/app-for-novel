@@ -7,6 +7,7 @@ import { actions } from '../../store/actions'
 import { initStore, resetStoreForTests } from '../../store/appStore'
 import { AppFrame } from '../../ui/Layout'
 import { HomePage } from './HomePage'
+import { resetBenchShelfForTests } from './BenchShelf'
 import { resetMaterialShelfForTests } from './MaterialShelf'
 
 let n = 0
@@ -24,6 +25,7 @@ afterEach(() => {
   cleanup()
   resetStoreForTests()
   resetMaterialShelfForTests()
+  resetBenchShelfForTests()
 })
 
 function renderHome(entry = '/') {
@@ -94,5 +96,20 @@ describe('ホーム', () => {
     await waitFor(() => expect(document.activeElement).toBe(heading))
     await waitFor(() => expect(screen.getByTestId('home-jump-bench').getAttribute('aria-current')).toBe('true'))
     expect(screen.getByTestId('home-jump-materials').getAttribute('aria-current')).toBeNull()
+  })
+})
+
+describe('ホームの棚のタグ（資料のタグと相対比較の作品のタグは別）', () => {
+  it('相対比較の棚には作品のタグ、資料の棚には資料のタグだけを出す', () => {
+    const w = actions.addBenchWork({ name: '銀河の果て' })
+    actions.setBenchWorkTags(w, ['SF', '宇宙'])
+    actions.addMaterial({ name: '江戸の町と暮らし', tags: ['歴史', 'SF'] })
+    renderHome()
+    const tags = (prefix: string) =>
+      within(screen.getByTestId(`${prefix}-tags`))
+        .getAllByTestId(`${prefix}-tag-chip`)
+        .map((c) => c.getAttribute('data-tag'))
+    expect(tags('bench')).toEqual(['SF', '宇宙'])
+    expect(tags('material')).toEqual(['SF', '歴史'])
   })
 })

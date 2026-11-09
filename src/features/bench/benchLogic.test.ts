@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { AppData, BenchAnalysis, BenchWork, Title } from '../../domain/types'
+import type { SyncStatus } from '../../sync/engine'
 import {
   analysesByWork,
   analysisPreview,
+  autoTagGate,
   benchShelfEntries,
+  benchTagChips,
   biblioLine,
+  canTagWork,
+  filterBenchWorksByTags,
+  tagDiff,
   comparingTitles,
   createdByLabel,
   deleteWorkMessage,
@@ -193,5 +199,72 @@ describe('自分の原稿の分析（【原稿】…（第n稿…））', () => 
     const moved = [{ ...shelf[4], order: -1 }, ...shelf.slice(0, 4)]
     expect(view(benchShelfEntries(moved, byWork))).toEqual(['星の庭:s2,s1', 'x', 'u1', 'y'])
     expect(view(benchShelfEntries(shelf.slice(0, 4), byWork))).toEqual(['x', 's1', 'u1', 'y'])
+  })
+})
+
+describe('作品のタグ（2.7）', () => {
+  const work = (id: string, name: string, tags?: string[], order = 0): BenchWork => ({
+    id,
+    name,
+    author: '',
+    pdfPlace: '',
+    note: '',
+    order,
+    createdAt: order,
+    updatedAt: order,
+    ...(tags ? { tags } : {}),
+  })
+  const works = [
+    work('a', '作品A', ['恋愛', '青春'], 0),
+    work('b', '作品B', ['ＳＦ', '恋愛'], 1),
+    work('c', '作品C', ['SF'], 2),
+    work('d', '作品D', undefined, 3),
+  ]
+
+  it('棚のタグのチップ（作品の数の多い順・照らす形つき）と、選んだタグをすべて持つ作品（棚の順のまま）', () => {
+    const data = { benchWorks: Object.fromEntries(works.map((w) => [w.id, w])) }
+    expect(benchTagChips(data)).toEqual([
+      { key: 'SF', tag: 'ＳＦ', count: 2 },
+      { key: '恋愛', tag: '恋愛', count: 2 },
+      { key: '青春', tag: '青春', count: 1 },
+    ])
+    expect(filterBenchWorksByTags(works, []).map((w) => w.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(filterBenchWorksByTags(works, ['恋愛']).map((w) => w.id)).toEqual(['a', 'b'])
+    expect(filterBenchWorksByTags(works, ['恋愛', 'SF']).map((w) => w.id)).toEqual(['b'])
+    expect(filterBenchWorksByTags(works, ['青春', 'SF'])).toEqual([])
+    expect(canTagWork(work('x', '【横断】恋愛'))).toBe(false)
+    expect(canTagWork(work('x', '【原稿】星の庭（第1稿）'))).toBe(true)
+  })
+
+  it('ダイアログの差分: 足した・外したタグ（書き方だけを変えたら、外して足す）', () => {
+    expect(tagDiff(['恋愛', '青春'], ['恋愛', '家族'])).toEqual({ add: ['家族'], remove: ['青春'] })
+    expect(tagDiff(['ＳＦ'], ['SF'])).toEqual({ add: ['SF'], remove: ['ＳＦ'] })
+    expect(tagDiff(['恋愛'], ['恋愛'])).toEqual({ add: [], remove: [] })
+  })
+
+  it('自動のタグを付けてよいか（autoTagGate）', () => {
+    const synced: SyncStatus = { phase: 'synced', pending: 0, lastSyncedAt: 1, error: null }
+    const base = { hasUid: false as boolean | null, auth: 'idle' as const, leader: false, status: null, accountMismatch: null }
+    // 端末内の記録を読むまでは待つ
+    expect(autoTagGate({ ...base, hasUid: null })).toBe(false)
+    // 一度も同期していない端末: いつでも（ログインを確かめている間は待つ）
+    expect(autoTagGate(base)).toBe(true)
+    expect(autoTagGate({ ...base, auth: 'signedOut' })).toBe(true)
+    expect(autoTagGate({ ...base, auth: 'checking' })).toBe(false)
+    // 同期している端末: 受け持ちの画面で、揃っていて、データの形の版が新しくなく、アカウントの確認を待っていない時だけ
+    const cloud = { ...base, hasUid: true, auth: 'signedIn' as const, leader: true, status: synced }
+    expect(autoTagGate(cloud)).toBe(true)
+    expect(autoTagGate({ ...cloud, leader: false })).toBe(false)
+    for (const phase of ['starting', 'downloading', 'uploading', 'offline', 'error'] as const)
+      expect(autoTagGate({ ...cloud, status: { ...synced, phase } })).toBe(false)
+    expect(autoTagGate({ ...cloud, status: null })).toBe(false)
+    expect(autoTagGate({ ...cloud, status: { ...synced, outdated: { model: 9, appVersion: '9.0' } } })).toBe(false)
+    expect(autoTagGate({ ...cloud, accountMismatch: { previousEmail: 'a@example.com' } })).toBe(false)
+    // 同期したことがあれば、ログアウト中・起動の直後（Firebase を読む前）も待つ
+    expect(autoTagGate({ ...base, hasUid: true })).toBe(false)
+    expect(autoTagGate({ ...base, hasUid: true, auth: 'signedOut' })).toBe(false)
+    // 初めてログインした端末（まだ uid を残していない）も、揃うまで待つ
+    expect(autoTagGate({ ...base, auth: 'signedIn' })).toBe(false)
+    expect(autoTagGate({ ...cloud, hasUid: false })).toBe(true)
   })
 })

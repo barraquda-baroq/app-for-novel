@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { decodeRecord, encodeRecord, hashRecord, splitJson, type ChunkDoc, type RecordDoc } from './codec'
-import { contentEqual, deepEqual, mergeFields, mergeList, mergeRemote, stableStringify } from './merge'
+import { contentEqual, deepEqual, LIST_FIELDS, mergeFields, mergeList, mergeRemote, NEWER_FIELDS, stableStringify } from './merge'
 
 const D = { device: 'テスト端末' }
 
@@ -76,6 +76,48 @@ describe('レコードのマージ', () => {
     const removed = { ...both, tags: ['現代'], updatedAt: 4 }
     const other = { ...both, tags: ['ＳＦ', 'SF', '現代', '戦闘'], updatedAt: 5 }
     expect((mergeFields('materials', both, removed, other, D).record as typeof both).tags).toEqual(['現代', '戦闘'])
+  })
+  it('相対比較の作品のタグ（2.7）: 資料のタグと同じく refKey の並び。自動のタグを2台が別々に足しても両方残る', () => {
+    expect(LIST_FIELDS.benchWorks).toEqual({ tags: expect.any(Function) })
+    const w = { id: 'w1', name: '港の喫茶店', updatedAt: 1 }
+    // 「SF」と「ＳＦ」は1つ
+    const mine = { ...w, tags: ['SF'], updatedAt: 2 }
+    const theirs = { ...w, tags: ['ＳＦ'], updatedAt: 3 }
+    expect((mergeFields('benchWorks', w, mine, theirs, D).record as typeof mine).tags).toEqual(['SF'])
+    // 片方で外すと、もう一方の書き方も外れる
+    const both = { ...w, tags: ['ＳＦ', 'SF', '宇宙'] }
+    const removed = { ...both, tags: ['宇宙'], updatedAt: 4 }
+    const other = { ...both, tags: ['ＳＦ', 'SF', '宇宙', '軍事'], updatedAt: 5 }
+    expect((mergeFields('benchWorks', both, removed, other, D).record as typeof both).tags).toEqual(['宇宙', '軍事'])
+    // 2台が別々の 14 から自動のタグを足した
+    const a = { ...w, tags: ['恋愛', '青春'], updatedAt: 6 }
+    const b = { ...w, tags: ['恋愛', '家族'], updatedAt: 7 }
+    expect((mergeFields('benchWorks', w, a, b, D).record as typeof a).tags).toEqual(['恋愛', '家族', '青春'])
+  })
+  it('自動のタグを取り込んだ印（autoTagsFrom）は、両方で変わっていたら新しい 14 の方（日付 → 作った時刻 → id）', () => {
+    expect(Object.keys(NEWER_FIELDS.benchWorks ?? {})).toEqual(['autoTagsFrom'])
+    const mark = (analysisId: string, runDate: string, createdAt: number) => ({ analysisId, runDate, createdAt })
+    const w = { id: 'w1', name: '作品', autoTagsFrom: mark('n0', '2026-10-01', 1), updatedAt: 1 }
+    const older = { ...w, autoTagsFrom: mark('n1', '2026-11-01', 9), updatedAt: 5 }
+    const newer = { ...w, autoTagsFrom: mark('n2', '2026-11-02', 2), updatedAt: 3 }
+    // この端末が古い方を持っていても、クラウドの新しい方を採る（逆も）
+    expect((mergeFields('benchWorks', w, older, newer, D).record as typeof w).autoTagsFrom).toEqual(newer.autoTagsFrom)
+    expect((mergeFields('benchWorks', w, newer, older, D).record as typeof w).autoTagsFrom).toEqual(newer.autoTagsFrom)
+    // 同じ日なら作った時刻の新しい方
+    const later = { ...w, autoTagsFrom: mark('n3', '2026-11-01', 10), updatedAt: 2 }
+    expect((mergeFields('benchWorks', w, older, later, D).record as typeof w).autoTagsFrom).toEqual(later.autoTagsFrom)
+    // 形の違う値より、読める値
+    const broken = { ...w, autoTagsFrom: 'x' as unknown as ReturnType<typeof mark>, updatedAt: 9 }
+    expect((mergeFields('benchWorks', w, broken, older, D).record as typeof w).autoTagsFrom).toEqual(older.autoTagsFrom)
+    // 片方の端末だけが変えた時は今までどおり（その端末の値。古い値でも）
+    expect((mergeFields('benchWorks', newer, older, newer, D).record as typeof w).autoTagsFrom).toEqual(older.autoTagsFrom)
+    // 共通の履歴が無い時も新しい方
+    const N = { device: 'iPhone', noHistory: true }
+    expect((mergeRemote('benchWorks', null, newer, older, N).record as typeof w).autoTagsFrom).toEqual(newer.autoTagsFrom)
+    expect((mergeRemote('benchWorks', null, older, newer, N).record as typeof w).autoTagsFrom).toEqual(newer.autoTagsFrom)
+    const { autoTagsFrom: _, ...plain } = w
+    expect((mergeRemote('benchWorks', null, newer, plain, N).record as typeof w).autoTagsFrom).toEqual(newer.autoTagsFrom)
+    expect('autoTagsFrom' in (mergeRemote('benchWorks', null, plain, newer, N).record as object)).toBe(true)
   })
   it('構成の並びは要素ごとに合わせる', () => {
     const mine = { ...base, structure: [...base.structure, { type: 'piece', id: 'm' }] }

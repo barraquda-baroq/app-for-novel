@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { createHashRouter, Outlet, RouterProvider, useLocation, useRouteError, type RouteObject } from 'react-router-dom'
+import { BenchAutoTags } from './features/bench/BenchAutoTags'
 import { HomePage } from './features/home/HomePage'
 import { actions } from './store/actions'
 import { isNative } from './platform/platform'
@@ -114,6 +115,7 @@ function RootLayout() {
   return (
     <AppFrame>
       <TrashPurge />
+      <BenchAutoTags />
       <Gate>
         <RouteErrorBoundary>
           <Suspense fallback={<PageLoading />}>

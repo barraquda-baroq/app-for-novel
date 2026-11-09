@@ -5,6 +5,7 @@ import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'fire
 import { appModelRef } from '../../../src/sync/appModel'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import * as B from '../../../src/domain/benchOps'
+import { applyAutoGenreTags } from '../../../src/domain/benchTags'
 import * as C from '../../../src/domain/claudeOps'
 import * as E from '../../../src/domain/entityOps'
 import * as M from '../../../src/domain/materialOps'
@@ -433,6 +434,53 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     expect((await tool(core, 'novel_list_materials', { tags: ['医療', '歴史'] })).text).toContain(
       '『外科の歴史』（高橋） 高橋\n  タグ: 医療・歴史',
     )
+  })
+
+  it('相対比較のタグ（2.7）: コネクタが作品と「14 検索用タグ」を登録した直後から tags で絞れ、端末が付けた後も同じ。端末で外すと一覧から消える', async () => {
+    const { owner, who } = await ownerWithNovel(['本文の一話目。'])
+    const other = await makeDevice('other', who)
+    await other.online()
+    await settle(owner, other)
+    const { core } = makeConnector()
+    await pair(core, owner)
+    const body14 = [
+      '**結論**：港町の喫茶店を舞台に、喪失から立ち直る二人を描く恋愛小説',
+      '担当：編集長（マーケター案を確定）',
+      '',
+      '- 判定したジャンル：恋愛',
+      '- 適性のある賞（選んだ理由）：架空の恋愛小説新人賞（理由）',
+      '※この2行には、役割の前の判定をそのまま写す。「ジャンル／サブジャンル」のジャンルは、判定したジャンルと同じ名前にする。',
+      '- ジャンル／サブジャンル：恋愛／青春・喪失',
+    ].join('\n')
+    const made = await tool(core, 'novel_add_bench_analysis', {
+      work: '港の喫茶店',
+      new_work: { name: '港の喫茶店', author: '山田' },
+      items: [{ viewpoint: '14 検索用タグ', body_markdown: body14, run_date: '2026-11-01' }],
+    })
+    expect(made.text).toContain('追加 1件')
+    // どの端末もまだ付けていないが、コネクタは 14 から付くタグを見せる
+    const love = (await tool(core, 'novel_list_bench_works', { tags: ['恋愛'] })).text
+    expect(love).toContain('=== 相対比較（タグ「恋愛」を持つ作品 1作品／全1作品。')
+    expect(love).toContain('『港の喫茶店』（山田） 山田\n  タグ: 恋愛・青春・喪失')
+    // 端末に届き、端末が自動のタグを付けて同期しても同じ
+    await waitFor(async () => Object.keys((await owner.load()).benchAnalyses).length === 1, '端末に 14 が届く', 30_000)
+    await owner.edit(applyAutoGenreTags)
+    await settle(owner, other)
+    const workId = Object.keys((await owner.load()).benchWorks)[0]
+    expect((await owner.load()).benchWorks[workId].tags).toEqual(['恋愛', '青春', '喪失'])
+    await waitFor(async () => (await other.load()).benchWorks[workId]?.tags?.length === 3, 'もう一方の端末にタグが届く', 30_000)
+    expect((await tool(core, 'novel_list_bench_works', { tags: ['恋愛'] })).text).toContain('タグ: 恋愛・青春・喪失')
+    // 端末で外すと、写しが届いた後の一覧から消える（autoTagsFrom が進んでいるので 14 から付き直さない）
+    await other.edit((d) => B.setBenchWorkTags(d, workId, ['恋愛']))
+    await settle(other, owner)
+    await waitFor(
+      async () => (await tool(core, 'novel_list_bench_works', { tags: ['青春'] })).text.includes('（タグ「青春」を持つ作品はありません）'),
+      'コネクタの一覧から外したタグが消える',
+      30_000,
+    )
+    expect((await tool(core, 'novel_get_bench_analysis', { work: '港の喫茶店' })).text.split('\n').slice(1, 3)).toEqual(['山田', 'タグ: 恋愛'])
+    expect(owner.notes).toEqual([])
+    expect(other.notes).toEqual([])
   })
 
   it('コネクタが作った文書は、端末の decodeRecord で読め、device は claude-connector', async () => {

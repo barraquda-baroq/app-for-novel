@@ -6,14 +6,8 @@
 import { materialBiblio, materialTagList } from '../../claude/material'
 import { materialNotesOf, materialSectionGroups } from '../../claude/materialOrder'
 import { refKey } from '../../claude/refs'
-import {
-  MATERIAL_LIMITS,
-  MATERIAL_SECTIONS,
-  materialName as nameOf,
-  materialTagsInUse,
-  sectionKey,
-  tagKey,
-} from '../../domain/materialOps'
+import { MATERIAL_SECTIONS, materialName as nameOf, materialTagsInUse, sectionKey } from '../../domain/materialOps'
+import { TAG_LIMITS, tagKey, type TagNoun } from '../../domain/tags'
 import { trashNotice } from '../../domain/trash'
 import type { AppData, ID, Material, MaterialNote } from '../../domain/types'
 import { analysisPreview, createdByLabel, runDateLabel, workLastUpdated } from '../bench/benchLogic'
@@ -154,7 +148,7 @@ export function materialTagKeys(m: Material): ReadonlySet<string> {
   return keys
 }
 
-/** タグのチップ（使っているタグだけ。資料の数の多い順、同じなら名前の順。書き方は棚で最初に出る資料のまま） */
+/** タグのチップ（使っているタグだけ。資料の数の多い順、同じなら名前の順。書き方は棚で最初に出る資料のまま。相対比較の作品のタグも同じ形） */
 export interface TagChip {
   /** 照らす形（tagKey） */
   key: string
@@ -224,11 +218,13 @@ export const hasTagSeparator = (text: string): boolean => TAG_SEPARATORS.test(te
 
 /**
  * タグを末尾に足す（前後の空白を除き、空のもの・もう付いているもの（tagKey が同じ）は足さない）。
- * 20字を超えるタグ・20個を超える分は足さず、その理由を error に返す
+ * 20字を超えるタグ・20個を超える分は足さず、その理由を error に返す（noun はエラーの文の「1つの資料に」の名詞。
+ * 相対比較の作品のタグでも使う）
  */
 export function addTags(
   current: readonly string[],
   add: readonly string[],
+  noun: TagNoun = '資料',
 ): { tags: string[]; error: string | null; rejected: string[] } {
   const tags = [...current]
   const have = new Set(tags.map(tagKey))
@@ -239,13 +235,13 @@ export function addTags(
     const tag = raw.trim()
     const key = tagKey(tag)
     if (!key || have.has(key)) continue
-    if (Array.from(tag).length > MATERIAL_LIMITS.tag) {
-      error = `タグは${MATERIAL_LIMITS.tag}字までにしてください（「${Array.from(tag).slice(0, MATERIAL_LIMITS.tag).join('')}…」）`
+    if (Array.from(tag).length > TAG_LIMITS.tag) {
+      error = `タグは${TAG_LIMITS.tag}字までにしてください（「${Array.from(tag).slice(0, TAG_LIMITS.tag).join('')}…」）`
       rejected.push(tag)
       continue
     }
-    if (tags.length >= MATERIAL_LIMITS.tags) {
-      error = `タグは1つの資料に${MATERIAL_LIMITS.tags}個までです`
+    if (tags.length >= TAG_LIMITS.tags) {
+      error = `タグは1つの${noun}に${TAG_LIMITS.tags}個までです`
       rejected.push(tag)
       continue
     }
@@ -264,9 +260,9 @@ export function tagSuggestions(inUse: readonly string[], current: readonly strin
   return inUse.filter((t) => !have.has(tagKey(t)) && (!q || searchFold(t).includes(q))).slice(0, limit)
 }
 
-/** 絞り込んだ時の件数（「3件／全120件」） */
-export function filterCountLabel(shown: number, total: number): string {
-  return `${shown}件／全${total}件`
+/** 絞り込んだ時の件数（「3件／全120件」。相対比較の棚は unit を「作品」にして「3作品／全120作品」） */
+export function filterCountLabel(shown: number, total: number, unit = '件'): string {
+  return `${shown}${unit}／全${total}${unit}`
 }
 
 /**

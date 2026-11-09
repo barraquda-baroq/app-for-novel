@@ -79,6 +79,27 @@
   overflow-wrap: anywhere;
 }
 
+/* ジャンル（作品のタグ。2.7）: チップとボタンを折り返して並べる（狭い画面でも横にはみ出さない） */
+.bw-facts dd.bw-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 2px 0;
+  line-height: 1.5;
+}
+
+.bw-tags .icon.mt-tags-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
+.bw-tags .btn {
+  min-height: 32px;
+}
+
 .bw-note {
   margin: 0;
   padding: 10px 12px;
@@ -529,7 +550,8 @@ a.bw-chip.is-title:hover {
   }
 
   .bw-head-top .btn-sm,
-  .bw-actions .btn {
+  .bw-actions .btn,
+  .bw-tags .btn {
     min-height: 38px;
   }
 }

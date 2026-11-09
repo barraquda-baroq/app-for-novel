@@ -7,18 +7,26 @@ import {
   addBenchAnalysis,
   addBenchWork,
   addTitleBenchWork,
+  BENCH_LIMITS,
+  benchTagsInUse,
   benchViewpointSuggestions,
   benchWorksOfTitle,
   deleteBenchAnalysis,
   deleteBenchWork,
+  editBenchWorkTags,
+  isTaglessWork,
   moveBenchWorkStep,
   moveBenchWorkTo,
+  removeBenchTag,
   removeTitleBenchWork,
+  renameBenchTag,
+  setBenchWorkTags,
   sortedBenchWorks,
   titlesComparing,
   updateBenchAnalysis,
   updateBenchWork,
 } from './benchOps'
+import { setMaterialTags, addMaterial, materialTagsInUse } from './materialOps'
 import { createTitle, deleteTitle } from './entityOps'
 import { repairData } from './repair'
 import { listTrash, restoreTrashEntry, trashContents, TRASH_KIND_LABELS } from './trash'
@@ -242,6 +250,143 @@ describe('相対比較の作品', () => {
     data = addTitleBenchWork(data, titleA, ids[0])
     data = deleteTitle(data, titleA)
     expect(names(data)).toEqual(['作品A', '作品B', '作品C'])
+  })
+})
+
+describe('作品のタグ（ジャンル。2.7）', () => {
+  /** 作品A〜C にタグを付けた棚 */
+  function tagged() {
+    const s = shelf()
+    let data = setBenchWorkTags(s.data, s.ids[0], ['恋愛', '青春', '喪失'])
+    data = setBenchWorkTags(data, s.ids[1], ['青春', '家族'])
+    data = setBenchWorkTags(data, s.ids[2], ['ミステリー', '喪失'])
+    return { ...s, data }
+  }
+  const tagsOf = (data: AppData, id: string) => data.benchWorks[id].tags
+
+  it('付ける: 付けた順・重なり（全角と半角）は1つ・20字・20個まで。空にすると項目ごと消す', () => {
+    const { data: d0, ids, tick } = shelf()
+    tick()
+    const data = setBenchWorkTags(d0, ids[0], [' 恋愛 ', '', 'ＳＦ', 'SF', '青春'])
+    expect(tagsOf(data, ids[0])).toEqual(['恋愛', 'ＳＦ', '青春'])
+    expect(data.benchWorks[ids[0]].updatedAt).toBeGreaterThan(d0.benchWorks[ids[0]].updatedAt)
+    expect(data.benchWorks[ids[1]]).toBe(d0.benchWorks[ids[1]])
+    expect(setBenchWorkTags(data, ids[0], ['恋愛', 'ＳＦ', '青春']).benchWorks).toBe(data.benchWorks)
+    expect('tags' in setBenchWorkTags(data, ids[0], []).benchWorks[ids[0]]).toBe(false)
+    expect(BENCH_LIMITS).toMatchObject({ tag: 20, tags: 20 })
+    expect(errorOf(() => setBenchWorkTags(data, ids[0], ['あ'.repeat(21)]))).toBe('タグは20字までにしてください')
+    const many = Array.from({ length: 20 }, (_, i) => `タグ${i + 1}`)
+    expect(tagsOf(setBenchWorkTags(data, ids[0], many), ids[0])).toEqual(many)
+    expect(errorOf(() => setBenchWorkTags(data, ids[0], [...many, 'タグ21']))).toBe('タグは1つの作品に20個までにしてください')
+    expect(errorOf(() => setBenchWorkTags(data, 'nope', ['恋愛']))).toBe('相対比較の作品が見つかりません')
+    // 作品の情報を直しても、タグと自動のタグの印は消えない
+    const marked: AppData = {
+      ...data,
+      benchWorks: {
+        ...data.benchWorks,
+        [ids[0]]: { ...data.benchWorks[ids[0]], autoTagsFrom: { analysisId: 'n1', runDate: '2026-11-01', createdAt: 1 } },
+      },
+    }
+    const edited = updateBenchWork(marked, ids[0], { genre: '恋愛小説', note: 'メモ' })
+    expect(edited.benchWorks[ids[0]]).toMatchObject({
+      tags: ['恋愛', 'ＳＦ', '青春'],
+      autoTagsFrom: { analysisId: 'n1' },
+      genre: '恋愛小説',
+    })
+  })
+
+  it('【対照】【監査】【横断】の作品にはタグを付けない（外すのはできる）', () => {
+    const { data: d0, ids } = shelf()
+    expect(isTaglessWork({ name: '【対照】作品A' })).toBe(true)
+    expect(isTaglessWork({ name: ' 【監査】作品A' })).toBe(true)
+    expect(isTaglessWork({ name: '【横断】恋愛＋喪失' })).toBe(true)
+    expect(isTaglessWork({ name: '【対照】【原稿】星の庭（第1稿）（置換）' })).toBe(true)
+    expect(isTaglessWork({ name: '【原稿】星の庭（第1稿）' })).toBe(false)
+    expect(isTaglessWork({ name: '作品【横断】' })).toBe(false)
+    let data = setBenchWorkTags(d0, ids[0], ['恋愛', '青春'])
+    data = updateBenchWork(data, ids[0], { name: '【横断】恋愛' })
+    expect(errorOf(() => setBenchWorkTags(data, ids[0], ['恋愛', '青春', '家族']))).toBe(
+      '【対照】【監査】【横断】の作品にはタグを付けません',
+    )
+    expect(errorOf(() => editBenchWorkTags(data, ids[0], { add: ['家族'], remove: [] }))).toBe(
+      '【対照】【監査】【横断】の作品にはタグを付けません',
+    )
+    expect(tagsOf(setBenchWorkTags(data, ids[0], ['青春']), ids[0])).toEqual(['青春'])
+    expect(tagsOf(editBenchWorkTags(data, ids[0], { add: [], remove: ['恋愛'] }), ids[0])).toEqual(['青春'])
+  })
+
+  it('差分で保存（editBenchWorkTags）: 開いた後に足されたタグを残し、外したもの（refKey）を除いて、無いものを末尾に足す', () => {
+    const { data: d0, ids } = tagged()
+    // ダイアログを開いた後に自動のタグ「家族」が付いた
+    const data = setBenchWorkTags(d0, ids[0], ['恋愛', '青春', '喪失', '家族'])
+    const next = editBenchWorkTags(data, ids[0], { add: ['港町', ' 恋愛 '], remove: ['青春'] })
+    expect(tagsOf(next, ids[0])).toEqual(['恋愛', '喪失', '家族', '港町'])
+    // 書き方だけを変える（外して足す。画面の tagDiff がこの形にする）
+    const sf = setBenchWorkTags(data, ids[1], ['ＳＦ', '青春'])
+    expect(tagsOf(editBenchWorkTags(sf, ids[1], { add: ['SF'], remove: ['ＳＦ'] }), ids[1])).toEqual(['青春', 'SF'])
+    expect(editBenchWorkTags(data, ids[0], { add: [], remove: [] }).benchWorks).toBe(data.benchWorks)
+    expect(
+      errorOf(() => editBenchWorkTags(data, ids[0], { add: Array.from({ length: 17 }, (_, i) => `x${i}`), remove: [] })),
+    ).toBe('タグは1つの作品に20個までにしてください')
+  })
+
+  it('名前を変える（もう付いていれば1つにまとめ、前の位置のまま）・すべての作品から外す。直した作品の数を返す', () => {
+    const { data, ids, tick } = tagged()
+    tick()
+    const r = renameBenchTag(data, '喪失', '家族')
+    expect(r.result).toBe(2)
+    expect(tagsOf(r.data, ids[0])).toEqual(['恋愛', '青春', '家族'])
+    expect(tagsOf(r.data, ids[2])).toEqual(['ミステリー', '家族'])
+    expect(r.data.benchWorks[ids[1]]).toBe(data.benchWorks[ids[1]])
+    const merged = renameBenchTag(r.data, '青春', '家族')
+    expect(merged.result).toBe(2)
+    expect(tagsOf(merged.data, ids[0])).toEqual(['恋愛', '家族'])
+    expect(tagsOf(merged.data, ids[1])).toEqual(['家族'])
+    expect(errorOf(() => renameBenchTag(data, '恋愛', ' '))).toBe('タグの名前を入れてください')
+    const removed = removeBenchTag(data, ' 青春 ')
+    expect(removed.result).toBe(2)
+    expect(tagsOf(removed.data, ids[1])).toEqual(['家族'])
+    expect('tags' in removeBenchTag(removed.data, '家族').data.benchWorks[ids[1]]).toBe(false)
+    expect(removeBenchTag(data, '料理').data.benchWorks).toBe(data.benchWorks)
+  })
+
+  it('使っているタグ: 作品の数の多い順、同じなら名前の順。資料のタグは数えない（資料の側にも作品のタグは出ない）', () => {
+    const { data: d0 } = tagged()
+    const m = addMaterial(d0, { name: '資料' })
+    const data = setMaterialTags(m.data, m.result, ['青春', '軍事'])
+    expect(benchTagsInUse(data)).toEqual([
+      { tag: '青春', count: 2 },
+      { tag: '喪失', count: 2 },
+      { tag: 'ミステリー', count: 1 },
+      { tag: '家族', count: 1 },
+      { tag: '恋愛', count: 1 },
+    ])
+    expect(materialTagsInUse(data)).toEqual([
+      { tag: '軍事', count: 1 },
+      { tag: '青春', count: 1 },
+    ])
+  })
+
+  it('作品を削除してゴミ箱から戻すと、タグも戻る。バックアップに入れて戻しても、タグと自動のタグの印が残る', () => {
+    const { data: d0, ids } = tagged()
+    const data: AppData = {
+      ...d0,
+      benchWorks: {
+        ...d0.benchWorks,
+        [ids[0]]: { ...d0.benchWorks[ids[0]], autoTagsFrom: { analysisId: 'n1', runDate: '2026-11-01', createdAt: 5 } },
+      },
+    }
+    const deleted = deleteBenchWork(data, ids[0])
+    expect(benchTagsInUse(deleted).find((t) => t.tag === '恋愛')).toBeUndefined()
+    const entry = listTrash(deleted.trashEntries)[0]
+    const back = restoreTrashEntry(deleted, entry.id).data
+    expect(back.benchWorks[ids[0]]).toMatchObject({
+      tags: ['恋愛', '青春', '喪失'],
+      autoTagsFrom: { analysisId: 'n1', runDate: '2026-11-01', createdAt: 5 },
+    })
+    const restored = parseBackup(JSON.stringify(toBackup(data)))
+    expect(restored.benchWorks[ids[0]].tags).toEqual(['恋愛', '青春', '喪失'])
+    expect(restored.benchWorks[ids[0]].autoTagsFrom).toEqual({ analysisId: 'n1', runDate: '2026-11-01', createdAt: 5 })
   })
 })
 

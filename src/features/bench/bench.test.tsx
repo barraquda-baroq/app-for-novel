@@ -10,12 +10,14 @@ import { createPersistence } from '../../db/persistence'
 import { listTrash } from '../../domain/trash'
 import type { BenchAnalysis, ID } from '../../domain/types'
 import { actions } from '../../store/actions'
-import { getData, initStore, resetStoreForTests } from '../../store/appStore'
+import { getData, getPersistence, initStore, resetStoreForTests } from '../../store/appStore'
+import { resetSyncForTests, useSync } from '../../sync/controller'
 import { copyText } from '../../ui/browser'
 import { AppFrame } from '../../ui/Layout'
 import { ManualDialog } from '../claude/ManualDialog'
-import { BenchShelf } from '../home/BenchShelf'
+import { BenchShelf, resetBenchShelfForTests } from '../home/BenchShelf'
 import { CritiqueTab } from '../title/critique/CritiqueTab'
+import { BenchAutoTags } from './BenchAutoTags'
 import { BenchWorkPage } from './BenchWorkPage'
 
 vi.mock('../../ui/browser', async (importOriginal) => {
@@ -32,6 +34,8 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup()
   resetStoreForTests()
+  resetBenchShelfForTests()
+  resetSyncForTests()
   vi.mocked(copyText).mockClear()
 })
 
@@ -574,5 +578,292 @@ describe('作品批評タブ', () => {
     await user.click(check)
     await user.click(screen.getAllByTestId('manual-copy-part')[0])
     expect(vi.mocked(copyText).mock.calls[1][0]).not.toContain('相対比較する作品の分析')
+  })
+})
+
+/** V29 の 02 が登録する「14 検索用タグ」の本文 */
+const GENRE_14 = [
+  '**結論**：港町の喫茶店を舞台に、喪失から立ち直る二人を描く恋愛小説',
+  '担当：編集長（マーケター案を確定）',
+  '',
+  '- 判定したジャンル：恋愛',
+  '- 適性のある賞（選んだ理由）：架空の恋愛小説新人賞（理由）',
+  '※この2行には、役割の前の判定をそのまま写す。「ジャンル／サブジャンル」のジャンルは、判定したジャンルと同じ名前にする。',
+  '- ジャンル／サブジャンル：恋愛／青春・喪失、家族',
+  '- トーン（例：静謐、疾走、乾いた、湿った、ユーモア）：静謐',
+].join('\n')
+
+function renderShelf() {
+  return render(
+    <MemoryRouter>
+      <AppFrame>
+        <BenchShelf headingId="h" />
+      </AppFrame>
+    </MemoryRouter>,
+  )
+}
+
+const cardNames = () => screen.queryAllByTestId('bench-card-name').map((c) => c.textContent)
+
+describe('作品のタグ（ジャンル。2.7）: 作品の画面', () => {
+  it('「比べるタイトル」の上の「ジャンル」。タグを付ける（Enter・「、」で足す）・20字を超えれば足さない・外す・保存', async () => {
+    const user = userEvent.setup()
+    const { workId } = seedWork()
+    renderPage(workId)
+    const head = await screen.findByTestId('bench-work-head')
+    const terms = Array.from(head.querySelectorAll('dt')).map((dt) => dt.textContent)
+    expect(terms.indexOf('ジャンル')).toBe(terms.indexOf('比べるタイトル') - 1)
+    expect(within(head).getByTestId('bench-work-no-tags').textContent).toBe('タグなし')
+    // 書誌の「ジャンル」の項目はそのまま
+    expect(within(head).getByTestId('bench-work-biblio').textContent).toBe('山田・2019')
+    await user.click(within(head).getByTestId('bench-edit-tags'))
+    expect(within(head).getByTestId('bench-edit-tags').textContent).toBe('タグを付ける')
+    const dialog = await screen.findByRole('dialog', { name: '「銀河の果て」のジャンル（タグ）' })
+    const input = within(dialog).getByTestId('bench-tag-input')
+    expect(input.getAttribute('placeholder')).toBe('例：恋愛、青春、喪失')
+    expect(dialog.textContent).toContain('「14 検索用タグ」の判定したジャンル・サブジャンルは自動で付きます')
+    await user.type(input, '恋愛、青春、')
+    await user.type(input, '喪失{Enter}')
+    expect(
+      within(dialog)
+        .getAllByTestId('bench-tag-chip-edit')
+        .map((c) => c.textContent),
+    ).toEqual(['恋愛', '青春', '喪失'])
+    await user.type(input, `${'あ'.repeat(21)}{Enter}`)
+    expect(within(dialog).getByTestId('bench-tag-error').textContent).toContain('タグは20字までにしてください')
+    await user.clear(input)
+    await user.click(within(dialog).getAllByTestId('bench-tag-remove')[1])
+    // 保存するまで変えない
+    expect(getData().benchWorks[workId].tags).toBeUndefined()
+    await user.click(within(dialog).getByTestId('bench-tags-save'))
+    await waitFor(() => expect(getData().benchWorks[workId].tags).toEqual(['恋愛', '喪失']))
+    expect(
+      within(head)
+        .getAllByTestId('bench-work-tag')
+        .map((c) => c.textContent),
+    ).toEqual(['恋愛', '喪失'])
+    expect(within(head).getByTestId('bench-edit-tags').textContent).toBe('タグを編集')
+    // 資料のタグの候補は出さない（作品のタグだけ）
+    actions.addMaterial({ name: '資料', tags: ['軍事'] })
+    await user.click(within(head).getByTestId('bench-edit-tags'))
+    const again = await screen.findByRole('dialog', { name: '「銀河の果て」のジャンル（タグ）' })
+    expect(within(again).queryByTestId('bench-tag-suggestions')).toBeNull()
+  })
+
+  it('開いている間に自動のタグが付いても、保存で消さない（開いた時との差分を当てる）', async () => {
+    const user = userEvent.setup()
+    const { workId } = seedWork()
+    actions.setBenchWorkTags(workId, ['恋愛'])
+    renderPage(workId)
+    await user.click(await screen.findByTestId('bench-edit-tags'))
+    const dialog = await screen.findByRole('dialog', { name: '「銀河の果て」のジャンル（タグ）' })
+    // 自動のタグが付いた（ほかの端末・BenchAutoTags）
+    actions.setBenchWorkTags(workId, ['恋愛', '家族'])
+    await user.type(within(dialog).getByTestId('bench-tag-input'), '港町{Enter}')
+    await user.click(within(dialog).getByTestId('bench-tags-save'))
+    await waitFor(() => expect(getData().benchWorks[workId].tags).toEqual(['恋愛', '家族', '港町']))
+  })
+
+  it('【対照】【監査】【横断】の作品にはタグを付けない（案内を出し、残っているタグを外すボタンだけ出す）', async () => {
+    const user = userEvent.setup()
+    const workId = actions.addBenchWork({ name: '【横断】恋愛', author: '編集部' })
+    renderPage(workId)
+    const head = await screen.findByTestId('bench-work-head')
+    expect(within(head).getByTestId('bench-work-tagless').textContent).toContain(
+      '【対照】【監査】【横断】の作品にはタグを付けません',
+    )
+    expect(within(head).queryByTestId('bench-edit-tags')).toBeNull()
+    cleanup()
+    const named = actions.addBenchWork({ name: '銀河', author: '山田' })
+    actions.setBenchWorkTags(named, ['SF', '宇宙'])
+    actions.updateBenchWork(named, { name: '【対照】銀河' })
+    renderPage(named)
+    await user.click(await screen.findByTestId('bench-edit-tags'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getAllByTestId('bench-tag-remove')[0])
+    await user.click(within(dialog).getByTestId('bench-tags-save'))
+    await waitFor(() => expect(getData().benchWorks[named].tags).toEqual(['宇宙']))
+  })
+})
+
+describe('作品のタグ（ジャンル。2.7）: 自動のタグ（BenchAutoTags）', () => {
+  it('一度も同期していない端末: 「14 検索用タグ」のある作品に、少し待ってからタグを付ける', async () => {
+    const { workId } = seedWork()
+    actions.addBenchAnalysis(workId, { viewpoint: '14 検索用タグ', body: GENRE_14, runDate: '2026-11-01' })
+    const before = getData()
+    render(<BenchAutoTags />)
+    // すぐには付けない
+    expect(getData().benchWorks[workId].tags).toBeUndefined()
+    await waitFor(() => expect(getData().benchWorks[workId].tags).toEqual(['恋愛', '青春', '喪失', '家族']), { timeout: 4000 })
+    expect(getData().benchWorks[workId].autoTagsFrom?.runDate).toBe('2026-11-01')
+    // ほかの作品は書き換えない
+    expect(getData().titles).toBe(before.titles)
+  })
+
+  it('同期している端末: クラウドと揃った受け持ちの画面になるまで付けない', async () => {
+    const { workId } = seedWork()
+    actions.addBenchAnalysis(workId, { viewpoint: '14 検索用タグ', body: GENRE_14, runDate: '2026-11-01' })
+    await getPersistence()!.setMeta('uid', 'u1')
+    render(<BenchAutoTags />)
+    await new Promise((r) => setTimeout(r, 2000))
+    expect(getData().benchWorks[workId].tags).toBeUndefined()
+    useSync.setState({
+      auth: 'signedIn',
+      leader: true,
+      status: { phase: 'downloading', pending: 0, lastSyncedAt: null, error: null },
+    })
+    await new Promise((r) => setTimeout(r, 2000))
+    expect(getData().benchWorks[workId].tags).toBeUndefined()
+    useSync.setState({ status: { phase: 'synced', pending: 0, lastSyncedAt: 1, error: null } })
+    await waitFor(() => expect(getData().benchWorks[workId].tags).toEqual(['恋愛', '青春', '喪失', '家族']), { timeout: 4000 })
+  }, 12_000)
+})
+
+describe('作品のタグ（ジャンル。2.7）: ホームの棚', () => {
+  /** タグを付けた作品（棚の順に A・B・C・原稿2回） */
+  function seedTagged() {
+    const a = actions.addBenchWork({ name: '作品A', author: '著者' })
+    const b = actions.addBenchWork({ name: '作品B', author: '著者' })
+    const c = actions.addBenchWork({ name: '作品C', author: '著者' })
+    const r1 = addRun('【原稿】星の庭（第1稿）', at(1, 9, 0))
+    const r2 = addRun('【原稿】星の庭（第2稿）', at(2, 9, 0))
+    actions.setBenchWorkTags(a, ['恋愛', '青春'])
+    actions.setBenchWorkTags(b, ['恋愛', '家族'])
+    actions.setBenchWorkTags(c, ['ミステリー'])
+    actions.setBenchWorkTags(r1, ['恋愛'])
+    actions.setBenchWorkTags(r2, ['恋愛', '青春'])
+    actions.addMaterial({ name: '資料', tags: ['軍事'] })
+    return { a, b, c, r1, r2 }
+  }
+  const chip = (tag: string) => screen.getAllByTestId('bench-tag-chip').find((x) => x.getAttribute('data-tag') === tag)
+
+  it('タグのチップ（数つき・多い順）。2つ選ぶとすべて持つ作品だけ・「n作品／全N作品」・解除。カードのタグ。資料のタグは出ない', async () => {
+    const user = userEvent.setup()
+    seedTagged()
+    renderShelf()
+    expect(screen.getAllByTestId('bench-tag-chip').map((c) => c.textContent)).toEqual([
+      '恋愛4作品',
+      '青春2作品',
+      'ミステリー1作品',
+      '家族1作品',
+    ])
+    expect(screen.queryByTestId('material-tag-chip')).toBeNull()
+    // 原稿は2回あるので1枚にまとまっている
+    expect(screen.getByTestId('bench-manuscript')).toBeTruthy()
+    const cardA = screen
+      .getAllByTestId('bench-card')
+      .find((c) => within(c).getByTestId('bench-card-name').textContent === '作品A')!
+    expect(
+      within(cardA)
+        .getAllByTestId('bench-card-tag')
+        .map((t) => t.textContent),
+    ).toEqual(['恋愛', '青春'])
+    await user.click(chip('恋愛')!)
+    expect(screen.getByTestId('bench-filter-count').textContent).toBe('4作品／全5作品')
+    await user.click(chip('青春')!)
+    expect(chip('青春')!.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('bench-filter-count').textContent).toBe('2作品／全5作品')
+    // 絞った後の原稿の回が1つだけなら、ふつうのカード
+    expect(cardNames()).toEqual(['作品A', '【原稿】星の庭（第2稿）'])
+    expect(screen.queryByTestId('bench-manuscript')).toBeNull()
+    await user.click(chip('ミステリー')!)
+    expect(screen.getByTestId('bench-no-match').textContent).toContain('当てはまる作品がありません')
+    await user.click(screen.getByTestId('bench-tags-clear'))
+    expect(screen.getByTestId('bench-filter-count').textContent).toBe('')
+    expect(screen.getByTestId('bench-manuscript')).toBeTruthy()
+    await user.click(chip('家族')!)
+    await user.click(screen.getByTestId('bench-filter-clear'))
+    expect(cardNames()).toHaveLength(3)
+  })
+
+  it('絞り込みは作品の画面から戻っても残る。タグが無ければ付け方の案内', async () => {
+    const user = userEvent.setup()
+    seedTagged()
+    renderShelf()
+    await user.click(chip('家族')!)
+    expect(cardNames()).toEqual(['作品B'])
+    cleanup()
+    renderShelf()
+    expect(cardNames()).toEqual(['作品B'])
+    expect(chip('家族')!.getAttribute('aria-pressed')).toBe('true')
+    cleanup()
+    resetBenchShelfForTests()
+    resetStoreForTests()
+    await initStore(createPersistence(`test-db-bench-${++n}`))
+    actions.addBenchWork({ name: '作品' })
+    renderShelf()
+    expect(screen.getByTestId('bench-tags-hint').textContent).toContain('作品の画面の「ジャンル」でタグを付けると')
+  })
+
+  it('タグを管理: 名前を変える（まとめる時は確かめる）・削除（確かめて、すべての作品から外す）。絞り込みも付け替える', async () => {
+    const user = userEvent.setup()
+    const { a, b, c } = seedTagged()
+    renderShelf()
+    await user.click(chip('家族')!)
+    await user.click(screen.getByTestId('bench-manage-tags-open'))
+    const dialog = await screen.findByTestId('bench-manage-tags')
+    expect(dialog.textContent).toContain('資料の棚のタグとは別です')
+    const row = (tag: string) =>
+      within(dialog)
+        .getAllByTestId('bench-manage-tag')
+        .find((r) => r.getAttribute('data-tag') === tag)!
+    expect(within(row('恋愛')).getByTestId('bench-manage-tag-count').textContent).toBe('4作品')
+    // 名前を変える（絞り込んでいるタグなら絞り込みも）
+    await user.click(within(row('家族')).getByTestId('bench-manage-rename'))
+    const prompt = await screen.findByRole('dialog', { name: 'タグ「家族」の名前を変える' })
+    expect(prompt.textContent).toContain('新しい名前（1作品で付け替えます）')
+    await user.clear(within(prompt).getByRole('textbox'))
+    await user.type(within(prompt).getByRole('textbox'), '家族もの')
+    await user.click(within(prompt).getByRole('button', { name: '名前を変える' }))
+    await waitFor(() => expect(getData().benchWorks[b].tags).toEqual(['恋愛', '家族もの']))
+    expect(chip('家族もの')!.getAttribute('aria-pressed')).toBe('true')
+    expect(cardNames()).toEqual(['作品B'])
+    // もうあるタグにまとめる
+    await user.click(within(row('青春')).getByTestId('bench-manage-rename'))
+    const prompt2 = await screen.findByRole('dialog', { name: 'タグ「青春」の名前を変える' })
+    await user.clear(within(prompt2).getByRole('textbox'))
+    await user.type(within(prompt2).getByRole('textbox'), '恋愛')
+    await user.click(within(prompt2).getByRole('button', { name: '名前を変える' }))
+    const merge = await screen.findByRole('dialog', { name: 'タグ「恋愛」にまとめますか？' })
+    expect(merge.textContent).toContain(
+      'タグ「恋愛」はもう4作品に付いています。「青春」の付いた2作品のタグを「恋愛」にまとめます（両方が付いた作品では1つにします）。',
+    )
+    await user.click(within(merge).getByRole('button', { name: 'まとめる' }))
+    await waitFor(() => expect(getData().benchWorks[a].tags).toEqual(['恋愛']))
+    // 削除（確かめてから）
+    await user.click(within(row('家族もの')).getByTestId('bench-manage-delete'))
+    const confirm = await screen.findByRole('dialog', { name: 'タグ「家族もの」を削除しますか？' })
+    expect(confirm.textContent).toContain(
+      '1作品からタグ「家族もの」を外します。作品とその分析は消えません（ゴミ箱には入りません）。新しい「14 検索用タグ」に同じジャンルがあれば、また付きます。',
+    )
+    await user.click(within(confirm).getByRole('button', { name: '削除' }))
+    await waitFor(() => expect(getData().benchWorks[b].tags).toEqual(['恋愛']))
+    expect(getData().benchWorks[c].tags).toEqual(['ミステリー'])
+    // 絞り込んでいたタグを削除すると、絞り込みから外す
+    await waitFor(() => expect(screen.getByTestId('bench-filter-count').textContent).toBe(''))
+    // 資料のタグはそのまま
+    expect(Object.values(getData().materials)[0].tags).toEqual(['軍事'])
+  })
+
+  it('絞っている時の並べ替えは、見えている作品の間で動かす', async () => {
+    const user = userEvent.setup()
+    const a = actions.addBenchWork({ name: '作品A' })
+    actions.addBenchWork({ name: '作品B' })
+    const c = actions.addBenchWork({ name: '作品C' })
+    actions.setBenchWorkTags(a, ['恋愛'])
+    actions.setBenchWorkTags(c, ['恋愛'])
+    renderShelf()
+    await user.click(chip('恋愛')!)
+    await user.click(screen.getByTestId('bench-edit-toggle'))
+    const cards = () => screen.getAllByTestId('bench-card')
+    expect(cardNames()).toEqual(['作品A', '作品C'])
+    expect((within(cards()[0]).getByTestId('bench-up') as HTMLButtonElement).disabled).toBe(true)
+    await user.click(within(cards()[1]).getByTestId('bench-up'))
+    await waitFor(() => expect(cardNames()).toEqual(['作品C', '作品A']))
+    expect(
+      Object.values(getData().benchWorks)
+        .sort((x, y) => x.order - y.order)
+        .map((w) => w.name),
+    ).toEqual(['作品C', '作品A', '作品B'])
   })
 })

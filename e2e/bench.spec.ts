@@ -1,6 +1,7 @@
 // 相対比較（2.5。内部名は bench）の E2E テスト: ホームの棚（追加・並べ替え・削除して戻す）、作品の画面（分析を追加・開閉・
 // 全文・直す）、手動の依頼文のコピーと結果の貼り付け（2回目は増えない）、作品批評タブの「相対比較する作品」と手動の依頼の分析、
-// 自分の原稿の分析（原稿ごとにまとめたカード・同じ原稿の分析）、360px の画面、ディープダーク。
+// 自分の原稿の分析（原稿ごとにまとめたカード・同じ原稿の分析）、作品のタグ（ジャンル。2.7。作品の画面の「ジャンル」・
+// 「14 検索用タグ」からの自動のタグ・棚のタグの絞り込みとタグの管理）、360px の画面、ディープダーク。
 import { expect, test, type Page } from '@playwright/test'
 import { darkSurfaces, noHorizontalScroll, openApp, seed, tapSize } from './helpers'
 
@@ -26,8 +27,51 @@ async function seedShelf(page: Page) {
     })
     actions.addBenchAnalysis(workId, { viewpoint: '文体', body: '## 文体\n短い文を重ねる。', runDate: '2026-10-02' })
     actions.addTitleBenchWork(titleId, workId)
+    // 作品のタグ（ジャンル。2.7）
+    actions.setBenchWorkTags(workId, ['SF', '宇宙', 'スペースオペラ'])
     return { titleId, workId }
   })
+}
+
+/** V29 の 02 が登録する「14 検索用タグ」を、作品の画面の「結果を貼り付け」で貼る答え */
+const genreAnswer = (sub: string, runDate: string) =>
+  [
+    '登録しました。',
+    '```novel-studio-v1',
+    JSON.stringify({
+      tool: 'novel_add_bench_analysis',
+      input: {
+        work: 'w:dummy',
+        items: [
+          {
+            viewpoint: '14 検索用タグ',
+            body_markdown: [
+              '**結論**：港町の喫茶店を舞台に、喪失から立ち直る二人を描く恋愛小説',
+              '担当：編集長（マーケター案を確定）',
+              '',
+              '- 判定したジャンル：恋愛',
+              '- 適性のある賞（選んだ理由）：架空の恋愛小説新人賞（理由）',
+              '※この2行には、役割の前の判定をそのまま写す。「ジャンル／サブジャンル」のジャンルは、判定したジャンルと同じ名前にする。',
+              `- ジャンル／サブジャンル：${sub}`,
+              '- トーン（例：静謐、疾走、乾いた、湿った、ユーモア）：静謐',
+            ].join('\n'),
+            run_date: runDate,
+          },
+        ],
+      },
+    }),
+    '```',
+  ].join('\n')
+
+/** 作品の画面の「ジャンル」のタグ */
+const workTags = (page: Page) => page.getByTestId('bench-work-tag').allTextContents()
+
+/** 作品の画面で「結果を貼り付け」から貼る */
+async function pasteAnswer(page: Page, answer: string) {
+  await page.getByTestId('bench-paste').click()
+  await page.getByTestId('paste-input').fill(answer)
+  await page.getByTestId('paste-add').click()
+  await expect(page.getByRole('status').filter({ hasText: '1件を追加しました' }).last()).toBeVisible()
 }
 
 const cardNames = (page: Page) => page.getByTestId('bench-card').getByTestId('bench-card-name').allTextContents()
@@ -362,6 +406,89 @@ test.describe('相対比較', () => {
     await expect(card.getByTestId('bench-run-label')).toHaveText(['第2稿', '第1稿'])
   })
 
+  test('作品のタグ: 「ジャンル」で付ける・外す。「14 検索用タグ」を貼ると数秒で付き、外したタグは読み込み直しても戻らず、新しい 14 で足される', async ({
+    page,
+  }) => {
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => ({
+      work: actions.addBenchWork({ name: '港の喫茶店', author: '山田' }),
+      control: actions.addBenchWork({ name: '【対照】港の喫茶店', author: '山田' }),
+    }))
+    await openApp(page, `/bench/${ids.work}`)
+    await expect(page.getByTestId('bench-work-no-tags')).toHaveText('タグなし')
+    await page.getByTestId('bench-edit-tags').click()
+    await page.getByTestId('bench-tag-input').fill('港町、')
+    await page.getByTestId('bench-tags-save').click()
+    await expect.poll(() => workTags(page)).toEqual(['港町'])
+    // 「結果を貼り付け」で 14 を貼ると、少し待ってから判定したジャンル・サブジャンルが付く
+    await pasteAnswer(page, genreAnswer('恋愛／青春・喪失', '2026-11-01'))
+    await expect.poll(() => workTags(page), { timeout: 10_000 }).toEqual(['港町', '恋愛', '青春', '喪失'])
+    // 1つ外す。読み込み直しても戻らない
+    await page.getByTestId('bench-edit-tags').click()
+    await dialog(page).getByRole('button', { name: 'タグ「青春」を外す' }).click()
+    await page.getByTestId('bench-tags-save').click()
+    await expect.poll(() => workTags(page)).toEqual(['港町', '恋愛', '喪失'])
+    await openApp(page, `/bench/${ids.work}`)
+    await page.waitForTimeout(2500)
+    expect(await workTags(page)).toEqual(['港町', '恋愛', '喪失'])
+    // もっと新しい日付の 14 を貼ると、そのジャンルが足される（外したタグは戻らない）
+    await pasteAnswer(page, genreAnswer('恋愛／大人・手紙', '2026-11-05'))
+    await expect.poll(() => workTags(page), { timeout: 10_000 }).toEqual(['港町', '恋愛', '喪失', '大人', '手紙'])
+    // 【対照】の作品には貼っても付かない（タグを付けるボタンも無い）
+    await openApp(page, `/bench/${ids.control}`)
+    await expect(page.getByTestId('bench-work-tagless')).toContainText('【対照】【監査】【横断】の作品にはタグを付けません')
+    await expect(page.getByTestId('bench-edit-tags')).toHaveCount(0)
+    await pasteAnswer(page, genreAnswer('恋愛／青春', '2026-11-01'))
+    await page.waitForTimeout(2500)
+    await expect(page.getByTestId('bench-work-no-tags')).toBeVisible()
+  })
+
+  test('ホームの棚: タグのチップで絞る（2つ選ぶとすべて持つ作品）。タグを管理で名前を変える・削除する', async ({ page }) => {
+    await openApp(page)
+    await seed(page, ({ actions }) => {
+      const a = actions.addBenchWork({ name: '作品A' })
+      const b = actions.addBenchWork({ name: '作品B' })
+      const c = actions.addBenchWork({ name: '作品C' })
+      actions.setBenchWorkTags(a, ['恋愛', '青春'])
+      actions.setBenchWorkTags(b, ['恋愛', '家族'])
+      actions.setBenchWorkTags(c, ['ミステリー'])
+      actions.addMaterial({ name: '資料', tags: ['軍事'] })
+    })
+    await openApp(page, '/?view=bench')
+    const chip = (tag: string) => page.locator(`[data-testid="bench-tag-chip"][data-tag="${tag}"]`)
+    await expect(page.getByTestId('bench-tag-chip')).toHaveCount(4)
+    await expect(page.locator('[data-testid="bench-tag-chip"][data-tag="軍事"]')).toHaveCount(0)
+    await chip('恋愛').click()
+    await expect(page.getByTestId('bench-filter-count')).toHaveText('2作品／全3作品')
+    await chip('青春').click()
+    await expect(page.getByTestId('bench-filter-count')).toHaveText('1作品／全3作品')
+    expect(await cardNames(page)).toEqual(['作品A'])
+    // 作品の画面から戻っても絞り込みは残る
+    await page.getByTestId('bench-card-link').first().click()
+    await expect(page.getByTestId('bench-page')).toBeVisible()
+    await page.goBack()
+    await expect(page.getByTestId('bench-filter-count')).toHaveText('1作品／全3作品')
+    await page.getByTestId('bench-filter-clear').click()
+    await expect(page.getByTestId('bench-card')).toHaveCount(3)
+    // タグを管理: 名前を変える・削除
+    await page.getByTestId('bench-manage-tags-open').click()
+    const manage = page.getByTestId('bench-manage-tags')
+    await manage.locator('[data-testid="bench-manage-tag"][data-tag="家族"]').getByTestId('bench-manage-rename').click()
+    const prompt = page.getByRole('dialog', { name: 'タグ「家族」の名前を変える' })
+    await prompt.getByRole('textbox').fill('家族もの')
+    await prompt.getByRole('button', { name: '名前を変える' }).click()
+    await expect(manage.locator('[data-testid="bench-manage-tag"][data-tag="家族もの"]')).toHaveCount(1)
+    await manage.locator('[data-testid="bench-manage-tag"][data-tag="ミステリー"]').getByTestId('bench-manage-delete').click()
+    const confirm = page.getByRole('dialog', { name: 'タグ「ミステリー」を削除しますか？' })
+    await expect(confirm).toContainText('1作品からタグ「ミステリー」を外します。作品とその分析は消えません')
+    await confirm.getByRole('button', { name: '削除' }).click()
+    await expect(manage.locator('[data-testid="bench-manage-tag"][data-tag="ミステリー"]')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(chip('家族もの')).toHaveCount(1)
+    await expect(chip('ミステリー')).toHaveCount(0)
+    expect(await cardNames(page)).toEqual(['作品A', '作品B', '作品C'])
+  })
+
   test('幅 360px でも横にはみ出さず、ボタンは押しやすい大きさ', async ({ page }, info) => {
     test.skip(info.project.name !== 'mobile', 'スマホの幅で確かめる')
     await page.setViewportSize({ width: 360, height: 760 })
@@ -370,6 +497,9 @@ test.describe('相対比較', () => {
     await openApp(page)
     await expect(page.getByTestId('home-jump-bench')).toBeVisible()
     await noHorizontalScroll(page)
+    // タグのチップは横にはみ出さない（1行にして横にスクロール）
+    await expect(page.getByTestId('bench-tag-chip')).toHaveCount(3)
+    await tapSize(page.getByTestId('bench-tag-chip').first(), 'bench-tag-chip', false)
     await page.getByTestId('bench-edit-toggle').click()
     await tapSize(page.getByTestId('bench-up').first(), 'bench-up')
     await tapSize(page.getByTestId('bench-delete').first(), 'bench-delete', false)
@@ -379,8 +509,11 @@ test.describe('相対比較', () => {
     await page.keyboard.press('Escape')
     await openApp(page, `/bench/${workId}`)
     await noHorizontalScroll(page)
-    for (const id of ['bench-work-edit', 'bench-add-analysis', 'bench-manual', 'bench-paste'])
+    for (const id of ['bench-work-edit', 'bench-edit-tags', 'bench-add-analysis', 'bench-manual', 'bench-paste'])
       await tapSize(page.getByTestId(id), id, false)
+    await page.getByTestId('bench-edit-tags').click()
+    await noHorizontalScroll(page)
+    await page.keyboard.press('Escape')
     await page.getByTestId('bench-analysis-toggle').first().click()
     for (const id of ['bench-analysis-copy', 'bench-analysis-edit', 'bench-analysis-delete'])
       await tapSize(page.getByTestId(id).first(), id, false)
@@ -405,11 +538,11 @@ test.describe('相対比較', () => {
     const project = testInfo.project.name
     const dir = 'e2e/artifacts/screens'
     await openApp(page)
-    await darkSurfaces(page, ['.home-bench-card', '.bw-chip', '.badge', '.btn'])
+    await darkSurfaces(page, ['.home-bench-card', '.bw-chip', '.badge', '.btn', '.home-mat-tag', '.home-mat-cardtag'])
     await page.getByTestId('bench-shelf').screenshot({ path: `${dir}/bench-${project}-deep-dark-shelf.png` })
     await openApp(page, `/bench/${workId}`)
     await page.getByTestId('bench-toggle-all').click()
-    await darkSurfaces(page, ['.bw-head', '.bw-note', '.sx-card', '.bw-chip', '.badge', '.btn', '.md code'])
+    await darkSurfaces(page, ['.bw-head', '.bw-note', '.sx-card', '.bw-chip', '.badge', '.btn', '.md code', '.mt-tag-chip'])
     await page.screenshot({ path: `${dir}/bench-${project}-deep-dark-work.png`, fullPage: true })
     await page.getByTestId('bench-manual').click()
     await darkSurfaces(page, ['.modal', '.bw-suggest-chip', '.input', '.btn'])

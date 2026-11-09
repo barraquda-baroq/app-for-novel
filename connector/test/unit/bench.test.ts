@@ -1,7 +1,14 @@
 // 相対比較（2.5。内部名は bench）のツール: 一覧・分析を読む・分析を追加、作品批評の相対比較する作品・比べた作品（bench_works）。
 // 相対比較の作品はタイトルの「Claude に見せる」と関係なく見せ、書き込みは「書き込みを許可」の時だけ。
 import { describe, expect, it } from 'vitest'
-import { addBenchAnalysis, addBenchWork, addTitleBenchWork, deleteBenchWork } from '../../../src/domain/benchOps'
+import {
+  addBenchAnalysis,
+  addBenchWork,
+  addTitleBenchWork,
+  deleteBenchWork,
+  setBenchWorkTags,
+} from '../../../src/domain/benchOps'
+import { applyAutoGenreTags } from '../../../src/domain/benchTags'
 import { addClaudeRecords, setTitleClaudeAccess } from '../../../src/domain/claudeOps'
 import { buildCritiqueResult } from '../../../src/claude/records'
 import { createTitle } from '../../../src/domain/entityOps'
@@ -635,5 +642,165 @@ describe('書き込み（novel_add_bench_analysis）', () => {
     expect(r.isError).toBe(true)
     expect(r.text).toContain('書き込みは停止中')
     expect(await call(off.core, 'novel_list_bench_works')).toContain('『銀河の果て』')
+  })
+})
+
+describe('作品のタグ（2.7。novel_list_bench_works の tags・タグの行・novel_get_bench_analysis のタグの行）', () => {
+  /** V29 の 02 が登録する「14 検索用タグ」の本文 */
+  const genre14 = (genre: string, sub: string) =>
+    [
+      '**結論**：検索の最短の言い方',
+      '担当：編集長（マーケター案を確定）',
+      '',
+      `- 判定したジャンル：${genre}`,
+      '- 適性のある賞（選んだ理由）：架空の新人賞（理由）',
+      '※この2行には、役割の前の判定をそのまま写す。「ジャンル／サブジャンル」のジャンルは、判定したジャンルと同じ名前にする。',
+      `- ジャンル／サブジャンル：${sub}`,
+      '- トーン（例：静謐、疾走、乾いた、湿った、ユーモア）：静謐',
+    ].join('\n')
+
+  /** 作品A（作者のタグ）・作品B（14 だけ。アプリはまだ付けていない）・作品C（タグなし）・【横断】恋愛（14 があっても付かない） */
+  function tagged() {
+    const s = bigShelf(3, 1, (i) => ['作品A', '作品B', '作品C'][i])
+    let data = setBenchWorkTags(s.data, s.ids[0], ['恋愛', '青春'])
+    data = addBenchAnalysis(data, s.ids[1], { viewpoint: '14 検索用タグ', body: genre14('恋愛', '恋愛／喪失・家族'), runDate: '2026-11-01' }).data
+    const cross = addBenchWork(data, { name: '【横断】恋愛', author: '編集部' })
+    data = addBenchAnalysis(cross.data, cross.result, { viewpoint: '14 検索用タグ', body: genre14('恋愛', '恋愛'), runDate: '2026-11-01' }).data
+    return { data, ids: [...s.ids, cross.result] }
+  }
+
+  it('一覧: 作品ごとに1行目の次に「  タグ: …」（アプリがまだ付けていない 14 のタグも）。1回目だけ「タグ（作品の数）」の行', async () => {
+    const fake = new FakeFirebase()
+    const s = tagged()
+    const { core } = await pairedCore(fake, s.data)
+    const text = await call(core, 'novel_list_bench_works')
+    const lines = text.split('\n')
+    expect(lines[0]).toBe('=== 相対比較（4作品。作者が比べるために読む既存の作品）===')
+    expect(lines[1]).toBe('タグ（作品の数）: 恋愛 2・家族 1・青春 1・喪失 1')
+    const after = (ref: string) => lines[lines.findIndex((l) => l.startsWith(ref)) + 1]
+    expect(after(`${shortId('benchWork', s.ids[0])}『作品A』`)).toBe('  タグ: 恋愛・青春')
+    expect(after(`${shortId('benchWork', s.ids[1])}『作品B』`)).toBe('  タグ: 恋愛・喪失・家族')
+    expect(after(`${shortId('benchWork', s.ids[2])}『作品C』`)).toMatch(/^ {2}分析 1件/)
+    expect(after(`${shortId('benchWork', s.ids[3])}『【横断】恋愛』`)).toMatch(/^ {2}分析 1件/)
+    // 続きの答えには出さない
+    const big = bigShelf(24, 10)
+    const fake2 = new FakeFirebase()
+    const { core: core2 } = await pairedCore(fake2, setBenchWorkTags(big.data, big.ids[0], ['SF']))
+    const first = await call(core2, 'novel_list_bench_works', { char_budget: 2_000 })
+    expect(first.split('\n')[1]).toBe('タグ（作品の数）: SF 1')
+    const second = await call(core2, 'novel_list_bench_works', { cursor: nextCursor(first)! })
+    expect(second).not.toContain('タグ（作品の数）')
+    // タグが1つも無ければ出さない
+    const fake3 = new FakeFirebase()
+    const { core: core3 } = await pairedCore(fake3, bigShelf(2, 1).data)
+    expect(await call(core3, 'novel_list_bench_works')).not.toContain('タグ')
+  })
+
+  it('tags で絞る: すべて持つ作品だけ（名前そのもので照らす。部分一致ではない。全角と半角は問わない）。ほかの絞り込みと一緒にも', async () => {
+    const fake = new FakeFirebase()
+    const s = tagged()
+    const { core } = await pairedCore(fake, s.data)
+    const love = await call(core, 'novel_list_bench_works', { tags: ['恋愛'] })
+    expect(love).toContain('=== 相対比較（タグ「恋愛」を持つ作品 2作品／全4作品。作者が比べるために読む既存の作品）===')
+    expect(listedIds(love)).toEqual([s.ids[0], s.ids[1]].map((id) => shortId('benchWork', id)))
+    // 絞っても「タグ（作品の数）」は全作品で数える
+    expect(love.split('\n')[1]).toBe('タグ（作品の数）: 恋愛 2・家族 1・青春 1・喪失 1')
+    const both = await call(core, 'novel_list_bench_works', { tags: ['恋愛', ' 家族 '] })
+    expect(both).toContain('タグ「恋愛」「家族」をすべて持つ作品 1作品／全4作品')
+    expect(listedIds(both)).toEqual([shortId('benchWork', s.ids[1])])
+    expect(listedIds(await call(core, 'novel_list_bench_works', { tags: ['恋'] }))).toEqual([])
+    expect(await call(core, 'novel_list_bench_works', { tags: ['恋'] })).toContain('（タグ「恋」を持つ作品はありません）')
+    const mixed = await call(core, 'novel_list_bench_works', { names: ['作品'], exclude_names: ['B'], tags: ['恋愛'] })
+    expect(mixed).toContain('作品名に「作品」を含む・「B」を含まない・タグ「恋愛」を持つ作品 1作品／全4作品')
+    expect(listedIds(mixed)).toEqual([shortId('benchWork', s.ids[0])])
+    // 形の違う tags は断る
+    for (const tags of ['恋愛', [1], ['あ'.repeat(21)], Array.from({ length: 11 }, (_, i) => `t${i}`)]) {
+      const bad = await core.callTool('novel_list_bench_works', { tags })
+      expect(bad.isError).toBe(true)
+      expect(bad.text).toContain('names・exclude_names・tags は文字列の配列にしてください（それぞれ10個まで・1つ80字まで。tags は1つ20字まで）')
+    }
+  })
+
+  it('cursor は tags も続ける。違う tags は断る。tags の無い前の版の cursor も読める', async () => {
+    const fake = new FakeFirebase()
+    const big = bigShelf(12, 10)
+    let data = big.data
+    for (const id of big.ids.filter((_, i) => i % 2)) data = setBenchWorkTags(data, id, ['SF'])
+    const { core } = await pairedCore(fake, data)
+    const first = await call(core, 'novel_list_bench_works', { tags: ['SF'], char_budget: 2_000 })
+    const next = nextCursor(first)!
+    expect(next).toBeTruthy()
+    const second = await call(core, 'novel_list_bench_works', { cursor: next })
+    expect(second).toContain('=== 相対比較の続き（タグ「SF」を持つ作品 6作品のうち')
+    const odd = big.ids.filter((_, i) => i % 2).map((id) => shortId('benchWork', id))
+    expect([...listedIds(first), ...listedIds(second)].every((id) => odd.includes(id))).toBe(true)
+    expect(await call(core, 'novel_list_bench_works', { cursor: next, tags: ['ＳＦ'] })).toBe(second)
+    const other = await core.callTool('novel_list_bench_works', { cursor: next, tags: ['宇宙'] })
+    expect(other.isError).toBe(true)
+    expect(other.text).toContain('cursor が別の条件のものです（cursor だけを渡すか、同じ names・exclude_names・tags で渡してください）')
+    // tags を持たない前の版の cursor（2.6）は、タグで絞らずに続ける
+    const old = encodeCursor({ k: 'benchList', n: [], x: [], a: big.ids[0], o: data.benchWorks[big.ids[0]].order, b: 2_000 })
+    const cont = await call(core, 'novel_list_bench_works', { cursor: old })
+    expect(cont).toMatch(/^=== 相対比較の続き（12作品のうち2作品目から／全12作品）===/)
+  })
+
+  it('アプリが付けた後に作者が外したタグは出ない（autoTagsFrom が進んでいるので 14 から付き直さない）', async () => {
+    const fake = new FakeFirebase()
+    const s = tagged()
+    const data = setBenchWorkTags(applyAutoGenreTags(s.data), s.ids[1], ['恋愛'])
+    const { core } = await pairedCore(fake, data)
+    const text = await call(core, 'novel_list_bench_works', { tags: ['家族'] })
+    expect(listedIds(text)).toEqual([])
+    expect(text).toContain('タグ（作品の数）: 恋愛 2・青春 1')
+  })
+
+  it('novel_get_bench_analysis: 書誌の行の次に「タグ: …」（書誌の行は変えない）。analysis_id の1件だけの答えは今のまま', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    let data = setBenchWorkTags(s.data, s.workA, ['SF', '宇宙'])
+    const b = addBenchAnalysis(data, s.workB, { viewpoint: '14 検索用タグ', body: genre14('恋愛', '恋愛／喪失'), runDate: '2026-11-01' })
+    data = b.data
+    const { core } = await pairedCore(fake, data)
+    const a = await call(core, 'novel_get_bench_analysis', { work: '銀河の果て' })
+    expect(a.split('\n').slice(0, 3)).toEqual([
+      `=== 相対比較の作品 ${shortId('benchWork', s.workA)}『銀河の果て』（山田） ===`,
+      '山田・2019',
+      'タグ: SF・宇宙',
+    ])
+    const auto = await call(core, 'novel_get_bench_analysis', { work: '海の記憶' })
+    expect(auto.split('\n').slice(1, 3)).toEqual(['佐藤', 'タグ: 恋愛・喪失'])
+    const one = await call(core, 'novel_get_bench_analysis', { work: s.workA, analysis_id: shortId('benchAnalysis', s.firstAnalysis) })
+    expect(one).not.toContain('タグ:')
+  })
+
+  it('new_work に tags・autoTagsFrom が付いていても作品に入れない（タグはアプリが 14 から付ける）', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core } = await pairedCore(fake, s.data)
+    const r = await core.callTool('novel_add_bench_analysis', {
+      work: '星を継ぐ',
+      new_work: { name: '星を継ぐ', author: '高橋', tags: ['SF'], autoTagsFrom: { analysisId: 'x', runDate: '2026-11-01', createdAt: 1 } },
+      items: [{ viewpoint: '14 検索用タグ', body_markdown: genre14('SF', 'SF／宇宙'), run_date: '2026-11-01' }],
+    })
+    expect(r.isError).toBeUndefined()
+    const doc = fake.recordDocs(OWNER).find((d) => d.name.includes('/benchWorks:') && d.fields.device?.stringValue === 'claude-connector')!
+    const rec = decodeRecord(
+      {
+        table: 'benchWorks',
+        id: doc.fields.id.stringValue,
+        json: doc.fields.json.stringValue,
+        chunks: 0,
+        deleted: false,
+        hash: doc.fields.hash.stringValue,
+        updated: null,
+        device: 'claude-connector',
+      } as unknown as RecordDoc,
+      () => undefined,
+    ) as Record<string, unknown>
+    expect(rec.name).toBe('星を継ぐ')
+    expect('tags' in rec).toBe(false)
+    expect('autoTagsFrom' in rec).toBe(false)
+    // 読む時は 14 から付くタグを見せる
+    expect(await call(core, 'novel_list_bench_works', { tags: ['宇宙'] })).toContain('『星を継ぐ』（高橋）')
   })
 })

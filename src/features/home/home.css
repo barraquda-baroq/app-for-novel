@@ -822,7 +822,8 @@ button.home-bench-toggle {
   pointer-events: none;
 }
 
-/* タグのチップの列（押すと絞る。いくつか選ぶと、すべてのタグを持つ資料だけ）と、選択の解除・タグを管理 */
+/* タグのチップの列（押すと絞る。いくつか選ぶと、すべてのタグを持つ資料だけ）と、選択の解除・タグを管理。
+   相対比較の棚のタグ（2.7）も同じもの（外側の .tag-bench で相対比較の色。tags.css） */
 .home-mat-tagbar {
   display: flex;
   flex-direction: column;
@@ -859,13 +860,13 @@ button.home-bench-toggle {
 }
 
 .home-mat-tag:hover {
-  border-color: var(--area-materials);
+  border-color: var(--tag-accent, var(--area-materials));
 }
 
 .home-mat-tag.is-on {
-  border-color: color-mix(in srgb, var(--area-materials) 60%, var(--border));
-  background: var(--area-materials-soft);
-  color: var(--area-materials-text);
+  border-color: color-mix(in srgb, var(--tag-accent, var(--area-materials)) 60%, var(--border));
+  background: var(--tag-soft, var(--area-materials-soft));
+  color: var(--tag-text, var(--area-materials-text));
 }
 
 .home-mat-tag-name {
@@ -891,8 +892,8 @@ button.home-bench-toggle {
 }
 
 .home-mat-tag.is-on .home-mat-tag-count {
-  background: color-mix(in srgb, var(--area-materials) 22%, transparent);
-  color: var(--area-materials-text);
+  background: color-mix(in srgb, var(--tag-accent, var(--area-materials)) 22%, transparent);
+  color: var(--tag-text, var(--area-materials-text));
 }
 
 .btn.home-mat-tags-more {

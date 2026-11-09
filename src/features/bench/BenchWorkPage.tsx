@@ -3,6 +3,8 @@
 // 分析は手で足す・直す・削除でき、「Claude に頼む（手動）」で PDF を置いた claude.ai のプロジェクトに渡す依頼文をコピーし、
 // 「結果を貼り付け」で取り込む（2回貼り付けても増えない）。
 // 自分の原稿を何回も分析した作品（「【原稿】原稿名（第2稿・2回目）」）には、同じ原稿のほかの回への一覧も出す。
+// 「比べるタイトル」の上の「ジャンル」に作品のタグ（2.7）を出し、作者が付け足し・外し・直しをする（「14 検索用タグ」の判定した
+// ジャンル・サブジャンルは自動で付く）。【対照】【監査】【横断】の作品には付けない（残っているタグを外すことはできる）。
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { benchAnalysesOf, benchViewpointGroups } from '../../claude/benchOrder'
@@ -18,7 +20,7 @@ import { attempt, notify } from '../../store/uiStore'
 import { copyText, formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { useDocumentTitle } from '../../ui/hooks'
-import { ChevronRightIcon, CopyIcon, EditIcon, PlusIcon, ShelfIcon, TrashIcon } from '../../ui/icons'
+import { ChevronRightIcon, CopyIcon, EditIcon, PlusIcon, ShelfIcon, TagIcon, TrashIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
 import { AskIcon, PasteIcon, SparkIcon } from '../claude/claudeIcons'
@@ -27,10 +29,13 @@ import { Markdown } from '../claude/Markdown'
 import { PasteResultDialog } from '../claude/PasteResultDialog'
 import { AnalysisDialog } from './AnalysisDialog'
 import { BenchManualDialog } from './BenchManualDialog'
+import { BenchTagsEditDialog } from './BenchTagDialogs'
 import { BenchWorkDialog } from './BenchWorkDialog'
 import {
   analysisPreview,
+  benchTags,
   biblioLine,
+  canTagWork,
   createdByLabel,
   deleteWorkMessage,
   runDateLabel,
@@ -40,6 +45,7 @@ import {
   type ManuscriptRun,
 } from './benchLogic'
 import '../title/strategy/claudeSections.css'
+import '../materials/tags.css'
 import './bench.css'
 
 /** 開いた分析で、これより長ければ頭だけを出して「全文を表示」（閉じている間は頭だけを変換する。Markdown.tsx） */
@@ -77,12 +83,15 @@ function BenchWorkView({ work }: { work: BenchWork }) {
     return counts
   }, [manuscript, data.benchAnalyses]) // eslint-disable-line react-hooks/exhaustive-deps
   const [editWork, setEditWork] = useState(false)
+  const [editTags, setEditTags] = useState(false)
   const [editing, setEditing] = useState<{ analysis: BenchAnalysis | null } | null>(null)
   const [manual, setManual] = useState(false)
   const [paste, setPaste] = useState(false)
   const [open, setOpen] = useState<ReadonlySet<ID>>(() => new Set())
   const [full, setFull] = useState<ReadonlySet<ID>>(() => new Set())
   const biblio = biblioLine(work)
+  const tags = benchTags(work)
+  const taggable = canTagWork(work)
   const createdBy = createdByLabel(work.source)
   const updated = workLastUpdated(work, analyses)
   const totalChars = useMemo(() => analyses.reduce((n, a) => n + a.body.length, 0), [analyses])
@@ -152,6 +161,41 @@ function BenchWorkView({ work }: { work: BenchWork }) {
             <div>
               <dt>PDF の置き場所</dt>
               <dd data-testid="bench-work-pdf-place">{work.pdfPlace.trim() || '（未記入）'}</dd>
+            </div>
+            <div>
+              <dt>ジャンル</dt>
+              <dd className="bw-tags tag-bench" data-testid="bench-work-tags">
+                <TagIcon className="icon mt-tags-icon" />
+                {tags.length ? (
+                  <ul className="mt-tag-list" aria-label="ジャンル（タグ）">
+                    {tags.map((t, i) => (
+                      <li key={`${t}-${i}`} className="mt-tag-chip is-static" data-testid="bench-work-tag">
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="small muted" data-testid="bench-work-no-tags">
+                    タグなし
+                  </span>
+                )}
+                {taggable || tags.length ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setEditTags(true)}
+                    data-testid="bench-edit-tags"
+                  >
+                    <EditIcon />
+                    {tags.length ? 'タグを編集' : 'タグを付ける'}
+                  </button>
+                ) : null}
+                {taggable ? null : (
+                  <span className="small muted" data-testid="bench-work-tagless">
+                    （【対照】【監査】【横断】の作品にはタグを付けません）
+                  </span>
+                )}
+              </dd>
             </div>
             <div>
               <dt>比べるタイトル</dt>
@@ -254,6 +298,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
         </section>
       </main>
       {editWork ? <BenchWorkDialog work={work} onClose={() => setEditWork(false)} /> : null}
+      {editTags ? <BenchTagsEditDialog work={work} onClose={() => setEditTags(false)} /> : null}
       {editing ? (
         <AnalysisDialog
           workId={work.id}

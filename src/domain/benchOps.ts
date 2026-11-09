@@ -2,15 +2,34 @@
 // 作品はどのタイトルにも属さず、すべてのタイトルで共有する。各タイトルは比べる作品を選べる（Title.benchWorkIds）。
 // 分析は1つの作品にいくつでも（観点・Markdown の本文・日付）。Claude（コネクタ・貼り付け）が作った分析も、作った後は
 // ふつうのレコードとして編集・削除できる。削除はゴミ箱へ（作品はその分析と一緒に1件、分析は1件ずつ）。
+// 作品のタグ（ジャンル。2.7）は資料のタグと同じ決まり（tags.ts。1つ20字・1作品20個・refKey が同じものは1つ）で、別の項目。
+// 作者が作品の画面で付け外しし、「14 検索用タグ」の判定したジャンル・サブジャンルはアプリが自動で付ける（benchTags.ts）。
+// 【対照】【監査】【横断】で始まる作品にはタグを付けない（外すのはできる）。
 import { jstDate, isIsoDate } from '../claude/dates'
+import { refKey } from '../claude/refs'
 import { CLAUDE_RECORD_VERSION } from '../claude/visibility'
 import { deepEqual } from './equal'
+import {
+  displayTags,
+  normalizeTags,
+  removeTagIn,
+  renameTagIn,
+  rewriteTags,
+  TAG_LIMITS,
+  tagKey,
+  tagName,
+  tagsInUse,
+  type TagUse,
+} from './tags'
 import { orderOrigin, putInTrash, trashLabel } from './trash'
 import { transact, type Tx } from './tx'
 import { DomainError, type AppData, type BenchAnalysis, type BenchWork, type ID, type Title } from './types'
 import { byOrder, newId, nextOrder, now, stepOrder } from './util'
 
-/** 長さの上限（短い項目だけ。分析の本文・メモには上限を設けない）。src/claude/records.ts の RECORD_LIMITS と同じ値 */
+/**
+ * 長さの上限（短い項目だけ。分析の本文・メモには上限を設けない）。src/claude/records.ts の RECORD_LIMITS と同じ値。
+ * tag はタグ1つの字数、tags は1つの作品に付けられるタグの数（資料のタグと同じ。tags.ts）
+ */
 export const BENCH_LIMITS = {
   workName: 80,
   author: 80,
@@ -19,6 +38,8 @@ export const BENCH_LIMITS = {
   genre: 40,
   pdfPlace: 200,
   viewpoint: 40,
+  tag: TAG_LIMITS.tag,
+  tags: TAG_LIMITS.tags,
 } as const
 
 /** 文字（コードポイント）の数 */
@@ -84,6 +105,8 @@ export interface BenchWorkInput {
   genre?: string
   pdfPlace?: string
   note?: string
+  /** タグ（付けた順。前後の空白を除き、空のもの・refKey が同じものの2つ目からは除く） */
+  tags?: readonly string[]
 }
 
 function checkLength(value: string | undefined, max: number, label: string): void {
@@ -118,13 +141,15 @@ function workFields(input: BenchWorkInput): Partial<BenchWork> {
     checkLength(v.trim(), BENCH_LIMITS[key], label)
     out[key] = v.trim()
   }
+  if (input.tags !== undefined) out.tags = normalizeBenchTags(input.tags)
   return out
 }
 
-/** 空の任意項目（出版社・刊行年・ジャンル）を取り除く */
+/** 空の任意項目（出版社・刊行年・ジャンル・タグ）を取り除く */
 function dropEmptyOptional(w: BenchWork): BenchWork {
   const out = { ...w }
   for (const key of ['publisher', 'year', 'genre'] as const) if (out[key] !== undefined && !out[key]!.trim()) delete out[key]
+  if (out.tags !== undefined && out.tags.length === 0) delete out.tags
   return out
 }
 
@@ -142,6 +167,7 @@ export function addBenchWork(data: AppData, input: BenchWorkInput): { data: AppD
       ...(fields.publisher ? { publisher: fields.publisher } : {}),
       ...(fields.year ? { year: fields.year } : {}),
       ...(fields.genre ? { genre: fields.genre } : {}),
+      ...(fields.tags?.length ? { tags: fields.tags } : {}),
       order: nextOrder(tx.all('benchWorks')),
       createdAt: ts,
       updatedAt: ts,
@@ -165,6 +191,80 @@ export function updateBenchWork(data: AppData, id: ID, patch: BenchWorkInput): A
     if (deepEqual(next, w)) return
     tx.put('benchWorks', { ...next, updatedAt: now() })
   }).data
+}
+
+// ---------- 作品のタグ（ジャンル） ----------
+
+/** タグを付けない作品の名前の頭（タグは集計と絞り込みに使うので、擬似的な作品には付けない。【対照】【原稿】… も） */
+const TAGLESS_PREFIXES = ['【対照】', '【監査】', '【横断】'].map(refKey)
+
+/** タグを付けない作品か（作品名が【対照】【監査】【横断】で始まる。全角と半角・前後の空白の違いは問わない） */
+export function isTaglessWork(w: Pick<BenchWork, 'name'>): boolean {
+  const key = refKey(typeof w.name === 'string' ? w.name : '')
+  return TAGLESS_PREFIXES.some((p) => key.startsWith(p))
+}
+
+/**
+ * 作品に付けるタグの形にする（付けた順のまま。前後の空白を除き、空のもの・refKey が同じものの2つ目からは除く）。
+ * 1つ20字・1つの作品に20個を超えれば DomainError
+ */
+export function normalizeBenchTags(tags: readonly string[]): string[] {
+  return normalizeTags(tags, '作品')
+}
+
+/** 作品のタグ（表示できる形。付けた順） */
+export function benchWorkTags(w: Pick<BenchWork, 'tags'>): string[] {
+  return displayTags(w.tags) ?? []
+}
+
+const TAGLESS_ERROR = '【対照】【監査】【横断】の作品にはタグを付けません'
+
+/** タグを付けない作品に、今は付いていないタグを付けようとしたら DomainError（外すのはできる） */
+function checkTaggable(w: BenchWork, next: readonly string[]): void {
+  if (!isTaglessWork(w)) return
+  const have = new Set(benchWorkTags(w).map(tagKey))
+  if (next.some((t) => !have.has(tagKey(t)))) throw new DomainError(TAGLESS_ERROR)
+}
+
+/** 作品のタグを付け直す（並びは渡した順。空にすればタグなし。値が変わらなければ何もしない） */
+export function setBenchWorkTags(data: AppData, id: ID, tags: readonly string[]): AppData {
+  const w = data.benchWorks[id]
+  if (!w) throw new DomainError('相対比較の作品が見つかりません')
+  checkTaggable(w, normalizeBenchTags(tags))
+  return updateBenchWork(data, id, { tags })
+}
+
+/**
+ * 作品のタグに、足したもの・外したものだけを当てる（作品の画面のダイアログ。開いている間に自動のタグが付いても消えないように、
+ * 開いた時のタグとの差分を今のタグに当てる）。外したもの（refKey で照らす）を除き、まだ無いものを末尾に足す
+ */
+export function editBenchWorkTags(data: AppData, id: ID, diff: { add: readonly string[]; remove: readonly string[] }): AppData {
+  const w = data.benchWorks[id]
+  if (!w) throw new DomainError('相対比較の作品が見つかりません')
+  const removed = new Set(diff.remove.map(tagKey))
+  const kept = benchWorkTags(w).filter((t) => !removed.has(tagKey(t)))
+  const next = normalizeBenchTags([...kept, ...diff.add])
+  checkTaggable(w, next)
+  return updateBenchWork(data, id, { tags: next })
+}
+
+/**
+ * タグの名前を変える（すべての作品で付け替える。付け替えた先のタグがもう付いている作品では1つにする（先に付いていた位置のまま））。
+ * 名前を変えた作品の数を返す。名前が空・20字を超えれば DomainError。自動のタグの取り込み（autoTagsFrom）は変えない
+ */
+export function renameBenchTag(data: AppData, from: string, to: string): { data: AppData; result: number } {
+  const name = tagName(to)
+  return transact(data, (tx) => rewriteTags(tx, 'benchWorks', from, renameTagIn(name)))
+}
+
+/** タグをすべての作品から外す。外した作品の数を返す（autoTagsFrom は変えないので、同じ 14 からは付き直さない） */
+export function removeBenchTag(data: AppData, tag: string): { data: AppData; result: number } {
+  return transact(data, (tx) => rewriteTags(tx, 'benchWorks', tag, removeTagIn))
+}
+
+/** 使っている作品のタグ（作品の数の多い順、同じなら名前の順。refKey が同じものは1つに数える。資料のタグは数えない） */
+export function benchTagsInUse(data: Pick<AppData, 'benchWorks'>): TagUse[] {
+  return tagsInUse(sortedBenchWorks(data))
 }
 
 /** 棚の index 番目（0から）へ移す */

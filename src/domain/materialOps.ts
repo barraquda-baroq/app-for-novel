@@ -5,11 +5,22 @@
 // 削除はゴミ箱へ（資料はその記録と一緒に1件、記録は1件ずつ）。相対比較（benchOps.ts）と同じ形。
 // タグ（ミリタリ・現代・戦闘…）は作者が自分で付けて管理する（Claude は付けない）。1つの資料にいくつでも（20個まで）付けられ、
 // 名前の照らし方は refs.ts の refKey（全角と半角・続く空白の違いは同じタグ）。名前の付け替え・外すのは、すべての資料でいっしょに。
+// タグの決まりと部品は相対比較の作品のタグと共通（tags.ts）。資料のタグと作品のタグは別の項目で、混ぜない。
 import { jstDate, isIsoDate } from '../claude/dates'
-import { refKey } from '../claude/refs'
 import { CLAUDE_RECORD_VERSION } from '../claude/visibility'
 import { viewpointKey } from './benchOps'
 import { deepEqual } from './equal'
+import {
+  normalizeTags,
+  removeTagIn,
+  renameTagIn,
+  rewriteTags,
+  TAG_LIMITS,
+  tagKey as sharedTagKey,
+  tagName,
+  tagsInUse,
+  type TagUse,
+} from './tags'
 import { orderOrigin, putInTrash, trashLabel } from './trash'
 import { transact, type Tx } from './tx'
 import { DomainError, type AppData, type ID, type Material, type MaterialNote } from './types'
@@ -26,8 +37,8 @@ export const MATERIAL_LIMITS = {
   year: 20,
   pdfPlace: 200,
   section: 40,
-  tag: 20,
-  tags: 20,
+  tag: TAG_LIMITS.tag,
+  tags: TAG_LIMITS.tags,
 } as const
 
 /** 決まった項目（この順に並べる。ほかの名前の項目は、この後に最初に作った順） */
@@ -172,71 +183,20 @@ export function updateMaterial(data: AppData, id: ID, patch: MaterialInput): App
 
 // ---------- タグ ----------
 
-/** タグを比べる形（refs.ts の refKey。全角と半角・続く空白・前後の空白の違いは同じタグ） */
-export const tagKey = (tag: string): string => refKey(tag)
-
-/** 並びの中で、前後の空白を除き、空のもの・refKey が同じものの2つ目から（と文字列でないもの）を除く。上限は確かめない */
-function uniqueTags(tags: readonly unknown[]): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const raw of tags) {
-    if (typeof raw !== 'string') continue
-    const tag = raw.trim()
-    const key = tagKey(tag)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    out.push(tag)
-  }
-  return out
-}
+/** タグを比べる形（refs.ts の refKey。全角と半角・続く空白・前後の空白の違いは同じタグ。tags.ts と同じ） */
+export const tagKey = sharedTagKey
 
 /**
  * 資料に付けるタグの形にする（付けた順のまま。前後の空白を除き、空のもの・refKey が同じものの2つ目からは除く）。
  * 1つ20字・1つの資料に20個を超えれば DomainError
  */
 export function normalizeMaterialTags(tags: readonly string[]): string[] {
-  const out = uniqueTags(tags)
-  for (const tag of out) checkLength(tag, MATERIAL_LIMITS.tag, 'タグ')
-  if (out.length > MATERIAL_LIMITS.tags) throw new DomainError(`タグは1つの資料に${MATERIAL_LIMITS.tags}個までにしてください`)
-  return out
+  return normalizeTags(tags, '資料')
 }
 
 /** 資料のタグを付け直す（並びは渡した順。空にすればタグなし。値が変わらなければ何もしない） */
 export function setMaterialTags(data: AppData, id: ID, tags: readonly string[]): AppData {
   return updateMaterial(data, id, { tags })
-}
-
-/** 新しいタグの名前を確かめる（前後の空白を除いたもの） */
-function tagName(to: string): string {
-  const name = to.trim()
-  if (!tagKey(name)) throw new DomainError('タグの名前を入れてください')
-  checkLength(name, MATERIAL_LIMITS.tag, 'タグ')
-  return name
-}
-
-/** すべての資料で、タグ from（refKey で照らす）を書き換える。書き換えた資料の数を返す */
-function rewriteTag(
-  data: AppData,
-  from: string,
-  fn: (tags: string[], fromKey: string) => string[],
-): { data: AppData; result: number } {
-  const fromKey = tagKey(from)
-  return transact(data, (tx) => {
-    if (!fromKey) return 0
-    const ts = now()
-    let changed = 0
-    for (const m of tx.all('materials')) {
-      const tags: readonly unknown[] = Array.isArray(m.tags) ? m.tags : []
-      if (!tags.some((t) => typeof t === 'string' && tagKey(t) === fromKey)) continue
-      const next = fn(uniqueTags(tags), fromKey)
-      if (deepEqual(next, m.tags)) continue
-      const out: Material = { ...m, tags: next, updatedAt: ts }
-      if (next.length === 0) delete out.tags
-      tx.put('materials', out)
-      changed += 1
-    }
-    return changed
-  })
 }
 
 /**
@@ -245,35 +205,20 @@ function rewriteTag(
  */
 export function renameMaterialTag(data: AppData, from: string, to: string): { data: AppData; result: number } {
   const name = tagName(to)
-  return rewriteTag(data, from, (tags, fromKey) => uniqueTags(tags.map((t) => (tagKey(t) === fromKey ? name : t))))
+  return transact(data, (tx) => rewriteTags(tx, 'materials', from, renameTagIn(name)))
 }
 
 /** タグをすべての資料から外す。外した資料の数を返す */
 export function removeMaterialTag(data: AppData, tag: string): { data: AppData; result: number } {
-  return rewriteTag(data, tag, (tags, fromKey) => tags.filter((t) => tagKey(t) !== fromKey))
+  return transact(data, (tx) => rewriteTags(tx, 'materials', tag, removeTagIn))
 }
 
 /** 使っているタグと、そのタグを付けた資料の数 */
-export interface MaterialTagUse {
-  /** タグの名前（書き方は棚で最初に出る資料のまま） */
-  tag: string
-  count: number
-}
+export type MaterialTagUse = TagUse
 
 /** 使っているタグ（資料の数の多い順、同じなら名前の順。refKey が同じものは1つに数える） */
 export function materialTagsInUse(data: Pick<AppData, 'materials'>): MaterialTagUse[] {
-  const out = new Map<string, MaterialTagUse>()
-  for (const m of sortedMaterials(data)) {
-    for (const tag of uniqueTags(Array.isArray(m.tags) ? m.tags : [])) {
-      const key = tagKey(tag)
-      const cur = out.get(key)
-      if (cur) cur.count += 1
-      else out.set(key, { tag, count: 1 })
-    }
-  }
-  return [...out.values()].sort(
-    (a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'ja') || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0),
-  )
+  return tagsInUse(sortedMaterials(data))
 }
 
 /** 棚の index 番目（0から）へ移す */

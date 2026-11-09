@@ -63,6 +63,38 @@ export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
   critiqueResults: { benchWorkIds: asString },
   // 2.6: 資料のタグ（作者が付ける。2台で別々に付けても両方残り、片方で外せば外れる）
   materials: { tags: asTag },
+  // 2.7: 相対比較の作品のタグ（資料のタグと同じ照らし方。2台が別々に自動のタグを付けても両方残る）
+  benchWorks: { tags: asTag },
+}
+
+type PickNewer = (a: unknown, b: unknown) => unknown
+
+/** 自動のタグを取り込んだ 14 の印（2.7。src/domain/benchTags.ts の AutoTagMark）。日付 → 作った時刻 → id の順で新しい方 */
+const newerMark: PickNewer = (a, b) => {
+  const ok = (v: unknown): v is { analysisId: string; runDate: string; createdAt: number } => {
+    const m = v as Record<string, unknown> | null
+    return (
+      !!m &&
+      typeof m === 'object' &&
+      typeof m.analysisId === 'string' &&
+      typeof m.runDate === 'string' &&
+      typeof m.createdAt === 'number' &&
+      Number.isFinite(m.createdAt)
+    )
+  }
+  if (!ok(a)) return ok(b) ? b : a
+  if (!ok(b)) return a
+  if (a.runDate !== b.runDate) return a.runDate > b.runDate ? a : b
+  if (a.createdAt !== b.createdAt) return a.createdAt > b.createdAt ? a : b
+  return a.analysisId <= b.analysisId ? a : b
+}
+
+/**
+ * 両方の端末で変わっていたら、新しい方を採る項目（2.7）。相対比較の作品の autoTagsFrom: 古い方に戻ると、新しい 14 をもう一度
+ * 取り込んで、作者が外したタグを戻してしまうため
+ */
+export const NEWER_FIELDS: Partial<Record<TableName, Record<string, PickNewer>>> = {
+  benchWorks: { autoTagsFrom: newerMark },
 }
 
 /**
@@ -227,7 +259,9 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
       out[k] = mv
     } else {
       const listKey = LIST_FIELDS[table]?.[k]
+      const newer = NEWER_FIELDS[table]?.[k]
       if (listKey) out[k] = mergeList(bv, mv, tv, listKey)
+      else if (newer) out[k] = newer(mv, tv)
       else if (table === 'versions' && k === 'body' && (opts.body ?? 'theirs') === 'theirs') bodyConflict = true
       else if (TEXT_FIELDS[table]?.includes(k) && typeof mv === 'string' && typeof tv === 'string') {
         out[k] = joinConflictText(tv, mv, opts.device)
@@ -294,6 +328,12 @@ function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null, 
   const m = mine as unknown as Record<string, unknown>
   for (const [field, key] of Object.entries(LIST_FIELDS[table] ?? {})) {
     if (field in out || field in m) out[field] = unionList(out[field], m[field], key)
+  }
+  for (const [field, pick] of Object.entries(NEWER_FIELDS[table] ?? {})) {
+    if (!(field in m)) continue
+    const v = field in out ? pick(m[field], out[field]) : m[field]
+    if (v === undefined) delete out[field]
+    else out[field] = v
   }
   const result: MergeResult = { record: out as Rec }
   const mineV = mine as unknown as { body?: unknown }

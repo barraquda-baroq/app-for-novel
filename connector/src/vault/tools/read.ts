@@ -4,6 +4,7 @@ import {
   analysisText,
   benchWorkLine,
   benchWorkRef,
+  benchWorkTagList,
   filterByViewpoints,
   resolveBenchWork,
   viewpointNames,
@@ -58,7 +59,7 @@ import {
   titleLastEdited,
   titleSummary,
 } from '../../../../src/domain/entityOps'
-import { benchWorkName, benchWorksOfTitle, sortedBenchWorks } from '../../../../src/domain/benchOps'
+import { BENCH_LIMITS, benchWorkName, benchWorksOfTitle, sortedBenchWorks } from '../../../../src/domain/benchOps'
 import { MATERIAL_LIMITS, materialName, sortedMaterials } from '../../../../src/domain/materialOps'
 import { byOrder } from '../../../../src/domain/util'
 import { actParts, adoptedMetrics, isSplit, pieceFullLabel, pieceLabel } from '../../../../src/domain/structure'
@@ -777,8 +778,11 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
 
 // ---------- R10 相対比較の作品一覧 ----------
 
-/** names・exclude_names の数と1つの長さの上限（schemas.ts と同じ。長さは作品名の上限と同じ） */
-export const BENCH_LIST_FILTERS = { count: 10, length: 80 } as const
+/** names・exclude_names・tags の数と1つの長さの上限（schemas.ts と同じ。長さは作品名・タグの上限と同じ） */
+export const BENCH_LIST_FILTERS = { count: 10, length: 80, tagLength: BENCH_LIMITS.tag } as const
+
+/** 一覧の1回目に出す「タグ（作品の数）」の行に並べるタグの種類の数（これより多ければ「ほか n種」） */
+export const BENCH_TAG_SUMMARY_LIMIT = 200
 
 interface NameFilters {
   /** 入力のまま（見出しと cursor に使う） */
@@ -803,6 +807,9 @@ function nameFilters(v: unknown, limits: { count: number; length: number }): Nam
 
 /** 作品名の絞り込み */
 const benchNameFilters = (v: unknown) => nameFilters(v, BENCH_LIST_FILTERS)
+/** 作品のタグの絞り込み */
+const benchTagFilters = (v: unknown) =>
+  nameFilters(v, { count: BENCH_LIST_FILTERS.count, length: BENCH_LIST_FILTERS.tagLength })
 
 const sameKeys = (a: NameFilters, b: NameFilters) =>
   a.keys.length === b.keys.length && [...a.keys].sort().join('\n') === [...b.keys].sort().join('\n')
@@ -817,10 +824,38 @@ function includeExcludeParts(names: NameFilters, excludes: NameFilters): string[
   ].filter(Boolean)
 }
 
-/** 「作品名に「【原稿】星の庭（」を含む・「【対照】」を含まない」（絞り込みが無ければ空） */
-function benchFilterLabel(names: NameFilters, excludes: NameFilters): string {
+/** 「作品名に「【原稿】星の庭（」を含む・「【対照】」を含まない・タグ「恋愛」を持つ」（絞り込みが無ければ空） */
+function benchFilterLabel(names: NameFilters, excludes: NameFilters, tags: NameFilters): string {
   const parts = includeExcludeParts(names, excludes)
-  return parts.length ? `作品名に${parts.join('・')}` : ''
+  return [
+    parts.length ? `作品名に${parts.join('・')}` : '',
+    tags.raw.length ? `タグ${quoted(tags.raw)}を${tags.raw.length > 1 ? 'すべて' : ''}持つ` : '',
+  ]
+    .filter(Boolean)
+    .join('・')
+}
+
+/**
+ * 棚で使っている作品のタグと作品の数の1行（「タグ（作品の数）: 恋愛 12・ミステリー 8・…」。絞り込む前の全作品で数える。
+ * 多い順、同じなら名前の順。BENCH_TAG_SUMMARY_LIMIT 種より多ければ「ほか n種」。タグが無ければ空）
+ */
+function benchTagSummary(view: AppData, works: readonly BenchWork[]): string {
+  const counts = new Map<string, { tag: string; count: number }>()
+  for (const w of works) {
+    for (const tag of benchWorkTagList(view, w)) {
+      const key = refKey(tag)
+      const cur = counts.get(key)
+      if (cur) cur.count += 1
+      else counts.set(key, { tag, count: 1 })
+    }
+  }
+  if (!counts.size) return ''
+  const list = [...counts.values()].sort(
+    (a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'ja') || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0),
+  )
+  const shown = list.slice(0, BENCH_TAG_SUMMARY_LIMIT).map((t) => `${t.tag} ${t.count}`)
+  const more = list.length > BENCH_TAG_SUMMARY_LIMIT ? `・ほか ${list.length - BENCH_TAG_SUMMARY_LIMIT}種` : ''
+  return `タグ（作品の数）: ${shown.join('・')}${more}`
 }
 
 /**
@@ -872,7 +907,9 @@ function shelfPage(
 }
 
 /**
- * 相対比較の作品一覧（アプリの棚の順）。names・exclude_names で作品名を部分一致で絞る（refKey にして照らす）。
+ * 相対比較の作品一覧（アプリの棚の順）。names・exclude_names で作品名を部分一致で絞り（refKey にして照らす）、tags で作品の
+ * タグ（2.7。アプリがまだ付けていない「14 検索用タグ」の自動のタグも含める）をすべて持つ作品だけにする（名前そのもので照らす）。
+ * 1回目の答え（cursor なし）には、見出しの次に棚で使っているタグと作品の数の1行を出す（絞り込む前の全作品で数える）。
  * 1回に返すのは char_budget 字（省略時は結果の上限 RESULT_LIMIT）まで。残りが収まれば今までどおり1回で全部（引数なしなら今までと同じ答え）。
  * 収まらない時だけ作品の切れ目で切り、最後の行を 続き: cursor="…"（結果が長いため、ここで切りました。…）にする。cursor には絞り込み
  * （入力のまま）・char_budget と、最後に出した作品の id と並び順を入れる。続きはその作品の今の位置の次から（消えていれば並び順で次から）
@@ -881,12 +918,14 @@ export function listBenchWorks(ctx: ReadContext, args: Args = {}): ToolResult {
   const all = sortedBenchWorks(ctx.view)
   const argNames = benchNameFilters(args.names)
   const argExcludes = benchNameFilters(args.exclude_names)
-  if (argNames === 'bad' || argExcludes === 'bad')
+  const argTags = benchTagFilters(args.tags)
+  if (argNames === 'bad' || argExcludes === 'bad' || argTags === 'bad')
     return fail(
-      `names・exclude_names は文字列の配列にしてください（それぞれ${BENCH_LIST_FILTERS.count}個まで・1つ${BENCH_LIST_FILTERS.length}字まで）`,
+      `names・exclude_names・tags は文字列の配列にしてください（それぞれ${BENCH_LIST_FILTERS.count}個まで・1つ${BENCH_LIST_FILTERS.length}字まで。tags は1つ${BENCH_LIST_FILTERS.tagLength}字まで）`,
     )
   let names = argNames
   let excludes = argExcludes
+  let tags = argTags
   let budget = num(args.char_budget)
   /** 前のページで最後に出した作品（id と並び順） */
   let after: { order: number; id: string } | null = null
@@ -895,21 +934,41 @@ export function listBenchWorks(ctx: ReadContext, args: Args = {}): ToolResult {
     const c = decodeCursor(cursorArg)
     const cn = c ? benchNameFilters(c.n) : 'bad'
     const cx = c ? benchNameFilters(c.x) : 'bad'
-    if (!c || c.k !== 'benchList' || typeof c.a !== 'string' || typeof c.o !== 'number' || cn === 'bad' || cx === 'bad')
+    // タグの絞り込み（2.7）を持たない前の版の cursor は、タグで絞らない
+    const ct = c ? benchTagFilters(c.t) : 'bad'
+    if (
+      !c ||
+      c.k !== 'benchList' ||
+      typeof c.a !== 'string' ||
+      typeof c.o !== 'number' ||
+      cn === 'bad' ||
+      cx === 'bad' ||
+      ct === 'bad'
+    )
       return fail('cursor が読めません（novel_list_bench_works の続きの cursor をそのまま渡してください）')
-    if ((args.names !== undefined && !sameKeys(names, cn)) || (args.exclude_names !== undefined && !sameKeys(excludes, cx)))
-      return fail('cursor が別の条件のものです（cursor だけを渡すか、同じ names・exclude_names で渡してください）')
+    if (
+      (args.names !== undefined && !sameKeys(names, cn)) ||
+      (args.exclude_names !== undefined && !sameKeys(excludes, cx)) ||
+      (args.tags !== undefined && !sameKeys(tags, ct))
+    )
+      return fail('cursor が別の条件のものです（cursor だけを渡すか、同じ names・exclude_names・tags で渡してください）')
     names = cn
     excludes = cx
+    tags = ct
     after = { order: c.o, id: c.a }
     budget ??= num(c.b)
   }
   const inc = names.keys
   const exc = excludes.keys
-  const filter = benchFilterLabel(names, excludes)
+  const wantTags = tags.keys
+  const filter = benchFilterLabel(names, excludes, tags)
   const works = all.filter((w) => {
     const k = refKey(benchWorkName(w))
-    return (!inc.length || inc.some((n) => k.includes(n))) && !exc.some((n) => k.includes(n))
+    if ((inc.length && !inc.some((n) => k.includes(n))) || exc.some((n) => k.includes(n))) return false
+    if (!wantTags.length) return true
+    // タグは名前そのもので照らす（アプリがまだ付けていない「14 検索用タグ」の自動のタグも含める）
+    const have = new Set(benchWorkTagList(ctx.view, w).map(refKey))
+    return wantTags.every((t) => have.has(t))
   })
   // 続きは、最後に出した作品の今の位置の次から（アプリで並べ替えて並び順の数が振り直されても抜けない）。その作品が消えていれば並び順で次から
   const from = resumeIndex(works, after)
@@ -921,6 +980,9 @@ export function listBenchWorks(ctx: ReadContext, args: Args = {}): ToolResult {
         ? `=== 相対比較（${filter}作品 ${works.length}作品／全${all.length}作品。作者が比べるために読む既存の作品）===`
         : `=== 相対比較（${all.length}作品。作者が比べるために読む既存の作品）===`,
   ]
+  // 1回目の答え（続きでない）には、棚で使っているタグと作品の数の1行（絞り込む前の全作品で数える）
+  const summary = after ? '' : benchTagSummary(ctx.view, all)
+  if (summary) lines.push(summary)
   if (!all.length && !filter)
     lines.push(
       '（まだありません。作品の PDF を読んで novel_add_bench_analysis の new_work を付けて分析を追加すると、作品も相対比較に追加されます）',
@@ -931,7 +993,15 @@ export function listBenchWorks(ctx: ReadContext, args: Args = {}): ToolResult {
   const closing = works.length ? ['分析の本文は novel_get_bench_analysis（work に w:…）で読んでください。'] : []
   // 収まらない時は作品の切れ目で切る。続きの行の分を空けておく（絞り込みが長いと cursor も長い）
   const cursorOf = (w: Pick<BenchWork, 'id' | 'order'>) =>
-    encodeCursor({ k: 'benchList', n: names.raw, x: excludes.raw, a: w.id, o: w.order, ...(budget !== undefined ? { b: budget } : {}) })
+    encodeCursor({
+      k: 'benchList',
+      n: names.raw,
+      x: excludes.raw,
+      t: tags.raw,
+      a: w.id,
+      o: w.order,
+      ...(budget !== undefined ? { b: budget } : {}),
+    })
   const footerOf = (next: string, left: number) =>
     `続き: cursor="${next}"（結果が長いため、ここで切りました。残り${left}作品は、この cursor で読めます）`
   return ok(

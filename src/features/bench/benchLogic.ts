@@ -3,9 +3,11 @@
 // （カードは React.memo でレコード単位の props にしている）。
 import { benchAnalysesOf, benchViewpointGroups } from '../../claude/benchOrder'
 import { refKey } from '../../claude/refs'
-import { benchWorkName } from '../../domain/benchOps'
+import { benchTagsInUse, benchWorkName, benchWorkTags, isTaglessWork } from '../../domain/benchOps'
+import { tagKey } from '../../domain/tags'
 import { trashNotice } from '../../domain/trash'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../../domain/types'
+import { cloudSettled, type SyncState } from '../../sync/controller'
 import { sourceLabel } from '../claude/claudeUi'
 
 /** 作品の書誌の1行（「山田・星の出版・2019・SF」。無い項目は飛ばす） */
@@ -259,4 +261,67 @@ export function benchShelfEntries(
     out.push({ kind: 'manuscript', key, base: m.base, runs: same ? before : runs })
   }
   return out
+}
+
+// ---------- 作品のタグ（ジャンル。2.7） ----------
+
+/** 作品のタグ（付けた順。表示できるものだけ） */
+export const benchTags = benchWorkTags
+
+/** タグを付けられる作品か（【対照】【監査】【横断】の作品には付けない） */
+export const canTagWork = (w: Pick<BenchWork, 'name'>): boolean => !isTaglessWork(w)
+
+/** 作品のタグの照らす形（tagKey）。作品のレコードが同じなら作り直さない */
+const tagKeyCache = new WeakMap<BenchWork, ReadonlySet<string>>()
+
+export function benchTagKeys(w: BenchWork): ReadonlySet<string> {
+  const cached = tagKeyCache.get(w)
+  if (cached) return cached
+  const keys = new Set(benchWorkTags(w).map(tagKey).filter(Boolean))
+  tagKeyCache.set(w, keys)
+  return keys
+}
+
+/** 棚のタグのチップ（使っているタグだけ。作品の数の多い順、同じなら名前の順。資料のタグは混ぜない） */
+export interface BenchTagChip {
+  /** 照らす形（tagKey） */
+  key: string
+  tag: string
+  count: number
+}
+
+export function benchTagChips(data: Pick<AppData, 'benchWorks'>): BenchTagChip[] {
+  return benchTagsInUse(data).map((t) => ({ key: tagKey(t.tag), tag: t.tag, count: t.count }))
+}
+
+/** 選んだタグ（tagKey の形）をすべて持つ作品だけ（works は棚の順のまま。空なら絞らない） */
+export function filterBenchWorksByTags(works: readonly BenchWork[], keys: readonly string[]): BenchWork[] {
+  if (!keys.length) return [...works]
+  return works.filter((w) => {
+    const have = benchTagKeys(w)
+    return keys.every((k) => have.has(k))
+  })
+}
+
+/**
+ * タグの差分（開いた時 before と、保存する時 after。tagKey で照らす。同じタグの書き方だけを変えた時は、外して足したことにする）
+ */
+export function tagDiff(before: readonly string[], after: readonly string[]): { add: string[]; remove: string[] } {
+  const b = new Map(before.map((t) => [tagKey(t), t]))
+  const a = new Map(after.map((t) => [tagKey(t), t]))
+  return { add: after.filter((t) => b.get(tagKey(t)) !== t), remove: before.filter((t) => a.get(tagKey(t)) !== t) }
+}
+
+/**
+ * 自動のタグ（BenchAutoTags）を付けてよいか。hasUid はこの端末が一度でも同期したか（端末内の記録を読むまでは null で待つ）。
+ * - 同期している端末（hasUid か、ログイン中）: 同期を受け持つ画面で、クラウドと揃っている時だけ（cloudSettled）。
+ *   起動の直後・オフライン・受け取りの途中に、古い端末内のデータで付けないように
+ * - 一度も同期していない端末: いつでも（ログインを確かめている間は待つ）
+ */
+export function autoTagGate(
+  s: { hasUid: boolean | null } & Pick<SyncState, 'auth' | 'leader' | 'status' | 'accountMismatch'>,
+): boolean {
+  if (s.hasUid === null) return false
+  if (s.hasUid || s.auth === 'signedIn') return cloudSettled(s)
+  return s.auth === 'idle' || s.auth === 'signedOut'
 }

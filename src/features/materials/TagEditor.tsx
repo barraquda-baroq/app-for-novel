@@ -1,10 +1,12 @@
-// 資料のタグの編集（2.6）: 付けたタグのチップ（×で外す）と入力欄。Enter・「、」・「,」で足し、使っているタグを候補に出す。
-// タグは作者が自分で付けて管理する（Claude は付けない）。並びは付けた順。1つ20字まで・1つの資料に20個まで。
+// タグの編集（資料のタグ（2.6）と相対比較の作品のタグ（2.7）で共通）: 付けたタグのチップ（×で外す）と入力欄。
+// Enter・「、」・「,」で足し、使っているタグを候補に出す。並びは付けた順。1つ20字まで・1つの資料（作品）に20個まで。
+// 資料のタグは作者が自分で付けて管理する（Claude は付けない）。作品のタグは「14 検索用タグ」のジャンルが自動でも付く。
 // 日本語の入力（IME）の変換中は Enter・「、」で足さない（変換を確定してから）。
 import { useEffect, useId, useMemo, useRef, useState, type MutableRefObject } from 'react'
-import { MATERIAL_LIMITS } from '../../domain/materialOps'
+import { TAG_LIMITS, type TagNoun } from '../../domain/tags'
 import { PlusIcon, TagIcon, XIcon } from '../../ui/icons'
 import { addTags, hasTagSeparator, splitTagInput, tagSuggestions } from './materialLogic'
+import './tags.css'
 
 export interface TagEditorProps {
   /** 付けたタグ（付けた順） */
@@ -20,9 +22,28 @@ export interface TagEditorProps {
   flushRef?: MutableRefObject<(() => string[] | null) | null>
   /** 見出し（既定「タグ（任意）」） */
   label?: string
+  /** タグを付ける物（エラーの文の「1つの資料に20個まで」。既定は資料） */
+  noun?: TagNoun
+  /** 入力欄の例（既定は資料の例） */
+  placeholder?: string
+  /** 区切り方の後ろに続ける案内（既定は資料の「タグは作者が付けるもので、Claude は付けません。」） */
+  hint?: string
+  /** data-testid の頭（既定 material。相対比較の作品は bench で、色も相対比較の色にする） */
+  testIdPrefix?: 'material' | 'bench'
 }
 
-export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（任意）' }: TagEditorProps) {
+export function TagEditor({
+  tags,
+  onChange,
+  inUse,
+  flushRef,
+  label = 'タグ（任意）',
+  noun = '資料',
+  placeholder = '例：ミリタリ、現代、戦闘',
+  hint = 'タグは作者が付けるもので、Claude は付けません。',
+  testIdPrefix = 'material',
+}: TagEditorProps) {
+  const tid = (name: string) => `${testIdPrefix}-${name}`
   const inputId = useId()
   const hintId = useId()
   const errorId = useId()
@@ -30,7 +51,7 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
   const composing = useRef(false)
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const full = tags.length >= MATERIAL_LIMITS.tags
+  const full = tags.length >= TAG_LIMITS.tags
   const suggestions = useMemo(() => tagSuggestions(inUse, tags, text), [inUse, tags, text])
 
   /**
@@ -44,7 +65,7 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
       setError(null)
       return [...tags]
     }
-    const r = addTags(tags, done)
+    const r = addTags(tags, done, noun)
     setError(r.error)
     if (r.tags.length !== tags.length) onChange(r.tags)
     setText(r.rejected.length ? [...r.rejected, rest].filter(Boolean).join('、') : rest)
@@ -71,15 +92,15 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
   }
 
   return (
-    <div className="field mt-tags-field" data-testid="material-tag-editor">
+    <div className={`field mt-tags-field${testIdPrefix === 'bench' ? ' tag-bench' : ''}`} data-testid={tid('tag-editor')}>
       <label htmlFor={inputId} className="mt-tags-label">
         <TagIcon />
         {label}
       </label>
       {tags.length ? (
-        <ul className="mt-tag-list" aria-label="付けたタグ" data-testid="material-tag-chips">
+        <ul className="mt-tag-list" aria-label="付けたタグ" data-testid={tid('tag-chips')}>
           {tags.map((t, i) => (
-            <li key={`${t}-${i}`} className="mt-tag-chip" data-testid="material-tag-chip-edit">
+            <li key={`${t}-${i}`} className="mt-tag-chip" data-testid={tid('tag-chip-edit')}>
               <span className="mt-tag-name">{t}</span>
               <button
                 type="button"
@@ -87,7 +108,7 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
                 onClick={() => remove(i)}
                 aria-label={`タグ「${t}」を外す`}
                 title="外す"
-                data-testid="material-tag-remove"
+                data-testid={tid('tag-remove')}
               >
                 <XIcon />
               </button>
@@ -105,7 +126,7 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
         aria-disabled={full || undefined}
         enterKeyHint="enter"
         autoComplete="off"
-        placeholder={full ? `タグは${MATERIAL_LIMITS.tags}個までです` : '例：ミリタリ、現代、戦闘'}
+        placeholder={full ? `タグは${TAG_LIMITS.tags}個までです` : placeholder}
         aria-describedby={error ? `${hintId} ${errorId}` : hintId}
         aria-invalid={error ? true : undefined}
         onCompositionStart={() => {
@@ -136,14 +157,13 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
         }}
         // 入力欄から離れただけでは足さない（打ちかけのタグは保存の時に flushRef で足す）。離れた時に足すと、候補の列が
         // 出てダイアログの高さが変わり、押そうとした［保存］が指の下から動いて押せないことがあるため
-        data-testid="material-tag-input"
+        data-testid={tid('tag-input')}
       />
       <span id={hintId} className="small muted mt-tags-hint">
-        Enter・「、」・「,」で区切って足します（1つ{MATERIAL_LIMITS.tag}字・{MATERIAL_LIMITS.tags}
-        個まで）。タグは作者が付けるもので、Claude は付けません。
+        Enter・「、」・「,」で区切って足します（1つ{TAG_LIMITS.tag}字・{TAG_LIMITS.tags}個まで）。{hint}
       </span>
       {error ? (
-        <span id={errorId} className="cl-error small" role="alert" data-testid="material-tag-error">
+        <span id={errorId} className="cl-error small" role="alert" data-testid={tid('tag-error')}>
           {error}
         </span>
       ) : null}
@@ -152,7 +172,7 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
           className="mt-tag-suggestions"
           role="group"
           aria-label="使っているタグから付ける"
-          data-testid="material-tag-suggestions"
+          data-testid={tid('tag-suggestions')}
         >
           {suggestions.map((t) => (
             <button
@@ -162,7 +182,7 @@ export function TagEditor({ tags, onChange, inUse, flushRef, label = 'タグ（�
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => add(t)}
               aria-label={`タグ「${t}」を付ける`}
-              data-testid="material-tag-suggestion"
+              data-testid={tid('tag-suggestion')}
             >
               <PlusIcon />
               {t}

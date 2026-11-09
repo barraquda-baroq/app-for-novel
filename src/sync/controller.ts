@@ -43,6 +43,15 @@ const initial: SyncState = {
 
 export const useSync = create<SyncState>(() => ({ ...initial }))
 
+/**
+ * この画面が同期を受け持っていて、クラウドと揃っているか（送り待ちも受け取りの途中も無く、クラウドのデータの形の版が
+ * このアプリより新しくなく、別のアカウントの確認も待っていない）。端末内のデータをもとに自動で書き込む部品（相対比較の
+ * 自動のタグなど）は、同期している端末ではこの時だけ動かす（古い端末内のデータで書いて、ほかの端末の変更と重ならないように）
+ */
+export function cloudSettled(s: Pick<SyncState, 'leader' | 'status' | 'accountMismatch'>): boolean {
+  return s.leader && s.status?.phase === 'synced' && !s.status.outdated && !s.accountMismatch
+}
+
 let engine: SyncEngine | null = null
 let generation = 0
 let releaseLeader: (() => void) | null = null

@@ -42,6 +42,7 @@ import {
 } from './materialLogic'
 import '../title/strategy/claudeSections.css'
 import './materials.css'
+import './tags.css'
 
 /** 開いた記録で、これより長ければ頭だけを出して「全文を表示」（閉じている間は頭だけを変換する。Markdown.tsx） */
 const LONG_NOTE = 900
