@@ -736,10 +736,19 @@ function repairBench(d: AppData, fix: (m: string) => void): void {
       if (tags === undefined) delete next.tags
       else next.tags = same(tags, w.tags) ? w.tags : tags
     }
-    // 自動のタグを取り込んだ 14 の印（2.7）: 形が違えば外す（新しい 14 から、また取り込む）
+    // 自動のタグを取り込んだ 14 の印（2.7）: 形が違えば外す（新しい 14 から、また取り込む）。足した語（added）は
+    // 文字列の配列の時だけ残す（形が違えば added だけを外し、印は残す）
     if (next.autoTagsFrom !== undefined && !isAutoTagMark(next.autoTagsFrom)) {
       next = { ...next }
       delete next.autoTagsFrom
+    } else if (
+      next.autoTagsFrom &&
+      'added' in next.autoTagsFrom &&
+      !(Array.isArray(next.autoTagsFrom.added) && next.autoTagsFrom.added.every((x) => typeof x === 'string'))
+    ) {
+      const mark = { ...next.autoTagsFrom }
+      delete mark.added
+      next = { ...next, autoTagsFrom: mark }
     }
     if (!same(next, w)) {
       d.benchWorks[w.id] = next

@@ -1739,7 +1739,19 @@ describe('相対比較のタグ（エミュレーター）', () => {
       return n.data
     })
     await settle(a, b)
-    return { a, b, workId, first }
+    return { a, b, workId, first, who }
+  }
+
+  /** A で作品に新しい 14 を足し、両方に届くまで待つ（その 14 の id） */
+  async function addGenre14(a: Device, b: Device, workId: string, sub: string, runDate: string): Promise<string> {
+    let id = ''
+    await a.edit((d) => {
+      const n = B.addBenchAnalysis(d, workId, { viewpoint: '14 検索用タグ', body: genre14('恋愛', sub), runDate })
+      id = n.result
+      return n.data
+    })
+    await settle(a, b)
+    return id
   }
 
   it('2台が同時に自動のタグを付けても、タグは重ならず autoTagsFrom は同じ。2.7 を知らない書き方の更新（メモだけを書き換えたレコード）もタグを消さない', async () => {
@@ -1868,6 +1880,69 @@ describe('相対比較のタグ（エミュレーター）', () => {
     // 外しても autoTagsFrom は進んだままなので、同じ 14 からは付き直さない
     await b.edit(applyAutoGenreTags)
     await settle(a, b)
+    expect((await a.load()).benchWorks[workId].tags).toEqual(['恋愛', '喪失'])
+  })
+
+  it('2台が同じ新しい 14 を取り込み、片方が送る前につながりが切れた間にもう一方で外したタグは、つながった後も戻らない（外した方が送れていなかった時も）', async () => {
+    const { a, b, workId } = await twoDevices()
+    await a.edit(applyAutoGenreTags)
+    await settle(a, b)
+    const second = await addGenre14(a, b, workId, '恋愛／大人', '2026-11-05')
+    // B は取り込んだ直後につながりが切れて送れていない。A は取り込んで送り、作者が「大人」を外す
+    b.offline()
+    await b.edit(applyAutoGenreTags)
+    await a.edit(applyAutoGenreTags)
+    await settle(a)
+    expect((await a.load()).benchWorks[workId].tags).toEqual(['恋愛', '青春', '喪失', '大人'])
+    await a.edit((d) => B.setBenchWorkTags(d, workId, ['恋愛', '青春', '喪失']))
+    await settle(a)
+    await b.online()
+    await settle(a, b)
+    for (const dev of [a, b]) {
+      const w = (await dev.load()).benchWorks[workId]
+      expect(w.tags).toEqual(['恋愛', '青春', '喪失'])
+      expect(w.autoTagsFrom).toMatchObject({ analysisId: second, runDate: '2026-11-05', added: ['大人'] })
+    }
+    await b.edit(applyAutoGenreTags)
+    await settle(a, b)
+    expect((await a.load()).benchWorks[workId].tags).toEqual(['恋愛', '青春', '喪失'])
+    // 逆: 取り込んで外した A の方が送れておらず、B の取り込みが先にクラウドに届いた
+    const third = await addGenre14(a, b, workId, '恋愛／手紙', '2026-11-08')
+    a.offline()
+    await a.edit(applyAutoGenreTags)
+    await a.edit((d) => B.setBenchWorkTags(d, workId, ['恋愛', '青春', '喪失']))
+    await b.edit(applyAutoGenreTags)
+    await settle(b)
+    expect((await b.load()).benchWorks[workId].tags).toEqual(['恋愛', '青春', '喪失', '手紙'])
+    await a.online()
+    await settle(a, b)
+    for (const dev of [a, b]) {
+      const w = (await dev.load()).benchWorks[workId]
+      expect(w.tags).toEqual(['恋愛', '青春', '喪失'])
+      expect(w.autoTagsFrom?.analysisId).toBe(third)
+    }
+    expect([...a.notes, ...b.notes].filter((n) => n.kind !== 'joined')).toEqual([])
+  })
+
+  it('一度も同期していない端末が、タグの無い前の版のバックアップを復元して自動のタグを付けてから初めてログインしても、クラウドで外したタグは戻らない', async () => {
+    const { a, b, workId, who } = await twoDevices()
+    await a.edit(applyAutoGenreTags)
+    await a.edit((d) => B.setBenchWorkTags(d, workId, ['恋愛', '喪失']))
+    await settle(a, b)
+    // 2.6 のバックアップ（作品にタグも autoTagsFrom も無い）を、新しい端末でログインする前に復元し、自動のタグを付ける
+    const backup = await a.load()
+    const { tags: _t, autoTagsFrom: _m, ...untagged } = backup.benchWorks[workId]
+    const c = await makeDevice('c', who)
+    await c.restore({ ...backup, benchWorks: { ...backup.benchWorks, [workId]: untagged } })
+    await c.edit(applyAutoGenreTags)
+    expect((await c.load()).benchWorks[workId].tags).toEqual(['恋愛', '青春', '喪失'])
+    await c.online()
+    await settle(a, b, c)
+    for (const dev of [a, b, c]) expect((await dev.load()).benchWorks[workId].tags).toEqual(['恋愛', '喪失'])
+    // 自動のタグだけの違いは、ゴミ箱に控えない
+    expect(c.notes).toEqual([])
+    await c.edit(applyAutoGenreTags)
+    await settle(a, c)
     expect((await a.load()).benchWorks[workId].tags).toEqual(['恋愛', '喪失'])
   })
 })

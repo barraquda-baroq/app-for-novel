@@ -233,4 +233,19 @@ describe('相対比較の作品のタグ（2.7）', () => {
       expect(r.fixes).toContain('相対比較の作品の項目を補いました')
     }
   })
+
+  it('印の足した語（added）は文字列の配列の時だけ残す（空の配列も残す）。形が違えば added だけを外し、印は残す', () => {
+    const mark = { analysisId: 'n1', runDate: '2026-11-01', createdAt: 5 }
+    for (const added of [['恋愛', '青春'], []]) {
+      const work = withWork({ autoTagsFrom: { ...mark, added } })
+      const r = repairData(work)
+      expect(r.fixes).toEqual([])
+      expect(r.data.benchWorks.w1).toBe(work.benchWorks.w1)
+    }
+    for (const bad of ['恋愛', ['恋愛', 3], { 0: '恋愛' }, null]) {
+      const r = repairData(withWork({ autoTagsFrom: { ...mark, added: bad, future: 2 } }))
+      expect(r.data.benchWorks.w1.autoTagsFrom).toEqual({ ...mark, future: 2 })
+      expect(r.fixes).toContain('相対比較の作品の項目を補いました')
+    }
+  })
 })

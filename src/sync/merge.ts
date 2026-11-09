@@ -69,24 +69,81 @@ export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
 
 type PickNewer = (a: unknown, b: unknown) => unknown
 
-/** 自動のタグを取り込んだ 14 の印（2.7。src/domain/benchTags.ts の AutoTagMark）。日付 → 作った時刻 → id の順で新しい方 */
+/**
+ * 自動のタグを取り込んだ 14 の印（2.7。src/domain/benchTags.ts の AutoTagMark。同期からは benchTags を読まないので、ここで形を見る）。
+ * added はその取り込みで足した語（2.7.0 の端末の印には無い）
+ */
+type AutoTagMark = { analysisId: string; runDate: string; createdAt: number; added?: unknown }
+
+const isMark = (v: unknown): v is AutoTagMark => {
+  const m = v as Record<string, unknown> | null
+  return (
+    !!m &&
+    typeof m === 'object' &&
+    typeof m.analysisId === 'string' &&
+    typeof m.runDate === 'string' &&
+    typeof m.createdAt === 'number' &&
+    Number.isFinite(m.createdAt)
+  )
+}
+
+/** 印の足した語（文字列の配列でなければ null） */
+const addedOf = (m: AutoTagMark): string[] | null =>
+  Array.isArray(m.added) && m.added.every((x) => typeof x === 'string') ? m.added : null
+
+/**
+ * 日付 → 作った時刻 → id の順で新しい方（足した語 added は見ない）。同じ 14 の印（2台が別々に取り込んで、added だけが違う）は、
+ * どちらの端末で合わせても同じ方になるように、キーを並べ替えた JSON の小さい方
+ */
 const newerMark: PickNewer = (a, b) => {
-  const ok = (v: unknown): v is { analysisId: string; runDate: string; createdAt: number } => {
-    const m = v as Record<string, unknown> | null
-    return (
-      !!m &&
-      typeof m === 'object' &&
-      typeof m.analysisId === 'string' &&
-      typeof m.runDate === 'string' &&
-      typeof m.createdAt === 'number' &&
-      Number.isFinite(m.createdAt)
-    )
-  }
-  if (!ok(a)) return ok(b) ? b : a
-  if (!ok(b)) return a
+  if (!isMark(a)) return isMark(b) ? b : a
+  if (!isMark(b)) return a
   if (a.runDate !== b.runDate) return a.runDate > b.runDate ? a : b
   if (a.createdAt !== b.createdAt) return a.createdAt > b.createdAt ? a : b
-  return a.analysisId <= b.analysisId ? a : b
+  if (a.analysisId !== b.analysisId) return a.analysisId < b.analysisId ? a : b
+  return stableStringify(a) <= stableStringify(b) ? a : b
+}
+
+/**
+ * 2台が同じ 14 を別々に取り込んでいた時の、作品のタグの共通の版（2.7）。この端末と相手の印が同じ 14 で、共通の版の印は
+ * それと違う（その前）時は、この端末がその 14 から足した語（autoTagsFrom.added）も共通の版のタグにあったものとする。
+ * 相手ももう同じ語を足しているので、その後に相手で外したタグを戻さず、この端末で外したタグも外れる。この端末で手で付けた
+ * タグは added に無いので、今までどおり残る。当てはまらない時・added の無い印（2.7.0 の端末）は undefined（今までどおり）
+ */
+function sharedImportBase(
+  b: Record<string, unknown>,
+  m: Record<string, unknown>,
+  t: Record<string, unknown>,
+): unknown[] | undefined {
+  const mine = m.autoTagsFrom
+  const theirs = t.autoTagsFrom
+  if (!isMark(mine) || !isMark(theirs) || mine.analysisId !== theirs.analysisId) return undefined
+  if (isMark(b.autoTagsFrom) && b.autoTagsFrom.analysisId === mine.analysisId) return undefined
+  const out = [...asArray(b.tags)]
+  const seen = new Set(out.map(asTag))
+  for (const w of addedOf(mine) ?? []) {
+    const k = asTag(w)
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push(w)
+  }
+  return out.length > asArray(b.tags).length ? out : undefined
+}
+
+/**
+ * 共通の履歴が無い時に、この端末にだけあっても足さない作品のタグ（2.7。asTag の集まり）。クラウドがこの端末と同じ 14 か、
+ * もっと新しい 14 をもう取り込んでいたら、この端末がその 14 から自動で足した語（autoTagsFrom.added）のうちクラウドに無いものは
+ * 足さない（クラウドで作者が外したタグを戻さない。もっと新しい 14 を取り込んだクラウドでは、古い 14 の判定はもう使わない）。
+ * この端末で手で付けたタグは足す。当てはまらない時・added の無い印（2.7.0 の端末）は null
+ */
+function importedInCloud(m: Record<string, unknown>, t: Record<string, unknown>): Set<string> | null {
+  const mine = m.autoTagsFrom
+  const theirs = t.autoTagsFrom
+  if (!isMark(mine) || !isMark(theirs)) return null
+  if (mine.analysisId !== theirs.analysisId && newerMark(mine, theirs) !== theirs) return null
+  const skip = new Set((addedOf(mine) ?? []).map(asTag))
+  for (const x of asArray(t.tags)) skip.delete(asTag(x))
+  return skip.size ? skip : null
 }
 
 /**
@@ -249,10 +306,13 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
   let bodyConflict = false
   const joined: string[] = []
   const keys = new Set([...Object.keys(m), ...Object.keys(b)])
+  // 2.7: 2台が同じ 14 を別々に取り込んでいたら、作品のタグは取り込んだ語も共通の版にあったものとして合わせる
+  const tagsBase = table === 'benchWorks' ? sharedImportBase(b, m, t) : undefined
+  if (tagsBase) keys.add('tags')
   for (const k of keys) {
     if (k === 'id' || k === 'updatedAt') continue
     const mv = m[k]
-    const bv = b[k]
+    const bv = k === 'tags' && tagsBase ? tagsBase : b[k]
     const tv = t[k]
     if (deepEqual(mv, bv)) continue
     if (deepEqual(tv, bv) || deepEqual(tv, mv)) {
@@ -326,8 +386,15 @@ function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null, 
   if (contentEqual(mine, theirs)) return { record: theirs }
   const out: Record<string, unknown> = { ...theirs }
   const m = mine as unknown as Record<string, unknown>
+  // 2.7: クラウドがもう取り込んだ 14 から、この端末が自動で足したタグ（足さない）
+  const skip = table === 'benchWorks' ? importedInCloud(m, out) : null
   for (const [field, key] of Object.entries(LIST_FIELDS[table] ?? {})) {
-    if (field in out || field in m) out[field] = unionList(out[field], m[field], key)
+    if (!(field in out || field in m)) continue
+    const skipHere = field === 'tags' ? skip : null
+    const list = unionList(out[field], skipHere ? asArray(m[field]).filter((x) => !skipHere.has(key(x))) : m[field], key)
+    // 足さなかった語しか無かった（クラウドにタグが無い）時は、項目を作らない
+    if (skipHere && !list.length && !(field in out)) continue
+    out[field] = list
   }
   for (const [field, pick] of Object.entries(NEWER_FIELDS[table] ?? {})) {
     if (!(field in m)) continue
@@ -340,7 +407,9 @@ function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null, 
   const theirV = theirs as unknown as { body?: unknown }
   if (table === 'versions' && mineV.body !== theirV.body) result.bodyConflict = mine
   else if (TEXT_TABLES.has(table)) {
-    if (!contentEqual(mine, result.record)) result.keptCopy = mine
+    // 足さなかった自動のタグと取り込んだ印だけが違う時は控えない（作者が書いた内容ではないので）
+    const shown = skip ? withoutSkippedTags(m, skip, out.autoTagsFrom) : mine
+    if (!contentEqual(shown, result.record)) result.keptCopy = mine
   } else {
     // 控えを作らない表（タイトルのあらすじ・全体戦略、章のメモ）は、この端末の文章をつないで残す
     const joined: string[] = []
@@ -355,6 +424,15 @@ function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null, 
     if (joined.length) result.joined = joined
   }
   return result
+}
+
+/** 控えるかを比べる時の、この端末の内容（足さなかったタグを除き、印は合わせた結果の印にする。mergeUnrelated） */
+function withoutSkippedTags(m: Record<string, unknown>, skip: Set<string>, mark: unknown): Rec {
+  const out: Record<string, unknown> = { ...m, autoTagsFrom: mark }
+  const tags = asArray(m.tags).filter((x) => !skip.has(asTag(x)))
+  if (tags.length) out.tags = tags
+  else delete out.tags
+  return out as Rec
 }
 
 export function mergeRemote(

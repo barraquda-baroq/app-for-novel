@@ -519,6 +519,11 @@ export interface AutoTagMark {
   /** 分析した日（YYYY-MM-DD） */
   runDate: string
   createdAt: number
+  /**
+   * その 14 から、この取り込みで今のタグの後ろに足した語（空のこともある）。同期で、2台が同じ 14 を別々に取り込んでいた時に、
+   * 自動で足した語と作者が手で付けたタグを分けるため（src/sync/merge.ts）。無い = 2.7.0 の端末が取り込んだ印
+   */
+  added?: string[]
 }
 
 /** ベンチ作品の分析（1つの観点の分析。1つの作品にいくつでも） */

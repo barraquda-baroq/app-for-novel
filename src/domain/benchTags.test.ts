@@ -15,7 +15,8 @@ import {
   latestGenreAnalysis,
   pendingAutoTags,
 } from './benchTags'
-import { emptyData, type AppData, type BenchAnalysis, type ID } from './types'
+import { listTrash, restoreTrashEntry } from './trash'
+import { emptyData, type AppData, type BenchAnalysis, type ID, type TrashRequest } from './types'
 
 /** V29 の 02 が登録する「14 検索用タグ」の本文（テンプレートの書き方そのまま） */
 const V29_14 = `**結論**：港町の喫茶店を舞台に、喪失から立ち直る二人を描く恋愛小説
@@ -180,10 +181,12 @@ describe('自動のタグを付ける（pendingAutoTags・applyAutoGenreTags）'
     expect(pendingAutoTags(data.benchWorks[id], analysesOf(data, id))?.tags).toEqual(['恋愛', '青春', '喪失', '家族'])
     const next = applyAutoGenreTags(data)
     expect(next.benchWorks[id].tags).toEqual(['恋愛', '青春', '喪失', '家族'])
+    // 足した語も印に残す（同期で、自動で足した語と手で付けたタグを分けるため）
     expect(next.benchWorks[id].autoTagsFrom).toEqual({
       analysisId,
       runDate: '2026-11-01',
       createdAt: data.benchAnalyses[analysisId].createdAt,
+      added: ['恋愛', '青春', '喪失', '家族'],
     })
     expect(next.benchWorks[id].updatedAt).toBeGreaterThan(data.benchWorks[id].updatedAt)
     expect(applyAutoGenreTags(next)).toBe(next)
@@ -214,6 +217,124 @@ describe('自動のタグを付ける（pendingAutoTags・applyAutoGenreTags）'
     data = setBenchWorkTags(data, id, [])
     data = deleteBenchAnalysis(data, b.id)
     expect(applyAutoGenreTags(data)).toBe(data)
+  })
+
+  it('取り込んだ 14 を削除した後に登録した 14 は、前の 14 より早い日付でも付ける（日付を間違えた 14 をやり直した時）', () => {
+    const { data: d0, id, tick } = shelf()
+    tick()
+    // 日付を間違えた（先の日付の）14 を取り込み、作者がタグを外してから、その 14 を削除する
+    const wrong = withAnalysis(d0, id, '14 検索用タグ', body14('SF', 'SF／宇宙'), '2026-12-09')
+    let data = applyAutoGenreTags(wrong.data)
+    expect(data.benchWorks[id].tags).toEqual(['SF', '宇宙'])
+    data = setBenchWorkTags(data, id, [])
+    data = deleteBenchAnalysis(data, wrong.id)
+    expect(applyAutoGenreTags(data)).toBe(data)
+    // 02 を回し直して、正しい日付の 14 を登録した
+    tick()
+    const fixed = withAnalysis(data, id, '14 検索用タグ', body14('恋愛', '恋愛／青春'), '2026-11-09')
+    expect(benchWorkTagsWithAuto(fixed.data, fixed.data.benchWorks[id])).toEqual(['恋愛', '青春'])
+    data = applyAutoGenreTags(fixed.data)
+    expect(data.benchWorks[id].tags).toEqual(['恋愛', '青春'])
+    expect(data.benchWorks[id].autoTagsFrom).toMatchObject({ analysisId: fixed.id, runDate: '2026-11-09' })
+    // 取り込んだ後は、同じ 14 からは付き直さない
+    data = setBenchWorkTags(data, id, ['恋愛'])
+    expect(applyAutoGenreTags(data)).toBe(data)
+  })
+
+  it('取り込んだ 14 にゴミ箱へ移す依頼が出ている時も、その後に登録した 14 は早い日付でも付ける（コネクタの見せるタグも同じ）', () => {
+    const { data: d0, id, tick } = shelf()
+    tick()
+    const wrong = withAnalysis(d0, id, '14 検索用タグ', body14('SF', 'SF／宇宙'), '2026-12-09')
+    let data = setBenchWorkTags(applyAutoGenreTags(wrong.data), id, [])
+    tick()
+    const fixed = withAnalysis(data, id, '14 検索用タグ', body14('恋愛', '恋愛／青春'), '2026-11-09')
+    // 依頼が出ていない間は、日付の新しい（間違えた）14 が最新のまま
+    expect(applyAutoGenreTags(fixed.data)).toBe(fixed.data)
+    const request: TrashRequest = {
+      id: `cz-${wrong.id}`,
+      table: 'benchAnalyses',
+      targetId: wrong.id,
+      parentId: id,
+      targetUpdatedAt: fixed.data.benchAnalyses[wrong.id].updatedAt,
+      label: '「14 検索用タグ」',
+      source: 'claude',
+      v: 1,
+      createdAt: tick(),
+      updatedAt: Date.now(),
+    }
+    const asked: AppData = { ...fixed.data, trashRequests: { [request.id]: request } }
+    expect(benchWorkTagsWithAuto(asked, asked.benchWorks[id])).toEqual(['恋愛', '青春'])
+    data = applyAutoGenreTags(asked)
+    expect(data.benchWorks[id].tags).toEqual(['恋愛', '青春'])
+    expect(data.benchWorks[id].autoTagsFrom?.analysisId).toBe(fixed.id)
+  })
+
+  it('取り込んだ 14 より前に作った 14 は、日付を後で直して新しくしても、取り込んだ 14 を削除しても何もしない', () => {
+    const tick = clock()
+    let { data, id } = withWork(emptyData(), '作品')
+    tick()
+    const older = withAnalysis(data, id, '14 検索用タグ', body14('SF', 'SF'), '2026-11-01')
+    data = older.data
+    tick()
+    const marked = withAnalysis(data, id, '14 検索用タグ', body14('恋愛', '恋愛'), '2026-11-05')
+    data = applyAutoGenreTags(marked.data)
+    expect(data.benchWorks[id].autoTagsFrom?.analysisId).toBe(marked.id)
+    // 前に作った 14 の日付を後で直して、最新にした（02 を回し直していない）
+    tick()
+    data = updateBenchAnalysis(data, older.id, { runDate: '2026-11-20' })
+    expect(latestGenreAnalysis(analysesOf(data, id))?.id).toBe(older.id)
+    expect(applyAutoGenreTags(data)).toBe(data)
+    expect(benchWorkTagsWithAuto(data, data.benchWorks[id])).toEqual(['恋愛'])
+    data = deleteBenchAnalysis(data, marked.id)
+    expect(applyAutoGenreTags(data)).toBe(data)
+  })
+
+  it('やり直しの 14 を取り込んだ後に、日付を間違えた 14 をゴミ箱から戻しても、作者が外したタグは戻らない', () => {
+    const { data: d0, id, tick } = shelf()
+    tick()
+    const wrong = withAnalysis(d0, id, '14 検索用タグ', body14('SF', 'SF／宇宙'), '2026-12-09')
+    let data = setBenchWorkTags(applyAutoGenreTags(wrong.data), id, [])
+    data = deleteBenchAnalysis(data, wrong.id)
+    tick()
+    const fixed = withAnalysis(data, id, '14 検索用タグ', body14('恋愛', '恋愛／青春'), '2026-11-09')
+    data = applyAutoGenreTags(fixed.data)
+    expect(data.benchWorks[id].tags).toEqual(['恋愛', '青春'])
+    // 戻した 14 は日付で最新になるが、やり直しの 14 より前に作ったもの（新しい 14 ではない）
+    tick()
+    const entry = listTrash(data.trashEntries).find((e) => e.kind === 'benchAnalysis')!
+    data = restoreTrashEntry(data, entry.id).data
+    expect(latestGenreAnalysis(analysesOf(data, id))?.id).toBe(wrong.id)
+    expect(applyAutoGenreTags(data)).toBe(data)
+    expect(benchWorkTagsWithAuto(data, data.benchWorks[id])).toEqual(['恋愛', '青春'])
+    expect(data.benchWorks[id].autoTagsFrom?.analysisId).toBe(fixed.id)
+  })
+
+  it('ゴミ箱へ移す依頼の間にやり直しの 14 を取り込み、その後で依頼を断っても（依頼が消えて、前の 14 が見えるようになっても）タグは戻らない', () => {
+    const { data: d0, id, tick } = shelf()
+    tick()
+    const wrong = withAnalysis(d0, id, '14 検索用タグ', body14('SF', 'SF／宇宙'), '2026-12-09')
+    let data = setBenchWorkTags(applyAutoGenreTags(wrong.data), id, [])
+    tick()
+    const fixed = withAnalysis(data, id, '14 検索用タグ', body14('恋愛', '恋愛／青春'), '2026-11-09')
+    const request: TrashRequest = {
+      id: `cz-${wrong.id}`,
+      table: 'benchAnalyses',
+      targetId: wrong.id,
+      parentId: id,
+      targetUpdatedAt: fixed.data.benchAnalyses[wrong.id].updatedAt,
+      label: '「14 検索用タグ」',
+      source: 'claude',
+      v: 1,
+      createdAt: tick(),
+      updatedAt: Date.now(),
+    }
+    data = applyAutoGenreTags({ ...fixed.data, trashRequests: { [request.id]: request } })
+    expect(data.benchWorks[id].tags).toEqual(['恋愛', '青春'])
+    // 依頼を断った（アプリが依頼を消し、14 はそのまま残る）
+    data = { ...data, trashRequests: {} }
+    expect(latestGenreAnalysis(analysesOf(data, id))?.id).toBe(wrong.id)
+    expect(applyAutoGenreTags(data)).toBe(data)
+    expect(benchWorkTagsWithAuto(data, data.benchWorks[id])).toEqual(['恋愛', '青春'])
   })
 
   it('14 が読めない時は autoTagsFrom を進めない（本文を直すと付く）。もう付いているタグだけでも autoTagsFrom は進める', () => {

@@ -3,7 +3,10 @@
 // まだ付けていないタグも見せる）で同じ関数を使う。
 // - 使うのは作品の最新の 14（分析の並びで最初のもの。novel_get_bench_analysis で最初に返るもの）
 // - どの 14 まで取り込んだかを作品の autoTagsFrom に残し、それより新しい 14 が来た時（無ければ一度だけ）、今のタグの後ろに足す。
-//   前のタグは消さないので、作者が外したタグは、新しい 14 が来るまで付き直さない
+//   前のタグは消さないので、作者が外したタグは、新しい 14 が来るまで付き直さない。足した語も autoTagsFrom.added に残す（同期で、
+//   2台が同じ 14 を別々に取り込んだ時に、自動で足した語と手で付けたタグを分けるため。src/sync/merge.ts）
+// - 取り込んだ 14 がもう無い（削除した・ゴミ箱へ移す依頼が出ている）時は、その 14 より後に作った 14 も新しいとする（日付は問わない）。
+//   取り込んだ 14 より前に作った 14 は、日付で最新でも新しくない（ゴミ箱から戻した・依頼を断った・日付を直した 14 でタグを戻さない）
 // - 14 が読めない（2行が無い・空）時は何もしない（autoTagsFrom も進めない。作者が本文を直せば付く）
 // - 【対照】【監査】【横断】の作品には付けない。【原稿】は回ごとに別の作品なので、回ごとの 14 から付く
 // - ゴミ箱へ移す依頼（2.7）の出ている 14 は読まない（コネクタの見せる内容からも外れているので、Claude に見えるタグと同じにする）
@@ -160,7 +163,7 @@ export function genreTagsOf(body: string): string[] {
 
 // ---------- 取り込み ----------
 
-/** 取り込んだ 14 の印として読める形か */
+/** 取り込んだ 14 の印として読める形か（足した語 added は見ない。2.7.0 の端末の印には無い） */
 export function isAutoTagMark(v: unknown): v is AutoTagMark {
   if (!v || typeof v !== 'object') return false
   const m = v as Record<string, unknown>
@@ -179,22 +182,36 @@ export const markOf = (a: Pick<BenchAnalysis, 'id' | 'runDate' | 'createdAt'>): 
   createdAt: a.createdAt,
 })
 
-/** 分析 a が、取り込んだ 14 の印 mark より新しいか（分析の並び: 日付 → 作った時刻 → id。同じ分析なら新しくない） */
+/** 分析 a が、取り込んだ 14 の印 mark より新しいか（分析の並び: 日付 → 作った時刻 → id。同じ分析なら新しくない。added は見ない） */
 export function isNewerMark(a: Pick<BenchAnalysis, 'id' | 'runDate' | 'createdAt'>, mark: AutoTagMark): boolean {
   if (a.id === mark.analysisId) return false
   return newestFirst(a, { id: mark.analysisId, runDate: mark.runDate, createdAt: mark.createdAt }) < 0
 }
 
+/**
+ * 最新の 14 が、取り込んだ印より後のものか（analyses はその作品の分析）。印の 14 より後に作った 14（作った時刻 → id の順）で、
+ * 並びでも新しいか、印の 14 がもう無い（削除した・ゴミ箱へ移す依頼が出ている）時（日付は問わない。日付を間違えた 14 をゴミ箱へ移して
+ * 02 を回し直し、前より早い日付の 14 が来た時にも付くように）。印の 14 より前に作った 14 は、日付で最新でも新しくない（ゴミ箱から
+ * 戻した・依頼を断った・日付を後で直した 14 で、作者が外したタグを戻さないように。02 を回し直して出た 14 ではない）
+ */
+function isAfterMark(latest: BenchAnalysis, mark: AutoTagMark, analyses: readonly BenchAnalysis[]): boolean {
+  if (latest.id === mark.analysisId) return false
+  const createdAfter = latest.createdAt > mark.createdAt || (latest.createdAt === mark.createdAt && latest.id < mark.analysisId)
+  if (!createdAfter) return false
+  if (isNewerMark(latest, mark)) return true
+  return !analyses.some((a) => a.id === mark.analysisId && isGenreAnalysis(a))
+}
+
 export interface PendingAutoTags {
   /** 付けた後のタグ（今のタグの後ろに、まだ無い語を20個になるまで足したもの。今と同じこともある） */
   tags: string[]
-  /** 取り込む 14 の印 */
+  /** 取り込む 14 の印（added は、今のタグの後ろに足した語。足す語が無ければ空） */
   mark: AutoTagMark
 }
 
 /**
  * まだ取り込んでいない自動のタグ（analyses はその作品の分析）。取り込むものが無ければ null:
- * タグを付けない作品・14 が無い・取り込んだ 14 より新しい 14 が無い・14 が読めない
+ * タグを付けない作品・14 が無い・取り込んだ 14 より後の 14 が無い（isAfterMark）・14 が読めない
  */
 export function pendingAutoTags(
   work: Pick<BenchWork, 'name' | 'tags' | 'autoTagsFrom'>,
@@ -203,19 +220,21 @@ export function pendingAutoTags(
   if (isTaglessWork(work)) return null
   const latest = latestGenreAnalysis(analyses)
   if (!latest) return null
-  if (isAutoTagMark(work.autoTagsFrom) && !isNewerMark(latest, work.autoTagsFrom)) return null
+  if (isAutoTagMark(work.autoTagsFrom) && !isAfterMark(latest, work.autoTagsFrom, analyses)) return null
   const words = genreTagsOf(typeof latest.body === 'string' ? latest.body : '')
   if (!words.length) return null
   const tags = displayTags(work.tags) ?? []
   const have = new Set(tags.map(tagKey))
+  const added: string[] = []
   for (const w of words) {
     if (tags.length >= TAG_LIMITS.tags) break
     const key = tagKey(w)
     if (have.has(key)) continue
     have.add(key)
     tags.push(w)
+    added.push(w)
   }
-  return { tags, mark: markOf(latest) }
+  return { tags, mark: { ...markOf(latest), added } }
 }
 
 /** 分析を作品ごとにまとめたもの（同じ表の参照なら作り直さない） */

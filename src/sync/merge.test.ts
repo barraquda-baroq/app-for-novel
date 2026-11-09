@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { decodeRecord, encodeRecord, hashRecord, splitJson, type ChunkDoc, type RecordDoc } from './codec'
-import { contentEqual, deepEqual, LIST_FIELDS, mergeFields, mergeList, mergeRemote, NEWER_FIELDS, stableStringify } from './merge'
+import {
+  contentEqual,
+  deepEqual,
+  LIST_FIELDS,
+  mergeFields,
+  mergeList,
+  mergeRemote,
+  NEWER_FIELDS,
+  stableStringify,
+  type MergeResult,
+} from './merge'
 
 const D = { device: 'テスト端末' }
 
@@ -118,6 +128,125 @@ describe('レコードのマージ', () => {
     const { autoTagsFrom: _, ...plain } = w
     expect((mergeRemote('benchWorks', null, newer, plain, N).record as typeof w).autoTagsFrom).toEqual(newer.autoTagsFrom)
     expect('autoTagsFrom' in (mergeRemote('benchWorks', null, plain, newer, N).record as object)).toBe(true)
+  })
+  describe('2台が同じ 14 を別々に取り込んでいた時の作品のタグ（autoTagsFrom.added。2.7）', () => {
+    const mark = (analysisId: string, runDate: string, createdAt: number, added?: string[]) => ({
+      analysisId,
+      runDate,
+      createdAt,
+      ...(added ? { added } : {}),
+    })
+    const M1 = mark('n1', '2026-11-01', 1, ['恋愛'])
+    const M2 = mark('n2', '2026-11-05', 2, ['青春'])
+    const M3 = mark('n3', '2026-11-08', 3, ['手紙'])
+    const w = { id: 'w1', name: '港の喫茶店', updatedAt: 1 }
+    type W = typeof w & { tags?: string[]; autoTagsFrom?: ReturnType<typeof mark>; note?: string }
+    const tagsOf = (r: MergeResult) => (r.record as W).tags
+
+    it('遅れて送った端末の取り込みで、もう一方の端末で外したタグが戻らない。この端末で手で付けたタグは残る', () => {
+      // 共通の版は新しい 14（M2）の前。両方が M2 から「青春」を足し、クラウド側ではその後に作者が「青春」を外した
+      const base: W = { ...w, tags: ['恋愛'], autoTagsFrom: M1 }
+      const mine: W = { ...w, tags: ['恋愛', '青春'], autoTagsFrom: M2, updatedAt: 2 }
+      const theirs: W = { ...w, tags: ['恋愛'], autoTagsFrom: M2, updatedAt: 3 }
+      const r = mergeRemote('benchWorks', base, mine, theirs, D)
+      expect(tagsOf(r)).toEqual(['恋愛'])
+      expect((r.record as W).autoTagsFrom).toEqual(M2)
+      // この端末で手で「港町」を付けていた（added に無い）
+      const manual: W = { ...mine, tags: ['恋愛', '港町', '青春'] }
+      expect(tagsOf(mergeRemote('benchWorks', base, manual, theirs, D))).toEqual(['恋愛', '港町'])
+      // 相手が手で付けたタグも残る
+      const theirsManual: W = { ...theirs, tags: ['恋愛', '手紙'] }
+      expect(tagsOf(mergeRemote('benchWorks', base, mine, theirsManual, D))).toEqual(['恋愛', '手紙'])
+      // 外さずに両方が取り込んだだけなら、そのまま
+      expect(tagsOf(mergeRemote('benchWorks', base, mine, { ...mine, updatedAt: 4 }, D))).toEqual(['恋愛', '青春'])
+    })
+
+    it('この端末の方で外していて、もう一方の端末の取り込みが先に届いても戻らない（どちらの端末で合わせても同じ）', () => {
+      const base: W = { ...w, tags: ['恋愛'], autoTagsFrom: M1 }
+      const removedHere: W = { ...w, tags: ['恋愛'], autoTagsFrom: M2, updatedAt: 3 }
+      const importedThere: W = { ...w, tags: ['恋愛', '青春'], autoTagsFrom: M2, updatedAt: 2 }
+      expect(tagsOf(mergeRemote('benchWorks', base, removedHere, importedThere, D))).toEqual(['恋愛'])
+      // タグを全部外した（項目ごと無い）時も
+      const b0: W = { ...w, autoTagsFrom: M1 }
+      const none: W = { ...w, autoTagsFrom: mark('n2', '2026-11-05', 2, ['青春']), updatedAt: 3 }
+      const there: W = { ...w, tags: ['青春'], autoTagsFrom: M2, updatedAt: 2 }
+      const r = mergeRemote('benchWorks', b0, none, there, D)
+      expect('tags' in (r.record as object)).toBe(false)
+    })
+
+    it('足した語の無い印（2.7.0 の端末）・別々の 14 の取り込み・共通の版がもう同じ 14 の時は今までどおり', () => {
+      const base: W = { ...w, tags: ['恋愛'], autoTagsFrom: mark('n1', '2026-11-01', 1) }
+      const old2 = mark('n2', '2026-11-05', 2)
+      const mine: W = { ...w, tags: ['恋愛', '青春'], autoTagsFrom: old2, updatedAt: 2 }
+      const theirs: W = { ...w, tags: ['恋愛'], autoTagsFrom: old2, updatedAt: 3 }
+      expect(tagsOf(mergeRemote('benchWorks', base, mine, theirs, D))).toEqual(['恋愛', '青春'])
+      // 別々の 14（この端末は M2、相手は M3）から足した語は両方残る
+      const mine2: W = { ...w, tags: ['恋愛', '青春'], autoTagsFrom: M2, updatedAt: 2 }
+      const theirs3: W = { ...w, tags: ['恋愛', '手紙'], autoTagsFrom: M3, updatedAt: 3 }
+      const base1: W = { ...base, autoTagsFrom: M1 }
+      const r = mergeRemote('benchWorks', base1, mine2, theirs3, D)
+      expect(tagsOf(r)).toEqual(['恋愛', '手紙', '青春'])
+      expect((r.record as W).autoTagsFrom).toEqual(M3)
+      // 共通の版がもう M2（取り込みは揃っている）: この端末で手で付け直した「青春」は残る
+      const synced: W = { ...w, tags: ['恋愛'], autoTagsFrom: M2 }
+      const readded: W = { ...synced, tags: ['恋愛', '青春'], updatedAt: 2 }
+      const noted: W = { ...synced, note: 'メモ', updatedAt: 3 }
+      expect(tagsOf(mergeRemote('benchWorks', synced, readded, noted, D))).toEqual(['恋愛', '青春'])
+    })
+
+    it('同じ 14 の印が足した語だけ違う時は、どちらの端末で合わせても同じ印になる', () => {
+      const base: W = { ...w, tags: ['恋愛'], autoTagsFrom: M1 }
+      const a: W = { ...w, tags: ['恋愛', '青春'], autoTagsFrom: mark('n2', '2026-11-05', 2, ['青春']), updatedAt: 2 }
+      const b: W = { ...w, tags: ['恋愛', '港町', '青春'], autoTagsFrom: mark('n2', '2026-11-05', 2, []), updatedAt: 3 }
+      const ab = mergeFields('benchWorks', base, a, b, D).record as W
+      const ba = mergeFields('benchWorks', base, b, a, D).record as W
+      expect(ab.autoTagsFrom).toEqual(ba.autoTagsFrom)
+      expect(ab.autoTagsFrom?.analysisId).toBe('n2')
+      // 足した語の無い印（2.7.0）とも
+      const c: W = { ...a, autoTagsFrom: mark('n2', '2026-11-05', 2) }
+      expect((mergeFields('benchWorks', base, a, c, D).record as W).autoTagsFrom).toEqual(
+        (mergeFields('benchWorks', base, c, a, D).record as W).autoTagsFrom,
+      )
+    })
+
+    it('共通の履歴が無い時: クラウドがもう同じ 14（かもっと新しい 14）を取り込んでいたら、この端末が自動で足した語は足さない', () => {
+      const N = { device: 'iPhone', noHistory: true }
+      // クラウドでは作者が「青春」を外している。この端末は復元したデータで同じ 14 から付けた（手で付けた「港町」もある）
+      const cloud: W = { ...w, tags: ['恋愛'], autoTagsFrom: mark('n1', '2026-11-01', 1), updatedAt: 5 }
+      const local: W = { ...w, tags: ['恋愛', '青春'], autoTagsFrom: mark('n1', '2026-11-01', 1, ['恋愛', '青春']), updatedAt: 6 }
+      const r = mergeRemote('benchWorks', null, local, cloud, N)
+      expect(tagsOf(r)).toEqual(['恋愛'])
+      expect((r.record as W).autoTagsFrom?.analysisId).toBe('n1')
+      // 自動のタグと印だけの違いは、ゴミ箱に控えない
+      expect(r.keptCopy).toBeUndefined()
+      const manual: W = { ...local, tags: ['恋愛', '港町', '青春'] }
+      expect(tagsOf(mergeRemote('benchWorks', null, manual, cloud, N))).toEqual(['恋愛', '港町'])
+      // ほかの項目が違えば今までどおり控える
+      const localNote: W = { ...local, note: 'この端末のメモ' }
+      expect(mergeRemote('benchWorks', null, localNote, cloud, N).keptCopy).toBeDefined()
+      // クラウドにタグが無ければ項目を作らない
+      const bare: W = { ...cloud }
+      delete bare.tags
+      expect('tags' in (mergeRemote('benchWorks', null, local, bare, N).record as object)).toBe(false)
+      // クラウドがもっと新しい 14 を取り込んでいた: 古い 14 から足した語は足さない
+      const newerCloud: W = { ...cloud, tags: ['恋愛', '手紙'], autoTagsFrom: M3 }
+      const r2 = mergeRemote('benchWorks', null, local, newerCloud, N)
+      expect(tagsOf(r2)).toEqual(['恋愛', '手紙'])
+      expect((r2.record as W).autoTagsFrom?.analysisId).toBe('n3')
+    })
+
+    it('共通の履歴が無い時: この端末の方が新しい 14・クラウドに印が無い・足した語の無い印は今までどおり（両方のタグ）', () => {
+      const N = { device: 'iPhone', noHistory: true }
+      const cloud: W = { ...w, tags: ['恋愛'], autoTagsFrom: mark('n1', '2026-11-01', 1), updatedAt: 5 }
+      const newerLocal: W = { ...w, tags: ['恋愛', '手紙'], autoTagsFrom: M3, updatedAt: 6 }
+      const r = mergeRemote('benchWorks', null, newerLocal, cloud, N)
+      expect(tagsOf(r)).toEqual(['恋愛', '手紙'])
+      expect((r.record as W).autoTagsFrom?.analysisId).toBe('n3')
+      const unmarked: W = { ...w, tags: ['恋愛'], updatedAt: 5 }
+      expect(tagsOf(mergeRemote('benchWorks', null, newerLocal, unmarked, N))).toEqual(['恋愛', '手紙'])
+      const oldLocal: W = { ...w, tags: ['恋愛', '青春'], autoTagsFrom: mark('n1', '2026-11-01', 1), updatedAt: 6 }
+      expect(tagsOf(mergeRemote('benchWorks', null, oldLocal, cloud, N))).toEqual(['恋愛', '青春'])
+    })
   })
   it('構成の並びは要素ごとに合わせる', () => {
     const mine = { ...base, structure: [...base.structure, { type: 'piece', id: 'm' }] }
