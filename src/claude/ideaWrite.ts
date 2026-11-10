@@ -26,6 +26,8 @@ import {
   isClaudeIdea,
   normalizeIdeaName,
   normalizeIdeaText,
+  normalizeReadMark,
+  READ_MARK,
 } from './ideaAppend'
 import { RECORD_LIMITS } from './records'
 import { matchesId, resolveTitle, shortId } from './refs'
@@ -131,9 +133,14 @@ export interface IdeaAddItem {
   status: IdeaAddStatus
   /** 足す・足したアイデアの id（invalid は無い） */
   id?: ID
-  /** 「2026/11/12 14:32　第3章の動機」（1行目。入力から作る）。形が違う時は「アイデア（2件目）」 */
+  /**
+   * 「2026/11/12 14:32　第3章の動機」（1行目。入力から作る。名前が無い時は日付と時刻の後ろに中身の最初の行。ideaHeadLine）。
+   * 重複で、もうあるカードが Claude に見えている時は、そのカードの1行目。形が違う時は「アイデア（2件目）」
+   */
   label: string
   hint?: string
+  /** 重複: もうあるカード（Claude が作ったもの）が Claude に見えている（答えにその i:… を出せる） */
+  existing?: boolean
 }
 
 export interface IdeaAddBuild {
@@ -234,9 +241,22 @@ export function buildAddIdeas(raw: AppData, view: AppData, input: AddIdeasInput,
       out.push({ index, status: 'previously_deleted', id, label, hint: IDEA_ADD_HINTS.previously_deleted })
       return
     }
-    // 見せないタイトルへ移したアイデアも raw で見る（中身は出さず、入力から作った表記だけを返す）
+    // 見せないタイトルへ移したアイデアも raw で見る（中身は出さず、入力から作った表記だけを返す）。Claude に見えているカードなら、
+    // そのカードの1行目と i:…（作った時刻は、送り直した時刻ではなく、もうあるカードのもの）
     if (Object.prototype.hasOwnProperty.call(raw.ideas, id) || seen.has(id)) {
-      out.push({ index, status: 'duplicate', id, label, hint: IDEA_ADD_HINTS.duplicate })
+      const known = Object.prototype.hasOwnProperty.call(view.ideas, id) ? view.ideas[id] : undefined
+      out.push(
+        known && isClaudeIdea(known)
+          ? {
+              index,
+              status: 'duplicate',
+              id,
+              label: `「${ideaHeadLine(known, 40)}」`,
+              hint: IDEA_ADD_HINTS.duplicate,
+              existing: true,
+            }
+          : { index, status: 'duplicate', id, label, hint: IDEA_ADD_HINTS.duplicate },
+      )
       return
     }
     seen.add(id)
@@ -290,7 +310,7 @@ export function buildAddIdeas(raw: AppData, view: AppData, input: AddIdeasInput,
 export interface AppendIdeaInput {
   /** 追記するアイデア（i:…） */
   idea_id?: unknown
-  /** 読んだ印（novel_get_notes の本文の見出しの「印: …」） */
+  /** 読んだ印（novel_get_notes の本文の見出しの「印: 」の後ろの8字。「印: …」のまま・英大文字でもよい。normalizeReadMark） */
   read_mark?: unknown
   content?: unknown
 }
@@ -340,7 +360,11 @@ function ideaLabel(view: AppData, idea: Idea): string {
 
 export const IDEA_APPEND_HINTS = {
   stale:
-    '読んだ後にこのアイデアの中身が変わりました（作者がアプリで直した・ほかの追記が入った）。novel_get_notes で読み直し、今の中身を踏まえて書いてから、新しい「印: …」で送ってください',
+    '読んだ後にこのアイデアの中身が変わりました（作者がアプリで直した・ほかの追記が入った）。novel_get_notes で読み直し、今の中身を踏まえて書いてから、新しい印（本文の見出しの「印: 」の後ろの8字）を read_mark に渡して送ってください',
+  read_mark_missing:
+    'read_mark がありません（novel_get_notes で今の中身を読み、本文の見出しの「印: 」の後ろの8字を渡してください）',
+  read_mark_format:
+    'read_mark の形が違います（novel_get_notes（kind=ideas・ids にこの id）の本文の見出しの「印: 」の後ろの8字を渡してください。例 1i30lfcq）',
   not_claude: '作者が書いたアイデアには追記できません（追記できるのは、Claude がこのコネクタで作ったアイデアだけ）',
   pending_trash: 'ゴミ箱へ移す依頼の出ているアイデアです（追記できません）',
   in_trash: 'アプリのゴミ箱にあります（作者がゴミ箱から戻すと追記できます）',
@@ -365,13 +389,10 @@ export function buildIdeaAppend(raw: AppData, view: AppData, input: AppendIdeaIn
     ...more,
   })
   if (!rawRef || charCount(rawRef) > IDEA_LIMITS.ref) return refuse('invalid', 'idea_id の形が違います（i:… を渡してください）')
-  if (typeof x.read_mark !== 'string' || !x.read_mark.trim() || charCount(x.read_mark.trim()) > IDEA_LIMITS.mark)
-    return refuse(
-      'invalid',
-      'read_mark がありません（novel_get_notes で今の中身を読み、本文の見出しの「印: …」を渡してください）',
-    )
+  if (typeof x.read_mark !== 'string' || !x.read_mark.trim()) return refuse('invalid', IDEA_APPEND_HINTS.read_mark_missing)
   if (typeof x.content !== 'string') return refuse('invalid', 'content がありません')
-  const mark = x.read_mark.trim()
+  // 「印: 1i30lfcq」・全角のコロン・英大文字でも、印の8字にそろえる（依頼の id と読んだ印の比べ方はそろえた後の印で。形は下で確かめる）
+  const mark = charCount(x.read_mark) > IDEA_LIMITS.mark ? '' : normalizeReadMark(x.read_mark)
   const hits = Object.values(view.ideas).filter((i) => matchesId('idea', rawRef, i.id))
   if (hits.length > 1)
     return refuse('ambiguous', IDEA_APPEND_HINTS.ambiguous, {
@@ -408,6 +429,8 @@ export function buildIdeaAppend(raw: AppData, view: AppData, input: AppendIdeaIn
     )
   const md = ideaMarkdownLines(text)
   if (md.length) return refuse('invalid', markdownHint(md), found)
+  // 印の形が違う（8字の英小文字と数字でない）: 中身が変わったのではないので、読み直しではなく形を直すように答える
+  if (!READ_MARK.test(mark)) return refuse('invalid', IDEA_APPEND_HINTS.read_mark_format, found)
   // 同じ依頼（同じアイデア・読んだ印・内容）。読んだ印を確かめる前に見る（送り直しは、当てた後の印が変わっていても同じ答え）
   const rawIdea = Object.prototype.hasOwnProperty.call(raw.ideas, idea.id) ? raw.ideas[idea.id] : undefined
   const applied = new Set(rawIdea ? appendIdsOf(rawIdea) : [])

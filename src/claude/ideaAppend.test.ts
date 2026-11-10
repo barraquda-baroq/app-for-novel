@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { hashJson } from '../domain/hash'
 import type { ClaudeAccess, Idea, IdeaAppend, Title } from '../domain/types'
-import { jstMinute, jstSlashDate } from './dates'
+import { isJstTimestamp, jstDate, jstMinute, jstSlashDate, MAX_JST_TS } from './dates'
 import {
   appendedBody,
   appendedTail,
@@ -18,6 +18,7 @@ import {
   ideaAppendProblem,
   ideaEditedByAuthor,
   ideaHeadLine,
+  ideaLabelLine,
   ideaPlaceLabel,
   ideaReadMark,
   ideaSectionWritable,
@@ -27,7 +28,9 @@ import {
   liveIdeaAppends,
   normalizeIdeaName,
   normalizeIdeaText,
+  normalizeReadMark,
   overlayIdeaAppends,
+  READ_MARK,
   withIdeaAppend,
 } from './ideaAppend'
 
@@ -97,6 +100,24 @@ describe('日付の行（日本時間）', () => {
     expect(jstSlashDate(Date.UTC(2026, 0, 2, 0, 5))).toBe('2026/01/02')
     expect(jstSlashDate(Date.UTC(2026, 10, 12, 14, 59))).toBe('2026/11/12')
     expect(jstSlashDate(Date.UTC(2026, 10, 12, 15, 0))).toBe('2026/11/13')
+  })
+
+  it('日付にできない時刻（範囲の外・NaN・数でない）でも投げずに、決まった代わりの値（1970/01/01 00:00）', () => {
+    for (const bad of [1e16, -1e16, Number.NaN, Number.POSITIVE_INFINITY, MAX_JST_TS + 1, -1e14, '1' as unknown as number]) {
+      expect(jstMinute(bad)).toBe('1970/01/01 00:00')
+      expect(jstSlashDate(bad)).toBe('1970/01/01')
+      expect(jstDate(bad)).toBe('1970-01-01')
+    }
+    // 4桁の年の終わりまでは、ふつうの形
+    expect(jstMinute(MAX_JST_TS)).toBe('9999/12/31 23:59')
+    expect(jstDate(0)).toBe('1970-01-01')
+    expect(jstMinute(-1)).toBe('1970/01/01 08:59')
+  })
+
+  it('isJstTimestamp: 0 以上・9999年の終わり（日本時間）までの整数の ms', () => {
+    for (const ok of [0, 1, AT, MAX_JST_TS]) expect(isJstTimestamp(ok)).toBe(true)
+    for (const bad of [-1, 1e16, -1e16, MAX_JST_TS + 1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '1', null, undefined])
+      expect(isJstTimestamp(bad)).toBe(false)
   })
 })
 
@@ -219,6 +240,10 @@ describe('追記の依頼の確かめ方', () => {
     expect(isIdeaAppend(request({ source: 'manual' as unknown as 'claude' }))).toBe(false)
     expect(isIdeaAppend(request({ v: Number.NaN }))).toBe(false)
     expect(isIdeaAppend(request({ createdAt: '1' as unknown as number }))).toBe(false)
+    // 追記の行の日付にできない時刻（Date の範囲の外・負・整数でない）は形が違う（日付の行を作る時に投げないように）
+    for (const createdAt of [1e16, -1e16, -1, 1.5, MAX_JST_TS + 1]) expect(isIdeaAppend(request({ createdAt }))).toBe(false)
+    expect(isIdeaAppend(request({ createdAt: 0 }))).toBe(true)
+    expect(isIdeaAppend(request({ createdAt: MAX_JST_TS }))).toBe(true)
     expect(isIdeaAppend(null)).toBe(false)
     expect(isIdeaAppend([request()])).toBe(false)
     expect(IDEA_APPEND_VERSION).toBe(1)
@@ -234,7 +259,10 @@ describe('追記の依頼の確かめ方', () => {
     const c = request({ id: 'cu-0', createdAt: 5 })
     const newer = request({ id: 'cu-new', createdAt: 1, v: 2 })
     const broken = { id: 'cu-broken', ideaId: 'x' } as unknown as IdeaAppend
-    const live = liveIdeaAppends({ ideaAppends: { [a.id]: a, [b.id]: b, [c.id]: c, [newer.id]: newer, [broken.id]: broken } })
+    const far = request({ id: 'cu-far', createdAt: 1e16 })
+    const live = liveIdeaAppends({
+      ideaAppends: { [a.id]: a, [b.id]: b, [c.id]: c, [newer.id]: newer, [broken.id]: broken, [far.id]: far },
+    })
     expect(live.map((r) => r.id)).toEqual(['cu-0', 'cu-a', 'cu-b'])
     expect(liveIdeaAppends({})).toEqual([])
   })
@@ -346,6 +374,20 @@ describe('追記の当て方', () => {
     // 当てた後の id の依頼をもう一度当てても足さない（applied）
     expect(overlayIdeaAppends(titles, out.ideas, [r1]).ideas).toBe(out.ideas)
   })
+
+  it('overlayIdeaAppends: 1件の依頼で投げても、その依頼だけ飛ばして、ほかの依頼は当てる（見せる内容を止めない）', () => {
+    const mine = claudeIdea()
+    // 壊れた本文（数）のアイデアへの依頼は、足した形を作る時に投げる
+    const broken: Idea = { ...claudeIdea({ id: 'cy-broken' }), body: 42 as unknown as string }
+    const ideas: Record<string, Idea> = { [mine.id]: mine, [broken.id]: broken }
+    const bad = request({ id: 'cu-bad', ideaId: broken.id, createdAt: 5 })
+    expect(() => withIdeaAppend(broken, bad)).toThrow()
+    const good = request({ id: 'cu-good', createdAt: 10 })
+    const out = overlayIdeaAppends({}, ideas, [bad, good])
+    expect(out.applied.map((r) => r.id)).toEqual(['cu-good'])
+    expect(out.ideas[broken.id]).toBe(broken)
+    expect(out.ideas[mine.id].body).toBe(appendedBody(BODY, good))
+  })
 })
 
 describe('読んだ印・場所・1行目', () => {
@@ -376,5 +418,42 @@ describe('読んだ印・場所・1行目', () => {
     expect(head).toBe(`${'あ'.repeat(39)}…`)
     expect(Array.from(ideaHeadLine(claudeIdea({ body: 'あ'.repeat(50) }), 10))).toHaveLength(10)
     expect(ideaHeadLine(claudeIdea({ body: 'あ'.repeat(40) }))).toBe('あ'.repeat(40))
+  })
+
+  it('ideaLabelLine・ideaHeadLine: 日付と時刻だけの1行目（名前の無い Claude のアイデア）は、全角の空白を挟んで次の空でない行も付ける', () => {
+    const a = claudeIdea({ body: '2026/11/12 14:32\n【動機】\n・兄を探す' })
+    const b = claudeIdea({ body: '2026/11/12 14:32\n\n  港町の案  \n・灯台' })
+    expect(ideaLabelLine(a)).toBe('2026/11/12 14:32　【動機】')
+    expect(ideaLabelLine(b)).toBe('2026/11/12 14:32　港町の案')
+    expect(ideaHeadLine(a)).toBe('2026/11/12 14:32　【動機】')
+    expect(ideaHeadLine(a)).not.toBe(ideaHeadLine(b))
+    // 長ければ、付けた後に切る
+    const long = claudeIdea({ body: `2026/11/12 14:32\n${'あ'.repeat(50)}` })
+    expect(ideaHeadLine(long)).toBe(`2026/11/12 14:32　${'あ'.repeat(22)}…`)
+    expect(Array.from(ideaHeadLine(long))).toHaveLength(40)
+    // 名前のあるアイデア・作者のアイデア・日付と時刻だけのアイデア・見出し（古い版）は今までどおり
+    expect(ideaLabelLine(claudeIdea())).toBe('2026/11/12 14:32　第3章の動機')
+    expect(ideaLabelLine(authorIdea({ body: '2026/11/12 の案\n中身' }))).toBe('2026/11/12 の案')
+    expect(ideaLabelLine(claudeIdea({ body: '2026/11/12 14:32' }))).toBe('2026/11/12 14:32')
+    expect(ideaLabelLine(claudeIdea({ body: '2026/11/12 14:32\n  \n' }))).toBe('2026/11/12 14:32')
+    expect(ideaLabelLine(claudeIdea({ heading: '見出し', body: '2026/11/12 14:32\n中身' }))).toBe('見出し')
+    expect(ideaLabelLine(authorIdea({ body: '' }))).toBe('')
+    expect(ideaLabelLine({ heading: 1 as unknown as string, body: undefined as unknown as string })).toBe('')
+  })
+
+  it('normalizeReadMark: 「印: …」・全角のコロン・英大文字・全角の英数字・前後の空白をそろえて8字に。形は READ_MARK', () => {
+    for (const written of [
+      '1on3jcfr',
+      ' 1on3jcfr ',
+      '印: 1on3jcfr',
+      '印：1on3jcfr',
+      '印 : 1ON3JCFR',
+      '１ＯＮ３ＪＣＦＲ',
+      '印:1on3jcfr',
+    ])
+      expect(normalizeReadMark(written)).toBe('1on3jcfr')
+    expect(READ_MARK.test('1on3jcfr')).toBe(true)
+    for (const bad of ['x', '1on3jcf', '1on3jcfr9', '印: 1on3jcfr ===', '[1on3jcfr]', 'i:1on3jcfr', '1on3-jcf'])
+      expect(READ_MARK.test(normalizeReadMark(bad))).toBe(false)
   })
 })

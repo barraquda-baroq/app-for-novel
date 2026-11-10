@@ -10,6 +10,7 @@ import { appendedBody, ideaReadMark, isClaudeIdea } from '../../../src/claude/id
 import { shortId } from '../../../src/claude/refs'
 import { novel } from '../../../src/test/claudeFixture'
 import { MESSAGES, modelMismatchMessage } from '../../src/vault/errors'
+import { ideaAddResult } from '../../src/vault/tools/ideas'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { cloudData, connectorDocs, pushChanges } from '../support/cloud'
 import { FakeFirebase } from '../support/fakeFirebase'
@@ -49,7 +50,7 @@ const DAY = '2026-10-29'
 const HOME_CLOSING =
   'アプリのホームのアイデア欄の「どのタイトルにも属さない」に、各端末が同期すると出ます。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。'
 const APPEND_CLOSING =
-  '追記は依頼として送りました。アプリを開いて同期すると、カードの終わりに足されます（前の中身と作者が直した所は残り、並びの位置と「済み」は変わりません）。Claude からは、もう追記した後の中身が見えます。続けて追記する時は、もう一度 novel_get_notes で読んでから、新しい「印: …」を渡してください。本文（稿）は書き換えていません。'
+  '追記は依頼として送りました。アプリを開いて同期すると、カードの終わりに足されます（前の中身と作者が直した所は残り、並びの位置と「済み」は変わりません）。Claude からは、もう追記した後の中身が見えます。続けて追記する時は、もう一度 novel_get_notes で読んでから、新しい印（本文の見出しの「印: 」の後ろの8字）を read_mark に渡してください。本文（稿）は書き換えていません。'
 
 describe('novel_add_ideas', () => {
   it('ホームのアイデア: 答えに入れた場所と i:… を出し、済みでないアイデアの先頭に渡した順で入れる（Claude の印の形）', async () => {
@@ -67,7 +68,7 @@ describe('novel_add_ideas', () => {
       [
         'アイデアを足す: 追加 2件',
         `- 追加 ${shortId('idea', a)} 「2026/10/29 12:00　第3章の動機」`,
-        `- 追加 ${shortId('idea', b)} 「2026/10/29 12:00」`,
+        `- 追加 ${shortId('idea', b)} 「2026/10/29 12:00　新作の案」`,
         '入れた場所: ホームのアイデア（どのタイトルにも属さないアイデア。済みでないアイデアの先頭。カードに「Claude が作成」の印が付きます）',
         HOME_CLOSING,
       ].join('\n'),
@@ -75,7 +76,7 @@ describe('novel_add_ideas', () => {
     expect(r.structured).toEqual({
       created: [
         { id: shortId('idea', a), label: '「2026/10/29 12:00　第3章の動機」（ホームのアイデア）' },
-        { id: shortId('idea', b), label: '「2026/10/29 12:00」（ホームのアイデア）' },
+        { id: shortId('idea', b), label: '「2026/10/29 12:00　新作の案」（ホームのアイデア）' },
       ],
       skipped: [],
     })
@@ -118,12 +119,13 @@ describe('novel_add_ideas', () => {
     const before = commits(fake)
     const again = await core.callTool('novel_add_ideas', input)
     expect(again.isError).toBeUndefined()
+    // もうあるカード（Claude に見えている）の i:… と1行目を出す
     expect(again.text).toBe(
-      'アイデアを足す: 重複 1件\n- 重複 「2026/10/29 12:00　終盤」: 同じ内容のアイデアがもうあります（追加しません）',
+      `アイデアを足す: 重複 1件\n- 重複 ${shortId('idea', id)} 「2026/10/29 12:00　終盤」: 同じ内容のアイデアがもうあります（追加しません）`,
     )
     expect(again.structured).toEqual({
       created: [],
-      skipped: [{ index: 0, reason: 'duplicate', hint: '同じ内容のアイデアがもうあります（追加しません）' }],
+      skipped: [{ index: 0, reason: 'duplicate', id: shortId('idea', id), hint: '同じ内容のアイデアがもうあります（追加しません）' }],
     })
     expect(commits(fake)).toBe(before)
     const ro = await core.callTool('novel_add_ideas', { title_id: '読む庭', items: [{ content: '案' }] })
@@ -137,6 +139,95 @@ describe('novel_add_ideas', () => {
     expect(md.isError).toBe(true)
     expect(md.text).toContain('アイデアを足す: 形が違う 1件\n- 形が違う アイデア（1件目）: Markdown の記号があります（2行目「## 動機」・3行目「- 兄」）')
     expect(commits(fake)).toBe(before)
+  })
+
+  it('1回の呼び出しに同じアイデアが2件あれば「追加 1件・重複 1件」（カードは1枚。重複の行にもその i:…）', async () => {
+    const fake = new FakeFirebase()
+    const { core } = await pairedCore(fake, setup().data)
+    const r = await core.callTool('novel_add_ideas', { items: [{ content: '同じ案' }, { content: '同じ案' }] })
+    const id = claudeIdeaId(null, DAY, '', '同じ案')
+    expect(r.isError).toBeUndefined()
+    expect(r.text.split('\n').slice(0, 3)).toEqual([
+      'アイデアを足す: 追加 1件・重複 1件',
+      `- 追加 ${shortId('idea', id)} 「2026/10/29 12:00　同じ案」`,
+      `- 重複 ${shortId('idea', id)} 「2026/10/29 12:00　同じ案」: 同じ内容のアイデアがもうあります（追加しません）`,
+    ])
+    expect(r.structured).toEqual({
+      created: [{ id: shortId('idea', id), label: '「2026/10/29 12:00　同じ案」（ホームのアイデア）' }],
+      skipped: [{ index: 1, reason: 'duplicate', id: shortId('idea', id), hint: '同じ内容のアイデアがもうあります（追加しません）' }],
+    })
+    expect(connectorDocs(fake, 'ideas')).toHaveLength(1)
+  })
+
+  it('試し直しで2回目に「重複」になったアイデアは、1回目に作っていれば「追加」（同じ id の2件目は「重複」のまま）', () => {
+    const id = claudeIdeaId(null, DAY, '', '同じ案')
+    const label = '「2026/10/29 12:00　同じ案」'
+    const hint = '同じ内容のアイデアがもうあります（追加しません）'
+    const r = ideaAddResult(
+      {
+        ok: true,
+        titleId: null,
+        place: 'ホームのアイデア',
+        titleName: '',
+        records: [],
+        items: [
+          { index: 0, status: 'duplicate', id, label, hint, existing: true },
+          { index: 1, status: 'duplicate', id, label, hint, existing: true },
+        ],
+      },
+      new Set([`ideas:${id}`]),
+    )
+    expect(r.text.split('\n').slice(0, 3)).toEqual([
+      'アイデアを足す: 追加 1件・重複 1件',
+      `- 追加 ${shortId('idea', id)} ${label}`,
+      `- 重複 ${shortId('idea', id)} ${label}: ${hint}`,
+    ])
+    expect((r.structured as { created: unknown[] }).created).toHaveLength(1)
+  })
+
+  it('数分後に同じ内容を送り直すと「重複」。もうあるカードの1行目（作った時刻）と i:… を出す', async () => {
+    const fake = new FakeFirebase()
+    const { core, clock } = await pairedCore(fake, setup().data)
+    await call(core, 'novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    const id = claudeIdeaId(null, DAY, '動機', '案')
+    clock.now += 3 * 60_000
+    const again = await core.callTool('novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    expect(again.isError).toBeUndefined()
+    expect(again.text).toBe(
+      `アイデアを足す: 重複 1件\n- 重複 ${shortId('idea', id)} 「2026/10/29 12:00　動機」: 同じ内容のアイデアがもうあります（追加しません）`,
+    )
+    expect(again.text).not.toContain('12:03')
+    expect(again.structured).toEqual({
+      created: [],
+      skipped: [{ index: 0, reason: 'duplicate', id: shortId('idea', id), hint: '同じ内容のアイデアがもうあります（追加しません）' }],
+    })
+  })
+
+  it('名前の無いアイデアは、答えの表記に中身の最初の行を付けて見分ける（もうある重複1件と新しい2件）', async () => {
+    const fake = new FakeFirebase()
+    const { core, clock } = await pairedCore(fake, setup().data)
+    await call(core, 'novel_add_ideas', { items: [{ content: '港町の案\n・灯台' }] })
+    clock.now += 60_000
+    const r = await core.callTool('novel_add_ideas', {
+      items: [{ content: '港町の案\n・灯台' }, { content: '山の町の案\n・峠' }, { content: '【動機】\n・兄を探す' }],
+    })
+    const port = claudeIdeaId(null, DAY, '', '港町の案\n・灯台')
+    const mountain = claudeIdeaId(null, DAY, '', '山の町の案\n・峠')
+    const motive = claudeIdeaId(null, DAY, '', '【動機】\n・兄を探す')
+    expect(r.text.split('\n').slice(0, 4)).toEqual([
+      'アイデアを足す: 追加 2件・重複 1件',
+      `- 追加 ${shortId('idea', mountain)} 「2026/10/29 12:01　山の町の案」`,
+      `- 追加 ${shortId('idea', motive)} 「2026/10/29 12:01　【動機】」`,
+      `- 重複 ${shortId('idea', port)} 「2026/10/29 12:00　港町の案」: 同じ内容のアイデアがもうあります（追加しません）`,
+    ])
+    // カードの本文は変えない（1行目は日付と時刻だけ）
+    expect(cloudData(fake).ideas[mountain].body).toBe('2026/10/29 12:01\n山の町の案\n・峠')
+    // ゴミ箱へ移す答えも、どのカードか分かる（n:・k: の行の形は変えない）
+    const trash = await call(core, 'novel_move_cards_to_trash', { cards: [shortId('idea', mountain)] })
+    expect(trash).toContain(`- 移す ${shortId('idea', mountain)} ホームのアイデア「2026/10/29 12:01　山の町の案」`)
+    // 依頼中のアイデアを読むと、同じ表記で依頼中と答える
+    const asked = await core.callTool('novel_get_notes', { kind: 'ideas', ids: [shortId('idea', mountain)] })
+    expect(asked.text).toContain(`${shortId('idea', mountain)} ホームのアイデア「2026/10/29 12:01　山の町の案」 はゴミ箱へ移す依頼中です`)
   })
 
   it('「書き込みを許可」していない時・データの形が違う時は作らない（追記も）', async () => {
@@ -226,7 +317,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     expect(stale.text).toBe(
       [
         'アイデアに追記: 追記しない',
-        `- 追記しない ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）（読んだ後に中身が変わった）: 読んだ後にこのアイデアの中身が変わりました（作者がアプリで直した・ほかの追記が入った）。novel_get_notes で読み直し、今の中身を踏まえて書いてから、新しい「印: …」で送ってください`,
+        `- 追記しない ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）（読んだ後に中身が変わった）: 読んだ後にこのアイデアの中身が変わりました（作者がアプリで直した・ほかの追記が入った）。novel_get_notes で読み直し、今の中身を踏まえて書いてから、新しい印（本文の見出しの「印: 」の後ろの8字）を read_mark に渡して送ってください`,
       ].join('\n'),
     )
     expect(stale.structured).toEqual({ created: [], skipped: [{ index: 0, reason: 'stale', hint: expect.any(String) }] })
@@ -256,6 +347,48 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     const second = await core.callTool('novel_append_to_idea', { idea_id: ref, read_mark: ideaReadMark(appended), content: '・舞台は冬' })
     expect(second.text).toContain('アイデアに追記: 追記 1件')
     expect(core.views().view.ideas[id].body).toBe(appendedBody(appended, { createdAt: clock.now, text: '・舞台は冬' }))
+  })
+
+  it('read_mark は「印: …」のまま・全角のコロン・英大文字でもよい（同じ依頼）。形の違う印は「形が違う」（読み直しを求めない）', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    await call(core, 'novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    const id = claudeIdeaId(null, DAY, '動機', '案')
+    const ref = shortId('idea', id)
+    const mark = ideaReadMark('2026/10/29 12:00　動機\n案')
+    const full = await call(core, 'novel_get_notes', { kind: 'ideas', ids: [ref] })
+    expect(full).toContain(`[${ref}] 印: ${mark} ===`)
+    // 見出しの「印: …」をそのまま渡す
+    const r = await core.callTool('novel_append_to_idea', { idea_id: ref, read_mark: `印: ${mark}`, content: '変更' })
+    expect(r.isError).toBeUndefined()
+    expect(r.text).toContain('アイデアに追記: 追記 1件')
+    const reqId = ideaAppendId(id, mark, '変更')
+    expect(connectorDocs(fake, 'ideaAppends').map((d) => d.fields.id.stringValue)).toEqual([reqId])
+    expect(cloudData(fake).ideaAppends[reqId].readMark).toBe(mark)
+    // 全角のコロン・英大文字・印だけでも、同じ依頼（依頼済み。書かない）
+    const writes = commits(fake)
+    for (const written of [`印：${mark}`, mark.toUpperCase(), ` ${mark} `]) {
+      const again = await core.callTool('novel_append_to_idea', { idea_id: ref, read_mark: written, content: '変更' })
+      expect([written, again.isError, again.text.split('\n')[1]]).toEqual([
+        written,
+        undefined,
+        `- 追記 ${ref} 「2026/10/29 12:00　動機」（ホームのアイデア）（依頼済み）`,
+      ])
+    }
+    expect(commits(fake)).toBe(writes)
+    // 形の違う印: 「読んだ後に中身が変わった」ではなく「形が違う」
+    const bad = await core.callTool('novel_append_to_idea', { idea_id: ref, read_mark: `印: ${mark.slice(0, 6)}`, content: '別の追記' })
+    expect(bad.isError).toBe(true)
+    expect(bad.text).toBe(
+      [
+        'アイデアに追記: 追記しない',
+        `- 追記しない ${ref} 「2026/10/29 12:00　動機」（ホームのアイデア）（形が違う）: read_mark の形が違います（novel_get_notes（kind=ideas・ids にこの id）の本文の見出しの「印: 」の後ろの8字を渡してください。例 1i30lfcq）`,
+      ].join('\n'),
+    )
+    expect(bad.text).not.toContain('読んだ後に')
+    expect(bad.structured).toEqual({ created: [], skipped: [{ index: 0, reason: 'invalid', hint: expect.stringContaining('read_mark の形が違います') }] })
+    expect(commits(fake)).toBe(writes)
   })
 
   it('アプリが当てずに消した依頼（「読むだけ」にした）の後は、同じ内容を別の依頼として頼み直せる', async () => {
@@ -333,7 +466,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     await call(core, 'novel_move_cards_to_trash', { cards: [home] })
     const asked = await core.callTool('novel_get_notes', { kind: 'ideas', ids: [home] })
     expect(asked.text).toBe(
-      `${home} ホームのアイデア「2026/10/29 12:00」 はゴミ箱へ移す依頼中です（アプリが同期すると、アプリのゴミ箱へ移ります。30日は作者がアプリのゴミ箱から戻せます）`,
+      `${home} ホームのアイデア「2026/10/29 12:00　ホームの案」 はゴミ箱へ移す依頼中です（アプリが同期すると、アプリのゴミ箱へ移ります。30日は作者がアプリのゴミ箱から戻せます）`,
     )
     const appendAsked = await core.callTool('novel_append_to_idea', { idea_id: home, read_mark: 'x', content: '追記' })
     expect(appendAsked.text).toContain('（ゴミ箱へ移す依頼中）: ゴミ箱へ移す依頼の出ているアイデアです（追記できません）')

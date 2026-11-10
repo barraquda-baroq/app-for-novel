@@ -422,7 +422,9 @@ export const SCHEMAS = {
       .string()
       .min(1)
       .max(IDEA_LIMITS.mark)
-      .describe('追記の前に novel_get_notes（kind=ideas・ids にこの id）で今の中身を読んだ時に、本文の見出しに出た「印: …」'),
+      .describe(
+        '追記の前に novel_get_notes（kind=ideas・ids にこの id）で今の中身を読んだ時に、本文の見出しに出た「印: 」の後ろの8字（例 1i30lfcq）',
+      ),
     content: z
       .string()
       .min(1)
@@ -446,7 +448,9 @@ export type ToolName = keyof typeof SCHEMAS
 /** 書き込みツールの結果（structuredContent）の形 */
 export const WRITE_OUTPUT = z.object({
   created: z.array(z.object({ id: z.string(), label: z.string() })),
-  skipped: z.array(z.object({ index: z.number().int(), reason: z.string(), hint: z.string().optional() })),
+  skipped: z.array(
+    z.object({ index: z.number().int(), reason: z.string(), id: z.string().optional(), hint: z.string().optional() }),
+  ),
 })
 
 /** ゴミ箱へ移すツールの結果（structuredContent）の形 */

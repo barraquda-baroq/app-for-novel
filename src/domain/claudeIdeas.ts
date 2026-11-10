@@ -9,8 +9,8 @@
 // 足す行の日付は依頼を作った時（コネクタの時計）の日本時間なので、どの端末がいつ処理しても、足した後の本文は1字も違わない。
 import { ideaAppendProblem, isIdeaAppend, isNewerIdeaAppend, withIdeaAppend } from '../claude/ideaAppend'
 import { trashLabel } from './trash'
-import { transact } from './tx'
-import type { AppData, ID } from './types'
+import { transact, type Tx } from './tx'
+import type { AppData, ID, Idea, IdeaAppend } from './types'
 
 /**
  * 依頼1件の結果。appended = カードの終わりに足した、applied = もう足してあった（別の端末が先に足した）、
@@ -41,6 +41,28 @@ function ideaInTrash(data: AppData, id: ID): boolean {
   return false
 }
 
+/** 依頼の指すアイデア（自分の項目だけ。'constructor' などの id で Object の中身を拾わない） */
+function ideaOf(tx: Tx, id: ID): Idea | undefined {
+  return Object.prototype.hasOwnProperty.call(tx.data.ideas, id) ? tx.get('ideas', id) : undefined
+}
+
+/** 依頼1件の結果と、足した後のアイデア（足す時だけ。まだ書かない） */
+function appendStep(
+  data: AppData,
+  idea: Idea | undefined,
+  req: IdeaAppend,
+  nowTs: number,
+): { outcome: IdeaAppendOutcome; next?: Idea } {
+  const problem = ideaAppendProblem(data.titles, idea, req)
+  if (!idea || problem === 'not_found')
+    return {
+      outcome: { requestId: req.id, ideaId: req.ideaId, status: ideaInTrash(data, req.ideaId) ? 'in_trash' : 'not_found' },
+    }
+  const base = { requestId: req.id, ideaId: idea.id, label: trashLabel.idea(idea) }
+  if (problem) return { outcome: { ...base, status: problem } }
+  return { outcome: { ...base, status: 'appended' }, next: { ...withIdeaAppend(idea, req), updatedAt: nowTs } }
+}
+
 const createdAtOf = (r: unknown) => {
   const v = (r as { createdAt?: unknown } | null | undefined)?.createdAt
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
@@ -67,23 +89,15 @@ export function applyIdeaAppends(data: AppData, nowTs: number): { data: AppData;
         outcomes.push({ requestId: key, status: 'invalid' })
         continue
       }
-      const idea = Object.prototype.hasOwnProperty.call(tx.data.ideas, req.ideaId) ? tx.get('ideas', req.ideaId) : undefined
-      const problem = ideaAppendProblem(tx.data.titles, idea, req)
-      if (!idea || problem === 'not_found') {
-        outcomes.push({
-          requestId: req.id,
-          ideaId: req.ideaId,
-          status: ideaInTrash(tx.data, req.ideaId) ? 'in_trash' : 'not_found',
-        })
-        continue
+      // 確かめと足した形は書く前に作る。1件の依頼で投げても、その依頼だけ形の違う依頼として消し、ほかの依頼・ゴミ箱へ移す依頼は続ける
+      let step: { outcome: IdeaAppendOutcome; next?: Idea }
+      try {
+        step = appendStep(tx.data, ideaOf(tx, req.ideaId), req, nowTs)
+      } catch {
+        step = { outcome: { requestId: req.id, ideaId: req.ideaId, status: 'invalid' } }
       }
-      const base = { requestId: req.id, ideaId: idea.id, label: trashLabel.idea(idea) }
-      if (problem) {
-        outcomes.push({ ...base, status: problem })
-        continue
-      }
-      tx.put('ideas', { ...withIdeaAppend(idea, req), updatedAt: nowTs })
-      outcomes.push({ ...base, status: 'appended' })
+      if (step.next) tx.put('ideas', step.next)
+      outcomes.push(step.outcome)
     }
   })
   return changed ? { data: out.data, result: outcomes } : { data, result: [] }

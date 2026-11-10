@@ -14,9 +14,18 @@ export interface ClaudeRequestsResult {
   trash: TrashRequestOutcome[]
 }
 
-/** 依頼を当てる（追記が先、ゴミ箱へ移すのが後）。どちらも何も変えなければ、元の data をそのまま返す */
+/**
+ * 依頼を当てる（追記が先、ゴミ箱へ移すのが後）。どちらも何も変えなければ、元の data をそのまま返す。
+ * 追記の依頼は1件ずつ確かめ、投げた依頼は形の違う依頼として消す（applyIdeaAppends）。それでも追記の処理が投げた時は、追記は
+ * 何も当てずに（依頼は残し、次の処理でもう一度）、ゴミ箱へ移す依頼は続けて当てる
+ */
 export function applyClaudeRequests(data: AppData, nowTs: number): { data: AppData; result: ClaudeRequestsResult } {
-  const appends = applyIdeaAppends(data, nowTs)
+  let appends: { data: AppData; result: IdeaAppendOutcome[] }
+  try {
+    appends = applyIdeaAppends(data, nowTs)
+  } catch {
+    appends = { data, result: [] }
+  }
   const trash = applyTrashRequests(appends.data, nowTs)
   return { data: trash.data, result: { appends: appends.result, trash: trash.result } }
 }

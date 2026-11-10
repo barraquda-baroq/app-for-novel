@@ -9,7 +9,7 @@
 import { hashJson } from '../domain/hash'
 import type { AppData, ID, Idea, IdeaAppend, Title } from '../domain/types'
 import { canClaudeWrite } from './access'
-import { jstMinute, jstSlashDate } from './dates'
+import { isJstTimestamp, jstMinute, jstSlashDate } from './dates'
 
 /** Claude が作るアイデアの記録の形の版 */
 export const IDEA_RECORD_VERSION = 1
@@ -132,7 +132,10 @@ export function ideaSectionWritable(titles: Record<ID, Pick<Title, 'claudeAccess
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
-/** 追記の依頼の形が正しいか（版は問わない。新しい版の依頼は isNewerIdeaAppend で見分ける） */
+/**
+ * 追記の依頼の形が正しいか（版は問わない。新しい版の依頼は isNewerIdeaAppend で見分ける）。createdAt は追記の行の日付になるので、
+ * 日付にできる時刻だけ（isJstTimestamp。範囲の外の値は形の違う依頼として、アプリが消し、Claude に見せる内容にも当てない）
+ */
 export function isIdeaAppend(r: unknown): r is IdeaAppend {
   if (!r || typeof r !== 'object' || Array.isArray(r)) return false
   const x = r as Record<string, unknown>
@@ -144,7 +147,7 @@ export function isIdeaAppend(r: unknown): r is IdeaAppend {
     typeof x.readMark === 'string' &&
     x.source === 'claude' &&
     isNum(x.v) &&
-    isNum(x.createdAt) &&
+    isJstTimestamp(x.createdAt) &&
     isNum(x.updatedAt)
   )
 }
@@ -216,9 +219,16 @@ export function overlayIdeaAppends(
   for (const req of requests) {
     const cur = out ?? ideas
     const idea = Object.prototype.hasOwnProperty.call(cur, req.ideaId) ? cur[req.ideaId] : undefined
-    if (!idea || ideaAppendProblem(titles, idea, req) !== null) continue
+    let next: Idea
+    try {
+      if (!idea || ideaAppendProblem(titles, idea, req) !== null) continue
+      next = withIdeaAppend(idea, req)
+    } catch {
+      // 1件の依頼で投げても、ほかの依頼と見せる内容は止めない（当てられない依頼として扱う。アプリの処理も形の違う依頼として消す）
+      continue
+    }
     if (!out) out = { ...ideas }
-    out[req.ideaId] = withIdeaAppend(idea, req)
+    out[req.ideaId] = next
     applied.push(req)
   }
   return { ideas: out ?? ideas, applied }
@@ -231,22 +241,58 @@ export function ideaReadMark(body: string): string {
   return hashJson(body).replace(/\./g, '').slice(0, 8)
 }
 
+/** 読んだ印の形（ideaReadMark。英小文字と数字の8字） */
+export const READ_MARK = /^[0-9a-z]{8}$/
+
+/**
+ * Claude が渡した読んだ印をそろえる。novel_get_notes の見出しの「印: 1i30lfcq」をそのまま渡しても（全角のコロン・英大文字・全角の英数字・
+ * 前後の空白も）、印の8字だけにする。形が合うかは READ_MARK で確かめる（同じ印なら、そろえる前の書き方によらず同じ依頼の id になる）
+ */
+export function normalizeReadMark(mark: string): string {
+  return mark
+    .normalize('NFKC')
+    .trim()
+    .replace(/^印\s*:\s*/u, '')
+    .trim()
+    .toLowerCase()
+}
+
 /** アイデアの場所（「ホームのアイデア」か「タイトル『灰の庭』のアイデア」。タイトルが無いものはホーム） */
 export function ideaPlaceLabel(titles: Record<ID, Pick<Title, 'name'>>, idea: Pick<Idea, 'titleId'>): string {
   const t = titleOf(titles, idea)
   return t ? `タイトル『${(typeof t.name === 'string' ? t.name.trim() : '') || '無題のタイトル'}』のアイデア` : 'ホームのアイデア'
 }
 
-/** アイデアの1行目（古い版の見出しがあれば見出し、なければ内容の最初の空でない行。max 字を超えれば「…」で切る） */
-export function ideaHeadLine(idea: Pick<Idea, 'heading' | 'body'>, max = 40): string {
+/** 日付と時刻だけの行（名前を付けずに Claude が作ったアイデアの1行目「2026/11/12 14:32」） */
+const STAMP_ONLY = /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/
+
+/**
+ * アイデアの呼び名（切る前）。古い版の見出しがあれば見出し、なければ内容の最初の空でない行（前後の空白を除く）。その行が日付と時刻
+ * だけ（名前を付けずに Claude が作ったアイデア）なら、全角の空白を挟んで次の空でない行を付ける（「2026/11/12 14:32　【動機】」。
+ * 同じ時刻に作ったカードを見分けるため）。コネクタの答え・ゴミ箱へ移す依頼の表記・アプリのお知らせ・ゴミ箱の一覧・確認の画面で
+ * 同じものを使う（カードの表示は変えない）。切るのは使う所（それぞれの字数）
+ */
+export function ideaLabelLine(idea: Pick<Idea, 'heading' | 'body'>): string {
   const heading = typeof idea.heading === 'string' ? idea.heading.trim() : ''
-  const line =
-    heading ||
-    (typeof idea.body === 'string' ? idea.body : '')
-      .split(/\r\n?|\n/)
-      .map((l) => l.trim())
-      .find((l) => l.length > 0) ||
-    ''
+  if (heading) return heading
+  const body = typeof idea.body === 'string' ? idea.body : ''
+  let first = ''
+  for (const raw of body.split(/\r\n?|\n/)) {
+    const l = raw.trim()
+    if (!l) continue
+    if (!first) {
+      first = l
+      if (!STAMP_ONLY.test(first)) return first
+      continue
+    }
+    return `${first}\u3000${l}`
+  }
+  return first
+}
+
+/** アイデアの1行目（ideaLabelLine。max 字を超えれば「…」で切る。空なら「（空のアイデア）」） */
+export function ideaHeadLine(idea: Pick<Idea, 'heading' | 'body'>, max = 40): string {
+  const line = ideaLabelLine(idea)
   const chars = Array.from(line)
   return (chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : line) || '（空のアイデア）'
 }

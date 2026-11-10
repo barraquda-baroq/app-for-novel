@@ -125,6 +125,36 @@ describe('applyClaudeRequests', () => {
     expect(claudeRequestNotice(r.result)).toBe('')
   })
 
+  it('日付にできない createdAt の追記の依頼があっても、ゴミ箱へ移す依頼は当てる（形の違う依頼として消す）', () => {
+    const bad = { ...appendReq('cy-home0002', '遠い未来'), createdAt: 1e16 }
+    const s = setup([bad], [trashReq('cy-home0001', 'home')])
+    const r = applyClaudeRequests(s.data, NOW)
+    expect(r.result.appends).toEqual([{ requestId: bad.id, status: 'invalid' }])
+    expect(r.result.trash.map((o) => o.status)).toEqual(['moved'])
+    expect(r.data.ideas['cy-home0001']).toBeUndefined()
+    expect(r.data.ideas['cy-home0002']).toBe(s.data.ideas['cy-home0002'])
+    expect(r.data.ideaAppends).toEqual({})
+    expect(claudeRequestNotice(r.result)).toBe(
+      'Claude の追記の依頼のうち1件は足しませんでした（形の違う依頼1件）。Claude の依頼で、アイデア1件をゴミ箱へ移しました（30日はゴミ箱から戻せます）',
+    )
+  })
+
+  it('追記の処理で投げた依頼は形の違う依頼として消し、ほかの追記・ゴミ箱へ移す依頼は当てる', () => {
+    const broken: Idea = { ...claudeIdea('cy-broken01', null, 2), body: 42 as unknown as string }
+    const bad = { ...appendReq('cy-broken01', '内容'), createdAt: AT - 1 }
+    const ok = appendReq('cy-home0002', '追記')
+    const s = setup([bad, ok], [trashReq('cy-home0001', 'home')])
+    const data = { ...s.data, ideas: { ...s.data.ideas, [broken.id]: broken } }
+    const r = applyClaudeRequests(data, NOW)
+    expect(r.result.appends.map((o) => [o.requestId, o.status])).toEqual([
+      [bad.id, 'invalid'],
+      [ok.id, 'appended'],
+    ])
+    expect(r.result.trash.map((o) => o.status)).toEqual(['moved'])
+    expect(r.data.ideas['cy-home0002'].body).toBe(appendedBody(BODY, ok))
+    expect(r.data.ideaAppends).toEqual({})
+  })
+
   it('依頼が無ければ元の data をそのまま返す', () => {
     const s = setup([], [])
     const r = applyClaudeRequests(s.data, NOW)

@@ -6,6 +6,7 @@
 // 編集している間に Claude の追記が足されていれば、保存する内容の後ろに残す（rebaseIdeaEdit）。
 import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { isJstTimestamp } from '../../claude/dates'
 import { isClaudeIdea } from '../../claude/ideaAppend'
 import { isIdeaChecked } from '../../domain/entityOps'
 import { trashNotice } from '../../domain/trash'
@@ -319,7 +320,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
         )}
         <time
           className="idea-card-time"
-          dateTime={new Date(idea.updatedAt).toISOString()}
+          dateTime={isJstTimestamp(idea.updatedAt) ? new Date(idea.updatedAt).toISOString() : undefined}
           title={`更新: ${formatDateTime(idea.updatedAt)}`}
         >
           {formatRelative(idea.updatedAt)}

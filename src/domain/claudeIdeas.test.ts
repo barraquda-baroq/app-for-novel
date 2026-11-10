@@ -201,6 +201,51 @@ describe('applyIdeaAppends', () => {
     expect(kept.result).toEqual([])
   })
 
+  it('日付にできない createdAt（範囲の外・負）の依頼は形の違う依頼として消す（投げない。ほかの依頼は足す）', () => {
+    const { data } = setup(
+      [claudeIdea('cy-home')],
+      [
+        request('cu-far', 'cy-home', '遠い未来', { createdAt: 1e16 }),
+        request('cu-past', 'cy-home', '遠い過去', { createdAt: -1e16 }),
+        request('cu-ok', 'cy-home', '内容'),
+      ],
+    )
+    const r = applyIdeaAppends(data, NOW)
+    expect(Object.fromEntries(statuses(r.result))).toEqual({ 'cu-far': 'invalid', 'cu-past': 'invalid', 'cu-ok': 'appended' })
+    expect(r.data.ideaAppends).toEqual({})
+    expect(r.data.ideas['cy-home'].body).toBe(`${BODY}\n\n${HEAD}\n内容`)
+    expect(ideaAppendNotice(r.result)).toBe(
+      'Claude の依頼で、アイデア「2026/11/12 14:32　第3章の動機」の終わりに追記しました。Claude の追記の依頼のうち2件は足しませんでした（形の違う依頼2件）',
+    )
+  })
+
+  it('1件の依頼の処理で投げても、その依頼だけ形の違う依頼として消し、ほかの依頼は続ける（アイデアは変えない）', () => {
+    // 壊れた本文（数）のアイデアへの依頼は、足した形を作る時に投げる
+    const broken: Idea = { ...claudeIdea('cy-broken'), body: 42 as unknown as string }
+    const { data } = setup(
+      [broken, claudeIdea('cy-home')],
+      [request('cu-bad', 'cy-broken', '内容', { createdAt: AT - 1 }), request('cu-ok', 'cy-home', '内容')],
+    )
+    const r = applyIdeaAppends(data, NOW)
+    expect(statuses(r.result)).toEqual([
+      ['cu-bad', 'invalid'],
+      ['cu-ok', 'appended'],
+    ])
+    expect(r.result[0]).toEqual({ requestId: 'cu-bad', ideaId: 'cy-broken', status: 'invalid' })
+    expect(r.data.ideas['cy-broken']).toBe(data.ideas['cy-broken'])
+    expect(r.data.ideas['cy-home'].appendIds).toEqual(['cu-ok'])
+    expect(r.data.ideaAppends).toEqual({})
+  })
+
+  it('名前の無いアイデアのお知らせは、日付と時刻の後ろに中身の最初の行（同じ時刻に作ったカードを見分ける）', () => {
+    const a = claudeIdea('cy-a', { body: '2026/11/12 14:32\n【動機】\n・兄を探す' })
+    const b = claudeIdea('cy-b', { body: '2026/11/12 14:32\n港町の案' })
+    const { data } = setup([a, b], [request('cu-a', 'cy-a', '内容')])
+    const r = applyIdeaAppends(data, NOW)
+    expect(r.result[0].label).toBe('2026/11/12 14:32　【動機】')
+    expect(ideaAppendNotice(r.result)).toBe('Claude の依頼で、アイデア「2026/11/12 14:32　【動機】」の終わりに追記しました')
+  })
+
   it('別の端末が先に足していた（アイデアの更新が依頼の削除より先に届いた）依頼は、もう一度足さずに消す', () => {
     const { data } = setup([claudeIdea('cy-home')], [request('cu-a', 'cy-home', '内容')])
     const first = applyIdeaAppends(data, NOW).data

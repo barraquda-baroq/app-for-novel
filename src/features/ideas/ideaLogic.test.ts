@@ -290,6 +290,20 @@ describe('アイデアからタイトル名を作る', () => {
     expect(ideaShortLabel({ heading: '', body: '2026/11/12 14:32\u3000第3章の動機\n中身' })).toBe(
       '2026/11/12 14:32\u3000第3章の動機',
     )
+    // 日付と時刻だけの1行目（名前の無い Claude のアイデア）は、次の空でない行も付けて見分ける（24字まで。カードの表示は変えない）
+    const a = ideaShortLabel({ heading: '', body: '2026/11/12 14:32\n【動機】\n・兄を探す' })
+    const b = ideaShortLabel({ heading: '', body: '2026/11/12 14:32\n  港町の案\n・灯台' })
+    expect(a).toBe('2026/11/12 14:32\u3000【動機】')
+    expect(b).toBe('2026/11/12 14:32\u3000港町の案')
+    expect(a).not.toBe(b)
+    expect(ideaShortLabel({ heading: '', body: `2026/11/12 14:32\n${'あ'.repeat(30)}` })).toBe(
+      `2026/11/12 14:32\u3000${'あ'.repeat(7)}…`,
+    )
+    expect(ideaShortLabel({ heading: '', body: '2026/11/12 14:32' })).toBe('2026/11/12 14:32')
+    expect(splitLead('2026/11/12 14:32\n【動機】\n・兄を探す')).toEqual({
+      lead: '2026/11/12 14:32',
+      rest: '\n【動機】\n・兄を探す',
+    })
   })
 
   it('空のアイデアは空文字。短い呼び名には代わりの表記', () => {

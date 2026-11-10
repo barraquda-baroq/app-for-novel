@@ -315,6 +315,23 @@ describe('2.8: アイデアへの追記の依頼と、Claude が作ったアイ�
     expect(r.data.ideaAppends).toEqual({})
   })
 
+  it('アイデアの時刻が Date の範囲の外・負・整数でない時は 0 にする（2.8: コネクタが作る cy-… のカードの日時で落ちないように）', () => {
+    const { data, titleId } = sample()
+    const ok = claudeIdea(titleId, { id: 'cy-ok', createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_001 })
+    const far = claudeIdea(titleId, { id: 'cy-far', createdAt: 1e16, updatedAt: 1e16 })
+    const neg = claudeIdea(titleId, { id: 'cy-neg', createdAt: -1e16, updatedAt: -1 })
+    const frac = claudeIdea(titleId, { id: 'cy-frac', createdAt: 1.5, updatedAt: 2 })
+    const input: AppData = { ...data, ideas: { [ok.id]: ok, [far.id]: far, [neg.id]: neg, [frac.id]: frac } }
+    const r = repairData(input)
+    expect(r.data.ideas['cy-ok']).toBe(ok)
+    expect(r.data.ideas['cy-far']).toMatchObject({ createdAt: 0, updatedAt: 0 })
+    expect(r.data.ideas['cy-neg']).toMatchObject({ createdAt: 0, updatedAt: 0 })
+    expect(r.data.ideas['cy-frac']).toMatchObject({ createdAt: 0, updatedAt: 2 })
+    expect(r.fixes).toEqual(['アイデアの項目を補いました', 'アイデアの項目を補いました', 'アイデアの項目を補いました'])
+    // 直した後の時刻はカードの日時（toISOString）で投げない
+    for (const i of Object.values(r.data.ideas)) expect(() => new Date(i.updatedAt).toISOString()).not.toThrow()
+  })
+
   it('Claude が作ったアイデアの項目（source・v・model・claudeHash・appendIds）は直さずに残す（壊れた値も。読む所で無いものとして扱う）', () => {
     const { data, titleId } = sample()
     const good = claudeIdea(titleId)

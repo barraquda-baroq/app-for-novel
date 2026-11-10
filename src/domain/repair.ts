@@ -1,5 +1,6 @@
 // 読み込んだデータの整合性を直す。壊れたバックアップや、別タブとの競合で参照が切れたデータでも
 // 画面が落ちないよう、起動時とバックアップ復元時に通す。直せないものは安全側（削除・未分類）に倒す。
+import { isJstTimestamp } from '../claude/dates'
 import { deepEqual } from './equal'
 import { isAutoTagMark } from './benchTags'
 import { displayTags } from './tags'
@@ -48,6 +49,8 @@ export interface RepairResult {
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
 const num = (v: unknown, fallback = 0): number => (typeof v === 'number' && Number.isFinite(v) ? v : fallback)
 const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+/** 記録の時刻（0 以上・日本時間の 9999 年までの整数の ms。ほかは 0） */
+const stamp = (v: unknown): number => (isJstTimestamp(v) ? v : 0)
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
 
@@ -443,8 +446,9 @@ export function repairData(input: AppData): RepairResult {
       heading: str(idea.heading),
       body: str(idea.body),
       order: orphan ? unassignedOrder : num(idea.order),
-      createdAt: num(idea.createdAt),
-      updatedAt: num(idea.updatedAt),
+      // 2.8: コネクタも Claude のアイデア（cy-…）を作れる。Date の範囲の外の時刻（1e16 など）はカードの日時で投げるので 0 に
+      createdAt: stamp(idea.createdAt),
+      updatedAt: stamp(idea.updatedAt),
     }
     // 済み: 持たない古いアイデアは済みでないものとして読み（isIdeaChecked）、項目は足さない（補ったことにも数えない）。
     // 足すと、触った時に checked: false として書かれ、ほかの端末で済みにしたのを同期で打ち消してしまう。壊れた値だけ直す

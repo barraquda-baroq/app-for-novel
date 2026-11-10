@@ -1,5 +1,5 @@
 // アイデア領域（仕切り・カード）で使う、表示用の純粋な計算。データは変更しない。
-import { appendedTail } from '../../claude/ideaAppend'
+import { appendedTail, ideaLabelLine } from '../../claude/ideaAppend'
 import type { IdeaSection } from '../../domain/entityOps'
 import type { ID, Idea } from '../../domain/types'
 
@@ -126,9 +126,12 @@ export function titleNameFromIdea(idea: Pick<Idea, 'heading' | 'body'>, max = 40
   return cutAtBoundary(first || (lines[1] ?? ''), max)
 }
 
-/** 確認ダイアログやトーストに出す、アイデアの短い呼び名 */
+/**
+ * 確認ダイアログやトーストに出す、アイデアの短い呼び名（見出し、なければ内容の最初の行。日付と時刻だけの行（名前を付けずに Claude が
+ * 作ったアイデア）は、次の空でない行も付ける「2026/11/12 14:32　【動機】」。ideaLabelLine。カードの表示は変えない）
+ */
 export function ideaShortLabel(idea: Pick<Idea, 'heading' | 'body'>, max = 24): string {
-  return truncate(ideaFirstLine(idea), max) || '（空のアイデア）'
+  return truncate(ideaLabelLine(idea), max) || '（空のアイデア）'
 }
 
 /** Ctrl+Enter / ⌘+Enter（変換中の Enter は除く） */

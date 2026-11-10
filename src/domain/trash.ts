@@ -2,6 +2,7 @@
 // 削除の操作（entityOps / storyOps）は putInTrash でレコードを丸ごとここへ移し、削除した時点の場所（TrashOrigin）を控える。
 // 戻す時はその場所へ並べ直す（直前にあった要素がまだあればその直後、なければ控えた位置）。
 // すべて純粋関数で、新しい AppData を返す。戻せない時は DomainError を投げる。
+import { ideaLabelLine } from '../claude/ideaAppend'
 import { actsOf, isSplit, locatePiece } from './structure'
 import { Tx, transact } from './tx'
 import {
@@ -152,15 +153,12 @@ export const trashLabel = {
   chapter: (c: Pick<Chapter, 'name'>) => c.name.trim() || '無題の章',
   version: (v: Pick<Version, 'name'>) => v.name.trim() || '（無題の稿）',
   memo: (m: Pick<Memo, 'name'>) => m.name.trim() || '無題のメモ',
-  /** 見出し、なければ内容の最初の行（長ければ切る） */
+  /**
+   * 見出し、なければ内容の最初の行（長ければ切る）。日付と時刻だけの行（名前を付けずに Claude が作ったアイデア）は、次の空でない行も
+   * 付ける（「2026/11/12 14:32　【動機】」。ideaLabelLine）
+   */
   idea: (i: Pick<Idea, 'heading' | 'body'>) => {
-    const line =
-      i.heading.trim() ||
-      (i.body
-        .split(/\r\n?|\n/)
-        .map((l) => l.trim())
-        .find((l) => l.length > 0) ??
-        '')
+    const line = ideaLabelLine(i)
     const chars = Array.from(line)
     return (chars.length > 24 ? `${chars.slice(0, 24).join('')}…` : line) || '（空のアイデア）'
   },

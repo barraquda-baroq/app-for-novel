@@ -157,4 +157,24 @@ describe('claudeView: アイデア', () => {
     const all = { ...data, ideaAppends: { 'cu-y': request('cu-y', 'cy-home0001', 'y') } } as AppData
     expect(claudeView(all).ideaAppends).toBe(all.ideaAppends)
   })
+
+  it('日付にできない createdAt の依頼・当てる時に投げる依頼があっても投げない（当てずに、依頼の表にも出さない。ほかの依頼は当てる）', () => {
+    const broken: Idea = { ...idea('cy-broken01', null), body: 42 as unknown as string }
+    const requests = [
+      request('cu-far', 'cy-home0001', '遠い未来', { createdAt: 1e16 }),
+      request('cu-past', 'cy-home0001', '遠い過去', { createdAt: -1e16 }),
+      request('cu-bad', 'cy-broken01', '壊れたアイデア'),
+      request('cu-ok', 'cy-home0001', '追記', { createdAt: AT + 1000, updatedAt: AT + 1000 }),
+    ]
+    const { data } = setup(() => [idea('cy-home0001', null), broken], requests)
+    const v = claudeView(data)
+    expect(Object.keys(v.ideaAppends)).toEqual(['cu-ok'])
+    expect(v.ideas['cy-home0001'].body).toBe(`${BODY}\n\n2026/11/13のセッションで以下の内容へ変更\n追記`)
+    expect(v.ideas['cy-broken01']).toBe(broken)
+    // 当てられない依頼だけなら、アイデアは同じオブジェクトのまま
+    const only = { ...data, ideaAppends: { 'cu-far': requests[0] } } as AppData
+    expect(() => claudeView(only)).not.toThrow()
+    expect(claudeView(only).ideas).toBe(data.ideas)
+    expect(claudeView(only).ideaAppends).toEqual({})
+  })
 })

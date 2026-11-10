@@ -202,7 +202,7 @@ describe('buildAddIdeas', () => {
     expect(r.items.map((x) => [x.status, x.label])).toEqual([
       ['invalid', 'アイデア（1件目）'],
       ['invalid', 'アイデア（2件目）'],
-      ['created', '「2026/11/12 14:32」'],
+      ['created', '「2026/11/12 14:32　1. 冒頭」'],
     ])
     expect(r.items[0].hint).toContain('Markdown の記号があります（3行目「## 父」・5行目「- 父との確執」）')
     expect(r.items[1].hint).toContain('1行目「**強い名前**」')
@@ -245,9 +245,12 @@ describe('buildAddIdeas', () => {
       ctx({ now: AT + 3_600_000 }),
     )
     expect(again.items.map((x) => x.status)).toEqual(['duplicate', 'duplicate'])
+    // Claude に見えているカードは、そのカードの1行目（送り直した 15:32 ではなく、作った 14:32）と id
     expect(again.items[0]).toMatchObject({
-      label: '「2026/11/12 15:32　動機」',
+      id: first.records[0].record.id,
+      label: '「2026/11/12 14:32　動機」',
       hint: '同じ内容のアイデアがもうあります（追加しません）',
+      existing: true,
     })
     expect(again.records).toHaveLength(0)
     const nextDay = add(data, { items: [{ name: '動機', content: '案' }] }, ctx({ now: AT + 86_400_000 }))
@@ -256,6 +259,29 @@ describe('buildAddIdeas', () => {
     expect(add(data, { title_id: s.titleId, items: [{ name: '動機', content: '案' }] }).items[0].status).toBe('created')
     const twice = add(s.data, { items: [{ content: '同じ' }, { content: '同じ' }] })
     expect(twice.items.map((x) => x.status)).toEqual(['created', 'duplicate'])
+    // 同じ呼び出しの中の重複は、まだ見えるカードが無い（入力から作った表記。id は1件目と同じ）
+    expect(twice.items[1]).toMatchObject({ id: twice.items[0].id, label: twice.items[0].label })
+    expect(twice.items[1].existing).toBeUndefined()
+  })
+
+  it('名前の無いアイデアの表記は、日付と時刻の後ろに中身の最初の行（同じ時刻に作ったカードを見分ける）。重複は、もうあるカードの表記', () => {
+    const s = setup()
+    const before = claudeIdea(null, '', '港町の案\n・灯台', AT - 3 * 60_000)
+    const data: AppData = { ...s.data, ideas: { [before.id]: before } }
+    const r = add(data, {
+      items: [{ content: '港町の案\n・灯台' }, { content: '\n  山の町の案  \n・峠' }, { content: '【動機】\n・兄を探す' }],
+    })
+    expect(r.items.map((x) => [x.status, x.label])).toEqual([
+      ['duplicate', '「2026/11/12 14:29　港町の案」'],
+      ['created', '「2026/11/12 14:32　山の町の案」'],
+      ['created', '「2026/11/12 14:32　【動機】」'],
+    ])
+    expect(r.items[0]).toMatchObject({ id: before.id, existing: true })
+    // カードの本文は変えない（1行目は日付と時刻だけ。中身の行の前後の空白も残る）
+    expect(r.records.map((x) => x.record.body)).toEqual([
+      '2026/11/12 14:32\n  山の町の案  \n・峠',
+      '2026/11/12 14:32\n【動機】\n・兄を探す',
+    ])
   })
 
   it('見せないタイトルへ移したアイデアと同じ内容も重複（中身は出さず、入力から作った表記だけ）。以前に削除されたものは作り直さない', () => {
@@ -350,7 +376,62 @@ describe('buildIdeaAppend', () => {
     expect(r.records[0].record.id).toMatch(/^cu-/)
     // タイトルのアイデアにも（「読む＋書き込む」）
     const t = append(s.data, { idea_id: s.inTitle.id, read_mark: ideaReadMark(s.inTitle.body), content: '追記' })
-    expect([t.status, t.label]).toEqual(['created', '「2026/11/12 14:32」（タイトル『星の庭』のアイデア）'])
+    expect([t.status, t.label]).toEqual(['created', '「2026/11/12 14:32　星の案」（タイトル『星の庭』のアイデア）'])
+  })
+
+  it('読んだ印は「印: …」のまま・全角のコロン・英大文字・全角の英数字でもよい（同じ依頼の id）。形の違う印は「形が違う」（読み直しではない）', () => {
+    const s = appendSetup()
+    const mark = ideaReadMark(s.home.body)
+    const ref = shortId('idea', s.home.id)
+    const bare = append(s.data, { idea_id: ref, read_mark: mark, content: '追記' })
+    expect(bare.status).toBe('created')
+    const fullWidth = Array.from(mark.toUpperCase())
+      .map((c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0))
+      .join('')
+    for (const written of [
+      `印: ${mark}`,
+      `印：${mark}`,
+      ` 印 ： ${mark.toUpperCase()} `,
+      mark.toUpperCase(),
+      fullWidth,
+      `印:${mark}`,
+    ]) {
+      const r = append(s.data, { idea_id: ref, read_mark: written, content: '追記' })
+      expect([written, r.status, r.requestId]).toEqual([written, 'created', bare.requestId])
+      expect(r.records[0].record).toEqual(bare.records[0].record)
+    }
+    expect(bare.records[0].record.readMark).toBe(mark)
+    // 送り直し（依頼済み）も、書き方によらず同じ依頼
+    const pendingData: AppData = { ...s.data, ideaAppends: { [bare.requestId!]: bare.records[0].record } }
+    expect(append(pendingData, { idea_id: ref, read_mark: `印: ${mark.toUpperCase()}`, content: '追記' })).toMatchObject({
+      status: 'pending',
+      requestId: bare.requestId,
+    })
+    // 形が違う: 8字でない・記号がある・別の見出しの字（読み直しを求めない）
+    for (const bad of [
+      'x',
+      `${mark}9`,
+      mark.slice(0, 7),
+      `印: ${mark} ===`,
+      `[${mark}]`,
+      `i:${mark}`,
+      `印: ${mark.slice(0, 4)}-${mark.slice(4)}`,
+    ]) {
+      const r = append(s.data, { idea_id: ref, read_mark: bad, content: '追記' })
+      expect([bad, r.status, r.hint]).toEqual([
+        bad,
+        'invalid',
+        'read_mark の形が違います（novel_get_notes（kind=ideas・ids にこの id）の本文の見出しの「印: 」の後ろの8字を渡してください。例 1i30lfcq）',
+      ])
+      expect(r.records).toEqual([])
+    }
+    // 形は合うが今の中身の印と違う: 読んだ後に中身が変わった
+    const other = mark === 'aaaaaaaa' ? 'bbbbbbbb' : 'aaaaaaaa'
+    expect(append(s.data, { idea_id: ref, read_mark: `印: ${other}`, content: '追記' }).status).toBe('stale')
+    // 空・無い
+    expect(append(s.data, { idea_id: ref, read_mark: '  ', content: '追記' }).hint).toBe(
+      'read_mark がありません（novel_get_notes で今の中身を読み、本文の見出しの「印: 」の後ろの8字を渡してください）',
+    )
   })
 
   it('見つからない: 無い id・作者が書いたホームのアイデア・見せないタイトルのアイデアは同じ答え（ある・無いを言わない）', () => {

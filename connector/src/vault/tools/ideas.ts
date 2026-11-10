@@ -4,7 +4,7 @@
 // - アイデアに追記: コネクタは依頼を作るだけなので、答えの時点ではまだカードに足されていない（アプリが同期した時に足す）。
 //   そのことと、Claude からはもう追記した後の中身が見えること、続けて追記する時は読み直すことを書く
 import { appendHeader } from '../../../../src/claude/ideaAppend'
-import type { IdeaAddBuild, IdeaAppendBuild, IdeaAppendItemStatus } from '../../../../src/claude/ideaWrite'
+import { IDEA_ADD_HINTS, type IdeaAddBuild, type IdeaAppendBuild, type IdeaAppendItemStatus } from '../../../../src/claude/ideaWrite'
 import { summarizeItems } from '../../../../src/claude/records'
 import { shortId } from '../../../../src/claude/refs'
 import { capText, fail, type ToolResult } from './common'
@@ -23,17 +23,29 @@ export function ideaAddError(built: IdeaAddBuild): ToolResult {
 
 /**
  * アイデアを足した結果。created は実際に作った記録（ideas:{id}。試し直しで2回目に「重複」になったアイデアも、1回目に作っていれば
- * 「追加」として返す）
+ * 「追加」として返す）。同じ id は1件だけ「追加」にする（1回の呼び出しに同じアイデアが2件あっても、カードは1枚なので2件目は「重複」）。
+ * 「重複」は、もうあるカードが Claude に見えている時（そのカードの1行目）と、同じ答えで「追加」にしたカードの時に、その i:… も出す
  */
 export function ideaAddResult(built: IdeaAddBuild, created: ReadonlySet<string>): ToolResult {
-  const items = built.items.map((it) =>
-    it.id && created.has(`ideas:${it.id}`) && it.status !== 'created' ? { ...it, status: 'created' as const, hint: undefined } : it,
-  )
+  const reported = new Set<string>()
+  const items = built.items.map((it) => {
+    if (!it.id || !created.has(`ideas:${it.id}`)) return it
+    if (reported.has(it.id))
+      return it.status === 'created' ? { ...it, status: 'duplicate' as const, hint: IDEA_ADD_HINTS.duplicate } : it
+    reported.add(it.id)
+    return it.status === 'created' ? it : { ...it, status: 'created' as const, hint: undefined }
+  })
   const made = items.filter((it) => it.status === 'created' && it.id && created.has(`ideas:${it.id}`))
   const skipped = items.filter((it) => !made.includes(it))
+  /** 「重複」の行に出す i:…（見えている・この答えで足したカードだけ。見せないタイトルのカードは出さない） */
+  const known = (it: (typeof items)[number]) =>
+    it.status === 'duplicate' && it.id && (it.existing || reported.has(it.id)) ? shortId('idea', it.id) : ''
   const lines = [`アイデアを足す: ${summarizeItems(items) || '追加するものはありませんでした'}`]
   for (const it of made) lines.push(`- 追加 ${shortId('idea', it.id!)} ${it.label}`)
-  for (const it of skipped) lines.push(`- ${ADD_STATUS_LABELS[it.status]} ${it.label}${it.hint ? `: ${it.hint}` : ''}`)
+  for (const it of skipped) {
+    const ref = known(it)
+    lines.push(`- ${ADD_STATUS_LABELS[it.status]} ${ref ? `${ref} ` : ''}${it.label}${it.hint ? `: ${it.hint}` : ''}`)
+  }
   if (made.length) {
     const home = built.titleId === null
     lines.push(
@@ -50,7 +62,10 @@ export function ideaAddResult(built: IdeaAddBuild, created: ReadonlySet<string>)
     isError: !made.length && skipped.some((it) => it.status === 'invalid') ? true : undefined,
     structured: {
       created: made.map((it) => ({ id: shortId('idea', it.id!), label: `${it.label}（${built.place}）` })),
-      skipped: skipped.map((it) => ({ index: it.index, reason: it.status, ...(it.hint ? { hint: it.hint } : {}) })),
+      skipped: skipped.map((it) => {
+        const ref = known(it)
+        return { index: it.index, reason: it.status, ...(ref ? { id: ref } : {}), ...(it.hint ? { hint: it.hint } : {}) }
+      }),
     },
   }
 }
@@ -98,7 +113,7 @@ export function ideaAppendResult(built: IdeaAppendBuild, created: ReadonlySet<st
         `足す形: カードの終わりに空行を置き、「${appendHeader(built.request.createdAt)}」の行の下に内容（${Array.from(built.text ?? '').length.toLocaleString('ja-JP')}字）`,
       )
     lines.push(
-      '追記は依頼として送りました。アプリを開いて同期すると、カードの終わりに足されます（前の中身と作者が直した所は残り、並びの位置と「済み」は変わりません）。Claude からは、もう追記した後の中身が見えます。続けて追記する時は、もう一度 novel_get_notes で読んでから、新しい「印: …」を渡してください。本文（稿）は書き換えていません。',
+      '追記は依頼として送りました。アプリを開いて同期すると、カードの終わりに足されます（前の中身と作者が直した所は残り、並びの位置と「済み」は変わりません）。Claude からは、もう追記した後の中身が見えます。続けて追記する時は、もう一度 novel_get_notes で読んでから、新しい印（本文の見出しの「印: 」の後ろの8字）を read_mark に渡してください。本文（稿）は書き換えていません。',
     )
   }
   return {

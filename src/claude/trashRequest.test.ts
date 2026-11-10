@@ -300,7 +300,7 @@ describe('buildTrashRequests: Claude が作ったアイデア（i:…）', () =>
     expect(r.ok).toBe(true)
     expect(r.items.map((i) => [i.status, i.label])).toEqual([
       ['requested', 'ホームのアイデア「2026/11/12 14:32　第3章の動機」'],
-      ['requested', 'タイトル『灰の庭』のアイデア「2026/11/12 15:00」'],
+      ['requested', 'タイトル『灰の庭』のアイデア「2026/11/12 15:00　灰の庭の案」'],
     ])
     expect(r.records.map((x) => x.record)).toEqual([
       {

@@ -1268,7 +1268,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "type": "string",
         "minLength": 1,
         "maxLength": 20,
-        "description": "追記の前に novel_get_notes（kind=ideas・ids にこの id）で今の中身を読んだ時に、本文の見出しに出た「印: …」"
+        "description": "追記の前に novel_get_notes（kind=ideas・ids にこの id）で今の中身を読んだ時に、本文の見出しに出た「印: 」の後ろの8字（例 1i30lfcq）"
       },
       "content": {
         "type": "string",
@@ -1335,6 +1335,9 @@ export const WRITE_OUTPUT_SCHEMA: Record<string, unknown> = {
             "maximum": 9007199254740991
           },
           "reason": {
+            "type": "string"
+          },
+          "id": {
             "type": "string"
           },
           "hint": {

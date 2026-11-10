@@ -50,6 +50,7 @@ import {
   purgeExpiredTrash,
   restoreTrashEntry,
   trashDaysLeft,
+  trashLabel,
   trashNotice,
 } from './trash'
 import { DomainError, emptyData, type AppData, type ID, type TrashEntry, type TrashRecord } from './types'
@@ -761,5 +762,27 @@ describe('ゴミ箱の修復', () => {
     const withTrash = deletePiece(f.data, f.pieces[4])
     const again = parseBackup(JSON.stringify({ app: 'novel-studio', schemaVersion: 1, exportedAt: '', data: withTrash }))
     expect(again).toEqual(withTrash)
+  })
+})
+
+describe('ゴミ箱の名前: アイデア', () => {
+  it('見出し、なければ内容の最初の行（24字まで）。日付と時刻だけの1行目（名前の無い Claude のアイデア）は次の行も付けて見分ける', () => {
+    const a = trashLabel.idea({ heading: '', body: '2026/11/12 14:32\n【動機】\n・兄を探す' })
+    const b = trashLabel.idea({ heading: '', body: '2026/11/12 14:32\n\n港町の案\n・灯台' })
+    expect(a).toBe('2026/11/12 14:32　【動機】')
+    expect(b).toBe('2026/11/12 14:32　港町の案')
+    expect(a.startsWith('2026/11/12 14:32　【動機】')).toBe(true)
+    expect(a).not.toBe(b)
+    expect(trashLabel.idea({ heading: '', body: `2026/11/12 14:32\n${'あ'.repeat(30)}` })).toBe(
+      `2026/11/12 14:32　${'あ'.repeat(7)}…`,
+    )
+    // 名前のあるアイデア・作者のアイデア・見出し（古い版）は今までどおり
+    expect(trashLabel.idea({ heading: '', body: '2026/11/12 14:32\u3000第3章の動機\n中身' })).toBe(
+      '2026/11/12 14:32\u3000第3章の動機',
+    )
+    expect(trashLabel.idea({ heading: '', body: '\n 作者の案 \n続き' })).toBe('作者の案')
+    expect(trashLabel.idea({ heading: ' 見出し ', body: '2026/11/12 14:32\n中身' })).toBe('見出し')
+    expect(trashLabel.idea({ heading: '', body: '2026/11/12 14:32' })).toBe('2026/11/12 14:32')
+    expect(trashLabel.idea({ heading: '', body: ' ' })).toBe('（空のアイデア）')
   })
 })
