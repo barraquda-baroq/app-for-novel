@@ -125,6 +125,9 @@ const REFUSED_LABELS: Partial<Record<TrashRequestStatus, string>> = {
   invalid: '形の違う依頼',
 }
 
+/** アイデアの changed（依頼の後に別の仕切りへ移した。分析・記録の changed は REFUSED_LABELS の「依頼の後に直したカード」） */
+const CHANGED_IDEA_LABEL = '依頼の後に別の仕切りへ移したアイデア'
+
 /**
  * 処理の後のお知らせ（無ければ空）。例:「Claude の依頼で、相対比較の分析2件・資料の記録1件をゴミ箱へ移しました（30日は
  * ゴミ箱から戻せます）」。移さなかった依頼は理由ごとの数を添える（カードが無い・もうゴミ箱にある依頼は知らせない）
@@ -134,7 +137,9 @@ export function trashRequestNotice(outcomes: readonly TrashRequestOutcome[]): st
   const refused = new Map<string, number>()
   for (const o of outcomes) {
     if (o.status === 'moved' && o.table) moved.set(o.table, (moved.get(o.table) ?? 0) + 1)
-    const label = REFUSED_LABELS[o.status]
+    // アイデアの changed は、依頼の後に作者が別の仕切りへ移した時だけ（済み・並べ替え・本文では changed にならない）。
+    // 「直した」と言うと、作者が中身を直したように読めるため
+    const label = o.status === 'changed' && o.table === 'ideas' ? CHANGED_IDEA_LABEL : REFUSED_LABELS[o.status]
     if (label) refused.set(label, (refused.get(label) ?? 0) + 1)
   }
   const parts: string[] = []

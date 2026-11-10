@@ -136,6 +136,11 @@ describe('applyTrashRequests', () => {
     expect(r2.result.map((o) => o.status).sort()).toEqual(['changed', 'not_claude'])
     expect(r2.data.benchAnalyses.m1).toBeDefined()
     expect(r2.data.benchAnalyses.a1).toBeDefined()
+    // 分析・記録の changed は今までどおり「依頼の後に直したカード」
+    const notice = trashRequestNotice(r2.result)
+    expect(notice).toMatch(/^Claude の依頼のうち2件は移しませんでした（/)
+    expect(notice).toContain('依頼の後に直したカード1件')
+    expect(notice).not.toContain('別の仕切りへ移した')
   })
 
   it('その日（日本時間）に Claude の依頼で移した件が100件になったら、残りは移さない（日付が変われば戻る）', () => {
@@ -312,6 +317,10 @@ describe('applyTrashRequests: アイデア', () => {
       ['cy-home0001', 'changed'],
     ])
     expect(r2.data.ideas['cy-home0001']).toBeDefined()
+    // 作者は中身を直していないので、「直したカード」ではなく「別の仕切りへ移したアイデア」と知らせる
+    expect(trashRequestNotice(r2.result)).toBe(
+      'Claude の依頼で、アイデア1件をゴミ箱へ移しました（30日はゴミ箱から戻せます）。Claude の依頼のうち1件は移しませんでした（依頼の後に別の仕切りへ移したアイデア1件）',
+    )
     // 偽の依頼で作者のアイデアを指しても移さない
     const req = Object.values(s.data.trashRequests)[0]
     const forged = { ...req, id: 'cz-forged', targetId: 'author-0001' }

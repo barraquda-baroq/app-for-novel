@@ -53,7 +53,7 @@ import { buildTrashRequests, trashEntryIdsOf, trashTargetProblem } from '../clau
 import { claudeView } from '../claude/visibility'
 import { appModelRef, type AppModel } from './appModel'
 import { createConflictHooks } from './conflicts'
-import { encodeRecord } from './codec'
+import { decodeRecord, encodeRecord, type RecordDoc } from './codec'
 import { createSyncEngine, SYNC_SCHEMA, type SyncEngine, type SyncTarget } from './engine'
 import { stableStringify } from './merge'
 
@@ -84,6 +84,13 @@ const listen = vi.hoisted(() => ({
   offline: new Set<unknown>(),
   /** 次のまとめた書き込み（writeBatch）を書いた直後に呼ぶ（一度だけ）。復元でまとめて消す途中で止まった時の再現 */
   afterCommit: new Map<unknown, () => Promise<void>>(),
+  /**
+   * 次の送信のトランザクションが終わった直後（返事を返す前）に呼ぶ（一度だけ）。送った直後につながりが切れた・
+   * 端末が眠った時の再現
+   */
+  afterTx: new Map<unknown, () => Promise<void>>(),
+  /** 記録の購読の通知を捨てる Firestore（ほかの端末の書き込みを受け取る前に送った時の再現） */
+  deaf: new Set<unknown>(),
 }))
 vi.mock('firebase/firestore', async (importOriginal) => {
   const m = await importOriginal<typeof import('firebase/firestore')>()
@@ -100,6 +107,7 @@ vi.mock('firebase/firestore', async (importOriginal) => {
         held.push(() => next(snap))
         return
       }
+      if (listen.deaf.has(ref.firestore) && !ref.path?.endsWith('/meta/app')) return
       const own = listen.dropOwn.get(ref.firestore)
       const changes = own && snap.docChanges ? snap.docChanges() : []
       if (own && changes.length && changes.every((c) => c.doc.data().device === own)) return
@@ -111,6 +119,11 @@ vi.mock('firebase/firestore', async (importOriginal) => {
     if (listen.offline.has(fs))
       throw Object.assign(new Error('通信できません（テスト）'), { name: 'FirebaseError', code: 'unavailable' })
     const r = await (m.runTransaction as unknown as (...a: unknown[]) => Promise<unknown>)(fs, ...rest)
+    const after = listen.afterTx.get(fs)
+    if (after) {
+      listen.afterTx.delete(fs)
+      await after()
+    }
     if (listen.loseReply.delete(fs))
       throw Object.assign(new Error('返事を受け取れませんでした（テスト）'), { name: 'FirebaseError', code: 'unavailable' })
     return r
@@ -193,6 +206,8 @@ afterEach(async () => {
   listen.beforeList.clear()
   listen.offline.clear()
   listen.afterCommit.clear()
+  listen.afterTx.clear()
+  listen.deaf.clear()
   for (const d of devices.splice(0)) {
     d.offline()
     d.p.close()
@@ -2311,6 +2326,70 @@ describe('Claude のアイデアと追記の依頼の同期（2.8。エミュレ
     expect(data.ideaAppends).toEqual({})
     expect((await cloud(a, `ideaAppends:${req.id}`))?.deleted).toBe(true)
     expect([...a.notes, ...b.notes]).toEqual([])
+  })
+
+  it('足して送る前に、もう一方の端末がそのアイデアを済みにして先に送っていても、依頼の削除だけはクラウドに届かない（Claude が同じ追記を頼み直しても依頼は増えない）', async () => {
+    const { a, b, home } = await twoDevices()
+    const content = '・舞台は冬'
+    const req = await requestAppend(a, [a, b], home.id, content)
+    a.offline()
+    expect((await processOn(a)).appends.map((o) => o.status)).toEqual(['appended'])
+    // b で済みにして、a より先にクラウドへ送る（済みでは本文が変わらないので、Claude に見える印も同じ）
+    await b.edit((d) => E.setIdeaChecked(d, home.id, true))
+    await settle(b)
+    // a は b の済みを受け取る前に送り（アイデアはクラウドが先に変わっていて書けない）、送った直後につながりが切れる
+    listen.deaf.add(a.fs)
+    const sent = new Promise<void>((resolve) =>
+      listen.afterTx.set(a.fs, async () => {
+        listen.offline.add(a.fs)
+        resolve()
+      }),
+    )
+    await a.online()
+    await sent
+    const cloudIdea = async () => {
+      const data = (await cloud(a, `ideas:${home.id}`)) as RecordDoc
+      return decodeRecord(data, () => undefined) as Idea
+    }
+    const reqDoc = await cloud(a, `ideaAppends:${req.id}`)
+    // クラウドの依頼は消えていない（アイデアに追記が無いまま、依頼だけが消えていない）
+    expect(reqDoc?.deleted).toBe(false)
+    expect(await cloudIdea()).toMatchObject({ body: home.body, checked: true })
+    expect((await cloudIdea()).appendIds ?? []).toEqual([])
+    /** Claude が同じ呼び出しを送り直す（コネクタと同じ: クラウドの写しと、クラウドの削除の印） */
+    const resend = async (d: Device) => {
+      const raw = await d.load()
+      const deleted = (await cloud(a, `ideaAppends:${req.id}`))?.deleted === true
+      return buildIdeaAppend(
+        raw,
+        claudeView(raw),
+        { idea_id: shortId('idea', home.id), read_mark: req.readMark, content },
+        { now: Date.now(), wasDeleted: (table, id) => table === 'ideaAppends' && id === req.id && deleted },
+      )
+    }
+    const again = await resend(b)
+    expect(again.status).toBe('pending')
+    expect(again.requestId).toBe(req.id)
+    expect(again.records).toEqual([])
+    // a がつながり直すと、済みと追記の両方が残り、追記は1回。依頼はその後で消える
+    a.offline()
+    listen.deaf.delete(a.fs)
+    listen.offline.delete(a.fs)
+    await a.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.ideas[home.id]).toMatchObject({ body: `${home.body}${block(req)}`, checked: true, appendIds: [req.id] })
+      expect(ideaEditedByAuthor(data.ideas[home.id])).toBe(false)
+      expect(data.ideaAppends).toEqual({})
+    }
+    expect((await cloud(a, `ideaAppends:${req.id}`))?.deleted).toBe(true)
+    expect((await cloudIdea()).appendIds).toEqual([req.id])
+    expect([...a.notes, ...b.notes]).toEqual([])
+    // 足した後に送り直しても「もう足されています」（新しい依頼は作らない）
+    const late = await resend(b)
+    expect(late.status).toBe('applied')
+    expect(late.records).toEqual([])
   })
 
   it('同期の形の版が古い端末（2.7）は、次の同期で追記の依頼を受け取り直す', async () => {

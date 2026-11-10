@@ -4,6 +4,7 @@
 // - 幕のまとまり（OutboxItem.group。幕に分けた・つないだ・解除した話と、その幕・稿・ゴミ箱の件）は、
 //   全部を書けるか、1つも書かないか（ほかの端末に、話の幕の並びより先に幕だけが届く・幕だけが消えるといった
 //   途中の状態を見せないように）
+// - 追記の依頼の削除（2.8。アプリが依頼を当てて消した）は、同じ回のそのアイデアの更新が書けない時は書かない
 import type { OutboxItem } from '../db/persistence'
 import { encodeRecord, hashRecord, type Encoded } from './codec'
 import { deepEqual } from './merge'
@@ -113,10 +114,21 @@ export interface BatchDecision {
   conflicts: OutboxItem[]
 }
 
+/** 追記の依頼の削除（アプリが当てて消した）なら、そのアイデアの id（2.8。base は消す前のクラウドの依頼） */
+function appendDeletionOf(it: OutboxItem): string | null {
+  if (it.table !== 'ideaAppends' || it.local !== null) return null
+  const ideaId = (it.base as { ideaId?: unknown } | null)?.ideaId
+  return typeof ideaId === 'string' ? ideaId : null
+}
+
 /**
  * 書くものを決める。1件ずつ、共通の履歴が無いものはクラウドに何も無い時、ほかは base の指紋がクラウドと同じ時に書く
  * （復元・すべて削除の後は必ず上書き。ただし復元を始めた後にほかの端末が書いたもの（fresh）は base と比べる）。
  * 幕のまとまりは、全部を書ける時だけ書く。
+ * 追記の依頼の削除は、同じ回に送るそのアイデアの更新が書けない（クラウドで先に変わっていた）時は書かない（受信でアイデアを
+ * 合わせてから一緒に送る）。依頼だけがクラウドから消え、アイデアに追記が無いままになると、Claude には追記が見えず、同じ追記を
+ * 頼み直すと別の依頼として作られ、後で2回足されるため。アイデアの更新は依頼の削除より先に並ぶ（SEND_ORDER）ので、送っていない
+ * アイデアの更新があれば同じ回にある
  */
 export function decideBatch(batch: readonly BatchEntry[], cloud: readonly CloudState[]): BatchDecision {
   const ok = batch.map((b, i) => {
@@ -129,7 +141,12 @@ export function decideBatch(batch: readonly BatchEntry[], cloud: readonly CloudS
   batch.forEach((b, i) => {
     if (!ok[i] && b.it.group) heldGroups.add(b.it.group)
   })
-  const write = batch.map((b, i) => ok[i] && !(b.it.group && heldGroups.has(b.it.group)))
+  const grouped = batch.map((b, i) => ok[i] && !(b.it.group && heldGroups.has(b.it.group)))
+  const heldIdeas = new Set(batch.filter((b, i) => b.it.table === 'ideas' && !grouped[i]).map((b) => b.it.id))
+  const write = batch.map((b, i) => {
+    const ideaId = grouped[i] ? appendDeletionOf(b.it) : null
+    return grouped[i] && !(ideaId !== null && heldIdeas.has(ideaId))
+  })
   const conflicts = batch.filter((_, i) => !ok[i]).map((b) => b.it)
   return { write, conflicts }
 }

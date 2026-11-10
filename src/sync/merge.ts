@@ -6,7 +6,7 @@
 import { refKey } from '../claude/refs'
 import { deepEqual } from '../domain/equal'
 import type { TableName } from '../domain/types'
-import { mergeIdeaBody } from './ideaMerge'
+import { mergeIdeaBody, sharedIdeaAppends } from './ideaMerge'
 
 export { deepEqual }
 
@@ -313,11 +313,24 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
   const tagsBase = table === 'benchWorks' ? sharedImportBase(b, m, t) : undefined
   if (tagsBase) keys.add('tags')
   let ideaBody: string | null = null
+  // 2.8: 両方の端末が同じ追記の依頼を当てていたら、片方の本文が共通の版と同じ（作者が足した部分をまるごと消した）でも、
+  // 本文は片方だけの変更として採らずに ideaMerge.ts でまとめる（消した追記を戻さない。まとめられなければ両方をつなぐ）
+  const ideaShared = table === 'ideas' && sharedIdeaAppends(b, m, t)
+  let ideaMerged = false
   for (const k of keys) {
     if (k === 'id' || k === 'updatedAt') continue
     const mv = m[k]
     const bv = k === 'tags' && tagsBase ? tagsBase : b[k]
     const tv = t[k]
+    if (ideaShared && k === 'body' && !deepEqual(mv, tv) && (deepEqual(mv, bv) || deepEqual(tv, bv))) {
+      ideaMerged = true
+      if ((ideaBody = mergeIdeaBody(b, m, t)) !== null) out[k] = ideaBody
+      else if (typeof mv === 'string' && typeof tv === 'string') {
+        out[k] = joinConflictText(tv, mv, opts.device)
+        joined.push(k)
+      }
+      continue
+    }
     if (deepEqual(mv, bv)) continue
     if (deepEqual(tv, bv) || deepEqual(tv, mv)) {
       out[k] = mv
@@ -340,9 +353,10 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
     }
     if (out[k] === undefined) delete out[k]
   }
-  // 2.8: アイデアの本文を両方の端末が変えていたら、Claude が書いた形の指紋（claudeHash）は、採った本文の側のもの
-  // （まとめた本文・つないだ本文はどちらの指紋とも合わないので、項目ごとに合わせた値のまま =「作者が直した」）
-  if (table === 'ideas' && !deepEqual(m.body, b.body) && !deepEqual(t.body, b.body)) {
+  // 2.8: アイデアの本文を両方の端末が変えていたら（同じ追記の依頼を当てた後に、片方が足した部分をまるごと消した時も）、
+  // Claude が書いた形の指紋（claudeHash）は、採った本文の側のもの（まとめた本文・つないだ本文はどちらの指紋とも合わないので、
+  // 項目ごとに合わせた値のまま =「作者が直した」。消した側の本文を採れば、その側の指紋とも合わないので「作者が直した」）
+  if (table === 'ideas' && (ideaMerged || (!deepEqual(m.body, b.body) && !deepEqual(t.body, b.body)))) {
     const hash = out.body === t.body ? t.claudeHash : out.body === m.body ? m.claudeHash : out.claudeHash
     if (hash === undefined) delete out.claudeHash
     else out.claudeHash = hash

@@ -428,7 +428,7 @@ describe('Claude のアイデアを直す編集の画面を開いている間', 
       'Claude からこのアイデアへの追記の依頼が届いています。保存かキャンセルで閉じると、カードの終わりに足されます。',
     )
     expect(screen.getByTestId('idea-editor-claude-trash').textContent).toBe(
-      'Claude からこのアイデアをゴミ箱へ移す依頼が届いています。直して保存すると移しません（何も変えずに閉じると移します）。',
+      'Claude からこのアイデアをゴミ箱へ移す依頼が届いています。この画面で直して保存すると移しません（何も変えずに閉じると移します。ほかの端末・タブでアプリを開いていると、そちらで先に移ることがあります。その時は編集の画面が閉じ、書きかけは下書きに残ります。ゴミ箱から戻せます）。',
     )
     expect(useApp.getState().draftsDirty).toBe(false)
     await user.click(screen.getByTestId('idea-save'))

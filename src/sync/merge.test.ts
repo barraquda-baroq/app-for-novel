@@ -704,6 +704,28 @@ describe('アイデアへの Claude の追記（2.8）のマージ', () => {
     const back = merged(theirs, mine)
     expect(bodyOf(back)).toBe(BODY + blockOf(X) + blockOf(Y))
     expect(ideaEditedByAuthor(back.record as Idea)).toBe(false)
+    // 共通の版の本文が空（追記の行が本文の初めにある）でも同じ
+    const empty = { ...base, body: '', claudeHash: hashJson('') }
+    const r2 = merged(applied(empty, X), applied(empty, X2, Y), empty)
+    expect(bodyOf(r2)).toBe(applied(empty, X2, Y).body)
+    expect(r2.joined).toBeUndefined()
+  })
+
+  it('(c) 短い方で作者が足した部分を消していたら、長い方を採らずにつなぐ（長い方で別の追記を消していても、消した追記を黙って戻さない）', () => {
+    const marker = '――――（同期の競合: テスト端末で同時に書かれた内容）――――'
+    // この端末は X・Y を当て、作者が Y の追記を消した。相手は X・Y・Z を当て、作者が Z の追記を消した（相手の本文 = この端末の本文 + Y の追記）
+    const mine = edited(applied(base, X, Y), BODY + blockOf(X))
+    const theirs = edited(applied(base, X, Y, Z), BODY + blockOf(X) + blockOf(Y))
+    for (const [m, t] of [
+      [mine, theirs],
+      [theirs, mine],
+    ]) {
+      const r = merged(m, t)
+      expect(r.joined).toEqual(['body'])
+      expect(bodyOf(r)).toBe(`${t.body}\n\n${marker}\n${m.body}`)
+      expect([...((r.record as Idea).appendIds ?? [])].sort()).toEqual(['cu-x', 'cu-y', 'cu-z'])
+      expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+    }
   })
 
   it('(d)(e) 片方が足しただけで、もう片方は作者が直した: 作者の直しの後ろに追記を1回（どちらの端末で合わせても同じ）', () => {
@@ -733,11 +755,12 @@ describe('アイデアへの Claude の追記（2.8）のマージ', () => {
 
   it('当てはまらない形は今までどおり両方をつなぐ（何も失わない）', () => {
     const marker = '――――（同期の競合: テスト端末で同時に書かれた内容）――――'
-    // 送る前に、同じ端末で追記の後に作者が足した部分の中を直した（もう一方の端末も同じ依頼を当てた）
+    // 両方の端末が同じ依頼を当て、どちらでも作者が直した（相手は足した部分の中を直し、この端末は終わりに行を足した）
     const editedTail = edited(applied(base, X), BODY + blockOf(X).replace('兄との約束', '姉との約束'))
-    const r1 = merged(applied(base, X), editedTail)
+    const mineTail = edited(applied(base, X), applied(base, X).body + AUTHOR_LINE)
+    const r1 = merged(mineTail, editedTail)
     expect(r1.joined).toEqual(['body'])
-    expect(bodyOf(r1)).toBe(`${editedTail.body}\n\n${marker}\n${BODY}${blockOf(X)}`)
+    expect(bodyOf(r1)).toBe(`${editedTail.body}\n\n${marker}\n${mineTail.body}`)
     // 同じ依頼を含むが、その先が違う
     const r2 = merged(applied(base, X, Z), applied(base, X, Y))
     expect(r2.joined).toEqual(['body'])
@@ -758,6 +781,134 @@ describe('アイデアへの Claude の追記（2.8）のマージ', () => {
     const r4 = mergeRemote('ideas', author, here, there, D)
     expect(bodyOf(r4)).toBe(`あちら\n\n${marker}\nこちら`)
     expect(mergeIdeaBody(author, here, there)).toBeNull()
+  })
+
+  describe('両方の端末が同じ依頼を当てた後、片方で作者が足した部分を直した（同期の後に送った端末の書き込みが競合した）', () => {
+    /** 終わりの箇条書きを消せる依頼（「・最後の一行」） */
+    const W = req('cu-w', '【動機】\n・兄との約束に変える\n・最後の一行')
+    const full = applied(base, W)
+    /** 足した部分の終わりの行を消した */
+    const trimmed = edited(full, full.body.replace('\n・最後の一行', ''))
+    /** 足した部分をまるごと消した（本文は共通の版と同じ） */
+    const removed = edited(full, BODY)
+    /** 足した部分の中を直した */
+    const rewritten = edited(full, full.body.replace('兄との約束', '姉との約束'))
+
+    it.each([
+      ['終わりの行を消した', trimmed],
+      ['足した部分をまるごと消した', removed],
+      ['足した部分の中を直した', rewritten],
+    ])('%s: どちらの端末で合わせても直した側の本文で、「作者が直した」のまま', (_, editedSide) => {
+      for (const r of [merged(full, editedSide), merged(editedSide, full)]) {
+        expect(bodyOf(r)).toBe(editedSide.body)
+        expect(r.joined).toBeUndefined()
+        expect((r.record as Idea).appendIds).toEqual(['cu-w'])
+        expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+      }
+    })
+
+    it('片方が続けて別の依頼も当てていたら、終わりを消した本文の後ろには足さずにつなぐ（消した行を黙って戻さない）', () => {
+      const more = applied(base, W, Y)
+      const marker = '――――（同期の競合: テスト端末で同時に書かれた内容）――――'
+      for (const editedSide of [trimmed, removed]) {
+        const here = merged(editedSide, more)
+        expect(here.joined).toEqual(['body'])
+        expect(bodyOf(here)).toBe(`${more.body}\n\n${marker}\n${editedSide.body}`)
+        const there = merged(more, editedSide)
+        expect(there.joined).toEqual(['body'])
+        expect(bodyOf(there)).toBe(`${editedSide.body}\n\n${marker}\n${more.body}`)
+        for (const r of [here, there]) {
+          expect((r.record as Idea).appendIds).toEqual(['cu-w', 'cu-y'])
+          expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+        }
+      }
+      // 別々の依頼だけを当てていた（消した側の依頼を相手は知らない）: 今までどおり相手の本文で、「作者が直した」
+      const other = merged(removed, applied(base, Y))
+      expect(bodyOf(other)).toBe(BODY + blockOf(Y))
+      expect(ideaEditedByAuthor(other.record as Idea)).toBe(true)
+      // 足した部分をまるごと消した側の方が多く当てていた（相手は直していない）: 消した側の本文
+      const removedMore = edited(more, BODY)
+      for (const r of [merged(removedMore, full), merged(full, removedMore)]) {
+        expect(bodyOf(r)).toBe(BODY)
+        expect(r.joined).toBeUndefined()
+        expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+      }
+      // 直していない方が続けて当てていた（もう片方は直していない）: 長い方
+      expect(bodyOf(merged(full, more))).toBe(more.body)
+      expect(bodyOf(merged(more, full))).toBe(more.body)
+    })
+
+    it('この端末で作者が直してから同じ依頼を当てた（指紋は直す前のまま）: この端末の本文', () => {
+      const mine = applied(edited(base, authorBody), W)
+      expect(mine.claudeHash).toBe(base.claudeHash)
+      for (const r of [merged(mine, full), merged(full, mine)]) {
+        expect(bodyOf(r)).toBe(authorBody + blockOf(W))
+        expect(r.joined).toBeUndefined()
+        expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+      }
+    })
+
+    it('共通の版がもう直してあった（指紋で見分けられない）: 同じ依頼なら両方をつなぐ。片方が終わりに追記を足しただけなら長い方', () => {
+      const authored = edited(base, authorBody)
+      const both = applied(authored, W)
+      const cut = edited(both, both.body.replace('\n・最後の一行', ''))
+      for (const r of [merged(both, cut, authored), merged(cut, both, authored)]) {
+        expect(r.joined).toEqual(['body'])
+        expect(bodyOf(r)).toContain(cut.body)
+        expect(bodyOf(r)).toContain(both.body)
+      }
+      // 片方が足した部分をまるごと消した（本文は共通の版と同じ）: 片方だけの変更として採らずにつなぐ
+      const gone = edited(both, authorBody)
+      const r2 = merged(gone, both, authored)
+      expect(r2.joined).toEqual(['body'])
+      expect(bodyOf(r2)).toBe(`${both.body}\n\n――――（同期の競合: テスト端末で同時に書かれた内容）――――\n${authorBody}`)
+      // 片方が続けて別の依頼も当てた（本文は、もう片方の本文の終わりに追記を1件足しただけ）
+      const longer = applied(authored, W, Y)
+      for (const r of [merged(both, longer, authored), merged(longer, both, authored)]) {
+        expect(bodyOf(r)).toBe(authorBody + blockOf(W) + blockOf(Y))
+        expect(r.joined).toBeUndefined()
+      }
+      // 終わりを消した側（短い方）の後ろに、相手は続けて当てていた: 追記の行の数が合わないのでつなぐ
+      expect(merged(cut, longer, authored).joined).toEqual(['body'])
+    })
+
+    it('共通の版がもう直してあった: 片方で足した部分の外（初めの行・元の本文の途中）を直したら、どちらの端末で合わせても直した側の本文', () => {
+      const authored = edited(base, authorBody)
+      const both = applied(authored, W)
+      const head = edited(both, both.body.replace('第3章', '第4章'))
+      const mid = edited(both, both.body.replace('・兄を探す', '・港で兄を探す'))
+      for (const editedSide of [head, mid]) {
+        for (const r of [merged(both, editedSide, authored), merged(editedSide, both, authored)]) {
+          expect(bodyOf(r)).toBe(editedSide.body)
+          expect(r.joined).toBeUndefined()
+          expect((r.record as Idea).appendIds).toEqual(['cu-w'])
+          expect(count(bodyOf(r), appendHeader(W.createdAt))).toBe(1)
+          expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+        }
+      }
+      // 直した側が続けて別の依頼も当てていた: 直した側の本文
+      const headMore = applied(head, Y)
+      for (const r of [merged(both, headMore, authored), merged(headMore, both, authored)]) {
+        expect(bodyOf(r)).toBe(authorBody.replace('第3章', '第4章') + blockOf(W) + blockOf(Y))
+        expect(r.joined).toBeUndefined()
+        expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+      }
+      // 足した部分の終わりに作者が行を足した（もう片方が終わりの行を消したのと見分けられない）・終わりを消した側と初めの行を直した側: つなぐ
+      const cut = edited(both, both.body.replace('\n・最後の一行', ''))
+      const tail = edited(both, both.body + AUTHOR_LINE)
+      for (const [x, y] of [
+        [both, tail],
+        [cut, head],
+        [cut, headMore],
+      ]) {
+        for (const r of [merged(x, y, authored), merged(y, x, authored)]) {
+          expect(r.joined).toEqual(['body'])
+          expect(bodyOf(r)).toContain(x.body)
+          expect(bodyOf(r)).toContain(y.body)
+          expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+        }
+      }
+    })
   })
 
   it('指紋（claudeHash）は採った本文の側のもの。済みだけを変えた端末と追記した端末では、追記した側の指紋', () => {

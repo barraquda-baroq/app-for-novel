@@ -158,7 +158,8 @@ export function IdeaEditorModal({
         ) : null}
         {trashPending ? (
           <p className="idea-editor-claude" role="status" data-testid="idea-editor-claude-trash">
-            Claude からこのアイデアをゴミ箱へ移す依頼が届いています。直して保存すると移しません（何も変えずに閉じると移します）。
+            Claude
+            からこのアイデアをゴミ箱へ移す依頼が届いています。この画面で直して保存すると移しません（何も変えずに閉じると移します。ほかの端末・タブでアプリを開いていると、そちらで先に移ることがあります。その時は編集の画面が閉じ、書きかけは下書きに残ります。ゴミ箱から戻せます）。
           </p>
         ) : null}
         {restoredNotice ? (

@@ -92,6 +92,42 @@ describe('書くものを決める', () => {
     expect(held.conflicts.map((c) => c.k)).toEqual(['pieces/E'])
   })
 
+  it('追記の依頼の削除は、同じ回のそのアイデアの更新がクラウドで先に変わっていて書けない時は書かない（2.8）', () => {
+    const req = { id: 'cu-r', ideaId: 'cy-x', text: '・舞台は冬', readMark: 'abcd1234', source: 'claude', v: 1 }
+    const batch = selectBatch(
+      [
+        item('ideas/cy-x', { id: 'cy-x', body: '本文\n\n追記', appendIds: ['cu-r'] }, { id: 'cy-x', body: '本文' }),
+        item('memos/a', { id: 'a', body: 'x' }, { id: 'a' }),
+        item('ideaAppends/cu-r', null, req),
+        // ほかのアイデアへの依頼の削除
+        item('ideaAppends/cu-s', null, { ...req, id: 'cu-s', ideaId: 'cy-y' }),
+      ],
+      limits,
+    )
+    expect(batch.map((b) => b.it.k)).toEqual(['ideas/cy-x', 'memos/a', 'ideaAppends/cu-r', 'ideaAppends/cu-s'])
+    // アイデアがクラウドで先に変わっていた（ほかの端末で済みにした）: そのアイデアへの依頼の削除も書かない。ほかは書く
+    const held = decideBatch(batch, [changed, ...batch.slice(1).map((b) => same(b.it))])
+    expect(held.write).toEqual([false, true, false, true])
+    // 書けなかったのはアイデアだけ（依頼の削除は、アイデアを合わせた後に一緒に送る）
+    expect(held.conflicts.map((c) => c.k)).toEqual(['ideas/cy-x'])
+    // アイデアを書ける時は一緒に書く
+    expect(
+      decideBatch(
+        batch,
+        batch.map((b) => same(b.it)),
+      ).write,
+    ).toEqual([true, true, true, true])
+    // 同じ回にアイデアの更新が無い（もう送った・送るものが無い）依頼の削除は、今までどおり書く
+    expect(decideBatch(batch.slice(2), [same(batch[2].it), same(batch[3].it)]).write).toEqual([true, true])
+    // 依頼の削除がクラウドで先に変わっていたら（ほかの端末が先に消した）、それだけ書かない
+    expect(decideBatch(batch, [same(batch[0].it), same(batch[1].it), changed, same(batch[3].it)]).write).toEqual([
+      true,
+      true,
+      false,
+      true,
+    ])
+  })
+
   it('共通の履歴が無いものはクラウドに何も無い時だけ、復元の後は必ず書く', () => {
     const batch = selectBatch(
       [
