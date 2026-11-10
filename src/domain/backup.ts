@@ -18,15 +18,17 @@ export interface BackupFile {
 }
 
 /**
- * バックアップに入れない表。ゴミ箱へ移す依頼（2.7）は、アプリが処理するまでの一時的な記録なので書き出さず、読み込まない
- * （バックアップから戻すと、まだ処理していない依頼は取り消しになる）。依頼の表を足しても BACKUP_SCHEMA_VERSION は上げない
- * （上げると 2.6 のアプリが 2.7 のバックアップを読めなくなる。ゴミ箱の件の by は、知らない項目として残るだけ）
+ * バックアップに入れない表。ゴミ箱へ移す依頼（2.7）とアイデアへの追記の依頼（2.8）は、アプリが処理するまでの一時的な記録なので
+ * 書き出さず、読み込まない（バックアップから戻すと、まだ処理していない依頼は取り消しになる）。依頼の表を足しても
+ * BACKUP_SCHEMA_VERSION は上げない（上げると前の版のアプリが新しいバックアップを読めなくなる。ゴミ箱の件の by・Claude が作った
+ * アイデアの source などは、前の版では知らない項目として残るだけ）
  */
-const NOT_BACKED_UP = new Set<keyof AppData>(['trashRequests'])
+const NOT_BACKED_UP = new Set<keyof AppData>(['trashRequests', 'ideaAppends'])
 
 export function toBackup(data: AppData, exportedAt = new Date()): BackupFile {
-  const { trashRequests: _omit, ...rest } = data
+  const { trashRequests: _omit, ideaAppends: _omitAppends, ...rest } = data
   void _omit
+  void _omitAppends
   return {
     app: BACKUP_APP_ID,
     schemaVersion: BACKUP_SCHEMA_VERSION,

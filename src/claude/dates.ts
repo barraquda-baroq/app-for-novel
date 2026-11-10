@@ -9,6 +9,17 @@ export function jstDate(ts: number): string {
   return new Date(ts + JST_OFFSET_MS).toISOString().slice(0, 10)
 }
 
+/** 日本時間の日付と時刻（「2026/11/12 14:32」。2.8: Claude が作るアイデアの1行目） */
+export function jstMinute(ts: number): string {
+  const s = new Date(ts + JST_OFFSET_MS).toISOString()
+  return `${s.slice(0, 4)}/${s.slice(5, 7)}/${s.slice(8, 10)} ${s.slice(11, 16)}`
+}
+
+/** 日本時間の日付（「2026/11/12」。2.8: アイデアへの追記の行「2026/11/12のセッションで以下の内容へ変更」） */
+export function jstSlashDate(ts: number): string {
+  return jstDate(ts).replace(/-/g, '/')
+}
+
 /** YYYY-MM-DD の形の、実在する日付か */
 export function isIsoDate(s: unknown): s is string {
   if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false

@@ -58,9 +58,9 @@ export function trashNotice(subject = ''): string {
 /** ゴミ箱に入れられるレコード */
 export type ContentRecord = AppData[ContentTableName][string]
 
-/** ゴミ箱に入れられるレコードの表（ゴミ箱の表と、ゴミ箱へ移す依頼の表は除く） */
+/** ゴミ箱に入れられるレコードの表（ゴミ箱の表と、Claude の依頼の表（ゴミ箱へ移す依頼・アイデアへの追記の依頼）は除く） */
 export const CONTENT_TABLES: readonly ContentTableName[] = TABLE_NAMES.filter(
-  (t): t is ContentTableName => t !== 'trashEntries' && t !== 'trashRecords' && t !== 'trashRequests',
+  (t): t is ContentTableName => t !== 'trashEntries' && t !== 'trashRecords' && t !== 'trashRequests' && t !== 'ideaAppends',
 )
 
 export function isContentTable(v: unknown): v is ContentTableName {

@@ -370,6 +370,19 @@ describe('第2回の見直しで直したこと', () => {
     expect(tableSendRank('trashRequests', true)).toBeGreaterThan(tableSendRank('trashEntries', true))
   })
 
+  it('アイデアへの追記の依頼は、削除でもアイデアとタイトルの後、ゴミ箱へ移す依頼の前に送る（2.8）', () => {
+    for (const deleted of [false, true]) {
+      const rank = tableSendRank('ideaAppends', deleted)
+      for (const t of TABLE_NAMES)
+        if (t !== 'ideaAppends' && t !== 'trashRequests') expect(rank).toBeGreaterThan(tableSendRank(t, deleted))
+      expect(rank).toBeGreaterThan(tableSendRank('ideas', deleted))
+      expect(rank).toBeGreaterThan(tableSendRank('titles', deleted))
+      expect(rank).toBeLessThan(tableSendRank('trashRequests', deleted))
+    }
+    // 知らない表（新しい版のアプリが足したもの）はさらに後ろ
+    expect(tableSendRank('ideaAppends')).toBeLessThan(tableSendRank('futureTable'))
+  })
+
   it('復元を始めた後にほかの端末が書いたものは、「必ず上書き」の送信待ちがあっても 3者マージする', async () => {
     const { data, versionId, memoId } = sample()
     const p = fresh()
@@ -709,35 +722,42 @@ describe('大きな作品の反映・送信待ちの読む量', () => {
   })
 })
 
-describe('端末内の DB の版（2.7）', () => {
-  it('v6（2.6）の DB を v7 に上げても、中身と送信待ちが残り、ゴミ箱へ移す依頼の表ができる', async () => {
+describe('端末内の DB の版（2.7・2.8）', () => {
+  // 2.6 の形（v6）の表
+  const v6Tables = [
+    'titles',
+    'chapters',
+    'pieces',
+    'versions',
+    'memos',
+    'ideas',
+    'settingCategories',
+    'settingEntries',
+    'submissions',
+    'snapshotTexts',
+    'trashEntries',
+    'trashRecords',
+    'proofSuggestions',
+    'proofBatches',
+    'revisionIdeas',
+    'strategyNotes',
+    'critiquePrompts',
+    'critiqueResults',
+    'benchWorks',
+    'benchAnalyses',
+    'materials',
+    'materialNotes',
+  ]
+  // 2.7 の形（v7）の表（persistence.ts で固定した一覧と同じ）
+  const v7Tables = [...v6Tables, 'trashRequests']
+
+  it('v7 の表に、2.8 のアイデアへの追記の依頼の表を足したものが今の表のすべて', () => {
+    expect(new Set([...v7Tables, 'ideaAppends'])).toEqual(new Set(TABLE_NAMES))
+  })
+
+  it('v6（2.6）の DB を今の版に上げても、中身と送信待ちが残り、ゴミ箱へ移す依頼の表ができる', async () => {
     const name = `persistence-upgrade-${++n}`
     // 2.6 の形（v6）をそのまま作る
-    const v6Tables = [
-      'titles',
-      'chapters',
-      'pieces',
-      'versions',
-      'memos',
-      'ideas',
-      'settingCategories',
-      'settingEntries',
-      'submissions',
-      'snapshotTexts',
-      'trashEntries',
-      'trashRecords',
-      'proofSuggestions',
-      'proofBatches',
-      'revisionIdeas',
-      'strategyNotes',
-      'critiquePrompts',
-      'critiqueResults',
-      'benchWorks',
-      'benchAnalyses',
-      'materials',
-      'materialNotes',
-    ]
-    expect(new Set([...v6Tables, 'trashRequests'])).toEqual(new Set(TABLE_NAMES))
     const old = new Dexie(name)
     old.version(6).stores({ ...Object.fromEntries(v6Tables.map((t) => [t, 'id'])), _outbox: 'k', _meta: 'key' })
     const { data } = sample()
@@ -777,8 +797,76 @@ describe('端末内の DB の版（2.7）', () => {
     expect((await p.load()).trashRequests[req.id]).toEqual(req)
     const db = new Dexie(name)
     await db.open()
-    expect(db.verno).toBe(7)
+    expect(db.verno).toBe(8)
     expect(db.tables.map((t) => t.name)).toContain('trashRequests')
+    expect(db.tables.map((t) => t.name)).toContain('ideaAppends')
+    db.close()
+  })
+
+  it('v7（2.7）の DB を v8 に上げても、中身と送信待ちが残り、アイデアへの追記の依頼の表ができる', async () => {
+    const name = `persistence-upgrade-${++n}`
+    // 2.7 の形（v7）をそのまま作る（ゴミ箱へ移す依頼も1件）
+    const old = new Dexie(name)
+    old.version(7).stores({ ...Object.fromEntries(v7Tables.map((t) => [t, 'id'])), _outbox: 'k', _meta: 'key' })
+    const { data } = sample()
+    const m = addMaterial(data, { name: '江戸の暮らし' })
+    const trashReq = {
+      id: 'cz-test',
+      table: 'benchAnalyses',
+      targetId: 'a1',
+      parentId: 'w1',
+      targetUpdatedAt: 1,
+      label: '「構成」',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const tables = { ...m.data, trashRequests: { [trashReq.id]: trashReq } } as unknown as Record<
+      string,
+      Record<string, AnyRecord>
+    >
+    for (const t of v7Tables) {
+      const rows = Object.values(tables[t])
+      if (rows.length) await old.table(t).bulkPut(rows)
+    }
+    await old.table('_meta').put({ key: 'uid', value: 'user-1' })
+    await old.table('_outbox').put({ k: `materials/${m.result}`, t: 'materials', id: m.result, base: null, at: 1 })
+    old.close()
+
+    const p = createPersistence(name)
+    const loaded = await p.load()
+    expect(loaded.materials[m.result].name).toBe('江戸の暮らし')
+    expect(Object.keys(loaded.titles)).toEqual(Object.keys(m.data.titles))
+    expect(loaded.trashRequests[trashReq.id]).toEqual(trashReq)
+    expect(loaded.ideaAppends).toEqual({})
+    expect(await p.getMeta('uid')).toBe('user-1')
+    expect(await p.outboxCount()).toBe(1)
+    // 新しい表に書ける（クラウドから届いた依頼を置き、処理して消す）
+    const req = {
+      id: 'cu-test',
+      ideaId: 'cy-idea',
+      text: '足す内容',
+      readMark: 'abcd1234',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    await p.applyRemote(
+      [{ table: 'ideaAppends', id: req.id, record: req as unknown as AnyRecord }],
+      hooks(() => loaded),
+    )
+    expect((await p.load()).ideaAppends[req.id]).toEqual(req)
+    await p.applyRemote(
+      [{ table: 'ideaAppends', id: req.id, record: null }],
+      hooks(() => loaded),
+    )
+    expect((await p.load()).ideaAppends).toEqual({})
+    const db = new Dexie(name)
+    await db.open()
+    expect(db.verno).toBe(8)
+    expect(db.tables.map((t) => t.name)).toContain('ideaAppends')
     db.close()
   })
 })

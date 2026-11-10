@@ -161,6 +161,8 @@ export function repairData(input: AppData): RepairResult {
     // 2.6 の表（古いバックアップ・古い形のデータには無い）
     materials: { ...(input.materials ?? {}) },
     materialNotes: { ...(input.materialNotes ?? {}) },
+    // 2.8 の表（古いバックアップ・古い形のデータには無い）
+    ideaAppends: { ...(input.ideaAppends ?? {}) },
     // 2.7 の表（古いバックアップ・古い形のデータには無い）
     trashRequests: { ...(input.trashRequests ?? {}) },
     trashEntries: { ...(input.trashEntries ?? {}) },
@@ -512,6 +514,8 @@ export function repairData(input: AppData): RepairResult {
 
   // 2.7: ゴミ箱へ移す依頼は、形が違っても残す（表示から外すとアプリが処理して消せず、クラウドに残り続けるため。
   // 確かめるのは処理する時。src/domain/claudeTrash.ts）。オブジェクトでない・id の合わない依頼は、上で取り除いた
+  // 2.8: アイデアへの追記の依頼も同じく、形が違っても残す（確かめるのは処理する時。src/domain/claudeIdeas.ts）。
+  // アイデアの 2.8 の項目（source・v・model・claudeHash・appendIds）は直さずに残す（読む所で、壊れた値を無いものとして扱う）
 
   return { data: fixes.length ? d : input, fixes }
 }

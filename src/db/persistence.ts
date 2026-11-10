@@ -206,6 +206,8 @@ const SEND_ORDER: TableName[] = [
   'pieces',
   'chapters',
   'titles',
+  // 2.8: アイデアへの追記の依頼の削除は、追記したアイデアの後に送る（分けて届いても、追記がクラウドに無いまま依頼だけが消えないように）
+  'ideaAppends',
   // 2.7: ゴミ箱へ移す依頼の削除は、カードの削除とゴミ箱の記録の後に送る（分けて届いても、コネクタにカードが一瞬見えないように）
   'trashRequests',
 ]
@@ -330,8 +332,15 @@ class NovelDB extends Dexie {
       _outbox: 'k',
       _meta: 'key',
     })
-    // v7（2.7）: ゴミ箱へ移す依頼の表を追加
+    // v7（2.7）: ゴミ箱へ移す依頼の表を追加（v6 と同じく、表の一覧は固定する）
+    const v7Tables = [...v6Tables, 'trashRequests']
     this.version(7).stores({
+      ...Object.fromEntries(v7Tables.map((t) => [t, 'id'])),
+      _outbox: 'k',
+      _meta: 'key',
+    })
+    // v8（2.8）: アイデアへの追記の依頼の表を追加
+    this.version(8).stores({
       ...Object.fromEntries(TABLE_NAMES.map((t) => [t, 'id'])),
       _outbox: 'k',
       _meta: 'key',

@@ -144,6 +144,22 @@ export interface Idea {
   checkedAt?: number | null
   /** 済みでないアイデアの並び順（済みのアイデアの並びには使わない） */
   order: number
+  /**
+   * 作ったもの（2.8）: claude = Claude がコネクタで作った（id は cy-…。isClaudeIdea で、id の形と一緒に見る）。
+   * 無い = 作者がアプリで書いた。以下の4つの項目も Claude が作ったアイデアだけが持つ（作者のアイデアは 2.7 までと同じ形）
+   */
+  source?: 'claude'
+  /** 記録の形の版（Claude が作ったアイデアだけ。いまは 1） */
+  v?: number
+  /** 作ったモデル（Claude が作ったアイデアだけ。表示しない控え。ほかの Claude の記録と同じ） */
+  model?: string
+  /**
+   * Claude が書いた形の本文の指紋（hashJson(body)）。作った時と、作者が直していない間に追記を足した時だけ変わる。
+   * 今の本文の指紋と違えば「作者が直した」（src/claude/ideaAppend.ts の ideaEditedByAuthor）
+   */
+  claudeHash?: string
+  /** アプリが足した追記の依頼の id（足した順。同じ依頼を2回足さない。同期では並びとして合わせる） */
+  appendIds?: string[]
   createdAt: number
   updatedAt: number
 }
@@ -713,6 +729,26 @@ export interface TrashRequest {
 /** ゴミ箱へ移す依頼の対象の表（相対比較の分析と資料の記録だけ） */
 export type TrashRequestTable = 'benchAnalyses' | 'materialNotes'
 
+/**
+ * アイデアへの追記の依頼（2.8）。Claude（コネクタ）が、自分が作ったアイデアに追記する時に1件作る。コネクタは作るだけ。
+ * 同期を受け持つ画面がクラウドと揃った時に、アプリが確かめてカードの終わりに足し、依頼を消す（src/domain/claudeIdeas.ts）。
+ * 足す行の日付は createdAt（コネクタの時計）の日本時間。id は derivedId.ts の ideaAppendId（cu-…）
+ */
+export interface IdeaAppend {
+  id: ID
+  /** 追記するアイデア */
+  ideaId: ID
+  /** 足す内容（normalizeIdeaText 済み。Markdown を使わない） */
+  text: string
+  /** 依頼の時に Claude が読んだ中身の印（ideaReadMark。控え。id の材料） */
+  readMark: string
+  source: 'claude'
+  /** 依頼の形の版（いまは 1） */
+  v: number
+  createdAt: number
+  updatedAt: number
+}
+
 /** ゴミ箱の中身の1レコード（削除した時点の内容そのもの） */
 export interface TrashRecord {
   id: ID
@@ -749,6 +785,8 @@ export interface AppData {
   // 資料（2.6）
   materials: Record<ID, Material>
   materialNotes: Record<ID, MaterialNote>
+  // アイデアへの追記の依頼（2.8。Claude が作り、アプリが処理して消す）
+  ideaAppends: Record<ID, IdeaAppend>
   // ゴミ箱へ移す依頼（2.7。Claude が作り、アプリが処理して消す）
   trashRequests: Record<ID, TrashRequest>
   trashEntries: Record<ID, TrashEntry>
@@ -757,8 +795,8 @@ export interface AppData {
 
 export type TableName = keyof AppData
 
-/** ゴミ箱に入れられるレコードの表（ゴミ箱の表と、ゴミ箱へ移す依頼の表は除く） */
-export type ContentTableName = Exclude<TableName, 'trashEntries' | 'trashRecords' | 'trashRequests'>
+/** ゴミ箱に入れられるレコードの表（ゴミ箱の表と、Claude の依頼の表（ゴミ箱へ移す依頼・アイデアへの追記の依頼）は除く） */
+export type ContentTableName = Exclude<TableName, 'trashEntries' | 'trashRecords' | 'trashRequests' | 'ideaAppends'>
 
 export const TABLE_NAMES: TableName[] = [
   'titles',
@@ -781,6 +819,7 @@ export const TABLE_NAMES: TableName[] = [
   'benchAnalyses',
   'materials',
   'materialNotes',
+  'ideaAppends',
   'trashRequests',
   'trashEntries',
   'trashRecords',
@@ -832,6 +871,7 @@ export function emptyData(): AppData {
     benchAnalyses: {},
     materials: {},
     materialNotes: {},
+    ideaAppends: {},
     trashRequests: {},
     trashEntries: {},
     trashRecords: {},

@@ -534,7 +534,8 @@ interface RecoveryJournal {
 const JOURNAL_BUDGET = 2_000_000
 /** 控えきれない時に先に諦める順（後ろほど大事） */
 const JOURNAL_DROP_ORDER: TableName[] = [
-  // 2.7: ゴミ箱へ移す依頼（控えられなくても、クラウドに残っていれば次の同期でまた届く）
+  // 2.8: アイデアへの追記の依頼・2.7: ゴミ箱へ移す依頼（控えられなくても、クラウドに残っていれば次の同期でまた届く）
+  'ideaAppends',
   'trashRequests',
   'trashRecords',
   'trashEntries',

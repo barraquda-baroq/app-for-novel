@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseBackup, toBackup } from '../../domain/backup'
 import { addIdea, createTitle } from '../../domain/entityOps'
-import { emptyData } from '../../domain/types'
+import { emptyData, TABLE_NAMES } from '../../domain/types'
 import { addEpisode, updateVersion } from '../../domain/storyOps'
 import {
   backupChunks,
@@ -53,6 +53,28 @@ describe('件数', () => {
 
   it('表の名前は画面の言い方にそろえる（批評の結果）', () => {
     expect(TABLE_LABELS.critiqueResults).toBe('批評の結果')
+  })
+  it('すべての表に名前がある。Claude の依頼の表（2.7・2.8）は件数の一覧に出さない（Claude が作ったアイデアは「アイデア」に数える）', () => {
+    for (const t of TABLE_NAMES) expect(TABLE_LABELS[t], t).toBeTruthy()
+    expect(TABLE_LABELS.ideaAppends).toBe('アイデアへの追記の依頼（Claude）')
+    const t = createTitle(emptyData(), '星の海')
+    const data = addIdea(t.data, t.result, '', '案').data
+    data.ideas['cy-abc'] = { ...Object.values(data.ideas)[0], id: 'cy-abc', source: 'claude' }
+    data.ideaAppends = {
+      'cu-a': {
+        id: 'cu-a',
+        ideaId: 'cy-abc',
+        text: '足す',
+        readMark: 'abcd1234',
+        source: 'claude',
+        v: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }
+    const counts = dataCounts(data)
+    expect(counts.map((c) => c.table)).not.toContain('ideaAppends')
+    expect(counts.find((c) => c.table === 'ideas')?.count).toBe(2)
   })
   it('相対比較の作品とその分析は、1件以上ある時だけ件数に出す', () => {
     const data = createTitle(emptyData(), '星の海').data

@@ -11,6 +11,7 @@ import {
   compareSnapshotWithCurrent,
   createTitle,
   deleteSubmission,
+  deleteIdea,
   deleteTitle,
   entriesOf,
   ideaSections,
@@ -22,6 +23,7 @@ import {
   moveSubmissionStep,
   moveTitleTo,
   recordSubmissionSnapshot,
+  setIdeaChecked,
   snapshotPieceBody,
   snapshotText,
   sortedTitles,
@@ -29,14 +31,19 @@ import {
   submissionsOf,
   titleLastEdited,
   titleSummary,
+  trashIdea,
   updateCategory,
+  updateIdea,
   updateSubmission,
 } from './entityOps'
+import { hashJson } from './hash'
+import { ideaEditedByAuthor } from '../claude/ideaAppend'
+import { transact } from './tx'
 import { addEpisode, deleteVersion, setActiveVersion, updateVersion } from './storyOps'
 import { countChars, textStats } from './text'
 import { repairData } from './repair'
 import { listTrash, restoreTrashEntry } from './trash'
-import { DomainError, emptyData, type AppData, type Submission } from './types'
+import { DomainError, emptyData, type AppData, type Idea, type Submission } from './types'
 
 describe('アイデア領域', () => {
   it('タイトルを増やすと仕切りが増え、どのタイトルにも属さない仕切りが常に最後にある', () => {
@@ -62,6 +69,134 @@ describe('アイデア領域', () => {
     data = deleteTitle(data, t.result)
     expect(ideaSections(data)).toHaveLength(1)
     expect(ideaSections(data)[0].ideas.map((i) => i.heading)).toEqual(['案2', '案1'])
+  })
+})
+
+describe('アイデアの書き換え・ゴミ箱（2.8）', () => {
+  /** タイトル1つと、その仕切りの作者のアイデア2つ・Claude のアイデア1つ（済みのもの1つ） */
+  function ideaFixture() {
+    const t = createTitle(emptyData(), '灰の庭')
+    let data = t.data
+    const a = addIdea(data, t.result, '', '案1')
+    data = a.data
+    const b = addIdea(data, t.result, '', '案2')
+    data = setIdeaChecked(b.data, b.result, true)
+    const body = '2026/11/12 14:32\u3000第3章の動機\n・兄を探す'
+    const claude: Idea = {
+      id: 'cy-abc123.def',
+      titleId: t.result,
+      heading: '',
+      body,
+      checked: false,
+      checkedAt: null,
+      order: -1,
+      source: 'claude',
+      v: 1,
+      claudeHash: hashJson(body),
+      appendIds: ['cu-a'],
+      createdAt: 100,
+      updatedAt: 100,
+    }
+    data = { ...data, ideas: { ...data.ideas, [claude.id]: claude } }
+    return { data, titleId: t.result, a: a.result, b: b.result, claude }
+  }
+
+  it('updateIdea: 何も変わらない時は書き込まず、同じデータを返す（updatedAt も進めない）', () => {
+    const f = ideaFixture()
+    expect(updateIdea(f.data, f.claude.id, { body: f.claude.body })).toBe(f.data)
+    expect(updateIdea(f.data, f.claude.id, { heading: '', body: f.claude.body })).toBe(f.data)
+    expect(updateIdea(f.data, f.claude.id, {})).toBe(f.data)
+    expect(ideaEditedByAuthor(updateIdea(f.data, f.claude.id, { body: f.claude.body }).ideas[f.claude.id])).toBe(false)
+    // 変われば書き込み、updatedAt を進める（Claude のアイデアは作者が直したものになる）
+    const next = updateIdea(f.data, f.claude.id, { body: `${f.claude.body}\n作者の一行` })
+    expect(next).not.toBe(f.data)
+    expect(next.ideas[f.claude.id].updatedAt).toBeGreaterThan(f.claude.updatedAt)
+    expect(next.ideas[f.claude.id].source).toBe('claude')
+    expect(next.ideas[f.claude.id].claudeHash).toBe(f.claude.claudeHash)
+    expect(ideaEditedByAuthor(next.ideas[f.claude.id])).toBe(true)
+    expect(() => updateIdea(f.data, 'nope', { body: 'x' })).toThrow(DomainError)
+  })
+
+  it('済み・並べ替え・位置を選んだ移動・仕切りの移動は、Claude のアイデアを「作者が直した」にしない', () => {
+    const f = ideaFixture()
+    const id = f.claude.id
+    let data = setIdeaChecked(f.data, id, true)
+    expect(data.ideas[id].checked).toBe(true)
+    expect(ideaEditedByAuthor(data.ideas[id])).toBe(false)
+    data = setIdeaChecked(data, id, false)
+    expect(ideaEditedByAuthor(data.ideas[id])).toBe(false)
+    data = moveIdeaStep(data, id, 1)
+    data = moveIdeaStep(data, id, -1)
+    expect(ideaEditedByAuthor(data.ideas[id])).toBe(false)
+    data = moveIdeaTo(data, id, f.titleId, 1)
+    expect(ideaEditedByAuthor(data.ideas[id])).toBe(false)
+    data = moveIdeaToSection(data, id, null)
+    expect(data.ideas[id].titleId).toBeNull()
+    expect(ideaEditedByAuthor(data.ideas[id])).toBe(false)
+    data = moveIdeaTo(data, id, f.titleId, 0)
+    expect(data.ideas[id]).toMatchObject({
+      titleId: f.titleId,
+      source: 'claude',
+      claudeHash: f.claude.claudeHash,
+      appendIds: ['cu-a'],
+    })
+    expect(ideaEditedByAuthor(data.ideas[id])).toBe(false)
+  })
+
+  it('deleteIdea: ゴミ箱の1件の形は今までどおり（trashIdea を使っても同じ）。戻すと Claude のアイデアの項目もそのまま', () => {
+    const f = ideaFixture()
+    const deleted = deleteIdea(f.data, f.a)
+    expect(deleted.ideas[f.a]).toBeUndefined()
+    const [entry] = Object.values(deleted.trashEntries)
+    const [record] = Object.values(deleted.trashRecords)
+    const peers = Object.values(f.data.ideas).filter((i) => !i.checked)
+    const sorted = [...peers].sort((x, y) => x.order - y.order)
+    const at = sorted.findIndex((i) => i.id === f.a)
+    expect(entry).toEqual({
+      id: entry.id,
+      kind: 'idea',
+      label: '案1',
+      titleName: '灰の庭',
+      origin: { titleId: f.titleId, index: f.data.ideas[f.a].order, prevId: at > 0 ? sorted[at - 1].id : null },
+      recordIds: [record.id],
+      reason: 'deleted',
+      deletedAt: entry.deletedAt,
+      createdAt: entry.deletedAt,
+      updatedAt: entry.deletedAt,
+    })
+    expect(record).toEqual({
+      id: record.id,
+      entryId: entry.id,
+      table: 'ideas',
+      record: f.data.ideas[f.a],
+      createdAt: entry.deletedAt,
+      updatedAt: entry.deletedAt,
+    })
+    // 同じ形を trashIdea で作れる（時刻・ゴミ箱の id・印は渡したもの）
+    const viaTx = transact(f.data, (tx) =>
+      trashIdea(tx, f.data.ideas[f.claude.id], { at: 5, entryId: 'te-x', recordId: (i) => `tr-x-${i}`, by: 'claude' }),
+    )
+    expect(viaTx.result).toBe('te-x')
+    expect(viaTx.data.trashEntries['te-x']).toMatchObject({
+      kind: 'idea',
+      label: '2026/11/12 14:32\u3000第3章の動機',
+      titleName: '灰の庭',
+      origin: { titleId: f.titleId, index: -1, prevId: null },
+      recordIds: ['tr-x-0'],
+      by: 'claude',
+      deletedAt: 5,
+    })
+    expect(viaTx.data.trashRecords['tr-x-0'].record).toEqual(f.claude)
+    expect(viaTx.data.ideas[f.claude.id]).toBeUndefined()
+    const back = restoreTrashEntry(viaTx.data, 'te-x').data
+    // 並びの位置は戻す時に決め直す（updatedAt も進む）。中身と Claude のアイデアの項目はそのまま
+    const { order: _o, updatedAt: _u, ...rest } = f.claude
+    void _o
+    void _u
+    expect(back.ideas[f.claude.id]).toMatchObject(rest)
+    expect(ideaEditedByAuthor(back.ideas[f.claude.id])).toBe(false)
+    // 何も無ければ何もしない
+    expect(deleteIdea(f.data, 'nope').ideas).toBe(f.data.ideas)
   })
 })
 

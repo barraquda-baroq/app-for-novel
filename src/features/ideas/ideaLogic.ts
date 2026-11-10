@@ -1,6 +1,10 @@
 // アイデア領域（仕切り・カード）で使う、表示用の純粋な計算。データは変更しない。
+import { appendedTail } from '../../claude/ideaAppend'
 import type { IdeaSection } from '../../domain/entityOps'
 import type { ID, Idea } from '../../domain/types'
+
+/** Claude がコネクタで作ったアイデアのカードの印（2.8。isClaudeIdea のもの） */
+export const CLAUDE_IDEA_BADGE = 'Claude が作成'
 
 /** 「どのタイトルにも属さない」仕切りの名前（entityOps.ideaSections と同じ文言） */
 export const UNASSIGNED_NAME = 'どのタイトルにも属さない'
@@ -105,9 +109,21 @@ export function cutAtBoundary(text: string, max = 40): string {
   return finish(chars.slice(0, max))
 }
 
-/** 「この案でタイトルを作る」ときのタイトル名の候補。見出し（古い版）、なければ内容の最初の行（省略記号なし） */
+/** 行の頭の日付と時刻（Claude が作ったアイデアの1行目「2026/11/12 14:32　第3章の動機」の「2026/11/12 14:32　」） */
+const STAMP = /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}(?:[ \u3000]+|$)/u
+
+/**
+ * 「この案でタイトルを作る」ときのタイトル名の候補。見出し（古い版）、なければ内容の最初の行（省略記号なし）。
+ * 行の頭の日付と時刻（2.8: Claude が作ったアイデアの1行目）は除き、日付と時刻だけの行なら次の空でない行
+ */
 export function titleNameFromIdea(idea: Pick<Idea, 'heading' | 'body'>, max = 40): string {
-  return cutAtBoundary(ideaFirstLine(idea), max)
+  if (idea.heading.trim()) return cutAtBoundary(ideaFirstLine(idea), max)
+  const lines = idea.body
+    .split(/\r\n?|\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+  const first = (lines[0] ?? '').replace(STAMP, '').trim()
+  return cutAtBoundary(first || (lines[1] ?? ''), max)
 }
 
 /** 確認ダイアログやトーストに出す、アイデアの短い呼び名 */
@@ -197,22 +213,47 @@ export function ideaModalDraftKey(target: { mode: 'add'; section: string } | { m
 export interface IdeaModalDraft {
   /** 書きかけの内容（見出しの入力欄があった頃の下書きは、見出しを1行目にまとめたもの） */
   body: string
+  /**
+   * 2.8: 書き始めた時のアイデアの内容（編集の時だけ）。下書きを書いた後に Claude の追記が足されていても、保存の時に追記を
+   * 下書きの後ろに残せるように控える。2.7 までの下書きには無い
+   */
+  base?: string
 }
 
-/** 下書きとして書く形。見出しは常に空（更新前の版の画面が開いていても読めるように heading も書く） */
-export function serializeIdeaModalDraft(body: string): string {
-  return JSON.stringify({ heading: '', body })
+/**
+ * 下書きとして書く形。見出しは常に空（更新前の版の画面が開いていても読めるように heading も書く）。
+ * base（書き始めた時の内容）は渡した時だけ書く（前の版の画面は知らない項目として読み飛ばす）
+ */
+export function serializeIdeaModalDraft(body: string, base?: string): string {
+  return JSON.stringify(base === undefined ? { heading: '', body } : { heading: '', body, base })
 }
 
-/** 保存した下書きを読む（壊れた値は null）。見出しのある古い下書きは、編集ダイアログと同じく見出しを1行目にまとめる */
+/**
+ * 保存した下書きを読む（壊れた値は null）。見出しのある古い下書きは、編集ダイアログと同じく見出しを1行目にまとめる。
+ * base の無い・文字列でない下書きは、base 無しとして読む
+ */
 export function parseIdeaModalDraft(raw: string | null): IdeaModalDraft | null {
   if (!raw) return null
   try {
-    const v = JSON.parse(raw) as { heading?: unknown; body?: unknown } | null
+    const v = JSON.parse(raw) as { heading?: unknown; body?: unknown; base?: unknown } | null
     if (!v || typeof v.body !== 'string') return null
     if (v.heading !== undefined && typeof v.heading !== 'string') return null
-    return { body: mergeHeading(typeof v.heading === 'string' ? v.heading : '', v.body) }
+    const body = mergeHeading(typeof v.heading === 'string' ? v.heading : '', v.body)
+    return typeof v.base === 'string' ? { body, base: v.base } : { body }
   } catch {
     return null
   }
+}
+
+/**
+ * 保存する内容（2.8）。base は編集を始めた時の内容、text は保存する内容、current は今のアイデアの内容（ideaEditText）。
+ * 編集している間に Claude の追記が足された（current が base の後ろに足しただけのもの）なら、保存する内容の後ろに追記を残す
+ * （carried = true）。変わっていない・ほかの変わり方の時は、保存する内容のまま（今までどおり）
+ */
+export function rebaseIdeaEdit(base: string, text: string, current: string): { body: string; carried: boolean } {
+  if (current === base) return { body: text, carried: false }
+  const tail = appendedTail(base, current)
+  if (tail === null) return { body: text, carried: false }
+  const mine = text.replace(/\s+$/u, '')
+  return { body: mine ? mine + tail : tail.replace(/^\n+/, ''), carried: true }
 }

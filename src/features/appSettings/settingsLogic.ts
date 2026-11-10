@@ -32,6 +32,8 @@ export const TABLE_LABELS: Record<TableName, string> = {
   benchAnalyses: '相対比較の分析',
   materials: '資料',
   materialNotes: '資料の記録',
+  // 2.8: Claude が作り、アプリが処理して消すので、件数の一覧（DISPLAY_ORDER）には出さない（Claude が作ったアイデアは「アイデア」に数える）
+  ideaAppends: 'アイデアへの追記の依頼（Claude）',
   // 2.7: Claude が作り、アプリが処理して消すので、件数の一覧（DISPLAY_ORDER）には出さない
   trashRequests: 'ゴミ箱へ移す依頼（Claude）',
   trashEntries: 'ゴミ箱',

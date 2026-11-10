@@ -4,6 +4,7 @@
 // 形: `c` + 種類の1文字 + `-` + 指紋（[a-z0-9.-] だけ・40字以内）。手で作ったレコードの id（newId の UUID）とは重ならない。
 import { hashJson } from '../domain/hash'
 import type { ID } from '../domain/types'
+import { normalizeIdeaName, normalizeIdeaText } from './ideaAppend'
 import { refKey } from './refs'
 
 export type DerivedKind =
@@ -19,6 +20,8 @@ export type DerivedKind =
   | 'material'
   | 'materialNote'
   | 'trashRequest'
+  | 'claudeIdea'
+  | 'ideaAppend'
 
 /** 種類ごとの1文字 */
 export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
@@ -34,6 +37,8 @@ export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
   material: 'd',
   materialNote: 'k',
   trashRequest: 'z',
+  claudeIdea: 'y',
+  ideaAppend: 'u',
 }
 
 /** 比べる前に揃える（Unicode の正規化 NFC。合成済みの文字と組み合わせの文字を同じに扱う） */
@@ -149,4 +154,22 @@ export function materialNoteId(p: { materialId: ID; section: string; runDate: st
 export function trashRequestId(table: string, targetId: ID, generation = 1): ID {
   const parts = [table, targetId]
   return derivedId('trashRequest', generation > 1 ? [...parts, generation] : parts)
+}
+
+/**
+ * Claude が作るアイデア（2.8。cy-…）。section はタイトルの id（null = どのタイトルにも属さないホームのアイデア）、
+ * day は作った日（日本時間の YYYY-MM-DD。jstDate）。同じ場所・日・名前・中身なら同じ id（送り直しが次の分になっても1つ。
+ * 日が変われば同じ中身でも足せる）。名前と中身は本文と同じくそろえてから使う（ideaAppend.ts）
+ */
+export function claudeIdeaId(section: ID | null, day: string, name: string | null | undefined, content: string): ID {
+  return derivedId('claudeIdea', [section ?? 'home', day, normalizeIdeaName(name), long(normalizeIdeaText(content))])
+}
+
+/**
+ * アイデアへの追記の依頼（2.8。cu-…）。Claude が読んだ中身（readMark）に同じ内容を足す依頼は1つ（同じ呼び出しを送り直しても増えない）。
+ * generation は頼み直しの通し番号（1 = 初めて。2 以降は、アプリが当てずに消した依頼の削除の印が残っている時。trashRequestId と同じ作り方）
+ */
+export function ideaAppendId(ideaId: ID, readMark: string, text: string, generation = 1): ID {
+  const parts = [ideaId, readMark.trim(), long(normalizeIdeaText(text))]
+  return derivedId('ideaAppend', generation > 1 ? [...parts, generation] : parts)
 }

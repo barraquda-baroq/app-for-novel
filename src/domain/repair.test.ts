@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { addIdea, addSubmission, createTitle, ideaSections, moveIdeaStep } from './entityOps'
 import { repairData } from './repair'
+import { CONTENT_TABLES, isContentTable } from './trash'
 import { addChapter, addEpisode, setChaptersEnabled } from './storyOps'
 import { flatten } from './structure'
 import { emptyData, type AppData, type Submission } from './types'
@@ -247,5 +248,85 @@ describe('相対比較の作品のタグ（2.7）', () => {
       expect(r.data.benchWorks.w1.autoTagsFrom).toEqual({ ...mark, future: 2 })
       expect(r.fixes).toContain('相対比較の作品の項目を補いました')
     }
+  })
+})
+
+describe('2.8: アイデアへの追記の依頼と、Claude が作ったアイデアの項目', () => {
+  const claudeIdea = (titleId: string | null, over: Record<string, unknown> = {}) =>
+    ({
+      id: 'cy-abc',
+      titleId,
+      heading: '',
+      body: '2026/11/12 14:32\n中身',
+      checked: false,
+      checkedAt: null,
+      order: 0,
+      source: 'claude',
+      v: 1,
+      model: 'claude-test',
+      claudeHash: 'h.h.1',
+      appendIds: ['cu-a'],
+      createdAt: 1,
+      updatedAt: 1,
+      ...over,
+    }) as unknown as AppData['ideas'][string]
+
+  it('依頼は形が違っても残す（アプリが処理して消せるように）。オブジェクトでない・id の合わないものだけ取り除く', () => {
+    const { data } = sample()
+    const ok = {
+      id: 'cu-ok',
+      ideaId: 'cy-abc',
+      text: '足す',
+      readMark: 'abcd1234',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const odd = { id: 'cu-odd', ideaId: 3, v: 'x' }
+    const input = {
+      ...data,
+      ideaAppends: { [ok.id]: ok, [odd.id]: odd, 'cu-mismatch': { ...ok, id: 'other' }, 'cu-null': null },
+    } as unknown as AppData
+    const r = repairData(input)
+    expect(Object.keys(r.data.ideaAppends).sort()).toEqual(['cu-odd', 'cu-ok'])
+    expect(r.data.ideaAppends['cu-odd']).toEqual(odd)
+    expect(r.data.ideaAppends['cu-ok']).toEqual(ok)
+    expect(r.fixes).toEqual(['形式の壊れたレコードを取り除きました', '形式の壊れたレコードを取り除きました'])
+    // 正しい依頼だけなら何も直さない（同じデータ）
+    const clean = { ...data, ideaAppends: { [ok.id]: ok } } as unknown as AppData
+    expect(repairData(clean).data).toBe(clean)
+  })
+
+  it('依頼の表はゴミ箱に入れる表ではない（ゴミ箱の中身に依頼の表があれば取り除く）', () => {
+    expect(isContentTable('ideaAppends')).toBe(false)
+    expect(isContentTable('trashRequests')).toBe(false)
+    expect(CONTENT_TABLES).not.toContain('ideaAppends')
+    expect(CONTENT_TABLES).toContain('ideas')
+  })
+
+  it('依頼の表が無い古いデータ（2.7 まで）を直す時は、空の表にする', () => {
+    const { data } = sample()
+    const { ideaAppends: _drop, ...old } = data
+    void _drop
+    const broken = { ...old, memos: { ...old.memos, bad: null } } as unknown as AppData
+    const r = repairData(broken)
+    expect(r.fixes).toEqual(['形式の壊れたレコードを取り除きました'])
+    expect(r.data.ideaAppends).toEqual({})
+  })
+
+  it('Claude が作ったアイデアの項目（source・v・model・claudeHash・appendIds）は直さずに残す（壊れた値も。読む所で無いものとして扱う）', () => {
+    const { data, titleId } = sample()
+    const good = claudeIdea(titleId)
+    const odd = claudeIdea(titleId, { id: 'cy-odd', claudeHash: 5, appendIds: 'cu-a', v: 'x', source: 'other' })
+    const input: AppData = { ...data, ideas: { [good.id]: good, [odd.id]: odd } }
+    const r = repairData(input)
+    expect(r.fixes).toEqual([])
+    expect(r.data).toBe(input)
+    // タイトルの無いものは、項目を残したまま「どのタイトルにも属さない」へ
+    const orphan: AppData = { ...data, ideas: { [good.id]: claudeIdea('gone') } }
+    const moved = repairData(orphan)
+    expect(moved.data.ideas[good.id]).toEqual({ ...claudeIdea(null), order: 0 })
+    expect(moved.fixes).toEqual(['タイトルのないアイデアを「どのタイトルにも属さない」へ移しました'])
   })
 })

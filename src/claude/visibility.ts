@@ -7,10 +7,12 @@
 // 資料とその記録（2.6）も同じく、タイトルの設定とは関係なく見せる。
 // ゴミ箱へ移す依頼（2.7）は見せ、依頼の出ているカード（相対比較の分析・資料の記録）は見せない（アプリが同期してゴミ箱へ移すまで、
 // Claude からはもう無いものとして扱う。trashTargets.ts）。
-import { emptyData, type AppData, type ClaudeAccess, type TableName, type Title } from '../domain/types'
+import { emptyData, type AppData, type ClaudeAccess, type TableName } from '../domain/types'
+import { canClaudeRead } from './access'
 import { pendingTrashTargets, trashTargetKey, TRASH_TARGET_TABLES } from './trashTargets'
 
-export const CLAUDE_ACCESS_VALUES: readonly ClaudeAccess[] = ['none', 'read', 'write']
+// 値と判定は access.ts（型だけを読み込む部品）にある。前からの読み込みのために、ここからも同じ名前で出す
+export { CLAUDE_ACCESS_VALUES, canClaudeRead, canClaudeWrite, claudeAccessOf } from './access'
 
 /** タイトルの設定の選択肢（「Claude に見せる: 見せない／読むだけ／読む＋書き込む」） */
 export const CLAUDE_ACCESS_OPTIONS: readonly { value: ClaudeAccess; label: string }[] = [
@@ -19,26 +21,8 @@ export const CLAUDE_ACCESS_OPTIONS: readonly { value: ClaudeAccess; label: strin
   { value: 'write', label: '読む＋書き込む' },
 ]
 
-/** 無い = 'write'。知らない値（新しい版が書いたもの）は安全側の 'none' */
-export function claudeAccessOf(title: Pick<Title, 'claudeAccess'> | null | undefined): ClaudeAccess {
-  if (!title) return 'none'
-  const v = title.claudeAccess
-  if (v === undefined) return 'write'
-  return (CLAUDE_ACCESS_VALUES as readonly unknown[]).includes(v) ? v : 'none'
-}
-
 export function claudeAccessLabel(access: ClaudeAccess): string {
   return CLAUDE_ACCESS_OPTIONS.find((o) => o.value === access)?.label ?? '見せない'
-}
-
-/** Claude が読める（read・write） */
-export function canClaudeRead(title: Pick<Title, 'claudeAccess'> | null | undefined): boolean {
-  return claudeAccessOf(title) !== 'none'
-}
-
-/** Claude が推敲案などを書き込める（write） */
-export function canClaudeWrite(title: Pick<Title, 'claudeAccess'> | null | undefined): boolean {
-  return claudeAccessOf(title) === 'write'
 }
 
 /** どのタイトルの設定でも見せない表 */

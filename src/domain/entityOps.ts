@@ -329,12 +329,19 @@ export function addIdea(data: AppData, titleId: ID | null, heading = '', body = 
   })
 }
 
+/**
+ * 見出し・内容を書き換える。何も変わらない時は書き込まず、同じデータを返す（updatedAt も進めない。2.8: 何も変えずに保存しても、
+ * Claude が作ったアイデアを「作者が直した」にしない。同期で送るものも増やさない）
+ */
 export function updateIdea(data: AppData, ideaId: ID, patch: Partial<Pick<Idea, 'heading' | 'body'>>): AppData {
-  return transact(data, (tx) => {
+  const r = transact(data, (tx) => {
     const i = tx.get('ideas', ideaId)
     if (!i) throw new DomainError('アイデアが見つかりません')
+    if ((Object.keys(patch) as (keyof typeof patch)[]).every((k) => patch[k] === i[k])) return false
     tx.put('ideas', { ...i, ...patch, updatedAt: now() })
-  }).data
+    return true
+  })
+  return r.result ? r.data : data
 }
 
 /**
@@ -406,23 +413,35 @@ export function deleteIdea(data: AppData, ideaId: ID): AppData {
   return transact(data, (tx) => {
     const idea = tx.get('ideas', ideaId)
     if (!idea) return
-    // 存在しないタイトルを指すアイデアは「どのタイトルにも属さない」に表示されているので、そこにあったものとして控える
-    const title = idea.titleId === null ? undefined : tx.get('titles', idea.titleId)
-    const sectionId = title ? title.id : null
-    // 戻す位置は、同じ側（済みでないもの・済みのもの）の並びの中で控える（済みのものは並び順を使わないため）
-    const checked = isIdeaChecked(idea)
-    const peers = tx
-      .all('ideas')
-      .filter((i) => (i.titleId !== null && tx.get('titles', i.titleId) ? i.titleId : null) === sectionId)
-      .filter((i) => isIdeaChecked(i) === checked)
-    putInTrash(tx, {
-      kind: 'idea',
-      label: trashLabel.idea(idea),
-      titleName: title?.name ?? '',
-      origin: { titleId: sectionId, ...orderOrigin(peers, ideaId) },
-      records: [{ table: 'ideas', record: idea }],
-    })
+    trashIdea(tx, idea)
   }).data
+}
+
+/** ゴミ箱へ入れる時の決まり（2.8: Claude の依頼で移す時の時刻・ゴミ箱の id・印。src/domain/claudeTrash.ts） */
+export type IdeaTrashOptions = Pick<TrashSpec, 'at' | 'entryId' | 'recordId' | 'by'>
+
+/**
+ * アイデア1つをゴミ箱の1件にする（作者の削除と Claude の依頼で同じ形。仕切りのタイトル名と、戻す位置を控える）。
+ * 戻すと、Claude が作ったアイデアの項目（source・claudeHash・appendIds など）もそのまま戻る
+ */
+export function trashIdea(tx: Tx, idea: Idea, opts: IdeaTrashOptions = {}): ID {
+  // 存在しないタイトルを指すアイデアは「どのタイトルにも属さない」に表示されているので、そこにあったものとして控える
+  const title = idea.titleId === null ? undefined : tx.get('titles', idea.titleId)
+  const sectionId = title ? title.id : null
+  // 戻す位置は、同じ側（済みでないもの・済みのもの）の並びの中で控える（済みのものは並び順を使わないため）
+  const checked = isIdeaChecked(idea)
+  const peers = tx
+    .all('ideas')
+    .filter((i) => (i.titleId !== null && tx.get('titles', i.titleId) ? i.titleId : null) === sectionId)
+    .filter((i) => isIdeaChecked(i) === checked)
+  return putInTrash(tx, {
+    kind: 'idea',
+    label: trashLabel.idea(idea),
+    titleName: title?.name ?? '',
+    origin: { titleId: sectionId, ...orderOrigin(peers, idea.id) },
+    records: [{ table: 'ideas', record: idea }],
+    ...opts,
+  })
 }
 
 // ---------- メモ（付箋。タイトル内で常に一番下に表示） ----------

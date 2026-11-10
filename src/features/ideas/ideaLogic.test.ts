@@ -17,6 +17,7 @@ import {
   UNASSIGNED_KEY,
   UNASSIGNED_NAME,
   canSaveIdea,
+  CLAUDE_IDEA_BADGE,
   cutAtBoundary,
   ideaEditText,
   ideaModalDraftKey,
@@ -26,6 +27,7 @@ import {
   parseCollapsed,
   parseIdeaModalDraft,
   positionOptions,
+  rebaseIdeaEdit,
   sectionDisplayName,
   sectionKey,
   serializeIdeaModalDraft,
@@ -274,6 +276,22 @@ describe('アイデアからタイトル名を作る', () => {
     expect(titleNameFromIdea({ heading: '走れ！', body: '' })).toBe('走れ！')
   })
 
+  it('行の頭の日付と時刻（Claude が作ったアイデアの1行目）は除く。日付と時刻だけの行なら次の空でない行（2.8）', () => {
+    expect(titleNameFromIdea({ heading: '', body: '2026/11/12 14:32\u3000第3章の動機\n・兄を探す' })).toBe('第3章の動機')
+    expect(titleNameFromIdea({ heading: '', body: '2026/11/12 14:32 灯台守の少女\n中身' })).toBe('灯台守の少女')
+    expect(titleNameFromIdea({ heading: '', body: '2026/11/12 14:32\n\n  記憶を売る古書店  \n続き' })).toBe('記憶を売る古書店')
+    expect(titleNameFromIdea({ heading: '', body: '2026/11/12 14:32' })).toBe('')
+    // 日付と時刻に続けて書いた文字は日付の一部とみなさない。行の途中の日付は残す
+    expect(titleNameFromIdea({ heading: '', body: '2026/11/12 14:32の約束' })).toBe('2026/11/12 14:32の約束')
+    expect(titleNameFromIdea({ heading: '', body: '再会は2026/11/12 14:32' })).toBe('再会は2026/11/12 14:32')
+    // 古い版の見出しはそのまま
+    expect(titleNameFromIdea({ heading: '2026/11/12 14:32 見出し', body: '' })).toBe('2026/11/12 14:32 見出し')
+    // 短い呼び名・ゴミ箱の名前は日付を残す（何のカードか分かるように）
+    expect(ideaShortLabel({ heading: '', body: '2026/11/12 14:32\u3000第3章の動機\n中身' })).toBe(
+      '2026/11/12 14:32\u3000第3章の動機',
+    )
+  })
+
   it('空のアイデアは空文字。短い呼び名には代わりの表記', () => {
     expect(titleNameFromIdea({ heading: '', body: ' \n ' })).toBe('')
     expect(ideaShortLabel({ heading: '', body: '' })).toBe('（空のアイデア）')
@@ -377,5 +395,59 @@ describe('追加・編集ダイアログの下書き', () => {
     const raw = serializeIdeaModalDraft('1行目\n2行目')
     expect(JSON.parse(raw)).toEqual({ heading: '', body: '1行目\n2行目' })
     expect(parseIdeaModalDraft(raw)).toEqual({ body: '1行目\n2行目' })
+  })
+
+  it('編集を始めた時の内容（base）も控えて読み戻す。base の無い古い下書き・文字列でない base は base 無し（2.8）', () => {
+    const raw = serializeIdeaModalDraft('直した内容', '元の内容')
+    expect(JSON.parse(raw)).toEqual({ heading: '', body: '直した内容', base: '元の内容' })
+    expect(parseIdeaModalDraft(raw)).toEqual({ body: '直した内容', base: '元の内容' })
+    // 空の base も控える（何も無い所から書き始めたもの）
+    expect(parseIdeaModalDraft(serializeIdeaModalDraft('x', ''))).toEqual({ body: 'x', base: '' })
+    expect(parseIdeaModalDraft('{"heading":"","body":"内容"}')).toEqual({ body: '内容' })
+    expect(parseIdeaModalDraft('{"heading":"","body":"内容","base":3}')).toEqual({ body: '内容' })
+    // 見出しのある古い下書きに base があっても、見出しは内容にまとめる
+    expect(parseIdeaModalDraft('{"heading":"見出し","body":"内容","base":"元"}')).toEqual({ body: '見出し\n内容', base: '元' })
+  })
+})
+
+describe('保存する内容（編集している間に届いた Claude の追記を残す。2.8）', () => {
+  const BASE = '2026/11/12 14:32\u3000第3章の動機\n・兄を探す'
+  const TAIL = '\n\n2026/11/13のセッションで以下の内容へ変更\n動機を変える'
+
+  it('今の内容が始めた時のままなら、保存する内容のまま', () => {
+    expect(rebaseIdeaEdit(BASE, `${BASE}\n作者の一行`, BASE)).toEqual({ body: `${BASE}\n作者の一行`, carried: false })
+    expect(rebaseIdeaEdit(BASE, BASE, BASE)).toEqual({ body: BASE, carried: false })
+  })
+
+  it('始めた時の内容の後ろに追記が足されていれば、保存する内容の後ろに追記を残す', () => {
+    const current = BASE + TAIL
+    expect(rebaseIdeaEdit(BASE, `${BASE}\n作者の一行`, current)).toEqual({
+      body: `${BASE}\n作者の一行${TAIL}`,
+      carried: true,
+    })
+    // 保存する内容の終わりの空白は除いてからつなぐ（空行は1つ）
+    expect(rebaseIdeaEdit(BASE, `作者が書き直した\n\n\u3000`, current)).toEqual({
+      body: `作者が書き直した${TAIL}`,
+      carried: true,
+    })
+    // 何も変えずに保存した時は、今の内容と同じになる（書き込まない）
+    expect(rebaseIdeaEdit(BASE, BASE, current)).toEqual({ body: current, carried: true })
+    // 2回の追記もまとめて残す
+    const twice = `${current}\n\n2026/11/14のセッションで以下の内容へ変更\n二つ目`
+    expect(rebaseIdeaEdit(BASE, 'x', twice).body).toBe(`x${twice.slice(BASE.length)}`)
+  })
+
+  it('保存する内容を空にした時は、追記だけ（先頭の空行は除く）', () => {
+    expect(rebaseIdeaEdit(BASE, ' \n', BASE + TAIL)).toEqual({ body: TAIL.replace(/^\n+/, ''), carried: true })
+  })
+
+  it('ほかの変わり方（途中を直した・別の端末の書き換え）は、今までどおり保存する内容のまま', () => {
+    expect(rebaseIdeaEdit(BASE, '作者', BASE.replace('兄', '弟'))).toEqual({ body: '作者', carried: false })
+    expect(rebaseIdeaEdit(BASE, '作者', `${BASE}\n続き`)).toEqual({ body: '作者', carried: false })
+    expect(rebaseIdeaEdit('', '作者', TAIL)).toEqual({ body: '作者', carried: false })
+  })
+
+  it('カードの印の文言', () => {
+    expect(CLAUDE_IDEA_BADGE).toBe('Claude が作成')
   })
 })
