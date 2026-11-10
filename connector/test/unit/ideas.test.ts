@@ -1,0 +1,379 @@
+// アイデアのツール（2.8。novel_add_ideas・novel_append_to_idea）と、Claude が作ったアイデアを読む novel_get_notes:
+// 足す場所（ホーム・タイトル）・答えの全文・並びの位置・書き込みの許可・重複、読む → 追記 → 見せる内容 → 依頼済み → アプリが足す →
+// もう足されています、読んだ後に変わった・頼み直し、作者のアイデア・見えないアイデアは断る、ゴミ箱へ移す、novel_status の最後の行。
+import { describe, expect, it } from 'vitest'
+import { applyClaudeRequests } from '../../../src/domain/claudeRequests'
+import { createTitle, sortIdeas } from '../../../src/domain/entityOps'
+import type { AppData, Idea } from '../../../src/domain/types'
+import { claudeIdeaId, ideaAppendId } from '../../../src/claude/derivedId'
+import { appendedBody, ideaReadMark, isClaudeIdea } from '../../../src/claude/ideaAppend'
+import { shortId } from '../../../src/claude/refs'
+import { novel } from '../../../src/test/claudeFixture'
+import { MESSAGES, modelMismatchMessage } from '../../src/vault/errors'
+import { CONNECTOR_MODEL } from '../../src/version'
+import { cloudData, connectorDocs, pushChanges } from '../support/cloud'
+import { FakeFirebase } from '../support/fakeFirebase'
+import { call, pairedCore } from '../support/harness'
+
+/** 作者が書いたアイデア */
+function authorIdea(id: string, titleId: string | null, body: string, order: number): Idea {
+  return { id, titleId, heading: '', body, checked: false, checkedAt: null, order, createdAt: 1, updatedAt: 1 }
+}
+
+/** 『星の庭』（読む＋書き込む）・『読む庭』（読むだけ）・『隠す庭』（見せない）と、作者が書いたホーム・タイトルのアイデア */
+function setup() {
+  const n = novel(['冒頭の本文。'], { name: '星の庭' })
+  const ro = createTitle(n.data, '読む庭')
+  const hidden = createTitle(ro.data, '隠す庭')
+  const authorHome = [
+    authorIdea('3f2a9c1b-0000-4000-8000-000000000001', null, 'ホームの作者の案', 0),
+    authorIdea('4e3b8d2c-0000-4000-8000-000000000002', null, 'ホームの作者の案2', 1),
+  ]
+  const authorTitle = authorIdea('5d4c7e3d-0000-4000-8000-000000000003', n.titleId, '星の庭の作者の案', 4)
+  const data: AppData = {
+    ...hidden.data,
+    titles: {
+      ...hidden.data.titles,
+      [ro.result]: { ...hidden.data.titles[ro.result], claudeAccess: 'read' },
+      [hidden.result]: { ...hidden.data.titles[hidden.result], claudeAccess: 'none' },
+    },
+    ideas: Object.fromEntries([...authorHome, authorTitle].map((i) => [i.id, i])),
+  }
+  return { data, titleId: n.titleId, readId: ro.result, hiddenId: hidden.result, authorHome, authorTitle }
+}
+
+const commits = (fake: FakeFirebase) => fake.calls.filter((c) => c.op === 'commit').length
+
+/** 2026/10/29 12:00（日本時間。harness の時計） */
+const DAY = '2026-10-29'
+const HOME_CLOSING =
+  'アプリのホームのアイデア欄の「どのタイトルにも属さない」に、各端末が同期すると出ます。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。'
+const APPEND_CLOSING =
+  '追記は依頼として送りました。アプリを開いて同期すると、カードの終わりに足されます（前の中身と作者が直した所は残り、並びの位置と「済み」は変わりません）。Claude からは、もう追記した後の中身が見えます。続けて追記する時は、もう一度 novel_get_notes で読んでから、新しい「印: …」を渡してください。本文（稿）は書き換えていません。'
+
+describe('novel_add_ideas', () => {
+  it('ホームのアイデア: 答えに入れた場所と i:… を出し、済みでないアイデアの先頭に渡した順で入れる（Claude の印の形）', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    const r = await core.callTool('novel_add_ideas', {
+      items: [{ name: '第3章の動機', content: '【動機】\n・兄を探す' }, { content: '新作の案\n・港町' }],
+      model: 'claude-x',
+    })
+    const a = claudeIdeaId(null, DAY, '第3章の動機', '【動機】\n・兄を探す')
+    const b = claudeIdeaId(null, DAY, '', '新作の案\n・港町')
+    expect(r.isError).toBeUndefined()
+    expect(r.text).toBe(
+      [
+        'アイデアを足す: 追加 2件',
+        `- 追加 ${shortId('idea', a)} 「2026/10/29 12:00　第3章の動機」`,
+        `- 追加 ${shortId('idea', b)} 「2026/10/29 12:00」`,
+        '入れた場所: ホームのアイデア（どのタイトルにも属さないアイデア。済みでないアイデアの先頭。カードに「Claude が作成」の印が付きます）',
+        HOME_CLOSING,
+      ].join('\n'),
+    )
+    expect(r.structured).toEqual({
+      created: [
+        { id: shortId('idea', a), label: '「2026/10/29 12:00　第3章の動機」（ホームのアイデア）' },
+        { id: shortId('idea', b), label: '「2026/10/29 12:00」（ホームのアイデア）' },
+      ],
+      skipped: [],
+    })
+    // クラウド: アイデアを作るだけ（作者のアイデアは書き換えない）
+    expect(connectorDocs(fake, 'ideas').map((d) => d.fields.id.stringValue).sort()).toEqual([a, b].sort())
+    const cloud = cloudData(fake)
+    expect(cloud.ideas[a]).toMatchObject({
+      titleId: null,
+      heading: '',
+      body: '2026/10/29 12:00　第3章の動機\n【動機】\n・兄を探す',
+      checked: false,
+      checkedAt: null,
+      order: -2,
+      source: 'claude',
+      v: 1,
+      model: 'claude-x',
+    })
+    expect(isClaudeIdea(cloud.ideas[a])).toBe(true)
+    const home = sortIdeas(Object.values(cloud.ideas).filter((i) => i.titleId === null)).map((i) => i.id)
+    expect(home).toEqual([a, b, ...s.authorHome.map((i) => i.id)])
+    for (const i of s.authorHome) expect(cloud.ideas[i.id]).toEqual(i)
+  })
+
+  it('タイトルのアイデア（読む＋書き込む）。同じ呼び出しをもう一度送ると「重複」で書かない。「読むだけ」「見せない」のタイトルは断る', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    const input = { title_id: shortId('title', s.titleId), items: [{ name: '終盤', content: '・灯台で再会する' }] }
+    const r = await core.callTool('novel_add_ideas', input)
+    const id = claudeIdeaId(s.titleId, DAY, '終盤', '・灯台で再会する')
+    expect(r.text).toBe(
+      [
+        'アイデアを足す: 追加 1件',
+        `- 追加 ${shortId('idea', id)} 「2026/10/29 12:00　終盤」`,
+        '入れた場所: タイトル『星の庭』のアイデア（済みでないアイデアの先頭。カードに「Claude が作成」の印が付きます）',
+        'アプリのタイトル『星の庭』の「アイデア」と、ホームのアイデア欄のその仕切りに、各端末が同期すると出ます。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。',
+      ].join('\n'),
+    )
+    expect(cloudData(fake).ideas[id]).toMatchObject({ titleId: s.titleId, order: 3 })
+    const before = commits(fake)
+    const again = await core.callTool('novel_add_ideas', input)
+    expect(again.isError).toBeUndefined()
+    expect(again.text).toBe(
+      'アイデアを足す: 重複 1件\n- 重複 「2026/10/29 12:00　終盤」: 同じ内容のアイデアがもうあります（追加しません）',
+    )
+    expect(again.structured).toEqual({
+      created: [],
+      skipped: [{ index: 0, reason: 'duplicate', hint: '同じ内容のアイデアがもうあります（追加しません）' }],
+    })
+    expect(commits(fake)).toBe(before)
+    const ro = await core.callTool('novel_add_ideas', { title_id: '読む庭', items: [{ content: '案' }] })
+    expect(ro.isError).toBe(true)
+    expect(ro.text).toContain('タイトル『読む庭』は「Claude に見せる」が「読むだけ」なので書き込めません')
+    const hidden = await core.callTool('novel_add_ideas', { title_id: '隠す庭', items: [{ content: '案' }] })
+    expect(hidden.isError).toBe(true)
+    expect(hidden.text).toContain("タイトル '隠す庭' が見つかりません")
+    // Markdown の記号だけのアイデアは足さずに、その行を返す（失敗として）
+    const md = await core.callTool('novel_add_ideas', { items: [{ content: '## 動機\n- 兄' }] })
+    expect(md.isError).toBe(true)
+    expect(md.text).toContain('アイデアを足す: 形が違う 1件\n- 形が違う アイデア（1件目）: Markdown の記号があります（2行目「## 動機」・3行目「- 兄」）')
+    expect(commits(fake)).toBe(before)
+  })
+
+  it('「書き込みを許可」していない時・データの形が違う時は作らない（追記も）', async () => {
+    const off = new FakeFirebase()
+    const a = await pairedCore(off, setup().data, { writes: false })
+    for (const [tool, args] of [
+      ['novel_add_ideas', { items: [{ content: '案' }] }],
+      ['novel_append_to_idea', { idea_id: 'i:12345678', read_mark: 'x', content: '案' }],
+    ] as const) {
+      const r = await a.core.callTool(tool, args)
+      expect([r.isError, r.text]).toEqual([true, MESSAGES.writesOff])
+    }
+    const old = new FakeFirebase()
+    const b = await pairedCore(old, setup().data, { model: CONNECTOR_MODEL - 1 })
+    const r = await b.core.callTool('novel_add_ideas', { items: [{ content: '案' }] })
+    expect([r.isError, r.text]).toEqual([true, modelMismatchMessage(CONNECTOR_MODEL - 1, CONNECTOR_MODEL)])
+    expect(connectorDocs(off, 'ideas')).toHaveLength(0)
+    expect(connectorDocs(old, 'ideas')).toHaveLength(0)
+  })
+})
+
+describe('Claude が作ったアイデアを読み、追記する', () => {
+  it('読む（title_id なし）→ 印 → 追記 → 追記した後の中身 → 依頼済み → アプリが足す → もう足されています', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core, clock } = await pairedCore(fake, s.data)
+    await call(core, 'novel_add_ideas', { items: [{ name: '第3章の動機', content: '【動機】\n・兄を探す' }, { content: '港町の案' }] })
+    const id = claudeIdeaId(null, DAY, '第3章の動機', '【動機】\n・兄を探す')
+    const other = claudeIdeaId(null, DAY, '', '港町の案')
+    const ref = shortId('idea', id)
+    const body = '2026/10/29 12:00　第3章の動機\n【動機】\n・兄を探す'
+    // 一覧（作者が書いたホームのアイデアは見えない。印は出さない）
+    const list = await call(core, 'novel_get_notes', { kind: 'ideas' })
+    expect(list).toBe(
+      [
+        '=== ホームのアイデア（どのタイトルにも属さない・Claude が作ったものだけ。2件）===',
+        '【Claude】は Claude がこのコネクタで作ったアイデア（追記・ゴミ箱へ移すのは、そのチャットで作ったものだけ）。',
+        `${ref} 【Claude】2026/10/29 12:00 第3章の動機 【動機】 ・兄を探す（34字）`,
+        `${shortId('idea', other)} 【Claude】2026/10/29 12:00 港町の案（21字）`,
+        '本文は ids に短い id を入れるか full=true で読めます。',
+        '作者が書いたホームのアイデアは見えません。',
+      ].join('\n'),
+    )
+    expect(list).not.toContain('ホームの作者の案')
+    expect(list).not.toContain('印:')
+    const mark = ideaReadMark(body)
+    const full = await call(core, 'novel_get_notes', { kind: 'ideas', ids: [ref] })
+    expect(full).toBe(`=== アイデア【Claude】（ホームのアイデア）[${ref}] 印: ${mark} ===\n${body}`)
+    // 追記（依頼を作るだけ。カードはまだ変わらない）
+    clock.now = Date.UTC(2026, 9, 31, 2, 0, 0)
+    const input = { idea_id: ref, read_mark: mark, content: '【変更】\n・兄ではなく姉を探す' }
+    const r = await core.callTool('novel_append_to_idea', input)
+    expect(r.isError).toBeUndefined()
+    expect(r.text).toBe(
+      [
+        'アイデアに追記: 追記 1件',
+        `- 追記 ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）`,
+        '足す形: カードの終わりに空行を置き、「2026/10/31のセッションで以下の内容へ変更」の行の下に内容（15字）',
+        APPEND_CLOSING,
+      ].join('\n'),
+    )
+    expect(r.structured).toEqual({ created: [{ id: ref, label: '「2026/10/29 12:00　第3章の動機」（ホームのアイデア）' }], skipped: [] })
+    const reqId = ideaAppendId(id, mark, '【変更】\n・兄ではなく姉を探す')
+    expect(connectorDocs(fake, 'ideaAppends').map((d) => d.fields.id.stringValue)).toEqual([reqId])
+    expect(cloudData(fake).ideas[id].body).toBe(body)
+    // Claude からは、もう追記した後の中身（印も変わる。同期待ちの数も出る）
+    const appended = `${body}\n\n2026/10/31のセッションで以下の内容へ変更\n【変更】\n・兄ではなく姉を探す`
+    const after = await call(core, 'novel_get_notes', { kind: 'ideas', ids: [ref] })
+    expect(after).toBe(
+      `=== アイデア【Claude】（ホームのアイデア・アプリの同期待ちの追記 1件を含む）[${ref}] 印: ${ideaReadMark(appended)} ===\n${appended}`,
+    )
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas' })).toContain('（追記の依頼 1件はアプリの同期待ち）')
+    expect((await call(core, 'novel_status')).split('\n').at(-1)).toBe('アイデアへの追記の依頼: アプリの同期待ち 1件')
+    // 同じ呼び出しの送り直しは「依頼済み」（書かない）。前の印で違う内容は「読んだ後に中身が変わった」
+    const writes = commits(fake)
+    const again = await core.callTool('novel_append_to_idea', input)
+    expect(again.text).toBe(
+      [
+        'アイデアに追記: 追記 1件',
+        `- 追記 ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）（依頼済み）`,
+        '足す形: カードの終わりに空行を置き、「2026/10/31のセッションで以下の内容へ変更」の行の下に内容（15字）',
+        APPEND_CLOSING,
+      ].join('\n'),
+    )
+    const stale = await core.callTool('novel_append_to_idea', { ...input, content: '別の追記' })
+    expect(stale.isError).toBe(true)
+    expect(stale.text).toBe(
+      [
+        'アイデアに追記: 追記しない',
+        `- 追記しない ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）（読んだ後に中身が変わった）: 読んだ後にこのアイデアの中身が変わりました（作者がアプリで直した・ほかの追記が入った）。novel_get_notes で読み直し、今の中身を踏まえて書いてから、新しい「印: …」で送ってください`,
+      ].join('\n'),
+    )
+    expect(stale.structured).toEqual({ created: [], skipped: [{ index: 0, reason: 'stale', hint: expect.any(String) }] })
+    expect(commits(fake)).toBe(writes)
+    // アプリが同期して足す（依頼は消える）。足した本文は Claude が先に見た本文と1字も違わない
+    const before = cloudData(fake)
+    const processed = applyClaudeRequests(before, clock.now + 5_000)
+    expect(processed.result.appends.map((o) => o.status)).toEqual(['appended'])
+    expect(processed.data.ideas[id].body).toBe(appended)
+    pushChanges(fake, before, processed.data)
+    clock.now += 20_000
+    const done = await core.callTool('novel_append_to_idea', input)
+    expect(done.isError).toBeUndefined()
+    expect(done.text).toBe(
+      [
+        'アイデアに追記: 追記 1件',
+        `- 追記 ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）（もう足されています）`,
+        'この内容は、もうアプリがカードの終わりに足しています（novel_get_notes で今の中身を読めます）。本文（稿）は書き換えていません。',
+      ].join('\n'),
+    )
+    expect(commits(fake)).toBe(writes)
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', ids: [ref] })).toBe(
+      `=== アイデア【Claude】（ホームのアイデア）[${ref}] 印: ${ideaReadMark(appended)} ===\n${appended}`,
+    )
+    expect((await call(core, 'novel_status')).split('\n').at(-1)).toBe('アイデアへの追記の依頼: アプリの同期待ち 0件')
+    // 新しい印でもう一度追記できる（2つ目の追記は1つ目の後ろ）
+    const second = await core.callTool('novel_append_to_idea', { idea_id: ref, read_mark: ideaReadMark(appended), content: '・舞台は冬' })
+    expect(second.text).toContain('アイデアに追記: 追記 1件')
+    expect(core.views().view.ideas[id].body).toBe(appendedBody(appended, { createdAt: clock.now, text: '・舞台は冬' }))
+  })
+
+  it('アプリが当てずに消した依頼（「読むだけ」にした）の後は、同じ内容を別の依頼として頼み直せる', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core, clock } = await pairedCore(fake, s.data)
+    await call(core, 'novel_add_ideas', { title_id: s.titleId, items: [{ content: '星の案' }] })
+    const id = claudeIdeaId(s.titleId, DAY, '', '星の案')
+    const mark = ideaReadMark(cloudData(fake).ideas[id].body)
+    const input = { idea_id: shortId('idea', id), read_mark: mark, content: '追記' }
+    await call(core, 'novel_append_to_idea', input)
+    // 作者がタイトルを「読むだけ」にしてから、アプリが同期した（依頼は足さずに消える）
+    const before = cloudData(fake)
+    const ro = { ...before, titles: { ...before.titles, [s.titleId]: { ...before.titles[s.titleId], claudeAccess: 'read' as const } } }
+    const processed = applyClaudeRequests(ro, clock.now)
+    expect(processed.result.appends.map((o) => o.status)).toEqual(['not_writable'])
+    // 「読む＋書き込む」に戻す
+    const back = { ...processed.data, titles: { ...processed.data.titles, [s.titleId]: before.titles[s.titleId] } }
+    pushChanges(fake, before, back)
+    clock.now += 20_000
+    const r = await core.callTool('novel_append_to_idea', input)
+    expect(r.text).toContain('アイデアに追記: 追記 1件')
+    expect(r.text).not.toContain('（依頼済み）')
+    expect(connectorDocs(fake, 'ideaAppends').map((d) => d.fields.id.stringValue)).toContain(ideaAppendId(id, mark, '追記', 2))
+  })
+
+  it('作者が書いたアイデア・見えないアイデア・「読むだけ」のタイトルは断る。場所の違う id は場所を言う。ゴミ箱へ移す依頼中も', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    await call(core, 'novel_add_ideas', { items: [{ content: 'ホームの案' }] })
+    await call(core, 'novel_add_ideas', { title_id: s.titleId, items: [{ content: '星の案' }] })
+    const home = shortId('idea', claudeIdeaId(null, DAY, '', 'ホームの案'))
+    const inTitle = shortId('idea', claudeIdeaId(s.titleId, DAY, '', '星の案'))
+    const authored = await core.callTool('novel_append_to_idea', { idea_id: shortId('idea', s.authorTitle.id), read_mark: 'x', content: '追記' })
+    expect(authored.text).toBe(
+      [
+        'アイデアに追記: 追記しない',
+        `- 追記しない ${shortId('idea', s.authorTitle.id)} 「星の庭の作者の案」（タイトル『星の庭』のアイデア）（作者が書いたアイデア）: 作者が書いたアイデアには追記できません（追記できるのは、Claude がこのコネクタで作ったアイデアだけ）`,
+      ].join('\n'),
+    )
+    const hiddenHome = await core.callTool('novel_append_to_idea', { idea_id: shortId('idea', s.authorHome[0].id), read_mark: 'x', content: '追記' })
+    expect(hiddenHome.text).toBe(
+      [
+        'アイデアに追記: 追記しない',
+        `- 追記しない ${shortId('idea', s.authorHome[0].id)}（見つからない）: 見つかりません（novel_get_notes の kind=ideas で id を確かめてください。作者が書いたホームのアイデアと「見せない」タイトルのアイデアは見えません）`,
+      ].join('\n'),
+    )
+    expect(hiddenHome.text).not.toContain('ホームの作者の案')
+    // novel_get_notes: ids で場所の違う id を指すと場所を言う。title_id を省くと、見せているタイトルのアイデアからも探す
+    const wrongPlace = await core.callTool('novel_get_notes', { title_id: s.titleId, kind: 'ideas', ids: [home] })
+    expect([wrongPlace.isError, wrongPlace.text]).toEqual([true, `${home} はホームのアイデアです（title_id を省いてください）`])
+    const ro = Object.values(core.views().view.titles).find((t) => t.name === '読む庭')!
+    const otherTitle = await core.callTool('novel_get_notes', { title_id: ro.id, kind: 'ideas', ids: [inTitle] })
+    expect(otherTitle.text).toBe(
+      `${inTitle} はタイトル『星の庭』のアイデアです（title_id に ${shortId('title', s.titleId)} を渡すか、title_id を省いてください）`,
+    )
+    const anywhere = await call(core, 'novel_get_notes', { kind: 'ideas', ids: [inTitle, home] })
+    expect(anywhere).toContain(`=== アイデア【Claude】（タイトル『星の庭』のアイデア）[${inTitle}] 印: `)
+    expect(anywhere).toContain(`=== アイデア【Claude】（ホームのアイデア）[${home}] 印: `)
+    // タイトルの一覧: 作者のアイデアは 2.7 の形のまま、Claude のアイデアには【Claude】
+    const titleList = await call(core, 'novel_get_notes', { title_id: s.titleId, kind: 'ideas' })
+    expect(titleList).toContain(`${inTitle} 【Claude】2026/10/29 12:00 星の案（20字）`)
+    expect(titleList).toContain(`${shortId('idea', s.authorTitle.id)} 星の庭の作者の案（8字）`)
+    expect(await call(core, 'novel_get_notes', { title_id: s.titleId, kind: 'ideas', ids: [shortId('idea', s.authorTitle.id)] })).toBe(
+      `=== アイデア [${shortId('idea', s.authorTitle.id)}] ===\n星の庭の作者の案`,
+    )
+    // 設定項目・メモは title_id が要る
+    const settings = await core.callTool('novel_get_notes', { kind: 'settings' })
+    expect([settings.isError, settings.text]).toEqual([
+      true,
+      'title_id がありません（設定項目・メモはタイトルを指してください。kind=ideas の時だけ省けます）',
+    ])
+    // ゴミ箱へ移す依頼中のアイデアは、読む・追記するとそう答える
+    await call(core, 'novel_move_cards_to_trash', { cards: [home] })
+    const asked = await core.callTool('novel_get_notes', { kind: 'ideas', ids: [home] })
+    expect(asked.text).toBe(
+      `${home} ホームのアイデア「2026/10/29 12:00」 はゴミ箱へ移す依頼中です（アプリが同期すると、アプリのゴミ箱へ移ります。30日は作者がアプリのゴミ箱から戻せます）`,
+    )
+    const appendAsked = await core.callTool('novel_append_to_idea', { idea_id: home, read_mark: 'x', content: '追記' })
+    expect(appendAsked.text).toContain('（ゴミ箱へ移す依頼中）: ゴミ箱へ移す依頼の出ているアイデアです（追記できません）')
+    // 一覧からも外れる（作者が書いたホームのアイデアと同じく、どこにも出ない）
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas' })).toContain('（ありません）')
+  })
+
+  it('「読むだけ」のタイトルの Claude のアイデアは、印を出さず追記できないと書く。追記すると断る', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core, clock } = await pairedCore(fake, s.data)
+    await call(core, 'novel_add_ideas', { title_id: s.titleId, items: [{ content: '星の案' }] })
+    const id = claudeIdeaId(s.titleId, DAY, '', '星の案')
+    // 作者がタイトルを「読むだけ」にした
+    const before = cloudData(fake)
+    pushChanges(fake, before, { ...before, titles: { ...before.titles, [s.titleId]: { ...before.titles[s.titleId], claudeAccess: 'read' } } })
+    clock.now += 20_000
+    const full = await call(core, 'novel_get_notes', { title_id: s.titleId, kind: 'ideas', ids: [shortId('idea', id)] })
+    expect(full).toBe(
+      `=== アイデア【Claude】（タイトル『星の庭』のアイデア・「読むだけ」のタイトルなので追記できません）[${shortId('idea', id)}] ===\n2026/10/29 12:00\n星の案`,
+    )
+    const r = await core.callTool('novel_append_to_idea', { idea_id: shortId('idea', id), read_mark: ideaReadMark('2026/10/29 12:00\n星の案'), content: '追記' })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('（書き込めない場所）: タイトル『星の庭』は「Claude に見せる」が「読むだけ」なので追記できません')
+  })
+
+  it('足して追記したアイデアをゴミ箱へ移す（Claude の追記は直したに数えない）。アプリは追記してから移す', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core, clock } = await pairedCore(fake, s.data)
+    await call(core, 'novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    const id = claudeIdeaId(null, DAY, '動機', '案')
+    const ref = shortId('idea', id)
+    await call(core, 'novel_append_to_idea', { idea_id: ref, read_mark: ideaReadMark('2026/10/29 12:00　動機\n案'), content: '変更' })
+    const r = await call(core, 'novel_move_cards_to_trash', { cards: [ref] })
+    expect(r).toContain(`- 移す ${ref} ホームのアイデア「2026/10/29 12:00　動機」`)
+    const before = cloudData(fake)
+    const processed = applyClaudeRequests(before, clock.now)
+    expect(processed.result.appends.map((o) => o.status)).toEqual(['appended'])
+    expect(processed.result.trash.map((o) => o.status)).toEqual(['moved'])
+    expect((Object.values(processed.data.trashRecords)[0].record as Idea).body).toBe('2026/10/29 12:00　動機\n案\n\n2026/10/29のセッションで以下の内容へ変更\n変更')
+  })
+})

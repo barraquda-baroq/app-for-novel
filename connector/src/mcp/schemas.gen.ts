@@ -23,6 +23,8 @@ export type ToolName =
   | 'novel_list_materials'
   | 'novel_get_material'
   | 'novel_add_material_notes'
+  | 'novel_add_ideas'
+  | 'novel_append_to_idea'
   | 'novel_move_cards_to_trash'
 
 export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
@@ -257,10 +259,10 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
     "type": "object",
     "properties": {
       "title_id": {
+        "description": "タイトル（t:… かタイトル名）。kind=ideas の時だけ省ける（省くと、どのタイトルにも属さないホームのアイデアのうち Claude が作ったもの。ids を渡すと、見せているタイトルのアイデアからも探す）",
         "type": "string",
         "minLength": 1,
-        "maxLength": 200,
-        "description": "タイトルの指し方（t:3f2a9c1b のような短い id・id・タイトル名）。novel_list_titles で確かめられる"
+        "maxLength": 200
       },
       "kind": {
         "type": "string",
@@ -301,7 +303,6 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       }
     },
     "required": [
-      "title_id",
       "kind"
     ]
   },
@@ -1210,6 +1211,77 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       "items"
     ]
   },
+  "novel_add_ideas": {
+    "type": "object",
+    "properties": {
+      "title_id": {
+        "description": "アイデアを入れるタイトル（t:… かタイトル名。「読む＋書き込む」のタイトルだけ）。作者がタイトルを言わない時（新作の相談など）は省く（どのタイトルにも属さないホームのアイデアに入れる）",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "items": {
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "アイデアの名前（作者が名前を言った時だけ。1行目の日付と時刻の後ろに付く。1行・40字まで）",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1,
+              "description": "アイデアの中身（カードの2行目から）。Markdown の記号を使わず、箇条書きは「・」、小見出しは【】で書く。20,000字まで。日付と時刻の行はコネクタが付ける"
+            }
+          },
+          "required": [
+            "content"
+          ]
+        },
+        "description": "足すアイデア（1件が1枚のカード。1回10件まで。この順に、済みでないアイデアの先頭に並ぶ）"
+      },
+      "model": {
+        "type": "string",
+        "maxLength": 60,
+        "description": "使ったモデルの名前（任意）"
+      }
+    },
+    "required": [
+      "items"
+    ]
+  },
+  "novel_append_to_idea": {
+    "type": "object",
+    "properties": {
+      "idea_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "description": "追記するアイデアの id（i:…）。そのチャットで novel_add_ideas で足した時の答えに出た id だけ"
+      },
+      "read_mark": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20,
+        "description": "追記の前に novel_get_notes（kind=ideas・ids にこの id）で今の中身を読んだ時に、本文の見出しに出た「印: …」"
+      },
+      "content": {
+        "type": "string",
+        "minLength": 1,
+        "description": "「（日付）のセッションで以下の内容へ変更」の行の下に入る新しい内容（Markdown の記号を使わず、箇条書きは「・」、小見出しは【】で書く。20,000字まで。日付の行はコネクタが付ける）"
+      }
+    },
+    "required": [
+      "idea_id",
+      "read_mark",
+      "content"
+    ]
+  },
   "novel_move_cards_to_trash": {
     "type": "object",
     "properties": {
@@ -1222,7 +1294,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
           "minLength": 1,
           "maxLength": 80
         },
-        "description": "ゴミ箱へ移すカードの id（相対比較の分析 n:… か資料の記録 k:…）。そのチャットで Claude が追加した時の答えに出た id だけ。1回20件まで"
+        "description": "ゴミ箱へ移すカードの id（相対比較の分析 n:…・資料の記録 k:…・アイデア i:…）。そのチャットで Claude が追加した時の答えに出た id だけ。1回20件まで"
       }
     },
     "required": [

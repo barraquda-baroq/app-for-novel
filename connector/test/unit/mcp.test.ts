@@ -36,6 +36,8 @@ const EXPECTED_ORDER = [
   'novel_add_critique_result',
   'novel_add_bench_analysis',
   'novel_add_material_notes',
+  'novel_add_ideas',
+  'novel_append_to_idea',
   'novel_move_cards_to_trash',
 ]
 
@@ -56,14 +58,106 @@ describe('ツールの決まり', () => {
       expect(t.description.length).toBeGreaterThan(60)
     }
     expect(new Set(TOOL_DEFS.map((t) => t.name)).size).toBe(TOOL_DEFS.length)
-    // 2.7: 読むツール 14・書き込みツール 7・ゴミ箱へ移すツール 1
+    // 2.8: 読むツール 14・書き込みツール 9（アイデアを足す・アイデアに追記を含む）・ゴミ箱へ移すツール 1
+    expect(TOOL_DEFS).toHaveLength(24)
     expect(TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(14)
-    expect(TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(7)
+    expect(TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(9)
     expect(TOOL_DEFS.filter((t) => t.kind === 'trash').map((t) => [t.name, t.title])).toEqual([
       ['novel_move_cards_to_trash', 'カードをゴミ箱へ移す'],
     ])
     expect(SERVER_INSTRUCTIONS.length).toBeGreaterThan(200)
-    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(900)
+    // 2.8: 1,000字未満（相対比較・資料・用語・文字数の行は 2.7 と1字も違わない）
+    expect(SERVER_INSTRUCTIONS.length).toBeLessThan(1000)
+    const lines = SERVER_INSTRUCTIONS.split('\n')
+    for (const line of [
+      '相対比較は、作者が比べるために読む既存の作品のホームの棚（「ベンチ作品」「比較作品」とも呼ぶ。PDF は claude.ai のプロジェクトにあり、ここには作品の情報と分析だけ）。批評では novel_get_bench_analysis で分析を読めます。',
+      '資料は、作者が創作のために読む資料（主に買った書籍。「参考資料」「資料本」とも呼ぶ）のホームの棚です（PDF は claude.ai のプロジェクトにあり、ここには情報と記録だけ）。設定や描写には novel_get_material で記録を読めます。',
+      '用語: タイトル＞章＞話（第n話・特殊ブロック・幕）＞稿。採用原稿は、話ごとに採用している稿の本文（幕に分けた話は各幕の採用稿をつないだもの）。',
+      '文字数は空白・改行・ルビの記法と読みを除いて数え、日付は日本時間です。',
+    ])
+      expect(lines).toContain(line)
+  })
+
+  it('アイデアのツール（2.8）: 書き込みと同じヒント（何も消さないので「常に許可」にできる）・説明に場所・1行目・Markdown・読んでから追記', () => {
+    const add = TOOL_DEFS.find((t) => t.name === 'novel_add_ideas')!
+    const append = TOOL_DEFS.find((t) => t.name === 'novel_append_to_idea')!
+    expect([add.title, append.title]).toEqual(['アイデアを足す', 'アイデアに追記'])
+    for (const t of [add, append]) {
+      expect(t.kind).toBe('write')
+      expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false })
+    }
+    for (const phrase of [
+      'title_id を省くとどのタイトルにも属さないホームのアイデアに入れる',
+      '「読む＋書き込む」の時だけ',
+      '済みでないアイデアの先頭に、渡した順で並ぶ',
+      '日本時間「2026/11/12 14:32」',
+      '「2026/11/12 14:32　第3章の動機」',
+      'Markdown の記号',
+      '箇条書きは「・」、小見出しは【】で書く',
+      '「Claude が作成」の印',
+      '入れた場所（タイトル『…』のアイデアか、ホームのアイデア）と、足したアイデアの id（i:…）を出す',
+      '本文（稿）は書き換えない',
+    ])
+      expect(add.description).toContain(phrase)
+    for (const phrase of [
+      '「2026/11/12のセッションで以下の内容へ変更」',
+      '前の中身（作者がアプリで直した所も）は消さず、カードの並びの位置と「済み」も変えない',
+      'そのチャットで自分が novel_add_ideas で足した時の答えに出た id だけ',
+      '追記の前に必ず novel_get_notes（kind=ideas、ids にその id）で今の中身を読み',
+      '「印: …」を read_mark に渡す',
+      '作者が直したアイデアにも追記できる',
+      'アプリを開いて同期した時にカードに足される',
+      '同じ内容を送り直しても増えない',
+    ])
+      expect(append.description).toContain(phrase)
+    const notes = TOOL_DEFS.find((t) => t.name === 'novel_get_notes')!
+    expect(notes.description).toContain('kind=ideas は title_id を省ける')
+    expect(notes.description).toContain('作者が書いたホームのアイデアは返さない')
+    expect(notes.description).not.toContain('どのタイトルにも属さないアイデアは返さない')
+    expect(TOOL_DEFS.find((t) => t.name === 'novel_status')!.description).toContain('アイデアへの追記の依頼（アプリの同期待ち）の数')
+    const trash = TOOL_DEFS.find((t) => t.name === 'novel_move_cards_to_trash')!
+    expect(trash.description).toContain('相対比較の分析（n:…）・資料の記録（k:…）・アイデア（i:…）を、アプリのゴミ箱へ移す')
+    expect(trash.description).toContain('アイデアは、Claude の追記だけなら直していないものとして移せる')
+    expect(trash.description).toContain('（アイデアは1行目と場所）')
+    expect(SERVER_INSTRUCTIONS).toContain('i: アイデア')
+    expect(SERVER_INSTRUCTIONS).toContain('Claude が作ったホームのアイデア')
+    expect(SERVER_INSTRUCTIONS).toContain('（n:・k:・i:）')
+    expect(SERVER_INSTRUCTIONS).toContain('Claude が作ったアイデアへの追記だけ')
+    // ゴミ箱へ移すツールの入力の形は 2.7 のまま（cards。1〜20件・1つ80字まで）
+    const cards = (TOOL_SCHEMAS.novel_move_cards_to_trash as { properties: { cards: Record<string, unknown> } }).properties.cards
+    expect(cards).toMatchObject({ minItems: 1, maxItems: 20, items: { minLength: 1, maxLength: 80 } })
+    expect(Object.keys((TOOL_SCHEMAS.novel_move_cards_to_trash as { properties: object }).properties)).toEqual(['cards'])
+    expect(String(cards.description)).toContain('アイデア i:…')
+  })
+
+  it('アイデアのツールの入力の形（cf-worker）: 1〜10件・名前は40字まで・中身の長さは入力の形では断らない', async () => {
+    const v = new CfWorkerJsonSchemaValidator()
+    const add = fromJsonSchema(TOOL_SCHEMAS.novel_add_ideas as never, v)
+    const addOk = async (x: Record<string, unknown>) => {
+      const r = await add['~standard'].validate(x)
+      return !('issues' in r && r.issues?.length)
+    }
+    expect(await addOk({ items: [{ content: 'あ' }] })).toBe(true)
+    expect(await addOk({ title_id: 't:1', items: [{ name: 'あ'.repeat(40), content: 'あ'.repeat(30_000) }], model: 'claude' })).toBe(true)
+    expect(await addOk({ items: [] })).toBe(false)
+    expect(await addOk({ items: Array.from({ length: 11 }, () => ({ content: 'x' })) })).toBe(false)
+    expect(await addOk({ items: [{ name: 'あ'.repeat(41), content: 'x' }] })).toBe(false)
+    expect(await addOk({ items: [{ name: 'x' }] })).toBe(false)
+    expect(await addOk({ title_id: '', items: [{ content: 'x' }] })).toBe(false)
+    const append = fromJsonSchema(TOOL_SCHEMAS.novel_append_to_idea as never, v)
+    const appendOk = async (x: Record<string, unknown>) => {
+      const r = await append['~standard'].validate(x)
+      return !('issues' in r && r.issues?.length)
+    }
+    expect(await appendOk({ idea_id: 'i:12345678', read_mark: 'k3f9a2b1', content: 'あ'.repeat(30_000) })).toBe(true)
+    expect(await appendOk({ idea_id: 'i:1', read_mark: 'x' })).toBe(false)
+    expect(await appendOk({ idea_id: 'i:1', content: 'x' })).toBe(false)
+    expect(await appendOk({ idea_id: 'i:1', read_mark: 'x'.repeat(21), content: 'x' })).toBe(false)
+    expect(await appendOk({ idea_id: 'x'.repeat(81), read_mark: 'x', content: 'x' })).toBe(false)
+    // novel_get_notes: kind=ideas の時は title_id を省ける（入力の形では kind に関係なく省ける。ツールが設定項目・メモを断る）
+    const notes = fromJsonSchema(TOOL_SCHEMAS.novel_get_notes as never, v)
+    const r = await notes['~standard'].validate({ kind: 'ideas' })
+    expect('issues' in r && r.issues).toBeFalsy()
   })
 
   it('既定値を省いた呼び出しも、cf-worker の検証で通る（JSON Schema は io: input から作っている）', async () => {

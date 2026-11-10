@@ -453,8 +453,11 @@ function sizeProblem(
   return recordTooLarge(length, what, room > 0 ? split(Math.max(2, Math.ceil(own / room))) : tooLong)
 }
 
-/** ゴミ箱に入っている 2.3 の記録の id（表ごと）。アプリの貼り付けで previously_deleted を見分ける */
-export function trashedIdsOf(data: AppData): (table: ClaudeTableName, id: ID) => boolean {
+/**
+ * ゴミ箱に入っている 2.3 の記録の id（表ごと）。アプリの貼り付けで previously_deleted を見分ける
+ * （コネクタは Claude のアイデア（2.8。表 ideas）にも使う）
+ */
+export function trashedIdsOf(data: AppData): (table: ClaudeTableName | 'ideas', id: ID) => boolean {
   const set = new Set<string>()
   for (const r of Object.values(data.trashRecords)) {
     const rec = r.record as { id?: unknown } | undefined
@@ -1544,7 +1547,7 @@ export function buildToolCall(data: AppData, call: WriteToolCall, ctx: BuildCont
 }
 
 /** 結果の件数（「追加 12件・重複 3件・見つからない 1件」） */
-export function summarizeItems(items: readonly ItemResult[]): string {
+export function summarizeItems(items: readonly Pick<ItemResult, 'status'>[]): string {
   const names: Record<ItemStatus, string> = {
     created: '追加',
     duplicate: '重複',

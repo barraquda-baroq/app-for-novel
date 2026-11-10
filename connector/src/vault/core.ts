@@ -10,6 +10,16 @@ import {
   type WriteTool,
 } from '../../../src/claude/records'
 import { buildTrashRequests, TRASH_LIMITS, TRASH_TOOL, type TrashInput } from '../../../src/claude/trashRequest'
+import { liveIdeaAppends } from '../../../src/claude/ideaAppend'
+import {
+  buildAddIdeas,
+  buildIdeaAppend,
+  IDEA_ADD_TOOL,
+  isIdeaTool,
+  type AddIdeasInput,
+  type AppendIdeaInput,
+  type IdeaTool,
+} from '../../../src/claude/ideaWrite'
 import { liveTrashRequests, pendingTrashTargets } from '../../../src/claude/trashTargets'
 import { jstDate } from '../../../src/claude/dates'
 import { claudeView, canClaudeRead } from '../../../src/claude/visibility'
@@ -35,6 +45,7 @@ import {
 import { takeRate, type RateKind, type RateResult } from './ratelimit'
 import { MirrorStore, type SqlRunner } from './store'
 import { fail, type ToolResult } from './tools/common'
+import { ideaAddError, ideaAddResult, ideaAppendResult } from './tools/ideas'
 import * as R from './tools/read'
 import { trashBuildError, trashResult } from './tools/trash'
 import { buildError, writeResult } from './tools/write'
@@ -448,6 +459,7 @@ export class VaultCore {
       if (name === 'novel_status') return await this.#status()
       this.#requirePaired()
       if (name === TRASH_TOOL) return await this.#trash(args)
+      if (isIdeaTool(name)) return await this.#ideas(name, args)
       if (isWriteTool(name)) return await this.#write(name, args)
       // 連携の記録を1分ごとに確かめる（解除・作り直しに、写しを新しくする間隔より遅れずに気付く）
       await this.#recheckConnector()
@@ -541,6 +553,10 @@ export class VaultCore {
     lines.push(`Claude に見せていないタイトル: ${warm.done ? this.views().hidden : '―'}件`)
     lines.push(
       `ゴミ箱へ移す依頼: アプリの同期待ち ${warm.done ? liveTrashRequests(this.views().raw).length.toLocaleString('ja-JP') : '―'}件・今日（日本時間）${this.#trashDaily().count} / ${TRASH_LIMITS.perDay}件`,
+    )
+    // 2.8（前の行は 2.7 と1字も変えない）
+    lines.push(
+      `アイデアへの追記の依頼: アプリの同期待ち ${warm.done ? liveIdeaAppends(this.views().raw).length.toLocaleString('ja-JP') : '―'}件`,
     )
     return { text: lines.join('\n') }
   }
@@ -738,6 +754,49 @@ export class VaultCore {
         if (done === 'retry') continue
         log('trash_requested', { count: created.size })
         return trashResult(built, createdTargets(), left())
+      }
+    })
+  }
+
+  // ---------- Claude のアイデア（2.8） ----------
+
+  /**
+   * アイデアを足す（novel_add_ideas）・アイデアに追記する依頼を作る（novel_append_to_idea）。書き込みと同じく、書き込みの許可と
+   * データの形の版を確かめ、最後まで読んでから作る（作るだけ。追記はアプリが同期した時に確かめてカードに足す）
+   */
+  #ideas(tool: IdeaTool, args: Record<string, unknown>): Promise<ToolResult> {
+    return this.#mutex.run(async () => {
+      await this.#requireWrites()
+      await this.#fresh(true)
+      const owner = this.pairing().ownerUid!
+      const created = new Set<string>()
+      for (let attempt = 0; ; attempt++) {
+        const { raw, view } = this.views()
+        const trashed = trashedIdsOf(raw)
+        // ゴミ箱へ移す依頼の出ているアイデア（見せる内容からは外れている）と同じ内容は、作り直さずに「以前に削除」にする
+        const pending = pendingTrashTargets(raw)
+        const ctx = {
+          now: this.#now(),
+          wasDeleted: (table: 'ideas' | 'ideaAppends', id: string) =>
+            this.mirror.wasDeleted(table, id) || (table === 'ideas' && (trashed(table, id) || pending.has(`${table}:${id}`))),
+        }
+        const add = tool === IDEA_ADD_TOOL ? buildAddIdeas(raw, view, args as AddIdeasInput, ctx) : null
+        if (add && !add.ok) return ideaAddError(add)
+        const append = add ? null : buildIdeaAppend(raw, view, args as AppendIdeaInput, ctx)
+        const records = add ? add.records : append!.records
+        const result = () => (add ? ideaAddResult(add, created) : ideaAppendResult(append!, created))
+        let prepared
+        try {
+          prepared = records.map((r) => prepareWrite(this.fs, owner, r))
+        } catch (e) {
+          if (e instanceof EncodeError) return fail(e.message)
+          throw e
+        }
+        if (!prepared.length) return result()
+        if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
+        if ((await this.#commitPrepared(prepared, created, attempt)) === 'retry') continue
+        log(add ? 'ideas_created' : 'idea_append_requested', { count: created.size })
+        return result()
       }
     })
   }

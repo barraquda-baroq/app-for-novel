@@ -46,6 +46,7 @@ import {
   searchTextView,
   titleHeadline,
 } from '../../../../src/claude/view'
+import { ideaPlaceLabel, ideaReadMark, ideaSectionWritable, isClaudeIdea } from '../../../../src/claude/ideaAppend'
 import { cardShortId, KIND_OF } from '../../../../src/claude/trashRequest'
 import { liveTrashRequests } from '../../../../src/claude/trashTargets'
 import { claudeAccessLabel, claudeAccessOf, isNewerRecord, NEWER_RECORD_LABEL } from '../../../../src/claude/visibility'
@@ -78,6 +79,7 @@ import type {
   AppData,
   BenchWork,
   ID,
+  Idea,
   Material,
   Piece,
   ProofSuggestion,
@@ -284,9 +286,60 @@ interface NoteItem {
   line: string
   /** 本文の形 */
   full: () => string
+  /** Claude が作ったアイデア（2.8） */
+  claude?: boolean
 }
 
-function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos' | 'ideas'): NoteItem[] {
+/** 依頼を当てた（アプリの同期待ちの）追記の数（見せる内容の ideaAppends は、当てた依頼だけ） */
+function pendingAppendCount(view: AppData, ideaId: ID): number {
+  let n = 0
+  for (const r of Object.values(view.ideaAppends ?? {})) if (r.ideaId === ideaId) n += 1
+  return n
+}
+
+/**
+ * アイデアの一覧の1行と本文の形。アプリと同じ並び（済みでないもの → 済み）で渡す。済み（実装した・没にした）には【済】を付ける。
+ * 見出しは古い版で付けたものだけ（今の版は内容だけ。1行目が見出しの代わり）。作者が書いたアイデアの形は 2.7 のまま。
+ * Claude が作ったアイデア（2.8）には【Claude】を付け、本文の見出しに場所と、追記できる時は読んだ印（novel_append_to_idea の read_mark）
+ * を出す（印は本文の見出しだけ。一覧の行には出さない）
+ */
+function ideaItems(view: AppData, ideas: readonly Idea[]): NoteItem[] {
+  return sortIdeas(ideas).map((i) => {
+    const ref = shortId('idea', i.id)
+    const heading = i.heading.trim()
+    const done = isIdeaChecked(i) ? '【済】' : ''
+    const chars = `（${formatCount(length(i.body))}字）`
+    const name = heading || (i.body.split(/\r\n?|\n/).find((l) => l.trim()) ?? '').trim()
+    if (!isClaudeIdea(i))
+      return {
+        id: i.id,
+        ref,
+        name,
+        line: heading
+          ? `${ref} ${done}${heading}${chars}${i.body.trim() ? `: ${head(i.body)}` : ''}`
+          : `${ref} ${done}${head(i.body) || '（空のアイデア）'}${chars}`,
+        full: () => `=== アイデア${done}${heading ? `: ${heading}` : ''} [${ref}] ===\n${i.body}`,
+      }
+    const k = pendingAppendCount(view, i.id)
+    const place = ideaPlaceLabel(view.titles, i)
+    const where = ideaSectionWritable(view.titles, i)
+      ? `（${place}${k ? `・アプリの同期待ちの追記 ${k}件を含む` : ''}）[${ref}] 印: ${ideaReadMark(i.body)}`
+      : `（${place}・「読むだけ」のタイトルなので追記できません）[${ref}]`
+    return {
+      id: i.id,
+      ref,
+      name,
+      line: `${ref} 【Claude】${done}${head(i.body) || '（空のアイデア）'}${chars}${k ? `（追記の依頼 ${k}件はアプリの同期待ち）` : ''}`,
+      full: () => `=== アイデア${done}【Claude】${where} ===\n${i.body}`,
+      claude: true,
+    }
+  })
+}
+
+/** 仕切りのアイデア（タイトルの id。null = どのタイトルにも属さないホームのアイデアのうち、見せる内容にある Claude が作ったもの） */
+const ideasIn = (view: AppData, section: ID | null) => Object.values(view.ideas).filter((i) => i.titleId === section)
+
+function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos'): NoteItem[] {
   if (kind === 'memos')
     return memosOf(view, title.id).map((m) => ({
       id: m.id,
@@ -295,24 +348,6 @@ function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos' | 'id
       line: `${shortId('memo', m.id)} ${m.name.trim() || '（無題のメモ）'}（${formatCount(length(m.body))}字）${m.body.trim() ? `: ${head(m.body)}` : ''}`,
       full: () => `=== メモ: ${m.name.trim() || '（無題のメモ）'} [${shortId('memo', m.id)}] ===\n${m.body}`,
     }))
-  if (kind === 'ideas')
-    // アプリと同じ並び（済みでないもの → 済み）。済み（実装した・没にした）には【済】を付ける。
-    // 見出しは古い版で付けたものだけ（今の版は内容だけ。1行目が見出しの代わり）
-    return sortIdeas(Object.values(view.ideas).filter((i) => i.titleId === title.id)).map((i) => {
-      const ref = shortId('idea', i.id)
-      const heading = i.heading.trim()
-      const done = isIdeaChecked(i) ? '【済】' : ''
-      const chars = `（${formatCount(length(i.body))}字）`
-      return {
-        id: i.id,
-        ref,
-        name: heading || (i.body.split(/\r\n?|\n/).find((l) => l.trim()) ?? '').trim(),
-        line: heading
-          ? `${ref} ${done}${heading}${chars}${i.body.trim() ? `: ${head(i.body)}` : ''}`
-          : `${ref} ${done}${head(i.body) || '（空のアイデア）'}${chars}`,
-        full: () => `=== アイデア${done}${heading ? `: ${heading}` : ''} [${ref}] ===\n${i.body}`,
-      }
-    })
   const out: NoteItem[] = []
   for (const c of categoriesOf(view, title.id)) {
     for (const e of entriesOf(view, c.id)) {
@@ -335,12 +370,19 @@ function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos' | 'id
 }
 
 export function getNotes(ctx: ReadContext, args: Args): ToolResult {
-  const t = titleArg(ctx.view, args.title_id)
-  if ('error' in t) return t.error
   const kind = args.kind === 'settings' || args.kind === 'memos' || args.kind === 'ideas' ? args.kind : null
   if (!kind) return fail("kind は 'settings'・'memos'・'ideas' のどれかにしてください")
+  // kind=ideas は title_id を省ける（どのタイトルにも属さないホームのアイデアのうち、Claude が作ったもの。2.8）
+  let title: Title | null = null
+  if (args.title_id === undefined) {
+    if (kind !== 'ideas')
+      return fail('title_id がありません（設定項目・メモはタイトルを指してください。kind=ideas の時だけ省けます）')
+  } else {
+    const t = titleArg(ctx.view, args.title_id)
+    if ('error' in t) return t.error
+    title = t.title
+  }
   const kindLabel = kind === 'settings' ? '設定項目' : kind === 'memos' ? 'メモ' : 'アイデア'
-  const items = noteItems(ctx.view, t.title, kind)
   const budget = Math.min(60_000, Math.max(2_000, num(args.char_budget) ?? 20_000))
   let ids = strList(args.ids) ?? []
   let full = bool(args.full) ?? false
@@ -350,22 +392,32 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
   const cursorArg = str(args.cursor)
   if (cursorArg) {
     const c = decodeCursor(cursorArg)
-    if (!c || c.k !== 'notes' || c.t !== t.title.id || c.kind !== kind || typeof c.s !== 'number')
+    if (!c || c.k !== 'notes' || c.t !== (title?.id ?? '') || c.kind !== kind || typeof c.s !== 'number')
       return fail('cursor が読めません（novel_get_notes の続きの cursor をそのまま渡してください）')
     start = c.s
     off0 = typeof c.o === 'number' && c.o > 0 ? c.o : 0
     ids = Array.isArray(c.ids) ? (c.ids as string[]) : []
     full = c.full === true
   }
+  // ホームのアイデアを ids で指す時は、見せているタイトルのアイデアからも探す
+  const items =
+    kind !== 'ideas'
+      ? noteItems(ctx.view, title!, kind)
+      : ideaItems(ctx.view, title || !ids.length ? ideasIn(ctx.view, title?.id ?? null) : Object.values(ctx.view.ideas))
   if (!ids.length && !full) {
     const done = kind === 'ideas' ? items.filter((it) => isIdeaChecked(ctx.view.ideas[it.id] ?? {})).length : 0
     const lines = [
-      `=== 『${t.title.name}』の${kindLabel}（${items.length}件${done ? `・うち済み ${done}件` : ''}）[${shortId('title', t.title.id)}] ===`,
+      title
+        ? `=== 『${title.name}』の${kindLabel}（${items.length}件${done ? `・うち済み ${done}件` : ''}）[${shortId('title', title.id)}] ===`
+        : `=== ホームのアイデア（どのタイトルにも属さない・Claude が作ったものだけ。${items.length}件${done ? `・うち済み ${done}件` : ''}）===`,
     ]
     if (done) lines.push('【済】は作者が済み（実装した・没にした）にしたアイデア。済みでないものの後ろに、新しく済みにしたものから並ぶ。')
+    if (items.some((it) => it.claude))
+      lines.push('【Claude】は Claude がこのコネクタで作ったアイデア（追記・ゴミ箱へ移すのは、そのチャットで作ったものだけ）。')
     if (!items.length) lines.push('（ありません）')
     for (const it of items) lines.push(it.line)
     if (items.length) lines.push('本文は ids に短い id を入れるか full=true で読めます。')
+    if (!title) lines.push('作者が書いたホームのアイデアは見えません。')
     return ok(lines.join('\n'))
   }
   let chosen = items
@@ -379,11 +431,18 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
       if (hit && !chosen.includes(hit)) chosen.push(hit)
       else if (!hit) missing.push(ref)
     }
-    if (!chosen.length) return fail(`${kindLabel}が見つかりません: ${missing.join('、')}`, items.slice(0, 20).map((i) => i.line))
+    if (!chosen.length) {
+      if (kind === 'ideas') {
+        const elsewhere = ideaElsewhere(ctx.view, title, missing)
+        if (elsewhere) return fail(elsewhere)
+      }
+      return fail(`${kindLabel}が見つかりません: ${missing.join('、')}`, items.slice(0, 20).map((i) => i.line))
+    }
   }
   const out: string[] = []
   let used = 0
   let i = start
+  const tid = title?.id ?? ''
   for (; i < chosen.length; i++) {
     const text = chosen[i].full()
     // 前のページの続き（項目が変わって短くなっていれば、その終わりまで）
@@ -396,7 +455,7 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
       let end = cutPoint(text, from, from + budget)
       if (end <= from) end = Math.min(text.length, from + budget)
       out.push(text.slice(from, end))
-      const next = encodeCursor({ k: 'notes', t: t.title.id, kind, s: i, o: end, ids, full })
+      const next = encodeCursor({ k: 'notes', t: tid, kind, s: i, o: end, ids, full })
       out.push(`続き: cursor="${next}"（この項目の残り ${formatCount(text.length - end)}字・残り${chosen.length - i}件）`)
       return ok(out.join('\n'))
     }
@@ -404,10 +463,32 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
     used += rest
   }
   if (i < chosen.length) {
-    const next = encodeCursor({ k: 'notes', t: t.title.id, kind, s: i, ids, full })
+    const next = encodeCursor({ k: 'notes', t: tid, kind, s: i, ids, full })
     out.push(`続き: cursor="${next}"（残り${chosen.length - i}件）`)
   }
   return ok(out.join('\n'))
+}
+
+/**
+ * ids で指したアイデアが選んだ場所に無い時の理由: ゴミ箱へ移す依頼中（2.7 と同じ文）か、見せているほかの場所にある
+ * （タイトルのアイデアか、Claude が作ったホームのアイデア）。どちらでもなければ null（作者が書いたホームのアイデア・見せない
+ * タイトルのアイデアは、ある・無いを答えない）
+ */
+function ideaElsewhere(view: AppData, title: Title | null, refs: readonly string[]): string | null {
+  for (const ref of refs) {
+    const asked = pendingRequestFor(view, 'ideas', null, ref)
+    if (asked) return pendingMessage(asked)
+  }
+  if (!title) return null
+  for (const ref of refs) {
+    const hit = Object.values(view.ideas).find((i) => i.titleId !== title.id && matchesId('idea', ref, i.id))
+    if (!hit) continue
+    const other = hit.titleId ? view.titles[hit.titleId] : undefined
+    return other
+      ? `${shortId('idea', hit.id)} はタイトル『${other.name}』のアイデアです（title_id に ${shortId('title', other.id)} を渡すか、title_id を省いてください）`
+      : `${shortId('idea', hit.id)} はホームのアイデアです（title_id を省いてください）`
+  }
+  return null
 }
 
 // ---------- R7 戦略 ----------

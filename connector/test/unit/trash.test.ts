@@ -9,16 +9,15 @@ import { createTitle, updateIdea } from '../../../src/domain/entityOps'
 import { hashJson } from '../../../src/domain/hash'
 import { addMaterial } from '../../../src/domain/materialOps'
 import { restoreTrashEntry } from '../../../src/domain/trash'
-import { emptyData, TABLE_NAMES, type AppData, type BenchAnalysis, type Idea, type TableName } from '../../../src/domain/types'
+import type { AppData, BenchAnalysis, Idea } from '../../../src/domain/types'
 import { jstDate } from '../../../src/claude/dates'
 import { shortId } from '../../../src/claude/refs'
 import { claudeIdeaId, ideaAppendId, trashRequestId } from '../../../src/claude/derivedId'
 import { claudeIdeaBody, ideaReadMark } from '../../../src/claude/ideaAppend'
-import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
-import type { Rec } from '../../../src/sync/merge'
 import { novel } from '../../../src/test/claudeFixture'
+import { cloudData, connectorDocs, pushChanges } from '../support/cloud'
 import { FakeFirebase } from '../support/fakeFirebase'
-import { OWNER, call, pairedCore } from '../support/harness'
+import { call, pairedCore } from '../support/harness'
 
 /** 棚に作者が手で足した作品1つ（分析つき）と資料1つ */
 function shelf() {
@@ -43,42 +42,8 @@ function shelf() {
   return { data, workId: w.result, materialId: m.result, manualId: manual.id, editedId: edited.id }
 }
 
-/** クラウドの記録を、端末と同じ decodeRecord で AppData にしたもの（アプリが受け取った内容） */
-function cloudData(fake: FakeFirebase): AppData {
-  const data = emptyData() as unknown as Record<TableName, Record<string, Rec>>
-  for (const d of fake.recordDocs(OWNER)) {
-    const table = d.fields.table?.stringValue as TableName
-    if (!TABLE_NAMES.includes(table) || d.fields.deleted?.booleanValue) continue
-    const rec = decodeRecord(
-      {
-        table,
-        id: d.fields.id.stringValue,
-        json: d.fields.json.stringValue,
-        chunks: 0,
-        deleted: false,
-        hash: d.fields.hash.stringValue,
-        updated: null,
-        device: d.fields.device?.stringValue,
-      } as unknown as RecordDoc,
-      () => undefined,
-    )
-    if (rec) data[table][rec.id] = rec as Rec
-  }
-  return data as unknown as AppData
-}
-
-/** アプリの処理の結果（前と後の差）を、端末と同じ形でクラウドに書く（消えた記録は削除の印） */
-function pushChanges(fake: FakeFirebase, before: AppData, after: AppData): void {
-  for (const table of TABLE_NAMES) {
-    const a = before[table] as Record<string, Rec>
-    const b = after[table] as Record<string, Rec>
-    for (const [id, rec] of Object.entries(b)) if (a[id] !== rec) fake.putRecord(OWNER, table, rec)
-    for (const id of Object.keys(a)) if (!(id in b)) fake.tombstone(OWNER, table, id)
-  }
-}
-
-const docsOf = (fake: FakeFirebase, table: string) =>
-  fake.recordDocs(OWNER).filter((d) => d.name.includes(`/${table}:`) && d.fields.device?.stringValue === 'claude-connector')
+/** コネクタが書いたその表の文書 */
+const docsOf = connectorDocs
 
 /** Claude が分析を1つ・記録を1つ足す（答えの n:… と k:…） */
 async function addCards(core: Awaited<ReturnType<typeof pairedCore>>['core']) {

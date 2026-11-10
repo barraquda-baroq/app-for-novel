@@ -219,7 +219,7 @@ function findCards(data: AppData, table: TrashRequestTable | null, ref: string):
  * ゴミ箱の中身が、Claude が作ったアイデアか（作者が書いたアイデアは、ゴミ箱にあることも答えない）。コネクタの写しのゴミ箱の中身は
  * 元の記録の id だけなので、id の形（cy-…。アクセスルールで Claude だけが作る形）で見る。source があれば claude であること
  */
-function isTrashedClaudeIdea(record: unknown): boolean {
+export function isTrashedClaudeIdea(record: unknown): boolean {
   const r = record as { id?: unknown; source?: unknown } | undefined
   return typeof r?.id === 'string' && CLAUDE_IDEA_ID.test(r.id) && (r.source === undefined || r.source === 'claude')
 }

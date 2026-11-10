@@ -5,6 +5,7 @@
 // コネクタが書く1件の記録は JSON にして 200,000 字まで（RECORD_LIMITS.recordJson）。超えればツールが分け方を返す。
 import * as z from 'zod'
 import { PROOF_CATEGORIES, PROOF_CATEGORY_GUIDE } from '../../../src/claude/categories'
+import { IDEA_LIMITS } from '../../../src/claude/ideaAppend'
 import { RECORD_LIMITS as L } from '../../../src/claude/records'
 import { TRASH_LIMITS } from '../../../src/claude/trashRequest'
 import { BENCH_LIMITS } from '../../../src/domain/benchOps'
@@ -112,7 +113,11 @@ export const SCHEMAS = {
     cursor: cursor.optional(),
   }),
   novel_get_notes: z.object({
-    title_id: titleId,
+    title_id: titleId
+      .optional()
+      .describe(
+        'タイトル（t:… かタイトル名）。kind=ideas の時だけ省ける（省くと、どのタイトルにも属さないホームのアイデアのうち Claude が作ったもの。ids を渡すと、見せているタイトルのアイデアからも探す）',
+      ),
     kind: z.enum(['settings', 'memos', 'ideas']).describe('settings = 設定項目（キャラクター・世界観など）、memos = メモ、ideas = アイデア'),
     ids: z.array(z.string().min(1).max(200)).max(50).optional().describe('本文まで読む項目（e:・m:・i: の短い id か名前）'),
     full: z.boolean().default(false).describe('true = すべての本文を読む（char_budget まで）'),
@@ -379,13 +384,59 @@ export const SCHEMAS = {
       .describe('記録（項目ごとに1つ。1回20件まで）'),
     model: model.optional(),
   }),
+  novel_add_ideas: z.object({
+    title_id: titleId
+      .optional()
+      .describe(
+        'アイデアを入れるタイトル（t:… かタイトル名。「読む＋書き込む」のタイトルだけ）。作者がタイトルを言わない時（新作の相談など）は省く（どのタイトルにも属さないホームのアイデアに入れる）',
+      ),
+    items: z
+      .array(
+        z.object({
+          name: z
+            .string()
+            .min(1)
+            .max(IDEA_LIMITS.name)
+            .optional()
+            .describe('アイデアの名前（作者が名前を言った時だけ。1行目の日付と時刻の後ろに付く。1行・40字まで）'),
+          content: z
+            .string()
+            .min(1)
+            .describe(
+              'アイデアの中身（カードの2行目から）。Markdown の記号を使わず、箇条書きは「・」、小見出しは【】で書く。20,000字まで。日付と時刻の行はコネクタが付ける',
+            ),
+        }),
+      )
+      .min(1)
+      .max(IDEA_LIMITS.perCall)
+      .describe('足すアイデア（1件が1枚のカード。1回10件まで。この順に、済みでないアイデアの先頭に並ぶ）'),
+    model: model.optional(),
+  }),
+  novel_append_to_idea: z.object({
+    idea_id: z
+      .string()
+      .min(1)
+      .max(IDEA_LIMITS.ref)
+      .describe('追記するアイデアの id（i:…）。そのチャットで novel_add_ideas で足した時の答えに出た id だけ'),
+    read_mark: z
+      .string()
+      .min(1)
+      .max(IDEA_LIMITS.mark)
+      .describe('追記の前に novel_get_notes（kind=ideas・ids にこの id）で今の中身を読んだ時に、本文の見出しに出た「印: …」'),
+    content: z
+      .string()
+      .min(1)
+      .describe(
+        '「（日付）のセッションで以下の内容へ変更」の行の下に入る新しい内容（Markdown の記号を使わず、箇条書きは「・」、小見出しは【】で書く。20,000字まで。日付の行はコネクタが付ける）',
+      ),
+  }),
   novel_move_cards_to_trash: z.object({
     cards: z
       .array(z.string().min(1).max(TRASH_LIMITS.ref))
       .min(1)
       .max(TRASH_LIMITS.perCall)
       .describe(
-        `ゴミ箱へ移すカードの id（相対比較の分析 n:… か資料の記録 k:…）。そのチャットで Claude が追加した時の答えに出た id だけ。1回${TRASH_LIMITS.perCall}件まで`,
+        `ゴミ箱へ移すカードの id（相対比較の分析 n:…・資料の記録 k:…・アイデア i:…）。そのチャットで Claude が追加した時の答えに出た id だけ。1回${TRASH_LIMITS.perCall}件まで`,
       ),
   }),
 } as const

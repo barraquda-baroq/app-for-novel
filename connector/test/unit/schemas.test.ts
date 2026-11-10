@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as z from 'zod'
 import { describe, expect, it } from 'vitest'
+import { isIdeaTool } from '../../../src/claude/ideaWrite'
 import { SCHEMAS, TRASH_OUTPUT, WRITE_OUTPUT } from '../../src/mcp/schemas'
 import { TOOL_DEFS } from '../../src/mcp/tools'
 
@@ -81,11 +82,22 @@ describe('ツールの JSON Schema', () => {
     ])
     expect([proof.run_label.maxLength, proof.items.maxItems, proof.covered.maxItems]).toEqual([60, 100, 200])
     // 書き出した JSON Schema にも、ツールの説明にも、前の上限（20,000・30,000・50,000・60,000字、相性 300字・方針 2,000字）は無い
+    // （2.8 のアイデアのツールは別。1件の中身・追記が20,000字までと決めてあり、超えた時はツールが分け方を返す。下で確かめる）
     const gen = fs.readFileSync(target, 'utf8')
     for (const n of [20000, 30000, 50000, 60000]) expect(gen.match(new RegExp(`"maxLength": ${n}\\b`, 'g'))).toBeNull()
-    for (const def of TOOL_DEFS.filter((d) => d.kind === 'write'))
+    for (const def of TOOL_DEFS.filter((d) => d.kind === 'write' && !isIdeaTool(d.name)))
       expect(def.description, def.name).not.toMatch(/(20,000|30,000|50,000|60,000)字まで|（300字以内）|（2,000字以内）/)
-    expect(gen).not.toMatch(/(20,000|30,000|50,000|60,000)字まで|相性（300字以内）|方針（2,000字以内）/)
+    const others = Object.entries(SCHEMAS)
+      .filter(([name]) => !isIdeaTool(name))
+      .map(([, s]) => JSON.stringify(jsonSchema(s)))
+      .join('\n')
+    expect(others).not.toMatch(/(20,000|30,000|50,000|60,000)字まで|相性（300字以内）|方針（2,000字以内）/)
+    // アイデアの中身・追記には maxLength を付けない（長すぎる時は入力の形の確かめで断らず、ツールが分け方を答える）。名前・id・印は短い
+    const add = props('novel_add_ideas')
+    const addItem = add.items.items!.properties!
+    expect([addItem.content.maxLength, addItem.name.maxLength, add.items.maxItems]).toEqual([undefined, 40, 10])
+    const append = props('novel_append_to_idea')
+    expect([append.content.maxLength, append.idea_id.maxLength, append.read_mark.maxLength]).toEqual([undefined, 80, 20])
   })
 
   it('すべてのツールに入力の形がある', () => {
