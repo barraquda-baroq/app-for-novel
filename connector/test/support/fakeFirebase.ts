@@ -1,6 +1,7 @@
 // テスト用の小さな Firebase（Auth の REST・Firestore の REST の、コネクタが使う部分だけ）。fetch として渡す。
 // - 文書は名前の順・updated（サーバー時刻）の順に並ぶ。1回の commit の書き込みはすべて同じ時刻
-// - アクセスルールの要点だけをまねる: コネクタ（config/connector の uid）は読める・10の表に作るだけ（writes の時だけ）
+// - アクセスルールの要点だけをまねる: コネクタ（config/connector の uid）は読める・10の表と依頼の表・Claude のアイデアに作るだけ
+//   （writes の時だけ）
 // 本物のアクセスルールとの合わせは、エミュレーターの結合テスト（test/emu）で確かめる。
 import { encodeRecord, splitJson } from '../../../src/sync/codec'
 import type { Rec } from '../../../src/sync/merge'
@@ -32,7 +33,13 @@ const CLAUDE_TABLES = new Set([
   'materialNotes',
   // 2.7: ゴミ箱へ移す依頼（作るだけ。JSON は 2,000 字まで。アクセスルールと同じ）
   'trashRequests',
+  // 2.8: Claude のアイデア（id は cy-…）とアイデアへの追記の依頼（id は cu-…）。作るだけ。JSON は 50,000 字まで（アクセスルールと同じ）
+  'ideas',
+  'ideaAppends',
 ])
+
+/** 2.8: 表ごとの id の形（アクセスルールの d.id.matches と同じ） */
+const ID_PATTERN: Record<string, RegExp> = { ideas: /^cy-[0-9a-z.]+$/, ideaAppends: /^cu-[0-9a-z.]+$/ }
 
 export class FakeFirebase {
   readonly project: string
@@ -337,11 +344,12 @@ export class FakeFirebase {
         const pre = w.currentDocument as { exists?: boolean } | undefined
         if (pre?.exists === false && exists) return jsonRes({ error: { code: 409, status: 'ALREADY_EXISTS', message: 'exists' } }, 409)
         if (isOwner) continue
-        // コネクタ: 10の表とゴミ箱へ移す依頼に、決まった形で作るだけ
+        // コネクタ: 10の表とゴミ箱へ移す依頼・Claude のアイデア・アイデアへの追記の依頼に、決まった形で作るだけ
         const f = upd.fields
         const table = f.table?.stringValue as string
         const id = f.id?.stringValue as string
         const keys = Object.keys(f).sort().join(',')
+        const idPattern = Object.hasOwn(ID_PATTERN, table) ? ID_PATTERN[table] : undefined
         const ok =
           conn !== null &&
           conn.uid === uid &&
@@ -354,6 +362,7 @@ export class FakeFirebase {
           f.chunks?.integerValue === '0' &&
           f.deleted?.booleanValue === false &&
           (table !== 'trashRequests' || String(f.json?.stringValue ?? '').length <= 2000) &&
+          (!idPattern || (idPattern.test(id) && String(f.json?.stringValue ?? '').length <= 50000)) &&
           JSON.stringify(w.updateTransforms) === JSON.stringify([{ fieldPath: 'updated', setToServerValue: 'REQUEST_TIME' }])
         if (!ok) return denied()
       }

@@ -150,6 +150,33 @@ describe('書き込みの形（作るだけ）', () => {
     expect(() => prepareWrite(fs, 'o', { table: 'versions' as never, record: rec as never })).toThrow(EncodeError)
     expect(() => prepareWrite(fs, 'o', { table: 'revisionIdeas', record: { ...rec, id: 'x'.repeat(65) } as never })).toThrow(EncodeError)
   })
+
+  it('Claude のアイデア（2.8）は id が cy-…、追記の依頼は cu-… で、JSON が 50,000 字までのものだけ（アクセスルールと同じ）', () => {
+    const idea = { id: 'cy-1a.2b', titleId: null, heading: '', body: '2026/11/12 14:32\n中身', checked: false, checkedAt: null, order: 0, source: 'claude', v: 1, claudeHash: 'h', createdAt: 1, updatedAt: 1 }
+    const append = { id: 'cu-3c.4d', ideaId: 'cy-1a.2b', text: '追記', readMark: 'abcd1234', source: 'claude', v: 1, createdAt: 1, updatedAt: 1 }
+    const p = prepareWrite(fs, 'o', { table: 'ideas', record: idea as never })
+    expect(p.write.update!.name).toBe('projects/p/databases/(default)/documents/users/o/records/ideas:cy-1a.2b')
+    expect(p.write.currentDocument).toEqual({ exists: false })
+    expect(prepareWrite(fs, 'o', { table: 'ideaAppends', record: append as never }).id).toBe('cu-3c.4d')
+    // id の形が違う（作者のアイデアの UUID・ほかの表の形）
+    for (const id of ['0b6f2c1e-5d1a-4c3e-9f0a-1b2c3d4e5f60', 'ci-1a', 'cu-1a', 'cy-1A', 'cy-'])
+      expect(() => prepareWrite(fs, 'o', { table: 'ideas', record: { ...idea, id } as never })).toThrow('記録の id が不正です')
+    for (const id of ['cy-1a', 'cz-1a', 'cu-'])
+      expect(() => prepareWrite(fs, 'o', { table: 'ideaAppends', record: { ...append, id } as never })).toThrow('記録の id が不正です')
+    // 50,000 字まで
+    const ideaRoom = 50_000 - JSON.stringify({ ...idea, body: '' }).length
+    expect(prepareWrite(fs, 'o', { table: 'ideas', record: { ...idea, body: 'あ'.repeat(ideaRoom) } as never }).json).toHaveLength(50_000)
+    expect(() => prepareWrite(fs, 'o', { table: 'ideas', record: { ...idea, body: 'あ'.repeat(ideaRoom + 1) } as never })).toThrow(
+      'アイデアが大きすぎます（1件は JSON にして 50,000 字まで）',
+    )
+    const appendRoom = 50_000 - JSON.stringify({ ...append, text: '' }).length
+    expect(prepareWrite(fs, 'o', { table: 'ideaAppends', record: { ...append, text: 'あ'.repeat(appendRoom) } as never }).json).toHaveLength(50_000)
+    expect(() => prepareWrite(fs, 'o', { table: 'ideaAppends', record: { ...append, text: 'あ'.repeat(appendRoom + 1) } as never })).toThrow(
+      'アイデアへの追記の依頼が大きすぎます（1件は JSON にして 50,000 字まで）',
+    )
+    // ほかの表は今までどおり cy-・cu- でなくてよく、200,000 字まで
+    expect(prepareWrite(fs, 'o', { table: 'revisionIdeas', record: { ...rec, body: 'あ'.repeat(60_000) } as never }).id).toBe('ci-1')
+  })
 })
 
 describe('Firestore の失敗の扱い', () => {

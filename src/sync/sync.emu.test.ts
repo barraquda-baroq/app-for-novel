@@ -2119,7 +2119,7 @@ describe('ゴミ箱へ移す依頼の同期（2.7。エミュレーター）', (
     await b.online()
     await waitFor(async () => (await b.load()).trashRequests[req.id], '受け取り直す')
     expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
-    expect(SYNC_SCHEMA).toBe(5)
+    expect(SYNC_SCHEMA).toBe(6)
   })
 })
 

@@ -317,6 +317,12 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       'trashRequests',
     ])
       expect([table, await connectorCommit(anon, owner.uid, [connectorRecord(table, `c-${table}`)])]).toEqual([table, 200])
+    // 2.8: Claude のアイデア（id は cy-…）とアイデアへの追記の依頼（id は cu-…）も作れる
+    for (const [table, id] of [
+      ['ideas', 'cy-shape'],
+      ['ideaAppends', 'cu-shape'],
+    ])
+      expect([table, await connectorCommit(anon, owner.uid, [connectorRecord(table, id)])]).toEqual([table, 200])
   })
 
   it('ゴミ箱へ移す依頼（2.7）: 作れるのは新しい依頼だけ。カードの削除・書き換え・ゴミ箱の表への作成は今までどおり拒む', async () => {
@@ -369,6 +375,125 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     expect((await getDoc(ownRef('trashRequests:cz-1'))).data()?.deleted).toBe(true)
     // 削除の印になった依頼を、コネクタは作り直せない（別の id の依頼にする）
     expect(await connectorCommit(anon, owner.uid, [req])).not.toBe(200)
+  })
+
+  it('Claude のアイデアとアイデアへの追記の依頼（2.8）: id が cy-…・cu-… の新しい記録だけ作れる。作者のアイデアの書き換え・削除・作り直しは拒む', async () => {
+    const ownRef = (docId: string) => doc(owner.fs, 'users', owner.uid, 'records', docId)
+    // ホームのアイデアとタイトルのアイデア（id に . を含む derivedId の形）、その追記の依頼
+    const body = '2026/11/12 14:32\n・動機を一つにまとめる'
+    const home = connectorRecord('ideas', 'cy-1a.2b', {
+      titleId: null,
+      heading: '',
+      body,
+      checked: false,
+      checkedAt: null,
+      order: -1,
+    })
+    const inTitle = connectorRecord('ideas', 'cy-3c.4d', { heading: '', body, checked: false, checkedAt: null, order: 0 })
+    const append = connectorRecord('ideaAppends', 'cu-5e.6f', {
+      ideaId: 'cy-1a.2b',
+      text: '【追記】・場面を足す',
+      readMark: 'abcd1234',
+    })
+    expect(await connectorCommit(anon, owner.uid, [home, inTitle, append])).toBe(200)
+    const snap = await getDoc(ownRef('ideas:cy-1a.2b'))
+    expect(snap.data()?.device).toBe('claude-connector')
+    expect(decodeRecord(snap.data() as RecordDoc, () => undefined)).toMatchObject({
+      id: 'cy-1a.2b',
+      titleId: null,
+      body,
+      source: 'claude',
+    })
+    expect(decodeRecord((await getDoc(ownRef('ideaAppends:cu-5e.6f'))).data() as RecordDoc, () => undefined)).toMatchObject({
+      id: 'cu-5e.6f',
+      ideaId: 'cy-1a.2b',
+    })
+    // アイデアのゴミ箱へ移す依頼（v:2）は今までの依頼の表に、2,000 字までで作れる
+    const trashIdea = connectorRecord('trashRequests', 'cz-idea', {
+      table: 'ideas',
+      targetId: 'cy-3c.4d',
+      parentId: 't1',
+      targetUpdatedAt: 1,
+      label: 'タイトル『星の庭』のアイデア「2026/11/12 14:32」',
+      v: 2,
+    })
+    expect(await connectorCommit(anon, owner.uid, [trashIdea])).toBe(200)
+    // もうあれば作れない。書き換え・削除はできない（アイデアも追記の依頼も）
+    expect(await connectorCommit(anon, owner.uid, [home])).not.toBe(200)
+    expect(await connectorCommit(anon, owner.uid, [append])).not.toBe(200)
+    const rewritten = connectorRecord('ideas', 'cy-1a.2b', { titleId: null, heading: '', body: `${body}\n書き換え`, order: -1 })
+    expect(await connectorCommit(anon, owner.uid, [{ ...rewritten, noPrecondition: true }])).toBe(403)
+    expect(await connectorCommit(anon, owner.uid, [{ ...append, noPrecondition: true }])).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'ideas:cy-1a.2b')).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'ideaAppends:cu-5e.6f')).toBe(403)
+    // 作者のアイデア（id は UUID）: コネクタは書き換え・削除できず、まだ無い（送る前の）UUID の文書を先に作ることもできない
+    const authorId = crypto.randomUUID()
+    await setDoc(
+      ownRef(`ideas:${authorId}`),
+      recordDoc('ideas', authorId, { titleId: null, heading: '', body: '作者のアイデア', order: 0 }),
+    )
+    const author = connectorRecord('ideas', authorId, { titleId: null, heading: '', body: 'Claude', order: 0 })
+    expect(await connectorCommit(anon, owner.uid, [{ ...author, noPrecondition: true }])).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, `ideas:${authorId}`)).toBe(403)
+    const unsent = crypto.randomUUID()
+    expect(await connectorCommit(anon, owner.uid, [connectorRecord('ideas', unsent)])).toBe(403)
+    expect((await getDoc(ownRef(`ideas:${unsent}`))).exists()).toBe(false)
+    const denied: [string, ConnectorWrite][] = [
+      ['アイデアの id が UUID', connectorRecord('ideas', crypto.randomUUID())],
+      ['アイデアの id がほかの形（ci-）', connectorRecord('ideas', 'ci-1a')],
+      ['アイデアの id が追記の依頼の形（cu-）', connectorRecord('ideas', 'cu-1a')],
+      ['アイデアの id に大文字', connectorRecord('ideas', 'cy-1A')],
+      ['アイデアの id が cy- だけ', connectorRecord('ideas', 'cy-')],
+      ['追記の依頼の id が cu- でない', connectorRecord('ideaAppends', 'cy-9z')],
+      ['追記の依頼の id が UUID', connectorRecord('ideaAppends', crypto.randomUUID())],
+      ['アイデアの json が 50,000 字を超える', { ...connectorRecord('ideas', 'cy-long'), json: 'x'.repeat(50_001) }],
+      ['追記の依頼の json が 50,000 字を超える', { ...connectorRecord('ideaAppends', 'cu-long'), json: 'x'.repeat(50_001) }],
+      ['アイデアの削除の印', { ...connectorRecord('ideas', 'cy-del'), extra: { deleted: true } }],
+      ['追記の依頼の分割（chunks）', { ...connectorRecord('ideaAppends', 'cu-chunks'), extra: { chunks: 1 } }],
+      ['表の名前が違う', { ...connectorRecord('ideaAppends', 'cu-table'), docId: 'ideas:cu-table' }],
+    ]
+    for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
+    // 50,000 字ちょうどは作れる。ほかの表の上限（200,000 字）は今までどおり
+    for (const edge of [connectorRecord('ideas', 'cy-edge'), connectorRecord('ideaAppends', 'cu-edge')])
+      expect(
+        await connectorCommit(anon, owner.uid, [
+          { ...edge, json: `${edge.json.slice(0, -1)}${' '.repeat(50_000 - edge.json.length)}}` },
+        ]),
+      ).toBe(200)
+    expect(
+      await connectorCommit(anon, owner.uid, [{ ...connectorRecord('revisionIdeas', 'ci-big'), json: 'x'.repeat(50_001) }]),
+    ).toBe(200)
+    // 持ち主（アプリ）は追記を当てられる: アイデアを書き換え、依頼を削除の印にする
+    const appended = `${body}\n\n2026/11/12のセッションで以下の内容へ変更\n【追記】・場面を足す`
+    await updateDoc(ownRef('ideas:cy-1a.2b'), {
+      ...recordDoc('ideas', 'cy-1a.2b', {
+        titleId: null,
+        heading: '',
+        body: appended,
+        appendIds: ['cu-5e.6f'],
+        source: 'claude',
+      }),
+    })
+    await updateDoc(ownRef('ideaAppends:cu-5e.6f'), {
+      json: null,
+      deleted: true,
+      hash: '',
+      updated: serverTimestamp(),
+      device: 'owner-device',
+    })
+    expect((await getDoc(ownRef('ideaAppends:cu-5e.6f'))).data()?.deleted).toBe(true)
+    expect(JSON.parse(String((await getDoc(ownRef('ideas:cy-1a.2b'))).data()?.json)).body).toBe(appended)
+    // 削除の印になった依頼・アイデアを、コネクタは作り直せない
+    expect(await connectorCommit(anon, owner.uid, [append])).not.toBe(200)
+    await updateDoc(ownRef('ideas:cy-3c.4d'), {
+      json: null,
+      deleted: true,
+      hash: '',
+      updated: serverTimestamp(),
+      device: 'owner-device',
+    })
+    expect(await connectorCommit(anon, owner.uid, [inTitle])).not.toBe(200)
+    expect((await getDoc(ownRef('ideas:cy-3c.4d'))).data()?.deleted).toBe(true)
   })
 
   it('相対比較の作品とその分析: 作れるのは新しい記録だけ（書き換え・削除・決まった形でない作成は拒む）', async () => {
@@ -484,6 +609,9 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
   it('「書き込みを許可」を外すと作れない（読むのは続く）。連携の確かめの指紋・時刻は変えられない', async () => {
     await updateDoc(connectorRef(), { writes: false })
     expect(await connectorCommit(anon, owner.uid, [connectorRecord('proofSuggestions', 'cs-off')])).toBe(403)
+    // 2.8: Claude のアイデア（ホームも）・アイデアへの追記の依頼も作れない
+    expect(await connectorCommit(anon, owner.uid, [connectorRecord('ideas', 'cy-off', { titleId: null })])).toBe(403)
+    expect(await connectorCommit(anon, owner.uid, [connectorRecord('ideaAppends', 'cu-off')])).toBe(403)
     expect(await connectorQuery(anon, owner.uid)).toBeGreaterThan(0)
     await expect(updateDoc(connectorRef(), { pairing: 'b'.repeat(64) })).rejects.toThrow()
     await expect(updateDoc(connectorRef(), { pairedAt: 12345 })).rejects.toThrow()

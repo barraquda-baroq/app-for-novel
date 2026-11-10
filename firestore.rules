@@ -5,9 +5,10 @@ rules_version = '2';
 //   持ち主を変えたい時は、Firebase コンソールの Firestore で config/owner を消してから、新しい持ち主でログインする。
 // - 持ち主のデータは users/{uid}/records と、データの形の版 users/{uid}/meta/app だけ。ほかの場所は誰も読み書きできない。
 // - 2.3: Claude 用のコネクタ（Cloudflare Worker）は、持ち主がアプリで許可した匿名のアカウント（config/connector の uid）として、
-//   持ち主の記録を読み、Claude の10の表（推敲案など。2.5 のベンチ作品とその分析、2.6 の資料とその記録も）と、2.7 のゴミ箱へ移す
-//   依頼の表に新しい記録を作ることだけができる（書き換え・削除・ゴミ箱の表・原稿の表は不可）。
-//   ゴミ箱へ移す依頼は作るだけで、カードを確かめてゴミ箱へ移すのはアプリ（持ち主）。
+//   持ち主の記録を読み、Claude の10の表（推敲案など。2.5 のベンチ作品とその分析、2.6 の資料とその記録も）と、2.8 の Claude の
+//   アイデア（ideas。id は cy-…。作るだけで、作者のアイデアの書き換え・削除はできない）、2.7 のゴミ箱へ移す依頼と 2.8 のアイデアへの
+//   追記の依頼（ideaAppends。id は cu-…）に新しい記録を作ることだけができる（書き換え・削除・ゴミ箱の表・原稿の表は不可）。
+//   ゴミ箱へ移す依頼・アイデアへの追記の依頼は作るだけで、カードを確かめてゴミ箱へ移す・カードの終わりに足すのはアプリ（持ち主）。
 //   持ち主の読み書きは今までどおり（|| の左で決まるので、コネクタのための読み取りは増えない）。
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -47,7 +48,13 @@ service cloud.firestore {
     }
 
     // コネクタが作れる記録: Claude の10の表（2.3 の6つと、2.5 のベンチ作品・その分析、2.6 の資料・その記録）と、2.7 のゴミ箱へ移す
-    // 依頼（trashRequests。作るだけ。JSON は 2,000 字まで。アプリが確かめてからカードをゴミ箱へ移し、依頼を消す）。
+    // 依頼（trashRequests。作るだけ。JSON は 2,000 字まで。アプリが確かめてからカードをゴミ箱へ移し、依頼を消す）、2.8 の Claude の
+    // アイデア（ideas）とアイデアへの追記の依頼（ideaAppends。作るだけ。アプリが確かめてカードの終わりに足し、依頼を消す）。
+    // Claude のアイデアの id は cy-…、追記の依頼の id は cu-… に限り、JSON はどちらも 50,000 字まで。作者のアイデアの id（UUID）とは
+    // 重ならないので、作者がオフラインで作ってまだ送っていないアイデアと同じ文書をコネクタが先に作って、作者のカードを Claude の
+    // アイデアにすることはできない（アプリは source と id の形の両方で Claude のアイデアと見る）。
+    // ルールは記録の json の中（titleId など）を読めないので、「読む＋書き込む」のタイトルにだけ書くことはコネクタ（writableTitle）が守り、
+    // 追記とゴミ箱へ移す依頼は、アプリが当てる前にもう一度確かめる（Claude のアイデアか・書き込めるタイトルかホームか・形）。
     // 決まった項目だけで（資料のタグ tags などの項目は足せない）、分割・削除の印・復元の印は無く、文書の名前は {表名}:{id}。
     // 新しく作るだけなので、作者が資料・相対比較の作品に付けたタグ（記録の json の中）をコネクタが書き換えることはない
     // （コネクタは作る資料・作品にタグを付けない。タグは作者がアプリで付けて管理し、作品のタグは「14 検索用タグ」からアプリが付ける）。
@@ -59,7 +66,7 @@ service cloud.firestore {
         && d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.table in ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults',
-          'benchWorks', 'benchAnalyses', 'materials', 'materialNotes', 'trashRequests']
+          'benchWorks', 'benchAnalyses', 'materials', 'materialNotes', 'trashRequests', 'ideas', 'ideaAppends']
         && d.id is string && d.id.size() > 0 && d.id.size() <= 64
         && docId == d.table + ':' + d.id
         && d.device == 'claude-connector'
@@ -67,6 +74,8 @@ service cloud.firestore {
         && d.deleted == false
         && d.json is string && d.json.size() <= 200000
         && (d.table != 'trashRequests' || d.json.size() <= 2000)
+        && (d.table != 'ideas' || (d.id.matches('^cy-[0-9a-z.]+$') && d.json.size() <= 50000))
+        && (d.table != 'ideaAppends' || (d.id.matches('^cu-[0-9a-z.]+$') && d.json.size() <= 50000))
         && d.hash is string && d.hash.size() <= 64;
     }
 
