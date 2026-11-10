@@ -25,14 +25,16 @@ import { createPersistence, type ConflictNote, type Persistence } from '../db/pe
 import * as A from '../domain/acts'
 import * as B from '../domain/benchOps'
 import { applyAutoGenreTags } from '../domain/benchTags'
+import { applyClaudeRequests } from '../domain/claudeRequests'
 import { applyTrashRequests } from '../domain/claudeTrash'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
+import { hashJson } from '../domain/hash'
 import * as M from '../domain/materialOps'
 import { repairData } from '../domain/repair'
 import * as S from '../domain/storyOps'
 import * as T from '../domain/trash'
-import { emptyData, type AppData } from '../domain/types'
+import { emptyData, type AppData, type Idea, type IdeaAppend } from '../domain/types'
 import { newId } from '../domain/util'
 import {
   ACTS_SCENARIOS,
@@ -43,8 +45,12 @@ import {
   type ActsScenario,
   type Order,
 } from '../test/actsScenarios'
+import { appendHeader, ideaEditedByAuthor, ideaReadMark, isClaudeIdea } from '../claude/ideaAppend'
+import { buildAddIdeas, buildIdeaAppend } from '../claude/ideaWrite'
 import { previewPaste } from '../claude/paste'
-import { buildTrashRequests, trashEntryIdsOf } from '../claude/trashRequest'
+import { shortId } from '../claude/refs'
+import { buildTrashRequests, trashEntryIdsOf, trashTargetProblem } from '../claude/trashRequest'
+import { claudeView } from '../claude/visibility'
 import { appModelRef, type AppModel } from './appModel'
 import { createConflictHooks } from './conflicts'
 import { encodeRecord } from './codec'
@@ -311,6 +317,27 @@ async function settle(...ds: Device[]): Promise<void> {
 }
 
 const account = () => `user-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
+/** 端末と同じ形で記録をクラウドに置く（device を渡す。コネクタは claude-connector） */
+async function putRecord(d: Device, table: string, rec: { id: string }, device: string): Promise<void> {
+  const enc = encodeRecord(rec as never)
+  await setDoc(doc(d.fs, 'users', d.uid, 'records', `${table}:${rec.id}`), {
+    table,
+    id: rec.id,
+    json: enc.json,
+    chunks: 0,
+    deleted: false,
+    hash: enc.hash,
+    updated: serverTimestamp(),
+    device,
+  })
+}
+
+/** コネクタと同じ形で記録を作る（device: claude-connector） */
+const connectorPut = (d: Device, table: string, rec: { id: string }) => putRecord(d, table, rec, 'claude-connector')
+
+/** クラウドの文書（記録の表と id の「ideas:…」） */
+const cloud = async (d: Device, docId: string) => (await getDoc(doc(d.fs, 'users', d.uid, 'records', docId))).data()
 
 function withTitle(d: AppData, name: string) {
   const t = E.createTitle(d, name)
@@ -1950,21 +1977,6 @@ describe('相対比較のタグ（エミュレーター）', () => {
 describe('ゴミ箱へ移す依頼の同期（2.7。エミュレーター）', () => {
   const genre14 = (genre: string, sub: string) => `- 判定したジャンル：${genre}\n- ジャンル／サブジャンル：${sub}`
 
-  /** コネクタと同じ形で記録を作る（device: claude-connector） */
-  async function connectorPut(d: Device, table: string, rec: { id: string }): Promise<void> {
-    const enc = encodeRecord(rec as never)
-    await setDoc(doc(d.fs, 'users', d.uid, 'records', `${table}:${rec.id}`), {
-      table,
-      id: rec.id,
-      json: enc.json,
-      chunks: 0,
-      deleted: false,
-      hash: enc.hash,
-      updated: serverTimestamp(),
-      device: 'claude-connector',
-    })
-  }
-
   const analysis = (workId: string, id: string, viewpoint = '構成', body = '三幕。') => ({
     id,
     workId,
@@ -2009,8 +2021,6 @@ describe('ゴミ箱へ移す依頼の同期（2.7。エミュレーター）', (
     await waitFor(async () => (await a.load()).trashRequests[req.id] && (await b.load()).trashRequests[req.id], '依頼が届く')
     return req
   }
-
-  const cloud = async (d: Device, docId: string) => (await getDoc(doc(d.fs, 'users', d.uid, 'records', docId))).data()
 
   it('アプリが処理すると、カード・ゴミ箱の件と中身・依頼の削除がクラウドへ送られ、もう一方の端末にもゴミ箱の1件として届く', async () => {
     const { a, b, card } = await twoDevices()
@@ -2120,6 +2130,322 @@ describe('ゴミ箱へ移す依頼の同期（2.7。エミュレーター）', (
     await waitFor(async () => (await b.load()).trashRequests[req.id], '受け取り直す')
     expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
     expect(SYNC_SCHEMA).toBe(6)
+  })
+})
+
+describe('Claude のアイデアと追記の依頼の同期（2.8。エミュレーター）', () => {
+  const ctx = (now = Date.now()) => ({ now, wasDeleted: () => false })
+
+  /** 追記で足す部分（空行・「…のセッションで以下の内容へ変更」の行・内容） */
+  const block = (req: IdeaAppend) => `\n\n${appendHeader(req.createdAt)}\n${req.text}`
+
+  /**
+   * 2台と『灰の庭』（読む＋書き込む）。作者のアイデアがホームと『灰の庭』に1つずつあり、コネクタが（コネクタと同じ
+   * buildAddIdeas で）ホームと『灰の庭』に Claude のアイデアを1つずつ作った（両方の端末に届いた）
+   */
+  async function twoDevices() {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '灰の庭')
+      titleId = t.result
+      const inTitle = E.addIdea(t.data, titleId, '', 'タイトルの作者の案').data
+      return E.addIdea(inTitle, null, '', 'ホームの作者の案').data
+    })
+    await settle(a, b)
+    const add = async (titleRef: string | undefined, name: string, content: string) => {
+      const raw = await a.load()
+      const built = buildAddIdeas(raw, claudeView(raw), { title_id: titleRef, items: [{ name, content }] }, ctx())
+      expect(built.items.map((i) => i.status)).toEqual(['created'])
+      const rec = built.records[0].record
+      await connectorPut(a, 'ideas', rec)
+      await waitFor(async () => (await a.load()).ideas[rec.id], 'a にアイデアが届く')
+      return rec
+    }
+    const home = await add(undefined, '第3章の動機', '【動機】\n・兄を探す')
+    const inTitle = await add(titleId, '', '【場面】\n・灰の降る庭で再会する')
+    await waitFor(async () => {
+      const d = await b.load()
+      return d.ideas[home.id] && d.ideas[inTitle.id]
+    }, 'b にアイデアが届く')
+    return { a, b, home, inTitle }
+  }
+
+  /** コネクタが追記の依頼を作る（コネクタと同じ buildIdeaAppend。読んだ印は Claude に見せる内容から）。online の端末に届くまで待つ */
+  async function requestAppend(from: Device, online: Device[], ideaId: string, content: string): Promise<IdeaAppend> {
+    const raw = await from.load()
+    const view = claudeView(raw)
+    const built = buildIdeaAppend(
+      raw,
+      view,
+      { idea_id: shortId('idea', ideaId), read_mark: ideaReadMark(view.ideas[ideaId].body), content },
+      ctx(),
+    )
+    expect(built.status).toBe('created')
+    const req = built.records[0].record
+    await connectorPut(from, 'ideaAppends', req)
+    for (const d of online) await waitFor(async () => (await d.load()).ideaAppends[req.id], `${d.name} に追記の依頼が届く`)
+    return req
+  }
+
+  /** コネクタがゴミ箱へ移す依頼を作る（コネクタと同じ buildTrashRequests。i:…） */
+  async function buildIdeaTrash(d: Device, ideaIds: string[]) {
+    const raw = await d.load()
+    return buildTrashRequests(
+      claudeView(raw),
+      { cards: ideaIds.map((id) => shortId('idea', id)) },
+      { now: Date.now(), trash: raw.trashRecords, wasDeleted: () => false, dailyLeft: 100 },
+    )
+  }
+
+  /** 依頼を処理する（ClaudeRequests と同じ applyClaudeRequests。追記が先・ゴミ箱が後） */
+  async function processOn(d: Device, at = Date.now()) {
+    let result: ReturnType<typeof applyClaudeRequests>['result'] = { appends: [], trash: [] }
+    await d.edit((data) => {
+      const r = applyClaudeRequests(data, at)
+      result = r.result
+      return r.data
+    })
+    return result
+  }
+
+  it('コネクタが作ったアイデアと追記の依頼が届き、受け持ちの端末が足すと、もう一方の端末にも1字も違わない本文が届く。クラウドの依頼は削除の印', async () => {
+    const { a, b, home } = await twoDevices()
+    const req = await requestAppend(a, [a, b], home.id, '【変更】\n・兄ではなく姉を探す')
+    const expected = `${home.body}${block(req)}`
+    // Claude にはアプリが足す前から、追記した後の本文が見える（同じ部品で当てる）
+    expect(claudeView(await a.load()).ideas[home.id].body).toBe(expected)
+    const at = Date.now()
+    expect((await processOn(a, at)).appends.map((o) => o.status)).toEqual(['appended'])
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      // 並び・済み・場所は変えない。作者が直していないので、指紋は追記した後の本文のもの
+      expect(data.ideas[home.id]).toEqual({
+        ...home,
+        body: expected,
+        appendIds: [req.id],
+        claudeHash: hashJson(expected),
+        updatedAt: at,
+      })
+      expect(ideaEditedByAuthor(data.ideas[home.id])).toBe(false)
+      expect(data.ideaAppends).toEqual({})
+    }
+    expect((await cloud(a, `ideaAppends:${req.id}`))?.deleted).toBe(true)
+    expect([...a.notes, ...b.notes]).toEqual([])
+  })
+
+  it('2台が同じ依頼を別々に足しても、追記は1回（同期の競合のつなぎも控えも無い）。揃った後は送り直し続けない', async () => {
+    const { a, b, home } = await twoDevices()
+    const req = await requestAppend(a, [a, b], home.id, '・舞台は冬')
+    a.offline()
+    b.offline()
+    await processOn(a)
+    await processOn(b, Date.now() + 1_000)
+    await a.online()
+    await settle(a)
+    await b.online()
+    await settle(a, b)
+    const data = await a.load()
+    expect(data.ideas[home.id].body).toBe(`${home.body}${block(req)}`)
+    expect(data.ideas[home.id].appendIds).toEqual([req.id])
+    expect(data.ideaAppends).toEqual({})
+    expect(Object.keys(data.trashEntries)).toEqual([])
+    expect([...a.notes, ...b.notes]).toEqual([])
+    const ref = doc(a.fs, 'users', a.uid, 'records', `ideas:${home.id}`)
+    const first = (await getDoc(ref)).data()?.updated
+    await new Promise((r) => setTimeout(r, 500))
+    await a.engine?.idle()
+    await b.engine?.idle()
+    expect((await getDoc(ref)).data()?.updated).toEqual(first)
+    expect(await a.p.outboxCount()).toBe(0)
+    expect(await b.p.outboxCount()).toBe(0)
+  })
+
+  it('足している間に、もう一方の端末がオフラインで直していたら、作者の直しの後ろに追記を1回（つなぎ無し）。直したカードはゴミ箱へ移せない', async () => {
+    const { a, b, inTitle } = await twoDevices()
+    const req = await requestAppend(a, [a, b], inTitle.id, '・雪の日にする')
+    b.offline()
+    const edited = inTitle.body.replace('・灰の降る庭で再会する', '・灰の降る庭で再会する（作者が直した）\n・二人は黙ったまま')
+    await b.edit((d) => E.updateIdea(d, inTitle.id, { body: edited }))
+    expect((await processOn(a)).appends.map((o) => o.status)).toEqual(['appended'])
+    await settle(a)
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.ideas[inTitle.id].body).toBe(`${edited}${block(req)}`)
+      expect(data.ideas[inTitle.id].appendIds).toEqual([req.id])
+      expect(ideaEditedByAuthor(data.ideas[inTitle.id])).toBe(true)
+      expect(data.ideaAppends).toEqual({})
+    }
+    expect([...a.notes, ...b.notes]).toEqual([])
+    // 作者が直したので、Claude はゴミ箱へ移せない（コネクタが断る。アプリの確かめ方も同じ）
+    const built = await buildIdeaTrash(a, [inTitle.id])
+    expect(built.items.map((i) => i.status)).toEqual(['edited'])
+    expect(built.records).toEqual([])
+    expect(trashTargetProblem('ideas', (await b.load()).ideas[inTitle.id])).toBe('edited')
+  })
+
+  it('足したアイデアが依頼の削除より先に届いても、もう一方の端末は足し直さない（依頼だけ消す）', async () => {
+    const { a, b, home } = await twoDevices()
+    const req = await requestAppend(a, [a, b], home.id, '・舞台は冬')
+    a.offline()
+    await processOn(a)
+    const appended = (await a.load()).ideas[home.id]
+    // a が送ったもののうち、アイデアの更新だけが先に届いた（依頼の削除はまだ届いていない）
+    await putRecord(a, 'ideas', appended, 'a')
+    await waitFor(async () => (await b.load()).ideas[home.id]?.body === appended.body, 'b にアイデアの更新だけが届く')
+    expect((await b.load()).ideaAppends[req.id]).toBeDefined()
+    expect((await processOn(b)).appends.map((o) => o.status)).toEqual(['applied'])
+    await settle(b)
+    await a.online()
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.ideas[home.id].body).toBe(`${home.body}${block(req)}`)
+    expect(data.ideas[home.id].appendIds).toEqual([req.id])
+    expect(data.ideaAppends).toEqual({})
+    expect((await cloud(a, `ideaAppends:${req.id}`))?.deleted).toBe(true)
+    expect([...a.notes, ...b.notes]).toEqual([])
+  })
+
+  it('同期の形の版が古い端末（2.7）は、次の同期で追記の依頼を受け取り直す', async () => {
+    const { a, b, home } = await twoDevices()
+    b.offline()
+    const req = await requestAppend(a, [a], home.id, '・舞台は冬')
+    // 受け取った位置がずっと先にある端末（2.7 の端末が知らない表を飛ばして位置を進めた時と同じ）
+    await b.p.setMeta('cursor', { s: 4_000_000_000, n: 0 })
+    await b.p.setMeta('syncSchema', 5)
+    await b.online()
+    await waitFor(async () => (await b.load()).ideaAppends[req.id], '受け取り直す')
+    expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
+    expect(SYNC_SCHEMA).toBe(6)
+  })
+
+  it('Claude の追記を足したアイデアはゴミ箱へ移せ（追記した後の形で入り、戻すと Claude のアイデアのまま）、依頼の後に作者が直したアイデアは移さない', async () => {
+    const { a, b, home, inTitle } = await twoDevices()
+    const r1 = await requestAppend(a, [a, b], home.id, '・舞台は冬')
+    const r2 = await requestAppend(a, [a, b], inTitle.id, '・雪の日にする')
+    expect((await processOn(a)).appends.map((o) => o.status)).toEqual(['appended', 'appended'])
+    await settle(a, b)
+    const built = await buildIdeaTrash(a, [home.id, inTitle.id])
+    expect(built.items.map((i) => i.status)).toEqual(['requested', 'requested'])
+    expect(built.records.map((r) => r.record.v)).toEqual([2, 2])
+    for (const { record } of built.records) await connectorPut(a, 'trashRequests', record)
+    for (const d of [a, b])
+      await waitFor(async () => Object.keys((await d.load()).trashRequests).length === 2, `${d.name} にゴミ箱へ移す依頼が届く`)
+    // 処理する前に、作者が b でタイトルのアイデアを直した
+    const edited = `${(await b.load()).ideas[inTitle.id].body}\n・作者の書き足し`
+    await b.edit((d) => E.updateIdea(d, inTitle.id, { body: edited }))
+    await settle(a, b)
+    const statuses = (await processOn(a)).trash.map((o) => `${o.targetId === home.id ? 'home' : 'title'}:${o.status}`)
+    expect(statuses.sort()).toEqual(['home:moved', 'title:edited'])
+    await settle(a, b)
+    const data = await b.load()
+    const ids = trashEntryIdsOf(built.records.find((r) => r.record.targetId === home.id)!.record.id)
+    expect(data.ideas[home.id]).toBeUndefined()
+    expect(data.trashEntries[ids.entry]).toMatchObject({ kind: 'idea', by: 'claude', origin: { titleId: null } })
+    const trashed = data.trashRecords[ids.record(0)].record as Idea
+    expect(trashed.body).toBe(`${home.body}${block(r1)}`)
+    expect(data.ideas[inTitle.id]).toMatchObject({ body: edited, appendIds: [r2.id] })
+    expect(data.trashRequests).toEqual({})
+    for (const { record } of built.records) expect((await cloud(a, `trashRequests:${record.id}`))?.deleted).toBe(true)
+    expect([...a.notes, ...b.notes]).toEqual([])
+    // ゴミ箱から戻すと、もう一方の端末でも戻る（Claude のアイデアのまま。直していないので、もう一度移せる）
+    await b.edit((d) => T.restoreTrashEntry(d, ids.entry).data)
+    await settle(a, b)
+    const back = (await a.load()).ideas[home.id]
+    expect(back).toMatchObject({ source: 'claude', body: trashed.body, claudeHash: trashed.claudeHash, appendIds: [r1.id] })
+    expect(isClaudeIdea(back)).toBe(true)
+    expect(ideaEditedByAuthor(back)).toBe(false)
+  })
+
+  it('済み・並べ替え・仕切りの移動は「作者が直した」に数えない（もう一方の端末の追記とも合わさる）。どれもゴミ箱へ移せる', async () => {
+    const { a, b, home, inTitle } = await twoDevices()
+    const req = await requestAppend(a, [a, b], home.id, '・舞台は冬')
+    b.offline()
+    // b で: ホームの Claude のアイデアを1つ下へ・『灰の庭』の Claude のアイデアを済みにしてホームへ移す
+    await b.edit((d) => E.moveIdeaStep(d, home.id, 1))
+    await b.edit((d) => E.setIdeaChecked(d, inTitle.id, true))
+    await b.edit((d) => E.moveIdeaToSection(d, inTitle.id, null))
+    const order = (await b.load()).ideas[home.id].order
+    expect(order).not.toBe(home.order)
+    // a で: 追記を足す
+    expect((await processOn(a)).appends.map((o) => o.status)).toEqual(['appended'])
+    await settle(a)
+    await b.online()
+    await settle(a, b)
+    const data = await a.load()
+    expect(data.ideas[home.id]).toMatchObject({ body: `${home.body}${block(req)}`, order, appendIds: [req.id] })
+    expect(data.ideas[inTitle.id]).toMatchObject({ body: inTitle.body, titleId: null, checked: true })
+    for (const id of [home.id, inTitle.id]) expect(ideaEditedByAuthor(data.ideas[id])).toBe(false)
+    expect([...a.notes, ...b.notes]).toEqual([])
+    const built = await buildIdeaTrash(a, [home.id, inTitle.id])
+    expect(built.items.map((i) => i.status)).toEqual(['requested', 'requested'])
+    for (const { record } of built.records) await connectorPut(a, 'trashRequests', record)
+    await waitFor(async () => Object.keys((await a.load()).trashRequests).length === 2, 'a にゴミ箱へ移す依頼が届く')
+    expect((await processOn(a)).trash.map((o) => o.status)).toEqual(['moved', 'moved'])
+    await settle(a, b)
+    const after = await b.load()
+    expect(after.ideas[home.id]).toBeUndefined()
+    expect(after.ideas[inTitle.id]).toBeUndefined()
+    expect(Object.values(after.trashEntries).filter((e) => e.by === 'claude' && e.kind === 'idea')).toHaveLength(2)
+  })
+
+  /**
+   * 2.7 のアプリの依頼の処理（知っている依頼の形の版が 1）。依頼の形の版（trashTargets.ts）だけを 2.7 に戻して、
+   * 処理（domain/claudeTrash.ts）を読み込み直す
+   */
+  async function trashProcessorOf27(): Promise<typeof applyTrashRequests> {
+    vi.resetModules()
+    vi.doMock('../claude/trashTargets', async (importOriginal) => {
+      const m = await importOriginal<typeof import('../claude/trashTargets')>()
+      return {
+        ...m,
+        TRASH_REQUEST_VERSION: 1,
+        isNewerTrashRequest: (r: unknown) => {
+          const v = (r as { v?: unknown } | null | undefined)?.v
+          return typeof v === 'number' && v > 1
+        },
+      }
+    })
+    try {
+      return (await import('../domain/claudeTrash')).applyTrashRequests
+    } finally {
+      vi.doUnmock('../claude/trashTargets')
+      vi.resetModules()
+    }
+  }
+
+  it('アイデアのゴミ箱へ移す依頼（形の版 2）は、2.7 のアプリの処理では触らずに残り（何も送らない）、2.8 の端末が移す', async () => {
+    const { a, b, home } = await twoDevices()
+    const built = await buildIdeaTrash(a, [home.id])
+    const req = built.records[0].record
+    expect(req.v).toBe(2)
+    await connectorPut(a, 'trashRequests', req)
+    for (const d of [a, b]) await waitFor(async () => (await d.load()).trashRequests[req.id], `${d.name} に依頼が届く`)
+    const process27 = await trashProcessorOf27()
+    const before = await b.load()
+    let result: unknown[] = ['まだ']
+    await b.edit((d) => {
+      const r = process27(d, Date.now())
+      result = r.result
+      return r.data
+    })
+    expect(result).toEqual([])
+    expect(await b.p.outboxCount()).toBe(0)
+    expect(stableStringify(await b.load())).toBe(stableStringify(before))
+    // 2.8 の端末が移す
+    expect((await processOn(a)).trash.map((o) => o.status)).toEqual(['moved'])
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.ideas[home.id]).toBeUndefined()
+    expect(data.trashRequests).toEqual({})
+    expect(data.trashEntries[trashEntryIdsOf(req.id).entry]).toMatchObject({ kind: 'idea', by: 'claude' })
   })
 })
 

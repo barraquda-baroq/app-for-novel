@@ -6,11 +6,13 @@ import { appModelRef } from '../../../src/sync/appModel'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import * as B from '../../../src/domain/benchOps'
 import { applyAutoGenreTags } from '../../../src/domain/benchTags'
+import { applyClaudeRequests } from '../../../src/domain/claudeRequests'
 import { applyTrashRequests } from '../../../src/domain/claudeTrash'
 import * as C from '../../../src/domain/claudeOps'
 import * as E from '../../../src/domain/entityOps'
 import * as M from '../../../src/domain/materialOps'
 import * as S from '../../../src/domain/storyOps'
+import { isClaudeIdea } from '../../../src/claude/ideaAppend'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { FirestoreError } from '../../src/vault/firestore'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
@@ -549,6 +551,107 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     const again = await tool(core, 'novel_move_cards_to_trash', { cards: [n1, n2] })
     expect(again.text).toContain(`- 移さない ${n1}（もうゴミ箱にある）`)
     expect(again.text).toContain(`- 移す ${n2}`)
+  })
+
+  it('アイデア（2.8）: 本番のルールでホーム・タイトルのアイデアと追記・ゴミ箱へ移す依頼が作れ、コネクタからのアイデアの書き換え・削除は拒まれる。端末が処理すると写しから依頼が消え、追記した後のカードが見える', async () => {
+    const { owner, who, titleId } = await ownerWithNovel(['本文の一話目。'])
+    const other = await makeDevice('other', who)
+    await other.online()
+    // 作者が書いたホームのアイデア（Claude からは見えない）
+    let authorId = ''
+    await owner.edit((d) => {
+      const r = E.addIdea(d, null, '', 'ホームの作者の案')
+      authorId = r.result
+      return r.data
+    })
+    await settle(owner, other)
+    const { core } = makeConnector()
+    await pair(core, owner)
+    const home = await tool(core, 'novel_add_ideas', { items: [{ name: '第3章の動機', content: '【動機】\n・兄を探す' }] })
+    expect(home.isError).toBeUndefined()
+    expect(home.text).toContain('入れた場所: ホームのアイデア（')
+    const inTitle = await tool(core, 'novel_add_ideas', { title_id: titleId, items: [{ content: '【場面】\n・灰の降る庭' }] })
+    expect(inTitle.text).toContain('入れた場所: タイトル『星の庭』のアイデア（')
+    const [homeRef] = (home.structured as { created: { id: string }[] }).created.map((c) => c.id)
+    const [titleRef] = (inTitle.structured as { created: { id: string }[] }).created.map((c) => c.id)
+    for (const d of [owner, other])
+      await waitFor(
+        async () => Object.values((await d.load()).ideas).filter((i) => isClaudeIdea(i)).length === 2,
+        `${d.name} に Claude のアイデアが届く`,
+        30_000,
+      )
+    const local = await owner.load()
+    const homeIdea = Object.values(local.ideas).find((i) => isClaudeIdea(i) && i.titleId === null)!
+    // 端末に届いた内容 = コネクタが書いた JSON（済みでないアイデアの先頭）
+    expect(stableStringify(homeIdea)).toBe(stableStringify(core.views().raw.ideas[homeIdea.id]))
+    expect(homeIdea.order).toBeLessThan(local.ideas[authorId].order)
+    // 読む（title_id なし。作者が書いたホームのアイデアは見えない）→ 印 → 追記
+    const list = (await tool(core, 'novel_get_notes', { kind: 'ideas' })).text
+    expect(list).toContain(`${homeRef} 【Claude】`)
+    expect(list).not.toContain('ホームの作者の案')
+    const full = (await tool(core, 'novel_get_notes', { kind: 'ideas', ids: [homeRef] })).text
+    const mark = /印: (\S+) ===/.exec(full)![1]
+    const appended = await tool(core, 'novel_append_to_idea', { idea_id: homeRef, read_mark: mark, content: '【変更】\n・姉を探す' })
+    expect(appended.isError).toBeUndefined()
+    expect(appended.text).toContain('アイデアに追記: 追記 1件')
+    // Claude からは、もう追記した後の中身（アプリが足すまで「同期待ち」）
+    const seen = (await tool(core, 'novel_get_notes', { kind: 'ideas', ids: [homeRef] })).text
+    expect(seen).toContain('アプリの同期待ちの追記 1件を含む')
+    const seenBody = seen.slice(seen.indexOf('===\n') + 4)
+    expect(seenBody).toMatch(/\n\n\d{4}\/\d{2}\/\d{2}のセッションで以下の内容へ変更\n【変更】\n・姉を探す$/)
+    // コネクタは作るだけ: 作者のアイデアも Claude のアイデアも、削除・書き換えは本番のルールが拒む
+    for (const id of [authorId, homeIdea.id]) {
+      const name = core.fs.name(`users/${owner.uid}/records/ideas:${id}`)
+      await expect(core.fs.commit([{ delete: name }])).rejects.toSatisfy((e) => e instanceof FirestoreError && e.status === 403)
+      await expect(
+        core.fs.commit([
+          {
+            update: { name, fields: { table: { stringValue: 'ideas' }, id: { stringValue: id }, deleted: { booleanValue: true } } },
+            updateTransforms: [{ fieldPath: 'updated', setToServerValue: 'REQUEST_TIME' }],
+          },
+        ]),
+      ).rejects.toSatisfy((e) => e instanceof FirestoreError && e.status === 403)
+    }
+    // 端末に依頼が届き、受け持ちの端末が処理する（ClaudeRequests と同じ applyClaudeRequests）
+    await waitFor(async () => Object.keys((await owner.load()).ideaAppends).length === 1, '追記の依頼が端末に届く', 30_000)
+    await owner.edit((d) => applyClaudeRequests(d, Date.now()).data)
+    await settle(owner, other)
+    await waitFor(async () => (await other.load()).ideas[homeIdea.id]?.body === seenBody, 'もう一方の端末に追記した後の本文が届く', 30_000)
+    // 写しから依頼が消え、追記した後のカード（印は Claude が先に見たものと同じ）
+    await waitFor(
+      async () => {
+        const t = (await tool(core, 'novel_get_notes', { kind: 'ideas', ids: [homeRef] })).text
+        return !t.includes('同期待ち') && t.endsWith(seenBody)
+      },
+      'コネクタの写しから追記の依頼が消える',
+      30_000,
+    )
+    expect(Object.keys(core.views().raw.ideaAppends)).toEqual([])
+    expect((await tool(core, 'novel_get_notes', { kind: 'ideas', ids: [homeRef] })).text.split('\n')[0]).toBe(
+      seen.split('\n')[0].replace('・アプリの同期待ちの追記 1件を含む', ''),
+    )
+    // ゴミ箱へ移す（i:…）。端末が処理するとゴミ箱へ（追記した後の形で）
+    const trash = await tool(core, 'novel_move_cards_to_trash', { cards: [homeRef, titleRef] })
+    expect(trash.text).toContain(`- 移す ${homeRef} ホームのアイデア「`)
+    expect(trash.text).toContain(`- 移す ${titleRef} タイトル『星の庭』のアイデア「`)
+    await waitFor(async () => Object.keys((await owner.load()).trashRequests).length === 2, 'ゴミ箱へ移す依頼が端末に届く', 30_000)
+    await owner.edit((d) => applyClaudeRequests(d, Date.now()).data)
+    await settle(owner, other)
+    await waitFor(async () => !Object.values((await other.load()).ideas).some((i) => isClaudeIdea(i)), 'もう一方の端末からも消える', 30_000)
+    const after = await other.load()
+    expect(Object.values(after.trashEntries).map((e) => [e.kind, e.by])).toEqual([
+      ['idea', 'claude'],
+      ['idea', 'claude'],
+    ])
+    expect(Object.values(after.trashRecords).map((r) => (r.record as { body: string }).body)).toContain(seenBody)
+    expect(after.ideas[authorId]).toBeDefined()
+    expect(after.trashRequests).toEqual({})
+    expect([...owner.notes, ...other.notes]).toEqual([])
+    await waitFor(
+      async () => (await tool(core, 'novel_get_notes', { kind: 'ideas' })).text.includes('（ありません）'),
+      'コネクタの写しからも消える',
+      30_000,
+    )
   })
 
   it('コネクタが作った文書は、端末の decodeRecord で読め、device は claude-connector', async () => {

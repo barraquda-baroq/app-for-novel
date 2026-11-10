@@ -5,6 +5,12 @@
 import { expect, test, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { trashRequestId } from '../src/claude/derivedId'
+import { ideaReadMark } from '../src/claude/ideaAppend'
+import { buildAddIdeas, buildIdeaAppend } from '../src/claude/ideaWrite'
+import { shortId } from '../src/claude/refs'
+import { buildTrashRequests } from '../src/claude/trashRequest'
+import { claudeView } from '../src/claude/visibility'
+import type { Idea } from '../src/domain/types'
 import { encodeRecord } from '../src/sync/codec'
 import type { Rec } from '../src/sync/merge'
 import { darkSurfaces, noHorizontalScroll, openApp, seed, seedTitleWithEpisodes, tapSize } from './helpers'
@@ -262,6 +268,129 @@ test('ゴミ箱へ移す依頼（2.7）: Claude の依頼が届くと、同期�
     .poll(async () => (await readDoc(`users/${uid}/records/benchAnalyses:${card.id}`))?.deleted?.booleanValue, {
       timeout: 20_000,
     })
+    .toBe(false)
+  await ctx.close()
+})
+
+test('Claude のアイデア（2.8）: コネクタが作ったアイデアが済みでないアイデアの先頭に「Claude が作成」の印つきで出る。追記の依頼でカードの終わりに足され、ゴミ箱へ移す依頼でゴミ箱へ移り、戻せる', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext()
+  const page = await ctx.newPage()
+  await openApp(page)
+  const uid = await signIn(page, `e2e-ideas-${Date.now()}`)
+  const titleId = await seed(page, ({ actions }) => {
+    const t = actions.createTitle('灰の庭')
+    actions.addIdea(null, '', 'ホームの作者の案')
+    actions.addIdea(t, '', 'タイトルの作者の案')
+    return t
+  })
+  await expect.poll(() => readDoc(`users/${uid}/records/titles:${titleId}`), { timeout: 20_000 }).not.toBeNull()
+  // コネクタがホームと『灰の庭』にアイデアを作った（コネクタと同じ buildAddIdeas。2026/11/12 14:32 日本時間）
+  const madeAt = Date.UTC(2026, 10, 12, 5, 32)
+  const data = await page.evaluate(() => window.__ns.getData())
+  const add = (title_id: string | undefined, name: string, content: string): Idea => {
+    const built = buildAddIdeas(
+      data,
+      claudeView(data),
+      { title_id, items: [{ name, content }] },
+      { now: madeAt, wasDeleted: () => false },
+    )
+    expect(built.items.map((i) => i.status)).toEqual(['created'])
+    return built.records[0].record
+  }
+  const home = add(undefined, '第3章の動機', '【動機】\n・兄を探す')
+  const inTitle = add(titleId, '', '【場面】\n・灰の降る庭で再会する')
+  for (const rec of [home, inTitle]) await putConnectorRecord(uid, 'ideas', rec as unknown as Rec)
+  const homeCards = page.locator('[data-testid="idea-section"][data-section="none"]').getByTestId('idea-card')
+  const titleCards = page.locator(`[data-testid="idea-section"][data-section="${titleId}"]`).getByTestId('idea-card')
+  await expect(homeCards).toHaveCount(2, { timeout: 20_000 })
+  await expect(titleCards).toHaveCount(2, { timeout: 20_000 })
+  // どちらも済みでないアイデアの先頭に、「Claude が作成」の印つきで出る（作者のアイデアには付かない）
+  for (const [cards, lead] of [
+    [homeCards, '2026/11/12 14:32　第3章の動機'],
+    [titleCards, '2026/11/12 14:32'],
+  ] as const) {
+    await expect(cards.first()).toHaveAttribute('data-source', 'claude')
+    await expect(cards.first().getByTestId('idea-by-claude')).toHaveText('Claude が作成')
+    await expect(cards.first().getByTestId('idea-lead')).toHaveText(lead)
+    await expect(cards.nth(1).getByTestId('idea-by-claude')).toHaveCount(0)
+  }
+  const card = page.locator(`[data-idea-id="${home.id}"]`)
+
+  // Claude が追記の依頼を作った（コネクタと同じ buildIdeaAppend。読んだ印は Claude に見せる内容から）
+  const before = await page.evaluate(() => window.__ns.getData())
+  const view = claudeView(before)
+  const content = '【変更】\n・兄ではなく姉を探す'
+  const appendAt = Date.UTC(2026, 10, 12, 6, 0)
+  const built = buildIdeaAppend(
+    before,
+    view,
+    { idea_id: shortId('idea', home.id), read_mark: ideaReadMark(view.ideas[home.id].body), content },
+    { now: appendAt, wasDeleted: () => false },
+  )
+  expect(built.status).toBe('created')
+  const req = built.records[0].record
+  await putConnectorRecord(uid, 'ideaAppends', req as unknown as Rec)
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'Claude の依頼で、アイデア「2026/11/12 14:32　第3章の動機」の終わりに追記しました' }),
+  ).toBeVisible({ timeout: 20_000 })
+  await expect(card.getByTestId('idea-body')).toContainText('2026/11/12のセッションで以下の内容へ変更')
+  const appended = `${home.body}\n\n2026/11/12のセッションで以下の内容へ変更\n${content}`
+  const after = (await page.evaluate((id) => window.__ns.getData().ideas[id], home.id))!
+  expect(after.body).toBe(appended)
+  // 並びの位置・済み・場所は変わらない（まだ先頭で、印も付いたまま）
+  expect([after.order, after.checked, after.checkedAt, after.titleId]).toEqual([before.ideas[home.id].order, false, null, null])
+  expect(after.appendIds).toEqual([req.id])
+  await expect(homeCards.first()).toHaveAttribute('data-idea-id', home.id)
+  await expect(card.getByTestId('idea-by-claude')).toBeVisible()
+  // クラウドでも、依頼は削除の印・アイデアは追記した後の本文
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/ideaAppends:${req.id}`))?.deleted?.booleanValue, { timeout: 20_000 })
+    .toBe(true)
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/ideas:${home.id}`))?.json?.stringValue, { timeout: 20_000 })
+    .toContain(req.id)
+
+  // 作者に頼まれた Claude が、ゴミ箱へ移す依頼を作った（コネクタと同じ buildTrashRequests。i:…）
+  const now = await page.evaluate(() => window.__ns.getData())
+  const trash = buildTrashRequests(
+    claudeView(now),
+    { cards: [shortId('idea', home.id)] },
+    { now: Date.now(), trash: now.trashRecords, wasDeleted: () => false, dailyLeft: 100 },
+  )
+  expect(trash.items.map((i) => i.status)).toEqual(['requested'])
+  const trashReq = trash.records[0].record
+  await putConnectorRecord(uid, 'trashRequests', trashReq as unknown as Rec)
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Claude の依頼で、アイデア1件をゴミ箱へ移しました（30日はゴミ箱から戻せます）' }),
+  ).toBeVisible({ timeout: 20_000 })
+  await expect(card).toHaveCount(0)
+  await expect(homeCards).toHaveCount(1)
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/trashRequests:${trashReq.id}`))?.deleted?.booleanValue, {
+      timeout: 20_000,
+    })
+    .toBe(true)
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/ideas:${home.id}`))?.deleted?.booleanValue, { timeout: 20_000 })
+    .toBe(true)
+  // ゴミ箱に「Claude の依頼」の札。元に戻すと、追記した後の形で Claude のアイデアとして戻る
+  await page.goto('/#/trash')
+  const row = page.getByTestId('trash-row').filter({ hasText: '2026/11/12 14:32　第3章の動機' })
+  await expect(row.getByTestId('trash-kind')).toHaveText('アイデア')
+  await expect(row.getByTestId('trash-by-claude')).toHaveText('Claude の依頼')
+  await expect(row.getByTestId('trash-place')).toHaveText('どのタイトルにも属さない')
+  await row.getByTestId('trash-restore').click()
+  await page.goto('/#/')
+  await expect(card).toBeVisible({ timeout: 20_000 })
+  await expect(card.getByTestId('idea-by-claude')).toHaveText('Claude が作成')
+  await expect(card.getByTestId('idea-body')).toContainText('2026/11/12のセッションで以下の内容へ変更')
+  expect((await page.evaluate((id) => window.__ns.getData().ideas[id], home.id))!.body).toBe(appended)
+  await expect
+    .poll(async () => (await readDoc(`users/${uid}/records/ideas:${home.id}`))?.deleted?.booleanValue, { timeout: 20_000 })
     .toBe(false)
   await ctx.close()
 })
