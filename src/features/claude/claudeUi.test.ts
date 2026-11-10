@@ -82,4 +82,20 @@ describe('Claude ができること（同意・設定の画面）', () => {
     expect(cannot).toContain('ゴミ箱へ移すこと以外の削除はできません')
     expect(cannot).not.toContain('削除もアプリでだけ')
   })
+
+  it('2.8: アイデアを足す・ホームのアイデア・Claude が足したアイデアへの追記と、作者が書いたアイデアには追記しない・読まないことを書く', () => {
+    const can = CLAUDE_CAN.join('\n')
+    for (const word of ['アイデアを新しく足す', 'ホームのアイデア', '追記', '「Claude が作成」の印', '前の中身は消さず'])
+      expect(can, word).toContain(word)
+    // ゴミ箱へ移せるものにアイデアが入る（2.7 の言葉はそのまま）。Claude の追記は「作者が直した」に数えない
+    const trash = CLAUDE_CAN.find((t) => t.includes('ゴミ箱へ移す'))!
+    expect(trash).toContain('相対比較の分析・資料の記録・アイデア')
+    expect(trash).toContain('Claude の追記は直したことに数えません')
+    const cannot = CLAUDE_CANNOT.join('\n')
+    for (const word of ['作者が書いたアイデアに追記する', '作者が書いたどのタイトルにも属さないアイデア', '前の中身は消せません'])
+      expect(cannot, word).toContain(word)
+    expect(CLAUDE_ACCESS_HINTS.write).toContain('アイデア')
+    expect(CLAUDE_ACCESS_HINTS.write).toContain('追記')
+    expect(CLAUDE_ACCESS_HINTS.read).toContain('アイデアなどは足せません')
+  })
 })

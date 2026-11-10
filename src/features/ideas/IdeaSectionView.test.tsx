@@ -1,13 +1,14 @@
 // アイデアの仕切り: 済みのチェックボックス（済みは斜線＋グレーで下へ沈む）、並べ替えは済みでないものだけ、
-// 古い版の見出しは編集して保存すると内容の1行目にまとまる。
+// 古い版の見出しは編集して保存すると内容の1行目にまとまる。Claude が作ったアイデア（2.8）には「Claude が作成」の印。
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence } from '../../db/persistence'
-import type { ID } from '../../domain/types'
+import { hashJson } from '../../domain/hash'
+import type { ID, Idea } from '../../domain/types'
 import { actions } from '../../store/actions'
-import { getData, initStore, resetStoreForTests } from '../../store/appStore'
+import { commit, getData, initStore, resetStoreForTests } from '../../store/appStore'
 import { useToasts } from '../../store/uiStore'
 import { AppFrame } from '../../ui/Layout'
 import { TitleIdeasTab } from '../title/ideas/TitleIdeasTab'
@@ -244,5 +245,81 @@ describe('古い版の見出し', () => {
     await user.click(screen.getByTestId('idea-save'))
     const [idea] = Object.values(getData().ideas)
     expect(idea).toMatchObject({ heading: '', body: '新しい案', checked: false, checkedAt: null })
+  })
+})
+
+describe('Claude が作ったアイデア（2.8）', () => {
+  /** コネクタが作ったアイデアが同期で届いた（id は cy-…。source だけでは Claude のアイデアにしない） */
+  function put(id: string, titleId: ID, body: string, order: number, extra: Partial<Idea> = {}) {
+    const idea: Idea = {
+      id,
+      titleId,
+      heading: '',
+      body,
+      checked: false,
+      checkedAt: null,
+      order,
+      source: 'claude',
+      v: 1,
+      claudeHash: hashJson(body),
+      createdAt: 100,
+      updatedAt: 100,
+      ...extra,
+    }
+    const data = getData()
+    commit({ ...data, ideas: { ...data.ideas, [id]: idea } })
+  }
+
+  it('「Claude が作成」の印は Claude が作ったアイデアだけ（済みにしても出す）。1行目の日付と時刻は少し目立たせ、内容はそのまま出す', async () => {
+    const user = userEvent.setup()
+    let titleId = ''
+    act(() => {
+      titleId = actions.createTitle('灰の庭')
+      actions.addIdea(titleId, '', '作者の案')
+      put('cy-abc123', titleId, '2026/11/12 14:32\u3000第3章の動機\n【動機】\n・兄を探す\n# 見出しの記号もそのまま', -1)
+      // source が claude でも、id が cy- でないもの（コネクタは作れない）は作者のアイデアとして扱う
+      put('6f1c1c9e-0000-4000-8000-000000000001', titleId, '形だけ似せた案', 5)
+    })
+    renderTab(titleId)
+    expect(texts()[0]).toContain('2026/11/12 14:32')
+    const mine = card('2026/11/12 14:32')
+    expect(mine.dataset.source).toBe('claude')
+    const badge = within(mine).getByTestId('idea-by-claude')
+    expect(badge.textContent).toBe('Claude が作成')
+    expect(badge.getAttribute('title')).toBe('Claude がコネクタで作ったアイデア')
+    expect(badge.className).toContain('badge')
+    expect(within(mine).getByTestId('idea-lead').textContent).toBe('2026/11/12 14:32\u3000第3章の動機')
+    // Markdown は変換しない（記号もそのまま）
+    expect(within(mine).getByTestId('idea-body').textContent).toContain('# 見出しの記号もそのまま')
+    expect(within(mine).getByTestId('idea-body').querySelector('h1, strong, ul')).toBeNull()
+    for (const text of ['作者の案', '形だけ似せた案']) {
+      expect(card(text).dataset.source).toBe('manual')
+      expect(within(card(text)).queryByTestId('idea-by-claude')).toBeNull()
+    }
+    await user.click(within(mine).getByTestId('idea-check'))
+    expect(within(card('2026/11/12 14:32')).getByTestId('idea-by-claude')).toBeTruthy()
+  })
+
+  it('何も変えずに保存しても書かない（作者が直したことにしない）。直して保存すると作者が直したアイデアになる', async () => {
+    const user = userEvent.setup()
+    let titleId = ''
+    act(() => {
+      titleId = actions.createTitle('灰の庭')
+      put('cy-abc123', titleId, '2026/11/12 14:32\n中身', 0)
+    })
+    renderTab(titleId)
+    await user.click(within(card('中身')).getByTestId('idea-edit'))
+    await user.click(screen.getByTestId('idea-save'))
+    await waitFor(() => expect(screen.queryByTestId('idea-editor')).toBeNull())
+    expect(getData().ideas['cy-abc123']).toMatchObject({ body: '2026/11/12 14:32\n中身', updatedAt: 100 })
+    await user.click(within(card('中身')).getByTestId('idea-edit'))
+    await user.type(screen.getByTestId('idea-body-input'), 'を直した')
+    await user.click(screen.getByTestId('idea-save'))
+    await waitFor(() => expect(screen.queryByTestId('idea-editor')).toBeNull())
+    const after = getData().ideas['cy-abc123']
+    expect(after.body).toBe('2026/11/12 14:32\n中身を直した')
+    expect(after.claudeHash).toBe(hashJson('2026/11/12 14:32\n中身'))
+    // 印は直しても残る（作ったのは Claude）
+    expect(within(card('中身を直した')).getByTestId('idea-by-claude')).toBeTruthy()
   })
 })

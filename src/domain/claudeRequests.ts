@@ -1,5 +1,5 @@
 // Claude の依頼（2.8）をアプリで1回の処理で当てる: アイデアへの追記の依頼（domain/claudeIdeas.ts）を先に、ゴミ箱へ移す依頼
-// （domain/claudeTrash.ts）を後に。同期を受け持つ画面がクラウドと揃った時に呼ぶ（src/features/claude/ClaudeTrashRequests.tsx）。
+// （domain/claudeTrash.ts）を後に。同期を受け持つ画面がクラウドと揃った時に呼ぶ（src/features/claude/ClaudeRequests.tsx）。
 // 追記を先にするので「作る → 追記 → ゴミ箱へ移す」と頼まれたアイデアは、追記した後の形でゴミ箱へ入る（Claude が見ていた形と同じ。
 // Claude の追記は「作者が直した」に数えないので、直していないカードは追記の後も移せる）。逆の順（移す依頼の後の追記）は、コネクタが
 // 依頼中のアイデアを見せないので作られない（届いても、アイデアがもうゴミ箱にあるので黙って消す）。

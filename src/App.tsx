@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { createHashRouter, Outlet, RouterProvider, useLocation, useRouteError, type RouteObject } from 'react-router-dom'
 import { BenchAutoTags } from './features/bench/BenchAutoTags'
-import { ClaudeTrashRequests } from './features/claude/ClaudeTrashRequests'
+import { ClaudeRequests } from './features/claude/ClaudeRequests'
 import { HomePage } from './features/home/HomePage'
 import { actions } from './store/actions'
 import { isNative } from './platform/platform'
@@ -117,7 +117,7 @@ function RootLayout() {
     <AppFrame>
       <TrashPurge />
       <BenchAutoTags />
-      <ClaudeTrashRequests />
+      <ClaudeRequests />
       <Gate>
         <RouteErrorBoundary>
           <Suspense fallback={<PageLoading />}>

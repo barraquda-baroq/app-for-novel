@@ -1,5 +1,5 @@
 // ゴミ箱へ移す依頼（2.7。TrashRequest）をアプリで処理する。Claude（コネクタ）は依頼を作るだけで、カードを移すのはアプリ
-// （src/features/claude/ClaudeTrashRequests.tsx が、同期を受け持つ画面でクラウドと揃った時に、アイデアへの追記の依頼と一緒に
+// （src/features/claude/ClaudeRequests.tsx が、同期を受け持つ画面でクラウドと揃った時に、アイデアへの追記の依頼と一緒に
 // 当てる。domain/claudeRequests.ts）。
 // 1件ずつ確かめてから、作者の削除と同じ形でゴミ箱へ入れ（trashBenchAnalysis・trashMaterialNote・trashIdea）、依頼を消す:
 // - Claude がコネクタで作ったカード（source が claude）で、作者が直していない（updatedAt が createdAt と同じ）こと。

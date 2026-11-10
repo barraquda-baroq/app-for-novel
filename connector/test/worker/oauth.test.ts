@@ -244,6 +244,12 @@ describe('GET /authorize（受け付けるクライアント）', () => {
     expect(html).toContain('Novel Studio への接続を求めています')
     expect(html).toContain('claude.ai')
     expect(html).toContain('Novel Studio で確認する')
+    // できること・できないこと（2.8: アイデアを足す・Claude が足したアイデアに追記する・作者が書いたアイデアには追記しない）
+    expect(html).toContain('批評の結果・アイデアを<strong>足す</strong>（アイデアはどのタイトルにも属さないホームのアイデアにも）')
+    expect(html).toContain('Claude が足したアイデアに<strong>追記</strong>する（前の中身は消しません）')
+    expect(html).toContain('Claude が足した分析・記録・アイデアをアプリのゴミ箱へ<strong>移す</strong>（30日は戻せます）')
+    expect(html).toContain('作者が書いたアイデアへの追記')
+    expect(html).toContain('ほかのタイトルや作者が書いたホームのアイデアを見ること')
     expect(res.headers.get('X-Frame-Options')).toBe('DENY')
     expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'")
     expect(res.headers.getSetCookie().some((c) => c.startsWith('__Host-'))).toBe(true)

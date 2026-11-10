@@ -598,6 +598,73 @@ test.describe('ホーム', () => {
     await expect(cardsIn(section(page, 'none'))).toHaveCount(0)
   })
 
+  test('Claude が作ったアイデアには「Claude が作成」の印を付ける（内容はそのまま。スマホ幅でも横にはみ出さない）', async ({
+    page,
+  }, info) => {
+    if (info.project.name === 'mobile') await page.setViewportSize({ width: 360, height: 760 })
+    await openApp(page)
+    const titleId = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('灰の庭')
+      actions.addIdea(null, '', '作者の案')
+      actions.addIdea(t, '', 'タイトルの作者の案')
+      return t
+    })
+    // コネクタが作ったアイデアが同期で届いた（id は cy-…。済みでないものの先頭）
+    await page.evaluate(async (titleId) => {
+      const ns = window.__ns
+      const data = ns.getData()
+      const now = Date.now()
+      const claude = (id: string, tid: string | null, body: string) => ({
+        id,
+        titleId: tid,
+        heading: '',
+        body,
+        checked: false,
+        checkedAt: null,
+        order: -1,
+        source: 'claude' as const,
+        v: 1,
+        claudeHash: 'x',
+        createdAt: now,
+        updatedAt: now,
+      })
+      await ns.replaceAllData({
+        ...data,
+        ideas: {
+          ...data.ideas,
+          'cy-home0001': claude(
+            'cy-home0001',
+            null,
+            '2026/11/12 14:32\u3000とても長い名前の付いた第3章の動機の見直し案\n【動機】\n・兄を探すのではなく、兄が残した手紙の差出人を探す',
+          ),
+          'cy-title001': claude('cy-title001', titleId, '2026/11/12 15:00\n【場面】\n・灰の降る庭で再会する'),
+        },
+      })
+    }, titleId)
+    await showIdeas(page)
+    const home = cardsIn(section(page, 'none'))
+    await expect(home).toHaveCount(2)
+    const mine = home.first()
+    await expect(mine).toHaveAttribute('data-source', 'claude')
+    await expect(mine.getByTestId('idea-by-claude')).toHaveText('Claude が作成')
+    await expect(mine.getByTestId('idea-lead')).toHaveText('2026/11/12 14:32\u3000とても長い名前の付いた第3章の動機の見直し案')
+    await expect(mine.getByTestId('idea-make-title')).toBeVisible()
+    await expect(home.nth(1)).toHaveAttribute('data-source', 'manual')
+    await expect(home.nth(1).getByTestId('idea-by-claude')).toHaveCount(0)
+    const inTitle = cardsIn(section(page, titleId))
+    await expect(inTitle.first().getByTestId('idea-by-claude')).toBeVisible()
+    await expect(inTitle.nth(1).getByTestId('idea-by-claude')).toHaveCount(0)
+    // 印と操作のボタンがカードの中に収まる
+    const card = await mine.boundingBox()
+    const badge = await mine.getByTestId('idea-by-claude').boundingBox()
+    expect(badge!.x + badge!.width).toBeLessThanOrEqual(card!.x + card!.width + 0.5)
+    await noHorizontalScroll(page)
+    // 「この案でタイトルを作る」の候補は、1行目の日付と時刻を除いた名前
+    await mine.getByTestId('idea-make-title').click()
+    await expect(dialog(page).getByRole('textbox')).toHaveValue('とても長い名前の付いた第3章の動機の見直し案')
+    await clickInDialog(page, 'キャンセル')
+  })
+
   test('「この案でタイトルを作る」の候補は、長い文でも「…」を付けずに文の区切りで切り、選択した状態で出す', async ({ page }) => {
     await openApp(page)
     await seed(page, ({ actions }) => {

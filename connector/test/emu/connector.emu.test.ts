@@ -525,7 +525,7 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
         },
       ]),
     ).rejects.toSatisfy((e) => e instanceof FirestoreError && e.status === 403)
-    // 端末に依頼が届き、受け持ちの端末が処理する（ClaudeTrashRequests と同じ applyTrashRequests）
+    // 端末に依頼が届き、受け持ちの端末が処理する（ClaudeRequests と同じ applyTrashRequests）
     await waitFor(async () => Object.keys((await owner.load()).trashRequests).length === 1, '依頼が端末に届く', 30_000)
     await owner.edit((d) => applyTrashRequests(d, Date.now()).data)
     await settle(owner, other)

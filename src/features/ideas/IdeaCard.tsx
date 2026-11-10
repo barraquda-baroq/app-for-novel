@@ -2,8 +2,11 @@
 // 編集・移動・並べ替え（済みでないものだけ）・削除。済み（実装した・没にした）にすると斜線＋グレーで仕切りの下へ沈む
 // （通知で知らせ、移った先で少しの間目立たせる）。
 // 古い版で付けた見出しがあれば、編集して保存するまでは見出しとして出す。
+// 2.8: Claude がコネクタで作ったアイデア（isClaudeIdea）には「Claude が作成」の印を付ける（内容の表示は変えない。Markdown も変換しない）。
+// 編集している間に Claude の追記が足されていれば、保存する内容の後ろに残す（rebaseIdeaEdit）。
 import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { isClaudeIdea } from '../../claude/ideaAppend'
 import { isIdeaChecked } from '../../domain/entityOps'
 import { trashNotice } from '../../domain/trash'
 import type { Idea } from '../../domain/types'
@@ -14,10 +17,19 @@ import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatRelative } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { DownIcon, EditIcon, MoveIcon, TrashIcon, UpIcon } from '../../ui/icons'
+import { SparkIcon as ClaudeMarkIcon } from '../claude/claudeIcons'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { IdeaMoveDialog } from './IdeaMoveDialog'
 import { SparkIcon } from './ideaIcons'
-import { ideaEditText, ideaModalDraftKey, ideaShortLabel, splitLead, titleNameFromIdea } from './ideaLogic'
+import {
+  CLAUDE_IDEA_BADGE,
+  ideaEditText,
+  ideaModalDraftKey,
+  ideaShortLabel,
+  rebaseIdeaEdit,
+  splitLead,
+  titleNameFromIdea,
+} from './ideaLogic'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { REVEAL_MS, revealIdea, useReveal } from './reveal'
 import { writeLocal } from './storage'
@@ -145,6 +157,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
   const { ref: cardRef, move } = useKeepInPlace<HTMLLIElement>()
   const revealed = useRevealed(idea.id, cardRef)
   const check = useKeepCheckFocus(checked)
+  const byClaude = isClaudeIdea(idea)
 
   const toggleChecked = (next: boolean) => {
     check.mark()
@@ -202,6 +215,26 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
     navigate(paths.title(titleId))
   }
 
+  /**
+   * 編集ダイアログの保存（b = 保存する内容、base = 編集を始めた時の内容）。Claude のアイデアは、編集している間に足された追記を
+   * 保存する内容の後ろに残す。今の内容と同じなら書かない（何も変えずに保存しても「作者が直した」にしない）
+   */
+  const saveEdit = (b: string, base: string) => {
+    const current = getData().ideas[idea.id] ?? idea
+    const cur = ideaEditText(current)
+    const r = isClaudeIdea(current) ? rebaseIdeaEdit(base, b, cur) : { body: b, carried: false }
+    if (!current.heading && r.body === cur) {
+      setEditing(false)
+      return
+    }
+    // 見出しは内容の1行目にまとめたので空にする（見出しのないアイデアは変わらない）
+    const ok = attempt(
+      () => (actions.updateIdea(idea.id, current.heading ? { heading: '', body: r.body } : { body: r.body }), true),
+    )
+    setEditing(false)
+    if (ok && r.carried) notify('編集している間に届いた Claude の追記を、保存した内容の後ろに残しました')
+  }
+
   return (
     <li
       ref={cardRef}
@@ -210,6 +243,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
       data-testid="idea-card"
       data-idea-id={idea.id}
       data-checked={checked}
+      data-source={byClaude ? 'claude' : 'manual'}
     >
       <div className="idea-card-top">
         <label
@@ -290,6 +324,12 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
         >
           {formatRelative(idea.updatedAt)}
         </time>
+        {byClaude ? (
+          <span className="badge idea-card-by" data-testid="idea-by-claude" title="Claude がコネクタで作ったアイデア">
+            <ClaudeMarkIcon />
+            {CLAUDE_IDEA_BADGE}
+          </span>
+        ) : null}
         <span className="grow" />
         {unassigned ? (
           <button
@@ -331,12 +371,10 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
           initialBody={ideaEditText(idea)}
           mergedHeading={heading !== ''}
           draftKey={editDraftKey}
+          ideaId={idea.id}
+          holdClaude={byClaude}
           onClose={() => setEditing(false)}
-          onSave={(b) => {
-            // 見出しは内容の1行目にまとめたので空にする（見出しのないアイデアは変わらない）
-            attempt(() => actions.updateIdea(idea.id, idea.heading ? { heading: '', body: b } : { body: b }))
-            setEditing(false)
-          }}
+          onSave={saveEdit}
         />
       ) : null}
       {moving ? <IdeaMoveDialog ideaId={idea.id} onClose={() => setMoving(false)} /> : null}

@@ -216,7 +216,7 @@ export const actions = {
   emptyTrash: () => apply((d) => T.emptyTrash(d)),
   /** 削除してから30日たったものを完全に削除する（起動時と1時間ごとに呼ぶ） */
   purgeExpiredTrash: (nowTs: number = Date.now()) => apply((d) => T.purgeExpiredTrash(d, nowTs)),
-  // Claude の依頼を確かめて当てる（ClaudeTrashRequests が同期の後に呼ぶ）: 2.8 のアイデアへの追記の依頼（カードの終わりに足す）を
+  // Claude の依頼を確かめて当てる（ClaudeRequests が同期の後に呼ぶ）: 2.8 のアイデアへの追記の依頼（カードの終わりに足す）を
   // 先に、2.7 の「ゴミ箱へ移す依頼」（カードをゴミ箱へ移す）を後に
   applyClaudeRequests: (nowTs: number = Date.now()) => run((d) => CR.applyClaudeRequests(d, nowTs)),
 }

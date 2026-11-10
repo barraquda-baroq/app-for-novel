@@ -407,6 +407,22 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Claude がコネクタで作ったアイデアの印（Claude 連携の .badge.cl-badge と同じ見た目。claude.css はホームで読み込まない） */
+.badge.idea-card-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  white-space: nowrap;
+  background: var(--area-critique-soft);
+  color: var(--area-critique-text);
+}
+
+.badge.idea-card-by .icon {
+  width: 12px;
+  height: 12px;
+}
+
 /* ---------- 追加・編集ダイアログ ---------- */
 .idea-editor-place {
   display: flex;
@@ -464,6 +480,17 @@
 .idea-editor-restored-discard:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* Claude の依頼が届いている・下書きの後に Claude の追記が足された（Claude が作ったアイデアの編集だけ） */
+.idea-editor-claude {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--area-critique-soft);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .idea-editor-hint {

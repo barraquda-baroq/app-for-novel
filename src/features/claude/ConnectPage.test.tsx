@@ -138,6 +138,10 @@ describe('連携の画面', () => {
     expect(within(rows[0]).getByTestId('connect-access-write').getAttribute('aria-pressed')).toBe('true')
     expect(within(rows[1]).getByTestId('connect-access-none').getAttribute('aria-pressed')).toBe('true')
     expect(form.textContent).toContain('心当たりのない依頼')
+    // 書き込みの許可の説明（2.8: アイデアを足す・Claude が足したアイデアに追記する・アイデアもゴミ箱へ移せる）
+    expect(form.querySelector('.cn-writes-hint')?.textContent).toBe(
+      '（Claude が推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果・相対比較の分析・資料の記録・アイデアを足せ、Claude が足したアイデアに追記できます。頼んだ時だけ、Claude が足した相対比較の分析・資料の記録・アイデアをゴミ箱へ移せます（30日は戻せます）。本文は書き換えません。後から 設定 → Claude 連携 で止められます）',
+    )
 
     // 見せるタイトルを変え、書き込みは許可しない
     await user.click(within(rows[0]).getByTestId('connect-access-read'))
