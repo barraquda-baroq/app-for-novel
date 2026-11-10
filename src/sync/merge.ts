@@ -6,6 +6,7 @@
 import { refKey } from '../claude/refs'
 import { deepEqual } from '../domain/equal'
 import type { TableName } from '../domain/types'
+import { mergeIdeaBody } from './ideaMerge'
 
 export { deepEqual }
 
@@ -65,6 +66,8 @@ export const LIST_FIELDS: Partial<Record<TableName, Record<string, KeyOf>>> = {
   materials: { tags: asTag },
   // 2.7: 相対比較の作品のタグ（資料のタグと同じ照らし方。2台が別々に自動のタグを付けても両方残る）
   benchWorks: { tags: asTag },
+  // 2.8: アプリが足した追記の依頼（2台が別々に同じ依頼・別の依頼を当てても両方残る。本文は ideaMerge.ts でまとめる）
+  ideas: { appendIds: asString },
 }
 
 type PickNewer = (a: unknown, b: unknown) => unknown
@@ -309,6 +312,7 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
   // 2.7: 2台が同じ 14 を別々に取り込んでいたら、作品のタグは取り込んだ語も共通の版にあったものとして合わせる
   const tagsBase = table === 'benchWorks' ? sharedImportBase(b, m, t) : undefined
   if (tagsBase) keys.add('tags')
+  let ideaBody: string | null = null
   for (const k of keys) {
     if (k === 'id' || k === 'updatedAt') continue
     const mv = m[k]
@@ -323,6 +327,8 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
       if (listKey) out[k] = mergeList(bv, mv, tv, listKey)
       else if (newer) out[k] = newer(mv, tv)
       else if (table === 'versions' && k === 'body' && (opts.body ?? 'theirs') === 'theirs') bodyConflict = true
+      // 2.8: Claude の追記と作者の直しがぶつかったアイデアの本文は、両方の変更を残して追記を1回にする（つないだ項目にしない）
+      else if (table === 'ideas' && k === 'body' && (ideaBody = mergeIdeaBody(b, m, t)) !== null) out[k] = ideaBody
       else if (TEXT_FIELDS[table]?.includes(k) && typeof mv === 'string' && typeof tv === 'string') {
         out[k] = joinConflictText(tv, mv, opts.device)
         joined.push(k)
@@ -333,6 +339,13 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
       else out[k] = mv
     }
     if (out[k] === undefined) delete out[k]
+  }
+  // 2.8: アイデアの本文を両方の端末が変えていたら、Claude が書いた形の指紋（claudeHash）は、採った本文の側のもの
+  // （まとめた本文・つないだ本文はどちらの指紋とも合わないので、項目ごとに合わせた値のまま =「作者が直した」）
+  if (table === 'ideas' && !deepEqual(m.body, b.body) && !deepEqual(t.body, b.body)) {
+    const hash = out.body === t.body ? t.claudeHash : out.body === m.body ? m.claudeHash : out.claudeHash
+    if (hash === undefined) delete out.claudeHash
+    else out.claudeHash = hash
   }
   let overridden: FieldMerge['overridden']
   if (table === 'pieces' && opts.acts) {
@@ -390,6 +403,9 @@ function mergeUnrelated(table: TableName, mine: Rec | null, theirs: Rec | null, 
   const skip = table === 'benchWorks' ? importedInCloud(m, out) : null
   for (const [field, key] of Object.entries(LIST_FIELDS[table] ?? {})) {
     if (!(field in out || field in m)) continue
+    // 2.8: アイデアの追記の依頼の id はクラウドの本文と組なので、クラウドの値のまま（この端末だけが足した追記は、この端末の
+    // 内容としてゴミ箱に控え、クラウドにまだ依頼が残っていれば、もう一度本文に足す）
+    if (table === 'ideas' && field === 'appendIds') continue
     const skipHere = field === 'tags' ? skip : null
     const list = unionList(out[field], skipHere ? asArray(m[field]).filter((x) => !skipHere.has(key(x))) : m[field], key)
     // 足さなかった語しか無かった（クラウドにタグが無い）時は、項目を作らない

@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { appendHeader, ideaEditedByAuthor, withIdeaAppend } from '../claude/ideaAppend'
+import { hashJson } from '../domain/hash'
+import type { Idea, IdeaAppend } from '../domain/types'
 import { decodeRecord, encodeRecord, hashRecord, splitJson, type ChunkDoc, type RecordDoc } from './codec'
+import { mergeIdeaBody } from './ideaMerge'
 import {
   contentEqual,
   deepEqual,
   LIST_FIELDS,
   mergeFields,
   mergeList,
+  mergeRecordLegacy,
   mergeRemote,
   NEWER_FIELDS,
   stableStringify,
@@ -602,5 +607,193 @@ describe('アイデアの済み（チェック）のマージ', () => {
     const mine = { ...base, checked: true, checkedAt: 5, updatedAt: 5 }
     const theirs = { ...base, checked: true, checkedAt: 4, updatedAt: 4 }
     expect(mergeRemote('ideas', base, mine, theirs, D).record).toMatchObject({ checked: true, checkedAt: 5 })
+  })
+})
+
+describe('アイデアへの Claude の追記（2.8）のマージ', () => {
+  /** 2026/11/13 10:00（日本時間）・11/14・11/15 に作った追記の依頼 */
+  const DAY13 = Date.UTC(2026, 10, 13, 1, 0, 0)
+  const req = (id: string, text: string, createdAt = DAY13): IdeaAppend => ({
+    id,
+    ideaId: 'cy-abc',
+    text,
+    readMark: 'abcd1234',
+    source: 'claude',
+    v: 1,
+    createdAt,
+    updatedAt: createdAt,
+  })
+  const X = req('cu-x', '【動機】\n・兄との約束に変える')
+  const Y = req('cu-y', '【結末】\n・兄は見つからない', DAY13 + 86_400_000)
+  const Z = req('cu-z', '【舞台】\n・港町に変える', DAY13 + 2 * 86_400_000)
+  /** 足した部分（空行と追記の行と内容） */
+  const blockOf = (r: IdeaAppend) => `\n\n${appendHeader(r.createdAt)}\n${r.text}`
+  const BODY = '2026/11/12 14:32　第3章の動機\n【動機】\n・兄を探す'
+  /** Claude が作り、作者が直していないアイデア（同期の共通の版） */
+  const base: Idea = {
+    id: 'cy-abc',
+    titleId: null,
+    heading: '',
+    body: BODY,
+    checked: false,
+    checkedAt: null,
+    order: 0,
+    source: 'claude',
+    v: 1,
+    claudeHash: hashJson(BODY),
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  /** アプリが依頼を当てた（順に） */
+  const applied = (idea: Idea, ...reqs: IdeaAppend[]): Idea =>
+    reqs.reduce((i, r) => ({ ...withIdeaAppend(i, r), updatedAt: i.updatedAt + 1 }), idea)
+  /** 作者がアプリで直した（指紋は変えない） */
+  const edited = (idea: Idea, body: string): Idea => ({ ...idea, body, updatedAt: idea.updatedAt + 1 })
+  const merged = (mine: Idea, theirs: Idea, b: Idea = base) => mergeRemote('ideas', b, mine, theirs, D)
+  const bodyOf = (r: MergeResult) => (r.record as Idea).body
+  const count = (s: string, sub: string) => s.split(sub).length - 1
+  const AUTHOR_LINE = '\n・作者が足した行'
+  const AUTHOR_HEAD = '2026/11/12 14:32　第3章の動機（作者が直した）'
+  const authorBody = BODY.replace('2026/11/12 14:32　第3章の動機', AUTHOR_HEAD)
+
+  it('追記の依頼の id は並びとして合わせる（2台が別々の依頼を当てても両方残る）', () => {
+    expect(LIST_FIELDS.ideas).toEqual({ appendIds: expect.any(Function) })
+    const r = merged(applied(base, Y), applied(base, X))
+    expect([...((r.record as Idea).appendIds ?? [])].sort()).toEqual(['cu-x', 'cu-y'])
+  })
+
+  it('(a) 相手が足しただけで、この端末にもその依頼と足した部分がある: この端末の本文（作者の直しと追記1回）', () => {
+    const theirs = applied(base, X)
+    // この端末も同じ依頼を当て、その後に作者が終わりに行を足した
+    const mineTail = edited(applied(base, X), applied(base, X).body + AUTHOR_LINE)
+    const r1 = merged(mineTail, theirs)
+    expect(bodyOf(r1)).toBe(BODY + blockOf(X) + AUTHOR_LINE)
+    expect(r1.joined).toBeUndefined()
+    // この端末も同じ依頼を当て、その後に作者が元の本文を直した（足した形ではない）
+    const mineHead = edited(applied(base, X), authorBody + blockOf(X))
+    const r2 = merged(mineHead, theirs)
+    expect(bodyOf(r2)).toBe(authorBody + blockOf(X))
+    expect(count(bodyOf(r2), appendHeader(X.createdAt))).toBe(1)
+    // 作者が直したまま
+    expect(ideaEditedByAuthor(r1.record as Idea)).toBe(true)
+    expect(ideaEditedByAuthor(r2.record as Idea)).toBe(true)
+  })
+
+  it('(b) この端末が足しただけで、相手にもその依頼と足した部分がある: 相手の本文', () => {
+    const mine = applied(base, X)
+    const theirs = edited(applied(base, X), authorBody + blockOf(X) + AUTHOR_LINE)
+    const r = merged(mine, theirs)
+    expect(bodyOf(r)).toBe(authorBody + blockOf(X) + AUTHOR_LINE)
+    expect(r.joined).toBeUndefined()
+    expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+    // 相手が続けて別の依頼も当てていた（作者は直していない）: 相手の本文で、直していないまま
+    const r2 = merged(applied(base, X), applied(base, X, Y))
+    expect(bodyOf(r2)).toBe(BODY + blockOf(X) + blockOf(Y))
+    expect((r2.record as Idea).appendIds).toEqual(['cu-x', 'cu-y'])
+    expect(ideaEditedByAuthor(r2.record as Idea)).toBe(false)
+  })
+
+  it('(c) 両方が足しただけで、片方の足した部分がもう片方の続き: 長い方（別の id の依頼が同じ内容を足していても1回）', () => {
+    const X2 = { ...X, id: 'cu-x2' }
+    const mine = applied(base, X)
+    const theirs = applied(base, X2, Y)
+    const r = merged(mine, theirs)
+    expect(bodyOf(r)).toBe(BODY + blockOf(X) + blockOf(Y))
+    expect(count(bodyOf(r), appendHeader(X.createdAt))).toBe(1)
+    expect(ideaEditedByAuthor(r.record as Idea)).toBe(false)
+    const back = merged(theirs, mine)
+    expect(bodyOf(back)).toBe(BODY + blockOf(X) + blockOf(Y))
+    expect(ideaEditedByAuthor(back.record as Idea)).toBe(false)
+  })
+
+  it('(d)(e) 片方が足しただけで、もう片方は作者が直した: 作者の直しの後ろに追記を1回（どちらの端末で合わせても同じ）', () => {
+    const appendedSide = applied(base, X)
+    const authorSide = edited(base, authorBody + AUTHOR_LINE + '\n\n')
+    for (const r of [merged(authorSide, appendedSide), merged(appendedSide, authorSide)]) {
+      expect(bodyOf(r)).toBe(authorBody + AUTHOR_LINE + blockOf(X))
+      expect(count(bodyOf(r), appendHeader(X.createdAt))).toBe(1)
+      expect(count(bodyOf(r), '【動機】\n・兄を探す')).toBe(1)
+      expect(r.joined).toBeUndefined()
+      expect((r.record as Idea).appendIds).toEqual(['cu-x'])
+      // 作者が直したもの（指紋はどちらの本文とも合わない）
+      expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+    }
+    // 作者が本文を空にしていたら、追記だけ
+    const cleared = edited(base, '')
+    expect(bodyOf(merged(cleared, appendedSide))).toBe(blockOf(X).replace(/^\n+/, ''))
+  })
+
+  it('(d) 2台が別々の依頼を当てた: 両方の追記を1回ずつ', () => {
+    const r = merged(applied(base, Y), applied(base, X))
+    expect(bodyOf(r)).toBe(BODY + blockOf(Y) + blockOf(X))
+    expect(count(bodyOf(r), appendHeader(X.createdAt))).toBe(1)
+    expect(count(bodyOf(r), appendHeader(Y.createdAt))).toBe(1)
+    expect(r.joined).toBeUndefined()
+  })
+
+  it('当てはまらない形は今までどおり両方をつなぐ（何も失わない）', () => {
+    const marker = '――――（同期の競合: テスト端末で同時に書かれた内容）――――'
+    // 送る前に、同じ端末で追記の後に作者が足した部分の中を直した（もう一方の端末も同じ依頼を当てた）
+    const editedTail = edited(applied(base, X), BODY + blockOf(X).replace('兄との約束', '姉との約束'))
+    const r1 = merged(applied(base, X), editedTail)
+    expect(r1.joined).toEqual(['body'])
+    expect(bodyOf(r1)).toBe(`${editedTail.body}\n\n${marker}\n${BODY}${blockOf(X)}`)
+    // 同じ依頼を含むが、その先が違う
+    const r2 = merged(applied(base, X, Z), applied(base, X, Y))
+    expect(r2.joined).toEqual(['body'])
+    expect(bodyOf(r2)).toContain(blockOf(Y))
+    expect(bodyOf(r2)).toContain(blockOf(Z))
+    // 共通の版の本文が空
+    const empty = { ...base, body: '', claudeHash: hashJson('') }
+    const r3 = merged(applied(empty, X), edited(empty, '作者の案'), empty)
+    expect(r3.joined).toEqual(['body'])
+    expect(bodyOf(r3)).toContain('作者の案')
+    expect(bodyOf(r3)).toContain(appendHeader(X.createdAt))
+    // まとめた本文ではないので、作者が直したもの
+    for (const r of [r1, r2, r3]) expect(ideaEditedByAuthor(r.record as Idea)).toBe(true)
+    // 作者のアイデア（追記の依頼の id が無い）は今までどおりつなぐ
+    const author = { ...base, id: '3f2a9c1b', source: undefined, claudeHash: undefined, body: '作者の案' }
+    const here = { ...author, body: 'こちら' }
+    const there = { ...author, body: 'あちら' }
+    const r4 = mergeRemote('ideas', author, here, there, D)
+    expect(bodyOf(r4)).toBe(`あちら\n\n${marker}\nこちら`)
+    expect(mergeIdeaBody(author, here, there)).toBeNull()
+  })
+
+  it('指紋（claudeHash）は採った本文の側のもの。済みだけを変えた端末と追記した端末では、追記した側の指紋', () => {
+    // 項目ごとに合わせると、両方で変わった指紋はこの端末の方になるが、採った本文は相手の方
+    const r = merged(applied(base, X), applied(base, X, Y))
+    expect((r.record as Idea).claudeHash).toBe(hashJson(BODY + blockOf(X) + blockOf(Y)))
+    const checkedOnly = { ...base, checked: true, checkedAt: 5, updatedAt: 5 }
+    const r2 = merged(checkedOnly, applied(base, X))
+    expect(r2.record).toMatchObject({ body: BODY + blockOf(X), checked: true, checkedAt: 5 })
+    expect((r2.record as Idea).claudeHash).toBe(hashJson(BODY + blockOf(X)))
+    expect(ideaEditedByAuthor(r2.record as Idea)).toBe(false)
+    const r3 = merged(applied(base, X), checkedOnly)
+    expect(ideaEditedByAuthor(r3.record as Idea)).toBe(false)
+    // 指紋の無い側の本文を採ったら、指紋は無い
+    const noHash = { ...applied(base, X, Y), claudeHash: undefined }
+    const r4 = merged(applied(base, X), noHash)
+    expect(bodyOf(r4)).toBe(noHash.body)
+    expect('claudeHash' in (r4.record as Idea)).toBe(false)
+  })
+
+  it('別のタブの保存（mergeRecordLegacy に表を渡す）も同じまとめ方', () => {
+    const authorSide = edited(base, authorBody)
+    const r = mergeRecordLegacy(base, authorSide, applied(base, X), 'ideas') as Idea
+    expect(r.body).toBe(authorBody + blockOf(X))
+    expect(r.appendIds).toEqual(['cu-x'])
+    expect(ideaEditedByAuthor(r)).toBe(true)
+  })
+
+  it('共通の履歴が無い時は、追記の依頼の id もクラウドの値のまま（本文と組。この端末の内容は控える）', () => {
+    const N = { device: 'iPhone', noHistory: true }
+    const mine = applied(base, X)
+    const r = mergeRemote('ideas', null, mine, base, N)
+    expect(r.record).toEqual(base)
+    expect(r.keptCopy).toEqual(mine)
+    const r2 = mergeRemote('ideas', null, mine, applied(base, Y), N)
+    expect((r2.record as Idea).appendIds).toEqual(['cu-y'])
+    expect(bodyOf(r2)).toBe(BODY + blockOf(Y))
   })
 })
