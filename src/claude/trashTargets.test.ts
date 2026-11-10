@@ -69,7 +69,7 @@ describe('Claude に見せる内容（claudeView）', () => {
     expect(v.materialNotes).toEqual({})
     expect(v.trashRequests).toBe(data.trashRequests)
     // 新しい版の依頼（形が違うかもしれない）では外さない
-    const newer = claudeView({ ...s.data, trashRequests: { 'cz-a1': request('benchAnalyses', 'a1', s.workId, { v: 2 }) } })
+    const newer = claudeView({ ...s.data, trashRequests: { 'cz-a1': request('benchAnalyses', 'a1', s.workId, { v: 3 }) } })
     expect(newer.benchAnalyses).toBe(s.data.benchAnalyses)
   })
 

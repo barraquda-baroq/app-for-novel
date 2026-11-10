@@ -46,7 +46,7 @@ import {
   searchTextView,
   titleHeadline,
 } from '../../../../src/claude/view'
-import { cardShortId } from '../../../../src/claude/trashRequest'
+import { cardShortId, KIND_OF } from '../../../../src/claude/trashRequest'
 import { liveTrashRequests } from '../../../../src/claude/trashTargets'
 import { claudeAccessLabel, claudeAccessOf, isNewerRecord, NEWER_RECORD_LABEL } from '../../../../src/claude/visibility'
 import {
@@ -1078,10 +1078,14 @@ export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
   return page('work', work.id, 0)
 }
 
-/** id で指したカードに、ゴミ箱へ移す依頼が出ているか（見せる内容からは外れているので、依頼の方を見る） */
-function pendingRequestFor(view: AppData, table: TrashRequestTable, parentId: ID, ref: string): TrashRequest | undefined {
-  const kind = table === 'benchAnalyses' ? 'benchAnalysis' : 'materialNote'
-  return liveTrashRequests(view).find((r) => r.table === table && r.parentId === parentId && matchesId(kind, ref, r.targetId))
+/**
+ * id で指したカードに、ゴミ箱へ移す依頼が出ているか（見せる内容からは外れているので、依頼の方を見る）。
+ * 分析・記録は作品（資料）も同じもの。アイデアは仕切りを比べない（parentId は見ない）
+ */
+function pendingRequestFor(view: AppData, table: TrashRequestTable, parentId: ID | null, ref: string): TrashRequest | undefined {
+  return liveTrashRequests(view).find(
+    (r) => r.table === table && (table === 'ideas' || r.parentId === parentId) && matchesId(KIND_OF[table], ref, r.targetId),
+  )
 }
 
 const pendingMessage = (r: TrashRequest) =>

@@ -1,6 +1,7 @@
 // Vault の中身（身元・連携・写し・ツール・書き込み）を、小さな Firebase（fetch の差し替え）で確かめる。
 import { describe, expect, it } from 'vitest'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
+import { hashJson } from '../../../src/domain/hash'
 import { emptyData } from '../../../src/domain/types'
 import { addSubmission, updateSubmission } from '../../../src/domain/entityOps'
 import { addPrologue, novel, splitEpisode } from '../../../src/test/claudeFixture'
@@ -314,7 +315,7 @@ describe('見せる範囲（Title.claudeAccess）', () => {
     expect(r.text).toContain('タイトル画面の「Claude に見せる」')
   })
 
-  it('ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアは見せない', async () => {
+  it('ゴミ箱・応募時の原稿の控え・作者が書いたどのタイトルにも属さないアイデアは見せない', async () => {
     const fake = new FakeFirebase()
     const n = novel(['本文'])
     n.data.ideas.i1 = { id: 'i1', titleId: null, heading: '宙ぶらりん', body: '属さない', order: 0, createdAt: 1, updatedAt: 1 }
@@ -324,6 +325,58 @@ describe('見せる範囲（Title.claudeAccess）', () => {
     expect(view.ideas.i1).toBeUndefined()
     expect(view.snapshotTexts.s1).toBeUndefined()
     expect(Object.keys(view.trashEntries)).toHaveLength(0)
+  })
+
+  it('Claude が作ったホームのアイデア（2.8）は見せ、まだアプリが足していない追記の依頼を当てた形にする', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文'])
+    const body = '2026/10/28 14:32　新作の案\n【あらすじ】\n・海辺の町'
+    const claude = {
+      id: 'cy-home0001',
+      titleId: null,
+      heading: '',
+      body,
+      checked: false,
+      checkedAt: null,
+      order: 0,
+      source: 'claude' as const,
+      v: 1,
+      claudeHash: hashJson(body),
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    n.data.ideas[claude.id] = claude
+    // source が claude でも、id が Claude のアイデアの形でなければ見せない
+    n.data.ideas['a1b2c3d4-0000-4000-8000-000000000001'] = { ...claude, id: 'a1b2c3d4-0000-4000-8000-000000000001' }
+    n.data.ideas.i1 = {
+      id: 'i1',
+      titleId: null,
+      heading: '',
+      body: '作者のホームのアイデア',
+      order: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const at = Date.UTC(2026, 9, 29, 1, 0, 0)
+    n.data.ideaAppends['cu-a1'] = {
+      id: 'cu-a1',
+      ideaId: claude.id,
+      text: '舞台を山の町に変える',
+      readMark: 'abcd1234',
+      source: 'claude',
+      v: 1,
+      createdAt: at,
+      updatedAt: at,
+    }
+    n.data.ideaAppends['cu-a2'] = { ...n.data.ideaAppends['cu-a1'], id: 'cu-a2', ideaId: 'i1' }
+    const { core } = await pairedCore(fake, n.data)
+    const { raw, view } = core.views()
+    expect(Object.keys(view.ideas)).toEqual([claude.id])
+    expect(view.ideas[claude.id].body).toBe(`${body}\n\n2026/10/29のセッションで以下の内容へ変更\n舞台を山の町に変える`)
+    expect(Object.keys(view.ideaAppends)).toEqual(['cu-a1'])
+    // 写し（raw）は書き換えない
+    expect(raw.ideas[claude.id].body).toBe(body)
+    expect(Object.keys(raw.ideaAppends).sort()).toEqual(['cu-a1', 'cu-a2'])
   })
 })
 

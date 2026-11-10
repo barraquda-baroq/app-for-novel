@@ -1,13 +1,19 @@
 // ゴミ箱へ移すツール（novel_move_cards_to_trash。2.7）: Claude がコネクタで作ったカードだけに「ゴミ箱へ移す依頼」を作る。
 // 依頼の後は Claude から見えない（一覧の数・本文・id で指すと「依頼中」）。アプリが処理した後の形・作者が戻した後も確かめる。
+// 2.8: Claude が作ったアイデア（i:…）も移せる（分析・記録の答えは 2.7 と1字も違わない）。
 import { describe, expect, it } from 'vitest'
 import { addBenchWork } from '../../../src/domain/benchOps'
+import { applyClaudeRequests } from '../../../src/domain/claudeRequests'
 import { applyTrashRequests } from '../../../src/domain/claudeTrash'
+import { createTitle, updateIdea } from '../../../src/domain/entityOps'
+import { hashJson } from '../../../src/domain/hash'
 import { addMaterial } from '../../../src/domain/materialOps'
 import { restoreTrashEntry } from '../../../src/domain/trash'
-import { emptyData, TABLE_NAMES, type AppData, type BenchAnalysis, type TableName } from '../../../src/domain/types'
+import { emptyData, TABLE_NAMES, type AppData, type BenchAnalysis, type Idea, type TableName } from '../../../src/domain/types'
+import { jstDate } from '../../../src/claude/dates'
 import { shortId } from '../../../src/claude/refs'
-import { trashRequestId } from '../../../src/claude/derivedId'
+import { claudeIdeaId, ideaAppendId, trashRequestId } from '../../../src/claude/derivedId'
+import { claudeIdeaBody, ideaReadMark } from '../../../src/claude/ideaAppend'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import type { Rec } from '../../../src/sync/merge'
 import { novel } from '../../../src/test/claudeFixture'
@@ -270,5 +276,226 @@ describe('novel_move_cards_to_trash', () => {
     expect(again.text).toContain(`- 移す ${n}`)
     const cardId = Object.values(restored.benchAnalyses).find((a) => a.viewpoint === '構成')!.id
     expect(docsOf(fake, 'trashRequests').map((d) => d.fields.id.stringValue)).toContain(trashRequestId('benchAnalyses', cardId, 2))
+  })
+})
+
+describe('novel_move_cards_to_trash: 相対比較の分析・資料の記録の答えは 2.7 と同じ', () => {
+  it('移す・移さない・依頼済みの答えの全文', async () => {
+    const fake = new FakeFirebase()
+    const s = shelf()
+    const { core } = await pairedCore(fake, s.data)
+    const { n, k } = await addCards(core)
+    const r = await core.callTool('novel_move_cards_to_trash', { cards: [n, k] })
+    expect(r.text).toBe(
+      [
+        'カードをゴミ箱へ移す: 移す 2件・移さない 0件',
+        `- 移す ${n} 相対比較『銀河の果て』の「構成」（2026-10-30）`,
+        `- 移す ${k} 資料『外科の歴史』の「要約」（2026-10-31）`,
+        '移すカードは、もう Claude からは見えません。アプリを開いて同期すると、アプリのゴミ箱へ移ります（作品・資料は棚に残ります）。移した後30日は、作者がアプリのゴミ箱から元に戻せます。',
+        '今日（日本時間）はあと 98件移せます。本文（稿）は書き換えていません。',
+      ].join('\n'),
+    )
+    const manual = shortId('benchAnalysis', s.manualId)
+    const edited = shortId('benchAnalysis', s.editedId)
+    const work = shortId('benchWork', s.workId)
+    const again = await core.callTool('novel_move_cards_to_trash', { cards: [n, manual, edited, work, 'n:zzzzzzzz', n] })
+    expect(again.text).toBe(
+      [
+        'カードをゴミ箱へ移す: 移す 1件・移さない 5件',
+        `- 移す ${n} 相対比較『銀河の果て』の「構成」（2026-10-30）（依頼済み）`,
+        `- 移さない ${manual} 『銀河の果て』の「人物」（2026-10-01）（Claude が作ったカードでない）: Claude がこのコネクタで作ったカードではありません（作者が書いた・貼り付けたカードは移せません。作者がアプリで削除してください）`,
+        `- 移さない ${edited} 『銀河の果て』の「文体」（2026-10-01）（作者が直したカード）: 作者がアプリで直したカードです（移せません。作者がアプリで削除してください）`,
+        `- 移さない ${work}（作品・資料そのもの）: 作品・資料そのものは移せません（移せるのはカードだけ。作品・資料ごとやり直す時は、作者がアプリで削除してください）`,
+        '- 移さない n:zzzzzzzz（見つからない）: 見つかりません（novel_get_bench_analysis・novel_get_material で id を確かめてください）',
+        `- 移さない ${n} 『銀河の果て』の「構成」（2026-10-30）（同じ指定）: この呼び出しの中で、前に指定したカードと同じです（1つにまとめました）`,
+        '移すカードは、もう Claude からは見えません。アプリを開いて同期すると、アプリのゴミ箱へ移ります（作品・資料は棚に残ります）。移した後30日は、作者がアプリのゴミ箱から元に戻せます。',
+        '今日（日本時間）はあと 98件移せます。本文（稿）は書き換えていません。',
+      ].join('\n'),
+    )
+    // 依頼の記録の形（版 1）
+    const req = Object.values(cloudData(fake).trashRequests).find((x) => x.table === 'materialNotes')!
+    expect(Object.keys(req).sort()).toEqual(
+      ['id', 'table', 'targetId', 'parentId', 'targetUpdatedAt', 'label', 'source', 'v', 'createdAt', 'updatedAt'].sort(),
+    )
+    expect(req.v).toBe(1)
+  })
+})
+
+// ---------- Claude が作ったアイデア（2.8） ----------
+
+/** コネクタが作る形の Claude のアイデア（作った時刻 at・場所 titleId・名前・中身） */
+function claudeIdea(titleId: string | null, name: string, content: string, at: number, order = 0): Idea {
+  const body = claudeIdeaBody(at, name, content)
+  return {
+    id: claudeIdeaId(titleId, jstDate(at), name, content),
+    titleId,
+    heading: '',
+    body,
+    checked: false,
+    checkedAt: null,
+    order,
+    source: 'claude',
+    v: 1,
+    claudeHash: hashJson(body),
+    createdAt: at,
+    updatedAt: at,
+  }
+}
+
+/** shelf に、ホーム・『星の庭』（読む＋書き込む）・『読む庭』（読むだけ）の Claude のアイデアと、作者のアイデアを足す */
+function ideaShelf() {
+  const s = shelf()
+  const titleId = Object.values(s.data.titles).find((t) => t.name === '星の庭')!.id
+  const r = createTitle(s.data, '読む庭')
+  const at = Date.UTC(2026, 9, 28, 5, 32, 0)
+  const home = claudeIdea(null, '第3章の動機', '【動機】\n・兄を探す', at)
+  const inTitle = claudeIdea(titleId, '', '星の庭の案', at, 1)
+  const readOnly = claudeIdea(r.result, '', '読む庭の案', at)
+  const authorHome: Idea = {
+    id: 'author-home-0001',
+    titleId: null,
+    heading: '',
+    body: 'ホームの作者の案',
+    order: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  const authorTitle: Idea = { ...authorHome, id: 'author-title-001', titleId, body: '星の庭の作者の案' }
+  const data: AppData = {
+    ...r.data,
+    titles: { ...r.data.titles, [r.result]: { ...r.data.titles[r.result], claudeAccess: 'read' } },
+    ideas: {
+      [home.id]: home,
+      [inTitle.id]: inTitle,
+      [readOnly.id]: readOnly,
+      [authorHome.id]: authorHome,
+      [authorTitle.id]: authorTitle,
+    },
+  }
+  return { ...s, data, titleId, home, inTitle, readOnly, authorHome, authorTitle }
+}
+
+describe('novel_move_cards_to_trash: Claude が作ったアイデア（i:…）', () => {
+  it('ホーム・タイトルのアイデアに依頼を作り、場所と1行目を出す（アイデアだけの時の結び）。依頼の後は見えない', async () => {
+    const fake = new FakeFirebase()
+    const s = ideaShelf()
+    const { core, clock } = await pairedCore(fake, s.data)
+    const home = shortId('idea', s.home.id)
+    const title = shortId('idea', s.inTitle.id)
+    const r = await core.callTool('novel_move_cards_to_trash', { cards: [home, s.inTitle.id] })
+    expect(r.isError).toBeUndefined()
+    expect(r.text).toBe(
+      [
+        'カードをゴミ箱へ移す: 移す 2件・移さない 0件',
+        `- 移す ${home} ホームのアイデア「2026/10/28 14:32　第3章の動機」`,
+        `- 移す ${title} タイトル『星の庭』のアイデア「2026/10/28 14:32」`,
+        '移すアイデアは、もう Claude からは見えません。アプリを開いて同期すると、アプリのゴミ箱へ移ります。移した後30日は、作者がアプリのゴミ箱から元に戻せます。',
+        '今日（日本時間）はあと 98件移せます。本文（稿）は書き換えていません。',
+      ].join('\n'),
+    )
+    expect(r.structured).toEqual({
+      requested: [
+        { id: home, label: 'ホームのアイデア「2026/10/28 14:32　第3章の動機」' },
+        { id: title, label: 'タイトル『星の庭』のアイデア「2026/10/28 14:32」' },
+      ],
+      skipped: [],
+    })
+    const reqs = Object.values(cloudData(fake).trashRequests)
+    expect(reqs.map((x) => [x.table, x.targetId, x.parentId, x.v]).sort()).toEqual(
+      [
+        ['ideas', s.home.id, 'home', 2],
+        ['ideas', s.inTitle.id, s.titleId, 2],
+      ].sort(),
+    )
+    clock.now += 20_000
+    // 見せる内容から外れ、もう一度頼むと「依頼済み」（書かない）
+    expect(core.views().view.ideas[s.inTitle.id]).toBeUndefined()
+    expect(core.views().view.ideas[s.home.id]).toBeUndefined()
+    const notes = await call(core, 'novel_get_notes', { title_id: s.titleId, kind: 'ideas' })
+    expect(notes).not.toContain('星の庭の案')
+    const writes = fake.calls.filter((c) => c.op === 'commit').length
+    const again = await core.callTool('novel_move_cards_to_trash', { cards: [home] })
+    expect(again.text).toContain(`- 移す ${home} ホームのアイデア「2026/10/28 14:32　第3章の動機」（依頼済み）`)
+    expect(fake.calls.filter((c) => c.op === 'commit').length).toBe(writes)
+  })
+
+  it('分析とアイデアを一緒に移す時は、2.7 の結びの文。作者のアイデア・「読むだけ」のタイトル・見えないホームのアイデアは断る', async () => {
+    const fake = new FakeFirebase()
+    const s = ideaShelf()
+    const { core } = await pairedCore(fake, s.data)
+    const { n } = await addCards(core)
+    const both = await core.callTool('novel_move_cards_to_trash', { cards: [n, shortId('idea', s.home.id)] })
+    expect(both.text).toContain('アプリを開いて同期すると、アプリのゴミ箱へ移ります（作品・資料は棚に残ります）')
+    expect(both.text).not.toContain('移すアイデアは')
+    const r = await core.callTool('novel_move_cards_to_trash', {
+      cards: [shortId('idea', s.authorTitle.id), shortId('idea', s.readOnly.id), shortId('idea', s.authorHome.id), 'x:12345678'],
+    })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('移す 0件・移さない 4件')
+    expect(r.text).toContain(
+      `- 移さない ${shortId('idea', s.authorTitle.id)} タイトル『星の庭』のアイデア「星の庭の作者の案」（Claude が作ったカードでない）`,
+    )
+    expect(r.text).toContain(
+      `- 移さない ${shortId('idea', s.readOnly.id)} タイトル『読む庭』のアイデア「2026/10/28 14:32」（書き込めない場所のアイデア）: 「Claude に見せる」が「読む＋書き込む」でないタイトルのアイデアです`,
+    )
+    // 作者が書いたホームのアイデアは見えない（ある・無いを答えない）
+    expect(r.text).toContain(
+      `- 移さない ${shortId('idea', s.authorHome.id)}（見つからない）: 見つかりません（novel_get_notes の kind=ideas で id を確かめてください）`,
+    )
+    expect(r.text).not.toContain('ホームの作者の案')
+    expect(r.text).toContain(
+      '- 移さない x:12345678（移せない種類）: 移せるのは相対比較の分析（n:…）・資料の記録（k:…）・Claude が作ったアイデア（i:…）だけです',
+    )
+    expect((r.structured as { skipped: { reason: string }[] }).skipped.map((x) => x.reason)).toEqual([
+      'not_claude',
+      'not_writable',
+      'not_found',
+      'not_card',
+    ])
+  })
+
+  it('作者が直したアイデアは断る。Claude の追記（アプリの同期待ちも）だけなら移せ、アプリは追記してから移す。処理の後は「もうゴミ箱にある」', async () => {
+    const fake = new FakeFirebase()
+    const s = ideaShelf()
+    // 作者がタイトルのアイデアを直した。ホームのアイデアには Claude の追記の依頼（アプリの同期待ち）
+    const edited = updateIdea(s.data, s.inTitle.id, { body: `${s.inTitle.body}\n作者の行` })
+    const mark = ideaReadMark(s.home.body)
+    const append = {
+      id: ideaAppendId(s.home.id, mark, '動機を変える'),
+      ideaId: s.home.id,
+      text: '動機を変える',
+      readMark: mark,
+      source: 'claude' as const,
+      v: 1,
+      createdAt: Date.UTC(2026, 9, 29, 1, 0, 0),
+      updatedAt: Date.UTC(2026, 9, 29, 1, 0, 0),
+    }
+    const { core, clock } = await pairedCore(fake, { ...edited, ideaAppends: { [append.id]: append } })
+    const shown = core.views().view.ideas[s.home.id].body
+    expect(shown).toContain('2026/10/29のセッションで以下の内容へ変更\n動機を変える')
+    const r = await core.callTool('novel_move_cards_to_trash', {
+      cards: [shortId('idea', s.inTitle.id), shortId('idea', s.home.id)],
+    })
+    expect(r.text).toContain('移す 1件・移さない 1件')
+    expect(r.text).toContain('（作者が直したカード）: 作者がアプリで直したカードです')
+    // アプリ: 追記を足してから、ゴミ箱へ移す
+    const before = cloudData(fake)
+    const processed = applyClaudeRequests(before, clock.now)
+    expect(processed.result.appends.map((o) => o.status)).toEqual(['appended'])
+    expect(processed.result.trash.map((o) => o.status)).toEqual(['moved'])
+    const rec = Object.values(processed.data.trashRecords)[0].record as Idea
+    expect(rec.body).toBe(shown)
+    pushChanges(fake, before, processed.data)
+    clock.now += 20_000
+    const inTrash = await core.callTool('novel_move_cards_to_trash', { cards: [shortId('idea', s.home.id)] })
+    expect(inTrash.text).toContain(`- 移さない ${shortId('idea', s.home.id)}（もうゴミ箱にある）`)
+    // 作者が戻すと、2番目の依頼を作れる
+    const entryId = Object.keys(processed.data.trashEntries)[0]
+    const restored = restoreTrashEntry(processed.data, entryId).data
+    pushChanges(fake, processed.data, restored)
+    clock.now += 20_000
+    const again = await core.callTool('novel_move_cards_to_trash', { cards: [shortId('idea', s.home.id)] })
+    expect(again.text).toContain(`- 移す ${shortId('idea', s.home.id)} ホームのアイデア「2026/10/28 14:32　第3章の動機」`)
+    expect(docsOf(fake, 'trashRequests').map((d) => d.fields.id.stringValue)).toContain(trashRequestId('ideas', s.home.id, 2))
   })
 })

@@ -1,12 +1,15 @@
 // ゴミ箱へ移す依頼（2.7）をアプリで処理する: 確かめてから作者の削除と同じ形でゴミ箱へ入れ、依頼を消す。
+// 2.8 の Claude が作ったアイデアも。
 import { describe, expect, it } from 'vitest'
 import { trashRequestId } from '../claude/derivedId'
 import { buildTrashRequests } from '../claude/trashRequest'
 import { addBenchWork, deleteBenchAnalysis, updateBenchAnalysis } from './benchOps'
 import { applyTrashRequests, trashRequestNotice, type TrashRequestOutcome } from './claudeTrash'
+import { createTitle, deleteIdea, moveIdeaToSection, updateIdea } from './entityOps'
+import { hashJson } from './hash'
 import { addMaterial } from './materialOps'
 import { restoreTrashEntry } from './trash'
-import { emptyData, type AppData, type BenchAnalysis, type MaterialNote, type TrashRequest } from './types'
+import { emptyData, type AppData, type BenchAnalysis, type Idea, type MaterialNote, type TrashRequest } from './types'
 
 const DAY = 24 * 60 * 60 * 1000
 const NOW = Date.UTC(2026, 10, 9, 3, 0, 0)
@@ -170,7 +173,7 @@ describe('applyTrashRequests', () => {
   it('新しい版の依頼は触らずに残し、形の違う依頼は消す。何も変わらなければ同じ data を返す', () => {
     const s = requested(['a1'])
     const req = Object.values(s.data.trashRequests)[0]
-    const newer = { ...req, id: 'cz-newer', v: 2 }
+    const newer = { ...req, id: 'cz-newer', v: 3 }
     const broken = { id: 'cz-broken', table: 'titles' } as unknown as TrashRequest
     const data = { ...s.data, trashRequests: { [newer.id]: newer, [broken.id]: broken } }
     const r = applyTrashRequests(data, NOW)
@@ -205,5 +208,163 @@ describe('trashRequestNotice', () => {
     )
     expect(trashRequestNotice([o('not_found'), o('in_trash')])).toBe('')
     expect(trashRequestNotice([])).toBe('')
+  })
+})
+
+// ---------- Claude が作ったアイデア（2.8） ----------
+
+const IDEA_BODY = '2026/11/12 14:32　第3章の動機\n【動機】\n・兄を探す'
+
+function claudeIdea(id: string, titleId: string | null, order: number): Idea {
+  return {
+    id,
+    titleId,
+    heading: '',
+    body: IDEA_BODY,
+    checked: false,
+    checkedAt: null,
+    order,
+    source: 'claude',
+    v: 1,
+    claudeHash: hashJson(IDEA_BODY),
+    appendIds: ['cu-done'],
+    createdAt: 100,
+    updatedAt: 100,
+  }
+}
+
+/** タイトル『灰の庭』（読む＋書き込む）のアイデア2つ（Claude・作者）とホームの Claude のアイデア、依頼（作った順に1ずつずらす） */
+function ideasRequested(cards: string[]) {
+  const t = createTitle(emptyData(), '灰の庭')
+  let data: AppData = {
+    ...t.data,
+    ideas: {
+      'cy-title001': claudeIdea('cy-title001', t.result, 1),
+      'author-0001': { id: 'author-0001', titleId: t.result, heading: '', body: '作者', order: 0, createdAt: 1, updatedAt: 1 },
+      'cy-home0001': claudeIdea('cy-home0001', null, 0),
+    },
+  }
+  const built = buildTrashRequests(data, { cards }, { now: NOW - 1000, trash: {}, wasDeleted: () => false, dailyLeft: 100 })
+  const reqs: Record<string, TrashRequest> = {}
+  built.records.forEach((r, i) => (reqs[r.record.id] = { ...r.record, createdAt: r.record.createdAt + i }))
+  data = { ...data, trashRequests: reqs }
+  return { data, titleId: t.result }
+}
+
+describe('applyTrashRequests: アイデア', () => {
+  it('作者の削除と同じ形（種類・場所・戻す位置）でゴミ箱へ移し、Claude の依頼の印と依頼から決めた id を付ける。戻すと項目も戻る', () => {
+    const s = ideasRequested(['i:title001', 'i:home0001'])
+    const reqT = trashRequestId('ideas', 'cy-title001')
+    const r = applyTrashRequests(s.data, NOW)
+    expect(statuses(r.result)).toEqual([
+      ['cy-title001', 'moved'],
+      ['cy-home0001', 'moved'],
+    ])
+    const d = r.data
+    expect(d.trashRequests).toEqual({})
+    expect(d.ideas['cy-title001']).toBeUndefined()
+    expect(d.ideas['author-0001']).toBeDefined()
+    expect(d.trashEntries[`te-${reqT}`]).toMatchObject({
+      kind: 'idea',
+      label: '2026/11/12 14:32　第3章の動機',
+      titleName: '灰の庭',
+      origin: { titleId: s.titleId, index: 1 },
+      recordIds: [`tr-${reqT}`],
+      by: 'claude',
+      deletedAt: NOW,
+    })
+    expect(d.trashRecords[`tr-${reqT}`]).toMatchObject({ table: 'ideas', record: s.data.ideas['cy-title001'] })
+    expect(d.trashEntries[`te-${trashRequestId('ideas', 'cy-home0001')}`]).toMatchObject({
+      kind: 'idea',
+      titleName: '',
+      origin: { titleId: null },
+    })
+    // 作者の削除と、印と id のほかは同じ形
+    const authorEntry = Object.values(deleteIdea(s.data, 'cy-title001').trashEntries)[0]
+    const { id: _a, by: _b, deletedAt: _c, createdAt: _d, updatedAt: _e, recordIds: _f, ...shape } = d.trashEntries[`te-${reqT}`]
+    const { id: _g, deletedAt: _h, createdAt: _i, updatedAt: _j, recordIds: _k, ...authorShape } = authorEntry
+    void [_a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k]
+    expect(shape).toEqual(authorShape)
+    // 戻すと Claude のアイデアのまま（source・claudeHash・appendIds）
+    const back = restoreTrashEntry(d, `te-${reqT}`).data
+    expect(back.ideas['cy-title001']).toEqual(s.data.ideas['cy-title001'])
+    expect(trashRequestNotice(r.result)).toBe('Claude の依頼で、アイデア2件をゴミ箱へ移しました（30日はゴミ箱から戻せます）')
+  })
+
+  it('作者が直した・「読むだけ」にしたタイトル・依頼の後に別の仕切りへ移した・作者のアイデアは移さない。済みにしただけなら移す', () => {
+    const s = ideasRequested(['i:title001', 'i:home0001'])
+    const edited = updateIdea(s.data, 'cy-title001', { body: `${IDEA_BODY}\n作者の行` })
+    const r1 = applyTrashRequests(edited, NOW)
+    expect(statuses(r1.result)).toEqual([
+      ['cy-title001', 'edited'],
+      ['cy-home0001', 'moved'],
+    ])
+    expect(r1.data.ideas['cy-title001'].body).toContain('作者の行')
+    const readOnly: AppData = {
+      ...s.data,
+      titles: { ...s.data.titles, [s.titleId]: { ...s.data.titles[s.titleId], claudeAccess: 'read' } },
+    }
+    expect(statuses(applyTrashRequests(readOnly, NOW).result)[0]).toEqual(['cy-title001', 'not_writable'])
+    const moved = moveIdeaToSection(s.data, 'cy-home0001', s.titleId)
+    const r2 = applyTrashRequests(moved, NOW)
+    expect(statuses(r2.result)).toEqual([
+      ['cy-title001', 'moved'],
+      ['cy-home0001', 'changed'],
+    ])
+    expect(r2.data.ideas['cy-home0001']).toBeDefined()
+    // 偽の依頼で作者のアイデアを指しても移さない
+    const req = Object.values(s.data.trashRequests)[0]
+    const forged = { ...req, id: 'cz-forged', targetId: 'author-0001' }
+    const r3 = applyTrashRequests({ ...s.data, trashRequests: { [forged.id]: forged } }, NOW)
+    expect(statuses(r3.result)).toEqual([['author-0001', 'not_claude']])
+    expect(r3.data.ideas['author-0001']).toBeDefined()
+    expect(trashRequestNotice(applyTrashRequests(readOnly, NOW).result)).toBe(
+      'Claude の依頼で、アイデア1件をゴミ箱へ移しました（30日はゴミ箱から戻せます）。Claude の依頼のうち1件は移しませんでした（書き込めない場所のアイデア1件）',
+    )
+  })
+
+  it('1日100件は相対比較の分析・資料の記録と合わせて数える', () => {
+    const s = ideasRequested(['i:title001', 'i:home0001'])
+    const entries: AppData['trashEntries'] = {}
+    for (let i = 0; i < 99; i++)
+      entries[`e${i}`] = {
+        id: `e${i}`,
+        kind: i % 2 ? 'benchAnalysis' : 'materialNote',
+        label: 'x',
+        titleName: '',
+        origin: { titleId: null, index: -1 },
+        recordIds: [],
+        reason: 'deleted',
+        by: 'claude',
+        deletedAt: NOW - 60_000,
+        createdAt: NOW - 60_000,
+        updatedAt: NOW - 60_000,
+      }
+    const r = applyTrashRequests({ ...s.data, trashEntries: entries }, NOW)
+    expect(statuses(r.result)).toEqual([
+      ['cy-title001', 'moved'],
+      ['cy-home0001', 'over_limit'],
+    ])
+  })
+
+  it('アイデアがもうゴミ箱にある・無い時は依頼だけ消す（知らせない）', () => {
+    const s = ideasRequested(['i:title001', 'i:home0001'])
+    const data = { ...deleteIdea(s.data, 'cy-title001'), ideas: { 'author-0001': s.data.ideas['author-0001'] } }
+    const r = applyTrashRequests(data, NOW)
+    expect(statuses(r.result)).toEqual([
+      ['cy-title001', 'in_trash'],
+      ['cy-home0001', 'not_found'],
+    ])
+    expect(r.data.trashRequests).toEqual({})
+    expect(trashRequestNotice(r.result)).toBe('')
+  })
+})
+
+describe('trashRequestNotice: アイデア', () => {
+  it('分析・記録・アイデアの順に並べる', () => {
+    const o = (table: TrashRequestOutcome['table']) => ({ requestId: 'x', status: 'moved', table }) as TrashRequestOutcome
+    expect(trashRequestNotice([o('ideas'), o('materialNotes'), o('benchAnalyses'), o('ideas')])).toBe(
+      'Claude の依頼で、相対比較の分析1件・資料の記録1件・アイデア2件をゴミ箱へ移しました（30日はゴミ箱から戻せます）',
+    )
   })
 })

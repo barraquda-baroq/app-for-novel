@@ -702,9 +702,9 @@ export interface TrashEntry {
 }
 
 /**
- * ゴミ箱へ移す依頼（2.7）。Claude（コネクタ）が、自分がコネクタで作ったカード（相対比較の分析・資料の記録）を作者に頼まれて
- * ゴミ箱へ移す時に、1枚のカードにつき1件作る。コネクタは作るだけで、カードの削除もゴミ箱の記録も書かない（アクセスルールで
- * 書けない）。同期を受け持つ画面がクラウドと揃った時に、アプリが確かめて（Claude が作った・作者が直していない・1日100件まで）
+ * ゴミ箱へ移す依頼（2.7）。Claude（コネクタ）が、自分がコネクタで作ったカード（相対比較の分析・資料の記録。2.8 からアイデアも）を
+ * 作者に頼まれてゴミ箱へ移す時に、1枚のカードにつき1件作る。コネクタは作るだけで、カードの削除もゴミ箱の記録も書かない（アクセス
+ * ルールで書けない）。同期を受け持つ画面がクラウドと揃った時に、アプリが確かめて（Claude が作った・作者が直していない・1日100件まで）
  * ゴミ箱へ移し、依頼を消す（src/domain/claudeTrash.ts）。id は表とカードから作る（derivedId.ts の trashRequestId。cz-…）
  */
 export interface TrashRequest {
@@ -713,21 +713,27 @@ export interface TrashRequest {
   table: TrashRequestTable
   /** カードの id */
   targetId: ID
-  /** カードの作品（benchAnalyses）か資料（materialNotes）の id */
+  /**
+   * カードの作品（benchAnalyses）か資料（materialNotes）の id。アイデア（ideas）は仕切りのタイトルの id
+   * （どのタイトルにも属さないホームのアイデアは 'home'。trashTargets.ts の IDEA_HOME_PARENT）
+   */
   parentId: ID
-  /** 依頼した時のカードの updatedAt（違えば、依頼の後に直したカードとして移さない） */
+  /**
+   * 依頼した時のカードの updatedAt（違えば、依頼の後に直したカードとして移さない）。アイデアは控えだけで比べない
+   * （済み・並べ替えでも変わるため。直したかは本文の指紋 claudeHash で見る）
+   */
   targetUpdatedAt: number
-  /** 依頼した時のカードの表記（『作品名』の「構成」（2026-10-30）） */
+  /** 依頼した時のカードの表記（『作品名』の「構成」（2026-10-30）。アイデアは ホームのアイデア「1行目」） */
   label: string
   source: 'claude'
-  /** 依頼の形の版（いまは 1） */
+  /** 依頼の形の版（分析・記録は 1、アイデアは 2） */
   v: number
   createdAt: number
   updatedAt: number
 }
 
-/** ゴミ箱へ移す依頼の対象の表（相対比較の分析と資料の記録だけ） */
-export type TrashRequestTable = 'benchAnalyses' | 'materialNotes'
+/** ゴミ箱へ移す依頼の対象の表（相対比較の分析・資料の記録と、2.8 から Claude が作ったアイデア） */
+export type TrashRequestTable = 'benchAnalyses' | 'materialNotes' | 'ideas'
 
 /**
  * アイデアへの追記の依頼（2.8）。Claude（コネクタ）が、自分が作ったアイデアに追記する時に1件作る。コネクタは作るだけ。

@@ -2,13 +2,19 @@
 // - 無い = write（読む＋書き込む）。個人のアプリで、原稿を Claude に見てもらうのが前提のため
 // - none = 見せない（コネクタのどのツールにも出ない）、read = 読むだけ、write = 読む＋推敲案などを足す
 // アクセスルールではタイトルごとに分けられない（タイトルの id は文書の JSON の中にある）ので、コネクタのコードで守る。
-// ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアは、どのタイトルの設定でも見せない。
+// ゴミ箱・応募時の原稿の控えは、どのタイトルの設定でも見せない。どのタイトルにも属さないホームのアイデアは、Claude がコネクタで
+// 作ったもの（2.8。ideaAppend.ts の isClaudeIdea）だけ見せる（作者が書いたホームのアイデアは見せない。タイトルが無いアイデアも
+// ホームのアイデアとして扱う。コネクタは修復した内容を渡すので titleId が null になっている）。
 // ベンチ作品とその分析（2.5）はどのタイトルにも属さない利用者の覚え書きなので、タイトルの設定とは関係なく見せる。
 // 資料とその記録（2.6）も同じく、タイトルの設定とは関係なく見せる。
-// ゴミ箱へ移す依頼（2.7）は見せ、依頼の出ているカード（相対比較の分析・資料の記録）は見せない（アプリが同期してゴミ箱へ移すまで、
-// Claude からはもう無いものとして扱う。trashTargets.ts）。
-import { emptyData, type AppData, type ClaudeAccess, type TableName } from '../domain/types'
+// ゴミ箱へ移す依頼（2.7）は見せ、依頼の出ているカード（相対比較の分析・資料の記録・アイデア）は見せない（アプリが同期してゴミ箱へ
+// 移すまで、Claude からはもう無いものとして扱う。trashTargets.ts）。
+// アイデアへの追記の依頼（2.8）は、まだアプリが足していなくても、見せるアイデアに当てた形で見せる（Claude からは送った直後から
+// 追記した後の中身が見える。アプリの処理と同じ確かめ方・同じ順。ideaAppend.ts の overlayIdeaAppends）。依頼の表には、当てた依頼
+// だけを入れる（見せないアイデア・当てられない依頼は出さない）。
+import { emptyData, type AppData, type ClaudeAccess, type Idea, type IdeaAppend, type TableName } from '../domain/types'
 import { canClaudeRead } from './access'
+import { isClaudeIdea, liveIdeaAppends, overlayIdeaAppends } from './ideaAppend'
 import { pendingTrashTargets, trashTargetKey, TRASH_TARGET_TABLES } from './trashTargets'
 
 // 値と判定は access.ts（型だけを読み込む部品）にある。前からの読み込みのために、ここからも同じ名前で出す
@@ -39,9 +45,9 @@ const ALWAYS_SERVED: ReadonlySet<TableName> = new Set<TableName>([
 
 /**
  * コネクタに見せる内容。見せないタイトル（none）と、その配下のレコード（titleId で見る）を除き、
- * ゴミ箱・応募時の原稿の控え・どのタイトルにも属さないアイデアも除く。共通の批評プロンプト（titleId = null）と
- * ベンチ作品・その分析、資料・その記録は見せる（ゴミ箱へ移す依頼の出ているカードは除く）。
- * 変わらない表は同じオブジェクトのまま返す
+ * ゴミ箱・応募時の原稿の控え・作者が書いたどのタイトルにも属さないアイデアも除く。共通の批評プロンプト（titleId = null）と
+ * Claude が作ったホームのアイデア、ベンチ作品・その分析、資料・その記録は見せる（ゴミ箱へ移す依頼の出ているカードは除く）。
+ * アイデアには、まだアプリが足していない追記の依頼を当てる。変わらない表は同じオブジェクトのまま返す（data は書き換えない）
  */
 export function claudeView(data: AppData): AppData {
   const out = emptyData() as unknown as Record<TableName, Record<string, unknown>>
@@ -61,11 +67,13 @@ export function claudeView(data: AppData): AppData {
       out.titles = visible.size === Object.keys(rows).length ? rows : pick(rows, (r) => visible.has(r.id))
       continue
     }
+    // アイデアへの追記の依頼はタイトルを持たない（当てたアイデアで決める。下で入れる）
+    if (table === 'ideaAppends') continue
     let all = true
-    const keep = (r: { titleId?: unknown }) => {
+    const keep = (r: { titleId?: unknown; id: string }) => {
       const t = r.titleId
-      // 共通の批評プロンプトだけは、どのタイトルにも属さなくても見せる
-      if (t === null) return table === 'critiquePrompts'
+      // どのタイトルにも属さないものは、共通の批評プロンプトと、Claude が作ったホームのアイデアだけ見せる
+      if (t === null) return table === 'critiquePrompts' || (table === 'ideas' && isClaudeIdea(r as Idea))
       return typeof t === 'string' && visible.has(t)
     }
     for (const r of Object.values(rows))
@@ -82,7 +90,22 @@ export function claudeView(data: AppData): AppData {
       if (Object.keys(rows).some((id) => pending.has(trashTargetKey(table, id))))
         out[table] = pick(rows, (r) => !pending.has(trashTargetKey(table, r.id)))
     }
-  return out as unknown as AppData
+  // 追記の依頼を、見せるアイデアに当てる（ゴミ箱へ移す依頼の出ているアイデアは、もう外れている）
+  const view = out as unknown as AppData
+  const requests = data.ideaAppends ?? {}
+  const live = liveIdeaAppends(data)
+  const { ideas, applied } = live.length
+    ? overlayIdeaAppends(data.titles, view.ideas, live)
+    : { ideas: view.ideas, applied: [] as IdeaAppend[] }
+  view.ideas = ideas
+  // 当てた依頼だけ（表の鍵で選ぶ。形の違う行があっても読み違えない）
+  const shown = new Set(applied.map((r) => r.id))
+  const keys = Object.keys(requests)
+  view.ideaAppends =
+    keys.length === shown.size && keys.every((id) => shown.has(id))
+      ? requests
+      : Object.fromEntries(Object.entries(requests).filter(([id]) => shown.has(id)))
+  return view
 }
 
 function pick<T>(rows: Record<string, T>, keep: (r: T) => boolean): Record<string, T> {

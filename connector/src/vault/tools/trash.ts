@@ -2,6 +2,8 @@
 // { requested: [{ id, label }], skipped: [{ ref, reason, hint }] } を返す（カードの本文は入れない）。
 // コネクタは依頼を作るだけなので、答えの時点ではまだゴミ箱へ移っていない（アプリが同期した時に移る）。そのことと、
 // 30日はアプリのゴミ箱から戻せることを必ず書く。
+// 2.8 から Claude が作ったアイデア（i:…）も移せる。相対比較の分析・資料の記録（n:・k:）の行と結びの文は 2.7 のまま
+// （移すのがアイデアだけの時だけ、結びの文を「移すアイデアは…」にする）。
 import { cardShortId, TRASH_SHELF_LABELS, type TrashBuild, type TrashItem, type TrashItemStatus } from '../../../../src/claude/trashRequest'
 import { TRASH_RETENTION_DAYS } from '../../../../src/domain/trash'
 import { capText, fail, type ToolResult } from './common'
@@ -10,6 +12,7 @@ const STATUS_LABELS: Record<Exclude<TrashItemStatus, 'requested' | 'pending'>, s
   repeated: '同じ指定',
   not_claude: 'Claude が作ったカードでない',
   edited: '作者が直したカード',
+  not_writable: '書き込めない場所のアイデア',
   shelf_item: '作品・資料そのもの',
   not_card: '移せない種類',
   not_found: '見つからない',
@@ -19,7 +22,16 @@ const STATUS_LABELS: Record<Exclude<TrashItemStatus, 'requested' | 'pending'>, s
 }
 
 /** 移さなかったうち、Claude が直して呼び直せる・作者に伝える理由（これだけで1件も移さなければ失敗として返す） */
-const NEEDS_FIX = new Set<TrashItemStatus>(['not_claude', 'edited', 'shelf_item', 'not_card', 'not_found', 'ambiguous', 'invalid'])
+const NEEDS_FIX = new Set<TrashItemStatus>([
+  'not_claude',
+  'edited',
+  'not_writable',
+  'shelf_item',
+  'not_card',
+  'not_found',
+  'ambiguous',
+  'invalid',
+])
 
 /** 送る前の確かめで呼び出し全体を断った */
 export function trashBuildError(built: TrashBuild): ToolResult {
@@ -45,9 +57,13 @@ export function trashResult(built: TrashBuild, created: ReadonlySet<string>, dai
     lines.push(`- 移さない ${what}（${reason}）${it.hint ? `: ${it.hint}` : ''}`)
     if (it.candidates?.length) for (const c of it.candidates.slice(0, 5)) lines.push(`    候補: ${c}`)
   }
-  if (moving.length)
+  if (moving.some((it) => it.table !== 'ideas'))
     lines.push(
       `移すカードは、もう Claude からは見えません。アプリを開いて同期すると、アプリのゴミ箱へ移ります（作品・資料は棚に残ります）。移した後${TRASH_RETENTION_DAYS}日は、作者がアプリのゴミ箱から元に戻せます。`,
+    )
+  else if (moving.length)
+    lines.push(
+      `移すアイデアは、もう Claude からは見えません。アプリを開いて同期すると、アプリのゴミ箱へ移ります。移した後${TRASH_RETENTION_DAYS}日は、作者がアプリのゴミ箱から元に戻せます。`,
     )
   lines.push(`今日（日本時間）はあと ${Math.max(0, dailyLeft)}件移せます。本文（稿）は書き換えていません。`)
   return {

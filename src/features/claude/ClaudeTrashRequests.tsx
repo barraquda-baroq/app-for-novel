@@ -1,4 +1,5 @@
-// Claude の「ゴミ箱へ移す依頼」（2.7）を処理する（src/domain/claudeTrash.ts の applyTrashRequests）。何も描かない。
+// Claude の「ゴミ箱へ移す依頼」（2.7）を処理する（src/domain/claudeRequests.ts の applyClaudeRequests。2.8 のアイデアへの追記の
+// 依頼も同じ処理で先に当てる）。何も描かない。
 // App の外枠に1つだけ置く（TrashPurge・BenchAutoTags と同じ）。
 // - 依頼はクラウドからしか届かないので、同期を受け持つ画面がクラウドと揃っている時だけ動かす（src/sync/controller.ts の
 //   cloudSettled）。古い端末内のデータで移して、ほかの端末で作者が直した・戻した変更と重ならないように
@@ -9,7 +10,7 @@
 // - 依頼が届いてから少し待ってから当てる（いくつかに分かれて届くのを待つ）。移した・断った時はトーストで知らせる
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import { trashRequestNotice } from '../../domain/claudeTrash'
+import { claudeRequestNotice } from '../../domain/claudeRequests'
 import { actions } from '../../store/actions'
 import { useApp } from '../../store/appStore'
 import { notify } from '../../store/uiStore'
@@ -58,7 +59,7 @@ export function ClaudeTrashRequests() {
     if (!ready || !settled || draftsDirty || held || !any) return
     const timer = window.setTimeout(() => {
       try {
-        const message = trashRequestNotice(actions.applyClaudeTrashRequests())
+        const message = claudeRequestNotice(actions.applyClaudeRequests())
         if (message) notify(message)
       } catch (e) {
         console.warn('Claude の依頼のカードをゴミ箱へ移せませんでした', e)

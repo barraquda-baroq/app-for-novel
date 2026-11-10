@@ -258,7 +258,7 @@ describe('分析・記録を直すダイアログを開いている間', () => {
 describe('ゴミ箱の画面', () => {
   it('Claude の依頼で移したカードに「Claude の依頼」の札。作者が削除したものには出ない。元に戻せる', async () => {
     const s = seed()
-    actions.applyClaudeTrashRequests()
+    actions.applyClaudeRequests()
     actions.deleteBenchAnalysis('cn-a2')
     const router = createMemoryRouter(
       [

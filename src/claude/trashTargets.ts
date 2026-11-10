@@ -1,13 +1,25 @@
 // ゴミ箱へ移す依頼（2.7。TrashRequest）の形と、依頼の出ているカード。コネクタの見せる内容（visibility.ts の claudeView）・
 // 自動のタグ（domain/benchTags.ts）・依頼の作成（trashRequest.ts）・アプリの処理（domain/claudeTrash.ts）で同じものを使う。
+// 2.8 から Claude が作ったアイデア（ideas）も移せる（アイデアの依頼は形の版 2。2.7 のアプリ・コネクタは触らない）。
 // visibility.ts から読み込むので、ほかの部品（benchOps・trash.ts など）は読み込まない（読み込みが輪にならないように）。
 import type { AppData, ID, TrashRequest, TrashRequestTable } from '../domain/types'
 
-/** このアプリ・コネクタが知っている依頼の形の版 */
-export const TRASH_REQUEST_VERSION = 1
+/**
+ * このアプリ・コネクタが知っている依頼の形の版（1 = 相対比較の分析・資料の記録（2.7）、2 = アイデアも（2.8））。
+ * 作る依頼の版は表で決める（trashRequestVersionFor。分析・記録の依頼は 2.7 と同じ 1 のまま）
+ */
+export const TRASH_REQUEST_VERSION = 2
 
-/** 依頼で移せるカードの表（相対比較の分析と資料の記録だけ。作品・資料そのものは移さない） */
-export const TRASH_TARGET_TABLES: readonly TrashRequestTable[] = ['benchAnalyses', 'materialNotes']
+/** 依頼で移せるカードの表（相対比較の分析・資料の記録と、Claude が作ったアイデア。作品・資料そのものは移さない） */
+export const TRASH_TARGET_TABLES: readonly TrashRequestTable[] = ['benchAnalyses', 'materialNotes', 'ideas']
+
+/** 作る依頼の形の版（アイデアは 2。2.7 のアプリは新しい版として触らずに残す。分析・記録は 2.7 と同じ 1） */
+export function trashRequestVersionFor(table: TrashRequestTable): number {
+  return table === 'ideas' ? 2 : 1
+}
+
+/** どのタイトルにも属さないホームのアイデアの依頼の parentId（タイトルの id は UUID なので重ならない） */
+export const IDEA_HOME_PARENT = 'home'
 
 export function isTrashTargetTable(v: unknown): v is TrashRequestTable {
   return typeof v === 'string' && (TRASH_TARGET_TABLES as readonly string[]).includes(v)
@@ -40,7 +52,7 @@ export function isNewerTrashRequest(r: unknown): boolean {
   return typeof v === 'number' && v > TRASH_REQUEST_VERSION
 }
 
-/** 依頼の対象の印（「benchAnalyses:id」） */
+/** 依頼の対象の印（「benchAnalyses:id」「ideas:id」） */
 export const trashTargetKey = (table: TrashRequestTable, id: ID): string => `${table}:${id}`
 
 /** 形が正しく、知っている版の依頼（作った順） */
