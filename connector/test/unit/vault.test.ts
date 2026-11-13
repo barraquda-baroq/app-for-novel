@@ -168,24 +168,31 @@ describe('複数の接続（2.9。claude.ai のアカウントごとの許可）
    * 遅れて届く。Durable Object は答えを待つ間にほかの呼び出しも進める）
    */
   function slowConnectorReads(fake: FakeFirebase) {
-    const holds: { reached: () => void; gate: Promise<void> }[] = []
+    const holds: { reached: () => void; gate: Promise<void>; late: boolean }[] = []
     const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const res = await fake.fetch(input, init)
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
       const hold = url.endsWith(':batchGet') && String(init?.body ?? '').includes('/config/connector"') ? holds.shift() : undefined
-      if (hold) {
+      if (hold?.late) {
+        hold.reached()
+        await hold.gate
+      }
+      const res = await fake.fetch(input, init)
+      if (hold && !hold.late) {
         hold.reached()
         await hold.gate
       }
       return res
     }) as typeof globalThis.fetch
-    /** 次の読み取りを止める（atRead は止まった時、release で答えを返す） */
-    const holdNext = () => {
+    /**
+     * 次の読み取りを止める（atRead は止まった時、release で答えを返す）。late なら、止めている間に変えた記録を読んだ答えにする
+     * （読み始めてから、記録を読むまでが遅れた時）
+     */
+    const holdNext = (opts: { late?: boolean } = {}) => {
       let reached!: () => void
       let release!: () => void
       const atRead = new Promise<void>((r) => (reached = r))
       const gate = new Promise<void>((r) => (release = r))
-      holds.push({ reached, gate })
+      holds.push({ reached, gate, late: opts.late === true })
       return { atRead, release }
     }
     return { fetch, holdNext }
@@ -569,6 +576,43 @@ describe('複数の接続（2.9。claude.ai のアカウントごとの許可）
       clock.now += 2 * MIN
       expect(await core.callTool('novel_list_titles', {}, { grant: b })).toMatchObject({ isError: true, auth: true })
       expect(core.pairingState()).toBe('unpaired')
+    }
+  })
+
+  it('読んでいる間にすべて解除して連携し直し、同じ cid（2.8 の記録の c0）がまた一覧にあっても、前の連携の許可は断る', async () => {
+    // late: 記録が無い時の答え（すべて解除の後に読んだ） / 連携し直した後の記録を読んだ答え（読むのが遅れた）
+    for (const late of [false, true]) {
+      for (const tool of ['novel_list_titles', 'novel_status']) {
+        const fake = new FakeFirebase()
+        const n = novel(['本文です。'])
+        const slow = slowConnectorReads(fake)
+        // 2.8 の記録（v1）で連携した許可（cid が無い = c0）
+        const { core, uid, clock, grant: a } = await pairedCore(fake, n.data, { fetch: slow.fetch })
+        clock.now += 2 * MIN
+        if (!late) fake.setConnector(null)
+        const held = slow.holdNext({ late })
+        const callA = core.callTool(tool, {}, { grant: a })
+        await held.atRead
+        // ［連携をすべて解除］の後に、また v1 の記録で連携し直す（一覧はまた [c0]。代は変わる）
+        if (late) fake.setConnector(null)
+        const h2 = await pairingHash('state-2', 'k'.repeat(43))
+        fake.setConnector({ uid, pairing: h2, pairedAt: clock.now })
+        const v = await core.verifyPairing(h2)
+        expect(v).toMatchObject({ ok: true, cid: 'c0' })
+        if (!v.ok) throw new Error('連携できません')
+        expect(v.gen).not.toBe(a.gen)
+        held.release()
+        const res = await callA
+        expect(res, `${tool}${late ? '（記録を読むのが遅れた）' : ''}`).toMatchObject({ isError: true, auth: true })
+        expect(res.text).not.toContain('『星の庭』')
+        expect(res.text).not.toContain('この接続')
+        // 新しい連携はそのまま使える
+        expect(core.pairingState()).toBe('paired')
+        const b: GrantProps = { ownerUid: v.ownerUid, gen: v.gen }
+        expect((await core.callTool('novel_list_titles', {}, { grant: b })).text).toContain('『星の庭』')
+        expect(await core.checkGrant(b)).toBe(true)
+        expect(await core.checkGrant(a)).toBe(false)
+      }
     }
   })
 })

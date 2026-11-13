@@ -940,6 +940,45 @@ describe('アイデアのフォルダ（2.9）を戻す', () => {
     expect(restoredMessage(r.result)).toBe('「雨の駅」は、元のフォルダが元の場所に無いため、1段目のフォルダとして戻しました')
   })
 
+  it('2段目: 親が1段目に見えていれば、記録に親へのつながりが残っていても（同期で P→Q→R）その中へ戻し、親のつながりを消す', () => {
+    const t = createTitle(emptyData(), '星の庭')
+    let r = folderIn(t.data, t.result, null, 'R')
+    const rr = r.id
+    r = folderIn(r.data, t.result, null, 'Q')
+    const q = r.id
+    r = folderIn(r.data, t.result, null, 'P')
+    const p = r.id
+    r = folderIn(r.data, t.result, p, 'S')
+    const s = r.id
+    const c = card(r.data, t.result, 'S1', s)
+    let data = deleteIdeaFolder(c.data, s)
+    // 同期でまとめた後: P は Q の中・Q は R の中（P は1段目に見えたまま）
+    data = {
+      ...data,
+      ideaFolders: {
+        ...data.ideaFolders,
+        [p]: { ...data.ideaFolders[p], parentId: q },
+        [q]: { ...data.ideaFolders[q], parentId: rr },
+      },
+    }
+    const shape = (d: AppData) => buildIdeaTree(d, t.result).folders.map((n) => [n.folder.name, names(n.folders)])
+    expect(shape(data)).toEqual([
+      ['P', []],
+      ['R', ['Q']],
+    ])
+    const back = restoreTrashEntry(data, entryOf(data, 'ideaFolder').id)
+    expect(back.result).toMatchObject({ kind: 'ideaFolder', outOfFolder: false, movedToUnassigned: false })
+    expect(shape(back.data)).toEqual([
+      ['P', ['S']],
+      ['R', ['Q']],
+    ])
+    expect(back.data.ideaFolders[s].parentId).toBe(p)
+    // P のつながりは同じ操作で消す（後で Q が1段目に戻っても、S は3段目にならない）
+    expect(back.data.ideaFolders[p].parentId).toBeNull()
+    expect(bodies(buildIdeaTree(back.data, t.result).folders[0].folders[0].ideas)).toEqual(['S1'])
+    expect(restoredMessage(back.result)).not.toContain('元の場所に無い')
+  })
+
   it('タイトルを消した後のカード: タイトルと一緒にホームへ移ったフォルダに戻る', () => {
     const f = folderFixture()
     let data = deleteIdea(f.data, f.rain2)

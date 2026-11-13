@@ -3,7 +3,7 @@
 // 戻す時はその場所へ並べ直す（直前にあった要素がまだあればその直後、なければ控えた位置）。
 // すべて純粋関数で、新しい AppData を返す。戻せない時は DomainError を投げる。
 import { ideaLabelLine } from '../claude/ideaAppend'
-import { effectiveFolderId, effectiveParentId, ideaFolderName, isTopFolder, sectionOf, withIdeaFolder } from './ideaFolders'
+import { effectiveFolderId, effectiveParentId, ideaFolderName, sectionOf, withIdeaFolder } from './ideaFolders'
 import { actsOf, isSplit, locatePiece } from './structure'
 import { Tx, transact } from './tx'
 import {
@@ -1057,14 +1057,16 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
           movedToUnassigned = true
         } else titleId = f.titleId
         const section = sectionOf(tx.data.titles, f.titleId)
-        // 親のフォルダが無い（ゴミ箱にある・削除した・2段目・別の仕切り）: 1段目として戻す
+        // 親のフォルダが無い（ゴミ箱にある・削除した・2段目として見せている・別の仕切り）: 1段目として戻す。1段目かどうかは見せ方で
+        // （effectiveParentId が null）決め、見せ方で1段目の親に記録のつながりが残れば、同じ操作の中で消す（ideaFolderOps の requirePlace と同じ。
+        // 後でつながりが生き返って、戻したフォルダが3段目にならないように）
         if (f.parentId !== null) {
           const p = typeof f.parentId === 'string' && f.parentId !== f.id ? tx.get('ideaFolders', f.parentId) : undefined
-          if (!p || sectionOf(tx.data.titles, p.titleId) !== section || !isTopFolder(tx.data, p)) {
+          if (!p || sectionOf(tx.data.titles, p.titleId) !== section || effectiveParentId(tx.data, p) !== null) {
             f = { ...f, parentId: null }
             tx.put('ideaFolders', f)
             outOfFolder = true
-          }
+          } else if (p.parentId !== null) tx.put('ideaFolders', { ...p, parentId: null, updatedAt: now() })
         }
         const parentId = effectiveParentId(tx.data, f)
         const peer = (x: IdeaFolder) =>

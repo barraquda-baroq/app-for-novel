@@ -365,7 +365,7 @@ describe('buildAddIdeas: フォルダ（2.9）', () => {
     expect(none.ok).toBe(false)
     expect(none.records).toEqual([])
     expect(none.error).toBe(
-      'フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（ホームのアイデアのフォルダは下のとおり）。作者がフォルダを言えば folder に（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。',
+      'フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（ホームのアイデアのフォルダは下のとおり）。作者がフォルダを言えば folder にその名前を（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。',
     )
     expect(none.candidates).toEqual(['（ホームのアイデアにはまだフォルダがありません。作者が名前を言えば、その名前で作ります）'])
     const data = withFolders(s.data, [
@@ -560,7 +560,9 @@ describe('buildAddIdeas: フォルダ（2.9）', () => {
       folder('f-tttt', s.titleId, '第1章', 0),
     ])
     const dup = addTo(data, { folder: '新作の相談', theme: '港町', items: [{ content: '一' }] })
-    expect(dup.error).toBe('「新作の相談」という名前のフォルダが2つ以上あり、決まりません。f:… で指してください')
+    expect(dup.error).toBe(
+      '「新作の相談」という名前の1段目のフォルダが2つ以上あり、決まりません。f:… で指し、theme もそのまま渡してください（その中に2段目「日付　theme」を作ります）',
+    )
     expect(dup.candidates).toEqual(['f:fa1 新作の相談', 'f:fa2 新作の相談'])
     expect(addTo(data, { folder: '雨の駅', items: [{ content: '一' }] }).error).toBe(
       '「雨の駅」という名前のフォルダが2つ以上あり、決まりません。f:… で指してください',
@@ -753,7 +755,7 @@ describe('buildAddIdeas: フォルダ（2.9）', () => {
       folder('f-cccc', null, '新作の相談', 1, { parentId: 'f-aaaa' }),
     ])
     const note =
-      'フォルダ「新作の相談」は、アプリでの移動がぶつかって中にフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）'
+      'フォルダ「新作の相談」は、アプリでの移動がぶつかって中に新しいフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）'
     for (const input of [
       { folder: '新作の相談', theme: '港町' },
       { folder: '新作の相談' },
@@ -787,6 +789,76 @@ describe('buildAddIdeas: フォルダ（2.9）', () => {
     const plain = addTo(chain, { folder: '置き場', theme: '港町', items: [{ content: '一' }] })
     expect([folderRecords(plain).length, plain.folderPath, plain.directNote]).toEqual([1, `置き場＞${DATED}`, undefined])
     expect(shownPaths(chain, plain)).toEqual([`置き場＞${DATED}`])
+  })
+
+  it('親が無い・別の仕切りにある1段目（中の2段目が見えている）は、もうある2段目を使い、新しく作る時だけじかに入れて補足で言う', () => {
+    const s = setup()
+    const note =
+      'フォルダ「新作の相談」は、アプリでの移動がぶつかって中に新しいフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）'
+    for (const parentId of ['f-gone', 'f-tttt']) {
+      // 親（f-gone）は消えた（ゴミ箱）・親（f-tttt）は別の仕切り（タイトル『星の庭』）。どちらも「新作の相談」は1段目に見え、中も見える
+      const data = withFolders(s.data, [
+        folder('f-tttt', s.titleId, '第1章', 0),
+        folder('f-cccc', null, '新作の相談', 0, { parentId }),
+        folder('f-xxxx', null, '雨の駅', 0, { parentId: 'f-cccc' }),
+        folder('f-dddd', null, DATED, 1, { parentId: 'f-cccc' }),
+      ])
+      expect(buildIdeaTree(data, null).folders.map((f) => [ideaFolderName(f.folder), f.folders.length])).toEqual([
+        ['新作の相談', 2],
+      ])
+      for (const [input, target] of [
+        [{ folder: '新作の相談', subfolder: '雨の駅' }, 'f-xxxx'],
+        [{ folder: 'f:fcccc', subfolder: 'f:fxxxx' }, 'f-xxxx'],
+        [{ folder: '新作の相談', theme: '港町' }, 'f-dddd'],
+      ] as const) {
+        const r = addTo(data, { ...input, items: [{ content: '一' }] })
+        expect([r.ok, folderRecords(r), cardRecords(r)[0].folderId, r.directNote], JSON.stringify(input)).toEqual([
+          true,
+          [],
+          target,
+          undefined,
+        ])
+        expect(shownPaths(data, r)).toEqual([r.folderPath])
+      }
+      // 新しい2段目を作る時だけ、作らずにじかに入れて補足で言う
+      for (const input of [
+        { folder: '新作の相談', theme: '灯台' },
+        { folder: '新作の相談', subfolder: '駅の外' },
+      ]) {
+        const r = addTo(data, { ...input, items: [{ content: '一' }] })
+        expect([r.ok, folderRecords(r), cardRecords(r)[0].folderId, r.directNote]).toEqual([true, [], 'f-cccc', note])
+        expect(shownPaths(data, r)).toEqual(['新作の相談'])
+      }
+      // 名前で言った1段目は、今までどおり theme が要る
+      expect(addTo(data, { folder: '新作の相談', items: [{ content: '一' }] }).error).toContain(
+        'theme（相談のテーマ。短く）も渡して',
+      )
+    }
+  })
+
+  it('同じ名前の1段目が2つの時、名前だけ（theme 無し）なら先に theme を求め、指し直す f:… にも theme を渡させる（2段目「日付　theme」を作る）', () => {
+    const s = setup()
+    const data = withFolders(s.data, [folder('f-aaaa', null, '新作の相談', 0), folder('f-bbbb', null, '新作の相談', 1)])
+    const first = addTo(data, { folder: '新作の相談', items: [{ content: '一' }] })
+    expect([first.ok, first.error, first.candidates]).toEqual([
+      false,
+      'folder だけの時は、その中に「2026/11/12　テーマ」の2段目のフォルダを作るので、theme（相談のテーマ。短く）も渡してください（作者が2段目の名前を言った時は subfolder に渡す）',
+      undefined,
+    ])
+    const second = addTo(data, { folder: '新作の相談', theme: '港町', items: [{ content: '一' }] })
+    expect(second.error).toContain('f:… で指し、theme もそのまま渡してください')
+    expect(second.candidates).toEqual(['f:faaaa 新作の相談', 'f:fbbbb 新作の相談'])
+    // そのとおり f:… と theme で指し直すと、その中に「日付　theme」を作る
+    const third = addTo(data, { folder: 'f:faaaa', theme: '港町', items: [{ content: '一' }] })
+    expect([third.ok, third.folderPath, shownPaths(data, third)]).toEqual([
+      true,
+      `新作の相談＞${DATED}`,
+      [`新作の相談＞${DATED}`],
+    ])
+    // 2段とも言った時は、今までどおり f:… で指してもらう（theme は要らない）
+    expect(addTo(data, { folder: '新作の相談', subfolder: '雨の駅', items: [{ content: '一' }] }).error).toBe(
+      '「新作の相談」という名前のフォルダが2つ以上あり、決まりません。f:… で指してください',
+    )
   })
 })
 

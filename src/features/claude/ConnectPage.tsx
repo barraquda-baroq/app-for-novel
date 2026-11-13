@@ -771,7 +771,7 @@ function ApproveForm({
           </span>
           {writes === null && list.state === 'error' ? (
             <span className="tiny faint cn-writes-hint" data-testid="connect-writes-unknown">
-              （いまの設定を読めませんでした。変えなければ、いまの設定のままです）
+              （いまの設定を読めませんでした。変えなければ、いまの設定のままです。コネクタが用意し直されていた時は許可になります）
             </span>
           ) : null}
         </span>

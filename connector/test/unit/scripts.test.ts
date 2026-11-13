@@ -265,6 +265,25 @@ describe('スクリプトの部品', () => {
     expect(row).not.toMatch(/`connector\.local\.json` の無いパソコンで公開した/)
   })
 
+  it('［連携をすべて解除］の「その場で」にも、Firebase に繋がらない間・無料枠を使い切った間の例外と、すぐに切る方法を添える', () => {
+    const docs = path.resolve(import.meta.dirname, '../../../docs')
+    const connector = fs.readFileSync(path.join(docs, 'CONNECTOR.md'), 'utf8')
+    // §4 の「すぐに止める」の行
+    const row = connector.split('\n').find((l) => l.startsWith('| すぐに止める |'))
+    expect(row).toContain('無料枠を使い切った間')
+    expect(row).toContain('「カスタマイズ → コネクタ → Novel Studio」でもコネクタを削除する')
+    // 仕組みの箇条: どちらの解除にも例外がある
+    const intro = connector.slice(0, connector.indexOf('## 1.'))
+    expect(intro).toMatch(/［連携をすべて解除］で、その場で読めなくなります。[^\n]*\n[^\n]*どちらも、Firebase に繋がらない間・無料枠を使い切った間は/)
+    // §2-E の例外の箇条は、すべて解除した後のどの接続にも効く
+    expect(connector).toContain('解除した接続（［連携をすべて解除］の後は、どの接続も）でも前に取り込んだ内容を')
+    // SPEC-2 §7 の「その場で」も同じ
+    const spec = fs.readFileSync(path.join(docs, 'SPEC-2.md'), 'utf8')
+    expect(spec).toContain(
+      '消す（［連携をすべて解除］）とその場でコネクタは何も読めなくなる（Firebase に繋がらない・無料枠を使い切った間は、記録を読み直せるまで、前に取り込んだ内容で答えることがある',
+    )
+  })
+
   it('鍵は32バイトの乱数（毎回違う）', () => {
     const a = newTokenKey()
     expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/)

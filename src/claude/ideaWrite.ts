@@ -13,6 +13,7 @@ import {
   folderNameKey,
   folderPathLabel,
   ideaFolderName,
+  isTopFolder,
   sectionOf,
   tidyFolderName,
 } from '../domain/ideaFolders'
@@ -216,7 +217,7 @@ export const IDEA_ADD_HINTS = {
 /** 2.9: フォルダの決め方の断りの文 */
 export const IDEA_FOLDER_TEXTS = {
   none: (place: string) =>
-    `フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（${place}のフォルダは下のとおり）。作者がフォルダを言えば folder に（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。`,
+    `フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（${place}のフォルダは下のとおり）。作者がフォルダを言えば folder にその名前を（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。`,
   noneYet: (place: string) => `（${place}にはまだフォルダがありません。作者が名前を言えば、その名前で作ります）`,
   both: 'folder と placement は一緒に渡せません（作者がフォルダを言った時は folder だけ、言わなかった時は placement だけ）',
   subfolderAlone: 'subfolder は folder（1段目のフォルダ）と一緒に渡してください',
@@ -230,6 +231,8 @@ export const IDEA_FOLDER_TEXTS = {
   notFound: (ref: string) => `フォルダが見つかりません: ${ref}`,
   ambiguousRef: (ref: string) => `${ref} がいくつかのフォルダに当たります（id を長く指定してください）`,
   ambiguousName: (name: string) => `「${name}」という名前のフォルダが2つ以上あり、決まりません。f:… で指してください`,
+  ambiguousTop: (name: string) =>
+    `「${name}」という名前の1段目のフォルダが2つ以上あり、決まりません。f:… で指し、theme もそのまま渡してください（その中に2段目「日付　theme」を作ります）`,
   inTitle: (ref: string, title: string, titleRef: string) =>
     `${ref} はタイトル『${title}』のフォルダです（そこに入れる時は title_id に ${titleRef} を渡してください）`,
   inHome: (ref: string) => `${ref} はホームのアイデアのフォルダです（title_id を省いてください）`,
@@ -237,7 +240,7 @@ export const IDEA_FOLDER_TEXTS = {
     `${ref} は2段目のフォルダなので、中にフォルダは作れません（3段目は作れません。subfolder を省くと、そのフォルダにじかに入れます）`,
   notChild: (ref: string, parent: string) => `${ref} は「${parent}」の中のフォルダではありません`,
   stuck: (name: string) =>
-    `フォルダ「${name}」は、アプリでの移動がぶつかって中にフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）`,
+    `フォルダ「${name}」は、アプリでの移動がぶつかって中に新しいフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）`,
   exhausted: 'このフォルダはもう作れません（同じ名前のフォルダの削除と作り直しが多すぎます）。別の名前にしてください',
   trashed: (name: string) =>
     `ゴミ箱にも同じ名前のフォルダ「${name}」があります（新しく作りました。前のフォルダは作者がアプリのゴミ箱から戻せます）`,
@@ -263,7 +266,8 @@ const FOLDER_REF = /^f:/i
 /**
  * 1段目として見せているのに、記録に親へのつながりが残るフォルダ（同期で C→A→B・A↔B になった・親が消えた）。中に2段目を作ると、
  * その2段目は今すぐ（C→A→B・輪）か、つながりが生き返った時（親が戻った）に、このフォルダの外の1段目に見える。コネクタは作者の
- * フォルダを書き換えない（つながりを消せない）ので、中にフォルダを作らずに、このフォルダにじかに入れる
+ * フォルダを書き換えない（つながりを消せない）ので、中に新しいフォルダを作らずに、このフォルダにじかに入れる。
+ * 親が無い・別の仕切りにある時（isTopFolder）は、中の2段目が今も見えているので、もうある2段目は使う（新しく作る時だけじかに入れる）
  */
 const stuckTop = (f: IdeaFolder) => typeof f.parentId === 'string'
 
@@ -407,9 +411,17 @@ export function buildAddIdeas(raw: AppData, view: AppData, input: AddIdeasInput,
   }
   let plan: FolderPlan | null = null
   let directNote: string | undefined
-  /** 1段目の中（2段目）の決め方。中にフォルダを作れない1段目は、そこにじかに入れて補足で言う */
+  /**
+   * 1段目の中（2段目）の決め方。中に新しいフォルダを作れない1段目は、そこにじかに入れて補足で言う（親が無い・別の仕切りにあって、
+   * 中の2段目が見えている時は、もうある2段目なら使う）
+   */
   const inTop = (top: FolderPick): FolderPlan | IdeaAddBuild => {
     if ('folder' in top && stuckTop(top.folder)) {
+      if (isTopFolder(view, top.folder)) {
+        const sub = pickSub(top)
+        if (isBuild(sub)) return sub
+        if ('folder' in sub) return { top, sub }
+      }
       directNote = IDEA_FOLDER_TEXTS.stuck(ideaFolderName(top.folder))
       return { top, sub: null }
     }
@@ -439,9 +451,13 @@ export function buildAddIdeas(raw: AppData, view: AppData, input: AddIdeasInput,
       const tops = sameKey(folderChildren(view, section, null), name)
       const subs = tops.length ? [] : sameKey(sectionSubfolders(view, section), name)
       const many = tops.length > 1 ? tops : subs.length > 1 ? subs : null
+      // 1段目を名前で言った（2段目「日付　theme」を作る）のに決まらない時は、先に theme を求め、f:… で指し直す時も theme を渡させる
+      // （1段目の f:… だけは、そのフォルダにじかに入れるため）
+      const topOnly = tops.length > 1 && !subRef
+      if (topOnly && !theme) return fail(IDEA_FOLDER_TEXTS.themeForFolder(slashDay))
       if (many)
         return fail(
-          IDEA_FOLDER_TEXTS.ambiguousName(name),
+          topOnly ? IDEA_FOLDER_TEXTS.ambiguousTop(name) : IDEA_FOLDER_TEXTS.ambiguousName(name),
           many.slice(0, 10).map((f) => `${ref(f)} ${folderPathLabel(view, f.id, CLAUDE_PATH_SEP)}`),
         )
       if (subs.length === 1) {

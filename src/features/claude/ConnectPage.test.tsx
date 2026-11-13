@@ -645,6 +645,36 @@ describe('連携の画面', () => {
       expect(leave.leaveTo).not.toHaveBeenCalled()
     })
 
+    it('いまの一覧を読めなかった時に、コネクタが用意し直されていれば、触らなくても許可になる（そう添えてある）', async () => {
+      const user = userEvent.setup()
+      const { addedConnectorDoc } = await import('./connectLogic')
+      // 前のコネクタの記録で、書き込みを止めている
+      let server: Record<string, unknown> | null = {
+        uid: 'old-anon',
+        pairing: 'h-old',
+        pairedAt: 1,
+        approvedOn: 'iPad',
+        writes: false,
+        v: 1,
+      }
+      doc.addConnection.mockImplementation(async (a: ConnectionApproval) => {
+        server = addedConnectorDoc(server, a, 'SERVER')
+        doc.written.push(a)
+      })
+      doc.deleteConnector.mockImplementation(async () => {
+        server = null
+      })
+      doc.readConnectorDoc.mockImplementation(async () => Promise.reject(new Error('offline')))
+      renderPage()
+      await screen.findByTestId('connect-connections-error')
+      expect(screen.getByTestId('connect-writes-unknown').textContent).toContain('コネクタが用意し直されていた時は許可になります')
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.deleteConnector).toHaveBeenCalledTimes(1)
+      expect((doc.written[0] as ConnectionApproval).writes).toBeNull()
+      expect(server).toMatchObject({ uid: 'anon-uid', writes: true })
+    })
+
     it('いまの一覧を読めなかった時: 「書き込みを許可」は分からないと出し、触らなければ送らない（記録の値のまま）', async () => {
       const user = userEvent.setup()
       const { addedConnectorDoc } = await import('./connectLogic')
@@ -662,7 +692,7 @@ describe('連携の画面', () => {
       expect(box.checked).toBe(false)
       expect(box.indeterminate).toBe(true)
       expect(screen.getByTestId('connect-writes-unknown').textContent).toBe(
-        '（いまの設定を読めませんでした。変えなければ、いまの設定のままです）',
+        '（いまの設定を読めませんでした。変えなければ、いまの設定のままです。コネクタが用意し直されていた時は許可になります）',
       )
       await user.click(screen.getByTestId('connect-approve'))
       await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))

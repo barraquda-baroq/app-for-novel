@@ -214,4 +214,27 @@ describe('フォルダを移す', () => {
     await openMove(user, '新作の相談')
     expect(within(dialog()).getByTestId('idea-folder-move-submit')).toHaveProperty('disabled', true)
   })
+
+  it('消したタイトルの titleId が残るフォルダ（同期）は、今の場所・今の位置なら移せない（仕切りは書き換えない）', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      const t = actions.createTitle('星の庭')
+      actions.createIdeaFolder(null, null, '置き場')
+      const f = actions.createIdeaFolder(t, null, '新作の相談')
+      actions.createIdeaFolder(t, f, '雨の駅')
+      // 端末1が「星の庭」を消し、同じ時に端末2が「新作の相談」＞「雨の駅」を作った（まとめた後の形）
+      const d = getData()
+      commit({ ...d, titles: {} })
+    })
+    render(
+      <MemoryRouter>
+        <AppFrame>
+          <IdeaArea headingId="h" />
+        </AppFrame>
+      </MemoryRouter>,
+    )
+    await openMove(user, '新作の相談')
+    expect(screen.getByTestId('idea-folder-move-summary').textContent).toBe('現在の位置です。移動先か位置を選んでください。')
+    expect(within(dialog()).getByTestId('idea-folder-move-submit')).toHaveProperty('disabled', true)
+  })
 })

@@ -463,4 +463,35 @@ describe('1段目として見せているのに親へのつながりが残るフ
     expect(top.ideaFolders.a.parentId).toBeNull()
     expect(shape(top)).toEqual([['A', ['B']]])
   })
+
+  it('消したタイトルの titleId が残るフォルダ（同期）を並べ替えても titleId は変えない。タイトルを戻すと中のフォルダ・カードと一緒に戻る', () => {
+    const t = createTitle(emptyData(), '星の庭')
+    const star = t.result
+    // 端末1が「星の庭」を消し、同じ時に端末2が「星の庭」に F（中に S とカード）を作った（まとめた後の形）
+    let data: AppData = {
+      ...t.data,
+      ideaFolders: { h: rec('h', 'H', null, 0), f: { ...rec('f', 'F', null, 1), titleId: star } },
+    }
+    data = { ...data, ideaFolders: { ...data.ideaFolders, s: { ...rec('s', 'S', 'f', 0), titleId: star } } }
+    const c = card(data, star, '雨1', 's')
+    const title = c.data.titles[star]
+    const gone: AppData = { ...c.data, titles: {} }
+    expect(shape(gone)).toEqual([
+      ['H', []],
+      ['F', ['S']],
+    ])
+    // ホームで F を先頭へ（並べ替え）。記録の仕切りは見せ方で同じなので書かない
+    const moved = moveIdeaFolder(gone, 'f', { titleId: null, parentId: null }, 0)
+    expect(shape(moved)).toEqual([
+      ['F', ['S']],
+      ['H', []],
+    ])
+    expect([moved.ideaFolders.f.titleId, moved.ideaFolders.s.titleId]).toEqual([star, star])
+    // タイトルを戻すと、F＞S とカードが一緒に「星の庭」に戻る（分かれない）
+    const back: AppData = { ...moved, titles: { [star]: title } }
+    expect(shape(back)).toEqual([['H', []]])
+    const tree = buildIdeaTree(back, star)
+    expect(tree.folders.map((n) => [n.folder.name, names(n.folders)])).toEqual([['F', ['S']]])
+    expect(bodies(tree.folders[0].folders[0].ideas)).toEqual(['雨1'])
+  })
 })

@@ -152,8 +152,9 @@ export function moveIdeaFolderStep(data: AppData, id: ID, dir: -1 | 1): AppData 
  * - 2段目は、どの仕切りの1段目の中へも・1段目にもできる。中にフォルダの無い1段目は、ほかの1段目の中へ移せる
  * - 中にフォルダのあるフォルダは1段目にしか移せない（3段目は作れない）。移す先に同じ名前のフォルダがあれば断る
  * - 仕切りが変わる時は、中のフォルダと、見せ方で中にあるカードの titleId も書き換える（カードの folderId はそのまま）
- * - 同じ入れ物の中なら、位置だけを変える（見せ方で同じでも、記録の仕切り・親が違えば書いてそろえる: 「1段目にする」で、同期でずれた
- *   親へのつながりを消す）
+ * - 同じ入れ物の中なら、位置だけを変える（見せ方で同じでも、記録の親が違えば親を書いてそろえる: 「1段目にする」で、同期でずれた
+ *   親へのつながりを消す。記録の仕切りは書き換えない: 消したタイトルの titleId が残るフォルダは、タイトルを戻すと中のフォルダ・
+ *   カードと一緒に戻る）
  */
 export function moveIdeaFolder(data: AppData, id: ID, to: FolderPlace, index = 0): AppData {
   return transact(data, (tx) => {
@@ -168,8 +169,8 @@ export function moveIdeaFolder(data: AppData, id: ID, to: FolderPlace, index = 0
       throw new DomainError('中にフォルダがあるフォルダは、ほかのフォルダの中へは移せません（3段目は作れません）')
     }
     const same = from.titleId === to.titleId && from.parentId === to.parentId
-    // 記録も同じ入れ物（仕切り・親を書き換えない）
-    const kept = same && f.titleId === to.titleId && f.parentId === to.parentId
+    // 記録も同じ親（書き換えない）。仕切りは見せ方で同じなら記録のまま（中のフォルダ・カードの titleId とそろったまま）
+    const kept = same && f.parentId === to.parentId
     // 移す先の兄弟と中のカードは、書き換える前に見せ方の決まりで集める（中のフォルダは一緒に移るので兄弟に数えない）
     const inner = new Set(subs.map((s) => s.id))
     const list = siblingFolders(tx.data, to, id).filter((s) => !inner.has(s.id))
@@ -182,7 +183,11 @@ export function moveIdeaFolder(data: AppData, id: ID, to: FolderPlace, index = 0
       for (const s of subs) tx.put('ideaFolders', { ...s, titleId: to.titleId, updatedAt: ts })
       for (const c of cards) tx.put('ideas', { ...c, titleId: to.titleId, updatedAt: ts })
     }
-    const moved: IdeaFolder = kept ? f : { ...f, titleId: to.titleId, parentId: to.parentId }
+    const moved: IdeaFolder = kept
+      ? f
+      : same
+        ? { ...f, parentId: to.parentId }
+        : { ...f, titleId: to.titleId, parentId: to.parentId }
     list.splice(Math.max(0, Math.min(index, list.length)), 0, moved)
     list.forEach((r, i) => {
       if (r.order !== i || (r.id === id && !kept)) tx.put('ideaFolders', { ...r, order: i, updatedAt: ts })

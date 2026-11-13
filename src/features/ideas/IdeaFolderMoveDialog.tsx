@@ -59,8 +59,8 @@ export function IdeaFolderMoveDialog({ folderId, onClose }: { folderId: ID; onCl
   if (!folder || !place) return null
   const name = ideaFolderName(folder)
   const cards = subtree.ideas.length
-  /** 今の場所でも、記録の仕切り・親が見せ方と違う（書いてそろえる） */
-  const relink = chosen !== null && chosen.current && (folder.titleId !== chosen.titleId || folder.parentId !== chosen.parentId)
+  /** 今の場所でも、記録の親が見せ方と違う（書いてそろえる。記録の仕切りは moveIdeaFolder も書き換えない） */
+  const relink = chosen !== null && chosen.current && folder.parentId !== chosen.parentId
   const unchanged = chosen !== null && chosen.current && index === currentIndex && !relink
   const duplicate =
     chosen !== null && !chosen.current && siblings.some((f) => folderNameKey(f.name) === folderNameKey(folder.name))

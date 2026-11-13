@@ -400,7 +400,8 @@ export class VaultCore {
    * ので、前の許可では使わない）。読めた内容は #connCheck に覚え、接続の一覧が変わった時だけ連携の状態にも残す。null の時は連携を外す。
    * 読み始めた順で覚える: 後から読み始めた読み取り・確かめ（verifyPairing）の一覧がもう届いていれば、この答えは捨ててそちらを返す。
    * null の答えも、後から読み取り・確かめを始めていれば連携は外さない（連携し直した後に届いた古い答えで、新しい連携を外さない。
-   * 外すかどうかは後の答えで決める）。この時も null を返す（読み始めた時の記録はもう無いので、いまの連携の許可は断ってよい）
+   * 外すかどうかは後の答えで決める）。この時も、後の一覧が届いていても null を返す（読み始めた時の記録はもう無いので、その時の
+   * 連携の許可は断ってよい。許可の代は #requireConnection・#status でも読んだ後に確かめる）
    */
   async #readConnector(): Promise<ConnectorState | null> {
     const seq = ++this.#connSeq
@@ -421,13 +422,13 @@ export class VaultCore {
         throw new ConnectorError('unavailable', MESSAGES.unavailable)
       }
     }
-    const cached = this.#connCheck
-    if (cached && cached.seq > seq) return cached
     if (!state) {
       if (seq < this.#connSeq) log('connector_gone_superseded')
       else this.#setUnpaired('connector_gone')
       return null
     }
+    const cached = this.#connCheck
+    if (cached && cached.seq > seq) return cached
     this.#connCheck = { ...state, at, seq }
     const m = this.pairing()
     const before = m.cids ?? [LEGACY_CONNECTION_ID]
@@ -603,6 +604,11 @@ export class VaultCore {
     try {
       const conn = await this.#readConnector()
       if (conn === null) return { text: MESSAGES.unpaired, isError: true, auth: true }
+      // 読んでいる間にすべて解除して連携し直された（前の代の許可）: 一覧に同じ cid があっても断る
+      if (grant && !this.#grantMatchesPairing(grant)) {
+        log('grant_stale', { tool: 'novel_status' })
+        return { text: MESSAGES.unpaired, isError: true, auth: true }
+      }
       // 一覧から外された接続（いま読んだ一覧に無い）: この許可だけを断る（ほかの接続・Vault の連携はそのまま）
       if (grant && !conn.cids.includes(grant.cid ?? LEGACY_CONNECTION_ID)) {
         log('grant_removed', { tool: 'novel_status' })
@@ -679,14 +685,26 @@ export class VaultCore {
       }
     }
     if (!p) return
+    this.#requireGrantCurrent(p)
     const cid = p.cid ?? LEGACY_CONNECTION_ID
     if (this.#listed(cid)) return
     if (!this.#connCheck || this.#now() - this.#connCheck.at >= CONNECTION_FRESH_MS) {
       // 読めなければ断らずに失敗にする（つながらない時の答え。許可は取り消さない）
       await this.#readConnectorOrUnpair()
+      this.#requireGrantCurrent(p)
       if (this.#listed(cid)) return
     }
     log('grant_removed')
+    throw new ConnectorError('unpaired', MESSAGES.unpaired)
+  }
+
+  /**
+   * 読んでいる間に、すべて解除して連携し直した（代が変わった）・連携が外れた時は、前の連携の許可を断る（呼び出しの始めに
+   * 確かめた代は、読み取りを待つ間に古くなることがある。一覧に同じ cid があっても、前の代の許可は使わない）
+   */
+  #requireGrantCurrent(p: GrantProps): void {
+    if (this.#grantMatchesPairing(p)) return
+    log('grant_stale')
     throw new ConnectorError('unpaired', MESSAGES.unpaired)
   }
 

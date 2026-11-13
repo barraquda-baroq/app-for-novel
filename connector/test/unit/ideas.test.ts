@@ -708,7 +708,7 @@ describe('novel_add_ideas: フォルダ（2.9）', () => {
     expect(r.isError).toBe(true)
     expect(r.text).toBe(
       [
-        'フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（ホームのアイデアのフォルダは下のとおり）。作者がフォルダを言えば folder に（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。',
+        'フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（ホームのアイデアのフォルダは下のとおり）。作者がフォルダを言えば folder にその名前を（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。',
         '候補:',
         '- （ホームのアイデアにはまだフォルダがありません。作者が名前を言えば、その名前で作ります）',
       ].join('\n'),
@@ -969,7 +969,7 @@ describe('novel_add_ideas: フォルダ（2.9）', () => {
     expect(r.isError).toBeUndefined()
     expect(r.text.split('\n').slice(2, 4)).toEqual([
       `フォルダ: 新作の相談 [${ref}]（もとからあるフォルダ）`,
-      '補足: フォルダ「新作の相談」は、アプリでの移動がぶつかって中にフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）',
+      '補足: フォルダ「新作の相談」は、アプリでの移動がぶつかって中に新しいフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）',
     ])
     expect(connectorDocs(fake, 'ideaFolders')).toHaveLength(0)
     expect(cloudData(fake).ideas[claudeIdeaId(null, DAY, '', '・一')].folderId).toBe(cId)
