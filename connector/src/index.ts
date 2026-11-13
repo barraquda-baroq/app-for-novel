@@ -48,12 +48,13 @@ export function oauthOptions(env: Env, requestUrl?: string): OAuthProviderOption
     refreshTokenTTL: 180 * 86_400,
     refreshTokenIdleTTL: 180 * 86_400,
     tokenExchangeCallback: async ({ grantType, env: e, props }) => {
-      // 連携が解除された・前の連携の許可（解除した後に連携し直した・持ち主が変わった）なら、更新用トークンを断る
-      // （この許可はライブラリが取り消し、claude.ai は接続し直しを求める）。毎回 Vault に確かめる（キャッシュしない）
+      // 連携が解除された・前の連携の許可（解除した後に連携し直した・持ち主が変わった）・アプリの接続の一覧から外された接続
+      // （2.9）なら、更新用トークンを断る（この許可だけをライブラリが取り消し、claude.ai は接続し直しを求める。ほかの接続はそのまま）。
+      // 毎回 Vault に確かめる（Vault は接続の一覧を1分ごとに読み直し、一覧に無い接続は5秒以内に読み直してから断る）
       if (grantType !== GrantType.REFRESH_TOKEN) return
       let current: boolean
       try {
-        current = await vault(e).grantCurrent(props as GrantProps)
+        current = await vault(e).checkGrant(props as GrantProps)
       } catch (err) {
         // Vault に届かない一時的な失敗では接続を切らない
         logError('grant_check_failed', err)

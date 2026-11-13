@@ -1,10 +1,10 @@
 // /mcp（OAuth のライブラリがトークンを確かめた後に呼ぶ apiHandler）。
 // - Origin: 無い・claude.ai・claude.com・このコネクタ自身だけ（ほかは 403。ログには host だけ）
 // - 本文は 1MB まで。2025 年版の呼び出し（initialize あり）も 2026-07-28 版も、状態を持たずに1回ずつ答える
-// - ツールの呼び出しには OAuth の許可の props（持ち主・連携の代）を渡す。前の連携の許可・連携が解除された・身元を失った時は、
-//   このトークンの許可だけを取り消して HTTP 401 にする（claude.ai がトークンを更新しようとして invalid_grant になり、接続し直しを
-//   求める）。持ち主のすべての許可は取り消さない（連携し直した新しい許可まで取り消さないように。ほかの古い許可は、それぞれの
-//   呼び出し・トークンの更新の時に断られる）
+// - ツールの呼び出しには OAuth の許可の props（持ち主・連携の代・接続）を渡す。前の連携の許可・連携が解除された・身元を失った・
+//   アプリの接続の一覧から外された（2.9）時は、このトークンの許可だけを取り消して HTTP 401 にする（claude.ai がトークンを更新しようと
+//   して invalid_grant になり、接続し直しを求める）。持ち主のすべての許可は取り消さない（連携し直した新しい許可・ほかの接続まで
+//   取り消さないように。ほかの古い許可は、それぞれの呼び出し・トークンの更新の時に断られる）
 import { getOAuthApi } from '@cloudflare/workers-oauth-provider'
 import { createMcpHandler, type AuthInfo } from '@modelcontextprotocol/server'
 import { workerConfig, type Env } from '../env'
@@ -131,7 +131,7 @@ export function createMcpFetch(options: () => OAuthProviderOptions<Env>) {
     const state: RequestState = {
       authProblem: false,
       userAgent: request.headers.get('User-Agent') ?? undefined,
-      grant: { ownerUid: props.ownerUid, gen: props.gen },
+      grant: { ownerUid: props.ownerUid, gen: props.gen, cid: props.cid },
     }
     const authInfo: AuthInfo = {
       token: '',

@@ -1,6 +1,13 @@
 // Vault の中身（Durable Object の外でも動く。テストでは node:sqlite と Firebase エミュレーターで動かす）。
 // 持ち主ごとに1つ（idFromName('owner')）。コネクタの身元・連携の状態・持ち主の記録の写し・数の記録・書き込みの順番を持つ。
-import { isPairingHash, PAIRING_TTL_MS } from '../../../src/claude/pairing'
+import {
+  connectionsOf,
+  isPairingHash,
+  LEGACY_CONNECTION_ID,
+  MAX_CONNECTIONS,
+  PAIRING_TTL_MS,
+  type ConnectionInfo,
+} from '../../../src/claude/pairing'
 import {
   trashedBenchNamesOf,
   trashedIdsOf,
@@ -74,20 +81,27 @@ export interface PairingMeta {
   /** 解除した理由（ログ・状態の表示用） */
   reason?: string
   /**
-   * 連携の代（確かめた時の config/connector の作られた時刻 createTime）。［連携を解除］で消して作り直すと変わる
-   * （「書き込みを許可」の切り替え・解除せずに別の Claude を足すための上書きでは変わらない）
+   * 連携の代（確かめた時の config/connector の作られた時刻 createTime）。［連携をすべて解除］で消して作り直すと変わる
+   * （「書き込みを許可」の切り替え・接続を足す・入れ替える・名前を変える・1つ解除する、では変わらない）
    */
   gen?: string | null
+  /**
+   * 2.9: 最後に読んだ config/connector の接続（cid）。無い = 2.8 の状態（[c0]。移し替えずにそのまま使う）。
+   * クラウドを読めない時の、許可の接続の確かめに使う（断るのは5秒以内に読み直した一覧に無い時だけ）
+   */
+  cids?: string[]
 }
 
-/** OAuth の許可に入れた値（props）。連携した持ち主と、連携の代 */
+/** OAuth の許可に入れた値（props）。連携した持ち主と、連携の代と、接続 */
 export interface GrantProps {
   ownerUid?: string
   gen?: string
+  /** 2.9: 許可した接続（config/connector の connections の鍵）。無い = 2.8 までの許可（c0「接続1」） */
+  cid?: string
 }
 
 export type PairingCheck =
-  | { ok: true; ownerUid: string; gen: string }
+  | { ok: true; ownerUid: string; gen: string; cid: string }
   | { ok: false; reason: 'not_found' | 'uid' | 'hash' | 'expired' | 'used' | 'owner' | 'error'; message: string }
 
 export type HealthState = 'ready' | 'unpaired' | 'no_identity' | 'anonymous_disabled' | 'key_missing' | 'unavailable'
@@ -101,8 +115,19 @@ export interface CallOptions {
 
 /** 読むツールの前に写しを新しくする間隔 */
 export const FRESH_MS = 15_000
-/** config/connector・meta/app を読み直す間隔（書き込みの前・読むツールの前） */
+/** config/connector・meta/app を読み直す間隔（どのツールの前・トークンの更新の前も） */
 export const RECHECK_MS = 60_000
+/** 許可の接続が一覧に無い時、断る前に読み直す（この時間より前に読んだ一覧では断らない。古い写しで許可を取り消さない） */
+export const CONNECTION_FRESH_MS = 5_000
+
+/** config/connector から読んだ、すべての接続に効く「書き込みを許可」と接続の一覧 */
+export interface ConnectorState {
+  writes: boolean
+  /** 一覧の接続の cid（許可した時刻の順） */
+  cids: string[]
+  /** cid ごとの名前（novel_status の「この接続」） */
+  names: Record<string, string>
+}
 
 /** 今日（日本時間）ゴミ箱へ移す依頼を作った数（meta 'trashDaily'。日付が変われば 0 から） */
 export interface TrashDaily {
@@ -132,7 +157,8 @@ export class VaultCore {
   readonly #mutex = new Mutex()
   #lastSync = 0
   #views: { version: number; raw: AppData; view: AppData; hidden: number } | null = null
-  #writesCheck: { writes: boolean; at: number } | null = null
+  /** 最後に読めた config/connector（at はその時刻） */
+  #connCheck: (ConnectorState & { at: number }) | null = null
   #modelCheck: { model: number | null; at: number } | null = null
 
   constructor(deps: VaultDeps) {
@@ -176,13 +202,30 @@ export class VaultCore {
   }
 
   /**
-   * OAuth の許可が、いまの連携（同じ持ち主・同じ代）のものか。［連携を解除］の後に連携し直した・持ち主が変わった後は、
-   * 前の許可は使えない（解除した Claude のアカウントが、別の連携で読めるようにならないように）
+   * OAuth の許可が、いまの連携（同じ持ち主・同じ代）のものか（写しの状態だけで見る。クラウドは読まない）。［連携をすべて解除］の
+   * 後に連携し直した・持ち主が変わった後は、前の許可は使えない（解除した Claude のアカウントが、別の連携で読めるようにならないように）
    */
-  grantCurrent(p: GrantProps | null | undefined): boolean {
+  #grantMatchesPairing(p: GrantProps | null | undefined): boolean {
     if (this.pairingState() !== 'paired' || !p) return false
     const m = this.pairing()
     return !!m.ownerUid && !!m.gen && p.ownerUid === m.ownerUid && p.gen === m.gen
+  }
+
+  /**
+   * トークンの更新の前（index.ts の tokenExchangeCallback）: 許可が、いまの連携の、一覧にある接続のものか。
+   * 一覧は RECHECK_MS ごとに読み直し、無い接続は5秒以内に読み直してから断る。つながらない・Firebase の無料枠などの一時的な失敗では
+   * 切らない（true）。解除された・一覧から外された接続は false（ライブラリがその許可だけを取り消す）
+   */
+  async checkGrant(p: GrantProps | null | undefined): Promise<boolean> {
+    if (!p || !this.#grantMatchesPairing(p)) return false
+    try {
+      await this.#requireConnection(p)
+      return true
+    } catch (e) {
+      if (e instanceof ConnectorError && isAuthProblem(e.code)) return false
+      if (!(e instanceof ConnectorError)) logError('grant_check_failed', e)
+      return true
+    }
   }
 
   #setUnpaired(reason: string): void {
@@ -190,7 +233,7 @@ export class VaultCore {
     if (cur.state !== 'unpaired') log('pairing_lost', { reason })
     // 持ち主は覚えておく（同じ持ち主と連携し直せば、写しをそのまま使える）
     this.store.setMeta('pairing', { ...cur, state: 'unpaired', reason } satisfies PairingMeta)
-    this.#writesCheck = null
+    this.#connCheck = null
     this.#modelCheck = null
     this.#d.schedule?.(null)
   }
@@ -229,7 +272,8 @@ export class VaultCore {
 
   /**
    * アプリが書いた config/connector を、コネクタの身元で読んで確かめる: uid がこのコネクタ・指紋が同じ・15分以内・まだ使っていない。
-   * 合えば連携した状態にして、写しの取り込みを始める
+   * 合えば連携した状態にして、写しの取り込みを始める。2.9: 指紋は接続ごと（15分の間に2つ許可しても、それぞれの指紋で確かめられる）。
+   * 指紋の合う接続がちょうど1つの時だけ、その接続（cid）の許可にする。v1 の記録（2.8 のアプリ）は c0「接続1」
    */
   async verifyPairing(hash: string): Promise<PairingCheck> {
     const bad = (reason: Exclude<PairingCheck, { ok: true }>['reason']): PairingCheck => {
@@ -269,10 +313,16 @@ export class VaultCore {
     }
     if (!conn || !gen) return bad('not_found')
     if (conn.uid !== uid) return bad('uid')
-    if (conn.pairing !== hash) return bad('hash')
-    const pairedAt = timestampMillis((conn.pairedAt as Timestamp | null)?.timestamp ?? '')
+    // v1（connections が無い）は記録の pairing・pairedAt の c0 だけ。v2 で正しい接続が1つも無ければ、解除と同じ
+    const list = connectionsOf(conn, plainMillis)
+    if (!list) return bad('not_found')
+    const hits = list.filter((c) => c.pairing === hash)
+    if (hits.length !== 1) return bad('hash')
+    const entry = hits[0]
+    // 期限は、その接続の許可の時刻から（ほかの接続・最後の許可の時刻ではなく）
+    const pairedAt = entry.pairedAt
     const now = this.#now()
-    if (!Number.isFinite(pairedAt) || now - pairedAt > PAIRING_TTL_MS || pairedAt - now > 2 * 60_000) return bad('expired')
+    if (pairedAt === null || now - pairedAt > PAIRING_TTL_MS || pairedAt - now > 2 * 60_000) return bad('expired')
     this.store.setMeta('usedPairings', [...used, hash].slice(-50))
     const prev = this.pairing()
     if (prev.ownerUid && prev.ownerUid !== ownerUid) {
@@ -280,12 +330,13 @@ export class VaultCore {
       this.mirror.reset()
       this.#views = null
     }
-    this.store.setMeta('pairing', { state: 'paired', ownerUid, pairedAt, gen } satisfies PairingMeta)
-    this.#writesCheck = { writes: conn.writes === true, at: now }
+    const state = connectorState(conn, list)
+    this.store.setMeta('pairing', { state: 'paired', ownerUid, pairedAt, gen, cids: state.cids } satisfies PairingMeta)
+    this.#connCheck = { ...state, at: now }
     this.#modelCheck = null
-    log('paired', { writes: conn.writes === true })
+    log('paired', { writes: state.writes, connections: state.cids.length })
     this.#d.schedule?.(now + 500)
-    return { ok: true, ownerUid, gen }
+    return { ok: true, ownerUid, gen, cid: entry.cid }
   }
 
   // ---------- 数の記録（太平洋時間の日ごと） ----------
@@ -324,8 +375,8 @@ export class VaultCore {
       if (e.code === 'RESOURCE_EXHAUSTED' || e.status === 429)
         throw new ConnectorError('firestore_quota', firestoreQuotaMessage(this.#now()))
       if (e.status === 403) {
-        const writes = await this.#readConnector()
-        if (writes === null) {
+        const conn = await this.#readConnector()
+        if (conn === null) {
           this.#setUnpaired('connector_gone')
           throw new ConnectorError('unpaired', MESSAGES.unpaired)
         }
@@ -339,10 +390,11 @@ export class VaultCore {
   }
 
   /**
-   * config/connector を読む。writes を返す（読めない・このコネクタのものでない・確かめた連携の後に作り直された = null。
-   * 作り直された記録は、連携の画面で許可しただけでまだ確かめていない（/pair/callback を通っていない）ので、前の許可では使わない）
+   * config/connector を読む。「書き込みを許可」と接続の一覧を返す（読めない・このコネクタのものでない・確かめた連携の後に作り直された・
+   * 正しい接続が1つも無い = null。作り直された記録は、連携の画面で許可しただけでまだ確かめていない（/pair/callback を通っていない）
+   * ので、前の許可では使わない）。読めた内容は #connCheck に覚え、接続の一覧が変わった時だけ連携の状態にも残す
    */
-  async #readConnector(): Promise<boolean | null> {
+  async #readConnector(): Promise<ConnectorState | null> {
     try {
       this.#countReads(3)
       const d = (await this.fs.batchGet(['config/connector'])).get('config/connector')
@@ -350,9 +402,15 @@ export class VaultCore {
       const f = fromFields(d.fields)
       if (f.uid !== this.identity.uid()) return null
       if ((d.createTime ?? '') !== (this.pairing().gen ?? '')) return null
-      const writes = f.writes === true
-      this.#writesCheck = { writes, at: this.#now() }
-      return writes
+      const list = connectionsOf(f, plainMillis)
+      if (!list) return null
+      const state = connectorState(f, list)
+      this.#connCheck = { ...state, at: this.#now() }
+      const m = this.pairing()
+      const before = m.cids ?? [LEGACY_CONNECTION_ID]
+      if (m.state === 'paired' && (before.length !== state.cids.length || before.some((c) => !state.cids.includes(c))))
+        this.store.setMeta('pairing', { ...m, cids: state.cids } satisfies PairingMeta)
+      return state
     } catch (e) {
       if (e instanceof FirestoreError && e.status === 403) return null
       if (e instanceof ConnectorError) throw e
@@ -451,18 +509,19 @@ export class VaultCore {
 
   async callTool(name: string, args: Record<string, unknown>, opts: CallOptions = {}): Promise<ToolResult> {
     try {
-      // 前の連携の許可（解除した後・持ち主が変わった後）は、状態のツールも含めて使わない
-      if (opts.grant && !this.grantCurrent(opts.grant)) {
+      // 前の連携の許可（解除した後・持ち主が変わった後）は、状態のツールも含めて使わない（写しの状態だけで見る）
+      if (opts.grant && !this.#grantMatchesPairing(opts.grant)) {
         log('grant_stale', { tool: name })
         throw new ConnectorError('unpaired', MESSAGES.unpaired)
       }
-      if (name === 'novel_status') return await this.#status()
+      if (name === 'novel_status') return await this.#status(opts.grant)
       this.#requirePaired()
+      // 連携の記録を1分ごとに確かめる（どのツールも。解除・作り直し・一覧から外された接続に、写しを新しくする間隔より遅れずに
+      // 気付く）。書き込みの許可はここで読んだ内容を使う
+      await this.#requireConnection(opts.grant)
       if (name === TRASH_TOOL) return await this.#trash(args)
       if (isIdeaTool(name)) return await this.#ideas(name, args)
       if (isWriteTool(name)) return await this.#write(name, args)
-      // 連携の記録を1分ごとに確かめる（解除・作り直しに、写しを新しくする間隔より遅れずに気付く）
-      await this.#recheckConnector()
       const { note } = await this.#fresh(false)
       const { view, hidden } = this.views()
       const ctx: R.ReadContext = { view, now: this.#now(), client: opts.client, workBudget: this.#d.config.workBudgetChars }
@@ -511,7 +570,7 @@ export class VaultCore {
     }
   }
 
-  async #status(): Promise<ToolResult> {
+  async #status(grant?: GrantProps): Promise<ToolResult> {
     const p = this.pairing()
     const paired = this.pairingState() === 'paired'
     const q = this.#quota()
@@ -522,14 +581,20 @@ export class VaultCore {
       return { text: lines.join('\n'), auth: this.identity.uid() ? true : undefined, isError: true }
     }
     lines.push(`連携: 済み（${p.pairedAt ? new Date(p.pairedAt + 9 * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') : '―'} 日本時間）`)
-    let writes: boolean | null = this.#writesCheck?.writes ?? null
+    let writes: boolean | null = this.#connCheck?.writes ?? null
     let model: number | null = this.#modelCheck?.model ?? null
     try {
-      writes = await this.#readConnector()
-      if (writes === null) {
+      const conn = await this.#readConnector()
+      if (conn === null) {
         this.#setUnpaired('connector_gone')
         return { text: MESSAGES.unpaired, isError: true, auth: true }
       }
+      // 一覧から外された接続（いま読んだ一覧に無い）: この許可だけを断る（ほかの接続・Vault の連携はそのまま）
+      if (grant && !conn.cids.includes(grant.cid ?? LEGACY_CONNECTION_ID)) {
+        log('grant_removed', { tool: 'novel_status' })
+        return { text: MESSAGES.unpaired, isError: true, auth: true }
+      }
+      writes = conn.writes
       model = await this.#readModel()
     } catch (e) {
       if (e instanceof ConnectorError && isAuthProblem(e.code)) return { text: e.message, isError: true, auth: true }
@@ -558,6 +623,13 @@ export class VaultCore {
     lines.push(
       `アイデアへの追記の依頼: アプリの同期待ち ${warm.done ? liveIdeaAppends(this.views().raw).length.toLocaleString('ja-JP') : '―'}件`,
     )
+    // 2.9: 許可のある呼び出し（/mcp）だけ、最後にこの接続の名前（前の行は 2.8 と1字も変えない。名前を読めた時だけ）
+    const conn = grant ? this.#connCheck : null
+    const cid = grant?.cid ?? LEGACY_CONNECTION_ID
+    if (conn && conn.cids.includes(cid))
+      lines.push(
+        `この接続: ${conn.names[cid]}（接続 ${conn.cids.length} / ${MAX_CONNECTIONS}。名前はアプリの 設定 → Claude 連携 で変えられます）`,
+      )
     return { text: lines.join('\n') }
   }
 
@@ -577,33 +649,52 @@ export class VaultCore {
     }
   }
 
-  /** 読むツールの前: config/connector を前に確かめてから RECHECK_MS 経っていれば読み直す（解除・作り直しなら連携を外す） */
-  async #recheckConnector(): Promise<void> {
-    if (this.#writesCheck && this.#now() - this.#writesCheck.at < RECHECK_MS) return
-    let writes: boolean | null
-    try {
-      writes = await this.#readConnector()
-    } catch (e) {
-      // つながらない時は、前に取り込んだ内容で答える（#fresh と同じ）
-      if (e instanceof ConnectorError && e.code === 'unavailable') return
-      throw e
+  /**
+   * どのツールの前も・トークンの更新の前も: config/connector を前に読んでから RECHECK_MS 経っていれば読み直す（記録が消された・
+   * 作り直された・正しい接続が無いなら連携を外す。つながらない時は前に読んだ内容のまま）。許可（p）の接続が一覧に無ければ、
+   * 5秒より前に読んだ一覧なら1回読み直し、それでも無ければこの許可だけを断る（Vault の連携は外さない。ほかの接続はそのまま使える。
+   * 古い一覧では断らないので、足したばかりの接続の許可を取り消さない）
+   */
+  async #requireConnection(p?: GrantProps): Promise<void> {
+    if (!this.#connCheck || this.#now() - this.#connCheck.at >= RECHECK_MS) {
+      try {
+        await this.#readConnectorOrUnpair()
+      } catch (e) {
+        // つながらない時は、前に読んだ内容（無ければ連携の状態に残した一覧）で続ける（#fresh と同じ）
+        if (!(e instanceof ConnectorError && e.code === 'unavailable')) throw e
+      }
     }
-    if (writes === null) {
+    if (!p) return
+    const cid = p.cid ?? LEGACY_CONNECTION_ID
+    if (this.#listed(cid)) return
+    if (!this.#connCheck || this.#now() - this.#connCheck.at >= CONNECTION_FRESH_MS) {
+      // 読めなければ断らずに失敗にする（つながらない時の答え。許可は取り消さない）
+      await this.#readConnectorOrUnpair()
+      if (this.#listed(cid)) return
+    }
+    log('grant_removed')
+    throw new ConnectorError('unpaired', MESSAGES.unpaired)
+  }
+
+  /** 許可の接続が一覧にあるか（最後に読めた一覧。まだ読んでいなければ連携の状態に残した一覧。2.8 の状態は [c0]） */
+  #listed(cid: string): boolean {
+    return (this.#connCheck?.cids ?? this.pairing().cids ?? [LEGACY_CONNECTION_ID]).includes(cid)
+  }
+
+  /** config/connector を読む。消された・作り直された・正しい接続が無い時は連携を外して unpaired */
+  async #readConnectorOrUnpair(): Promise<ConnectorState> {
+    const conn = await this.#readConnector()
+    if (conn === null) {
       this.#setUnpaired('connector_gone')
       throw new ConnectorError('unpaired', MESSAGES.unpaired)
     }
+    return conn
   }
 
   async #requireWrites(): Promise<void> {
     const now = this.#now()
-    let writes = this.#writesCheck && now - this.#writesCheck.at < RECHECK_MS ? this.#writesCheck.writes : null
-    if (writes === null) {
-      writes = await this.#readConnector()
-      if (writes === null) {
-        this.#setUnpaired('connector_gone')
-        throw new ConnectorError('unpaired', MESSAGES.unpaired)
-      }
-    }
+    const writes =
+      this.#connCheck && now - this.#connCheck.at < RECHECK_MS ? this.#connCheck.writes : (await this.#readConnectorOrUnpair()).writes
     if (!writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
     const model =
       this.#modelCheck && now - this.#modelCheck.at < RECHECK_MS ? this.#modelCheck.model : await this.#readModel()
@@ -684,12 +775,8 @@ export class VaultCore {
         return 'retry'
       }
       if (e instanceof FirestoreError && e.status === 403) {
-        const writes = await this.#readConnector()
-        if (writes === null) {
-          this.#setUnpaired('connector_gone')
-          throw new ConnectorError('unpaired', MESSAGES.unpaired)
-        }
-        if (!writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
+        const conn = await this.#readConnectorOrUnpair()
+        if (!conn.writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
       }
       return this.#firestoreFailure(e)
     }
@@ -851,5 +938,22 @@ export class VaultCore {
   /** 回数の上限（/authorize はネットワークごと＋全体・DCR は全体）。超えていれば、どの上限か */
   takeRate(kind: RateKind, bucket?: string): RateResult {
     return takeRate(this.store, kind, this.#now(), bucket)
+  }
+}
+
+/** Firestore の REST の時刻（{ timestamp }）を ms にする（読めなければ null） */
+function plainMillis(v: unknown): number | null {
+  const ts = v && typeof v === 'object' ? (v as Partial<Timestamp>).timestamp : undefined
+  if (typeof ts !== 'string') return null
+  const ms = timestampMillis(ts)
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** 読んだ config/connector の「書き込みを許可」と接続の一覧 */
+function connectorState(doc: Record<string, unknown>, list: ConnectionInfo[]): ConnectorState {
+  return {
+    writes: doc.writes === true,
+    cids: list.map((c) => c.cid),
+    names: Object.fromEntries(list.map((c) => [c.cid, c.name])),
   }
 }

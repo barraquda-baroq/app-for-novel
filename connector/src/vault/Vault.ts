@@ -65,9 +65,12 @@ export class Vault extends DurableObject<Env> {
     return this.#core.pairingState()
   }
 
-  /** OAuth の許可が、いまの連携（同じ持ち主・同じ代）のものか */
-  grantCurrent(props: GrantProps | null | undefined): boolean {
-    return this.#core.grantCurrent(props)
+  /**
+   * トークンの更新の前: OAuth の許可が、いまの連携（同じ持ち主・同じ代）の、接続の一覧にある接続のものか
+   * （一時的に読めない時は true。解除された・一覧から外された接続は false）
+   */
+  checkGrant(props: GrantProps | null | undefined): Promise<boolean> {
+    return this.#core.checkGrant(props)
   }
 
   callTool(name: string, args: Record<string, unknown>, opts: CallOptions): Promise<ToolResult> {

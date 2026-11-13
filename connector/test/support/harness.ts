@@ -3,7 +3,7 @@ import type { AppData, TableName } from '../../../src/domain/types'
 import type { Rec } from '../../../src/sync/merge'
 import type { VaultConfig } from '../../src/config'
 import { CONNECTOR_MODEL } from '../../src/version'
-import { VaultCore } from '../../src/vault/core'
+import { VaultCore, type GrantProps } from '../../src/vault/core'
 import { pairingHash } from '../../src/vault/crypto'
 import { FakeFirebase } from './fakeFirebase'
 import { nodeSql } from './nodeSql'
@@ -60,11 +60,20 @@ export function seed(fake: FakeFirebase, data: AppData, owner = OWNER): void {
   }
 }
 
-/** 連携した Vault（取り込みも済ませる） */
+/**
+ * 連携した Vault（取り込みも済ませる）。cid を渡すと 2.9 のアプリの許可（接続の一覧の形 v2。名前は name・既定は「接続1」）、
+ * 渡さなければ 2.8 までの記録（v1。接続は c0）。grant はその許可の props
+ */
 export async function pairedCore(
   fake: FakeFirebase,
   data: AppData | null,
-  opts: Parameters<typeof makeCore>[1] & { writes?: boolean; model?: number | null; warm?: boolean } = {},
+  opts: Parameters<typeof makeCore>[1] & {
+    writes?: boolean
+    model?: number | null
+    warm?: boolean
+    cid?: string
+    name?: string
+  } = {},
 ) {
   const made = makeCore(fake, opts)
   const { uid } = await made.core.connectIdentity()
@@ -72,7 +81,16 @@ export async function pairedCore(
   if (opts.model !== null) fake.setAppModel(OWNER, opts.model ?? CONNECTOR_MODEL)
   if (data) seed(fake, data)
   const hash = await pairingHash('state-1', 'k'.repeat(43))
-  fake.setConnector({ uid, pairing: hash, writes: opts.writes ?? true, pairedAt: made.clock.now })
+  if (opts.cid)
+    fake.addConnection({
+      uid,
+      cid: opts.cid,
+      name: opts.name ?? '接続1',
+      pairing: hash,
+      writes: opts.writes ?? true,
+      pairedAt: made.clock.now,
+    })
+  else fake.setConnector({ uid, pairing: hash, writes: opts.writes ?? true, pairedAt: made.clock.now })
   const r = await made.core.verifyPairing(hash)
   if (!r.ok) throw new Error(`連携できません: ${r.reason}`)
   if (opts.warm !== false) {
@@ -81,7 +99,24 @@ export async function pairedCore(
       if (next === null) break
     }
   }
-  return { ...made, uid }
+  const grant: GrantProps = { ownerUid: r.ownerUid, gen: r.gen, ...(opts.cid ? { cid: r.cid } : {}) }
+  return { ...made, uid, grant }
+}
+
+/**
+ * アプリでもう1つ接続を許可して（addConnection と同じ）、コネクタで確かめる（/pair/callback と同じ）。その許可の props を返す
+ */
+export async function addConnection(
+  fake: FakeFirebase,
+  core: VaultCore,
+  uid: string,
+  c: { cid: string; name?: string; pairedAt: number; replaceCid?: string; state?: string },
+): Promise<GrantProps> {
+  const hash = await pairingHash(c.state ?? `state-${c.cid}`, 'k'.repeat(43))
+  fake.addConnection({ uid, cid: c.cid, name: c.name ?? c.cid, pairing: hash, pairedAt: c.pairedAt, replaceCid: c.replaceCid })
+  const r = await core.verifyPairing(hash)
+  if (!r.ok) throw new Error(`連携できません: ${r.reason}`)
+  return { ownerUid: r.ownerUid, gen: r.gen, cid: r.cid }
 }
 
 /** ツールを呼んでテキストを返す（失敗なら例外） */

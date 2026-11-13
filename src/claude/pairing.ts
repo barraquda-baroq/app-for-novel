@@ -2,8 +2,10 @@
 // 両方がこのファイルを使う（React・Dexie・Firebase・Zustand を読み込まない。Worker にもそのまま入る）。
 //   1. コネクタ: POST /authorize（同意）→ 302 `${アプリ}/#/claude/connect?s=<state>`（connectPageUrl）
 //   2. アプリ: GET `${コネクタ}/connect/identity`（identityUrl。CORS はアプリの origin だけ）→ { uid, version, model }（parseIdentity）
-//   3. アプリ: config/connector = { uid, pairing: pairingHash(s, k), pairedAt: サーバー時刻, approvedOn, writes, v: 1 }
-//      （k = 32バイトの乱数の base64url。k そのものはどこにも書かない）
+//   3. アプリ: config/connector = { uid, writes, v: 2, pairing, pairedAt, approvedOn（最後の許可）, pairingCid,
+//      connections: { [cid]: { name, pairing, pairedAt, approvedOn } } }（トランザクションで足す・入れ替える）。
+//      pairing = pairingHash(s, k)・pairedAt はサーバー時刻（k = 32バイトの乱数の base64url。k そのものはどこにも書かない）。
+//      2.8 までの v: 1（connections が無い）は、接続 c0「接続1」1つとして読む（connectionsOf）
 //   4. アプリ: ページごと `${コネクタ}/pair/callback?state=<s>&k=<k>` へ移る（callbackUrl）
 //   5. コネクタ: claude.ai で始めたブラウザの cookie と、k の指紋・uid・15分以内・一度だけ を確かめて、claude.ai へ戻す
 // コネクタの origin はビルドの時に決める（アプリは URL に書かれた origin・uid を使わない）。
@@ -143,6 +145,122 @@ export function parseIdentity(v: unknown): ConnectorIdentity | null {
 export interface IdentityError {
   error: string
   message: string
+}
+
+// ---------- 2.9: 複数の接続（claude.ai のアカウントごと） ----------
+
+/** 1つの Novel Studio に同時に接続できる数（firestore.rules と同じ） */
+export const MAX_CONNECTIONS = 10
+/** 接続の名前の長さの上限（アプリの入力。ルールは 40 字まで受け、コネクタは出す時に 40 字で切る） */
+export const CONNECTION_NAME_MAX = 20
+/** 記録から読む時の名前の長さの上限（ルールが受ける長さ） */
+const CONNECTION_NAME_READ_MAX = 40
+/** 2.8 までの許可（OAuth の許可の props に cid が無い）と、v1 の記録の接続 */
+export const LEGACY_CONNECTION_ID = 'c0'
+export const LEGACY_CONNECTION_NAME = '接続1'
+/** 接続の id の形（firestore.rules と同じ） */
+export const CONNECTION_ID = /^c[0-9a-z]{1,31}$/
+/** 名前が読めない接続の呼び名 */
+const BROKEN_CONNECTION_NAME = '接続'
+
+/** 新しい接続の id: 'c' と乱数の base36 12字（'c0' にも表示の番号にもならない。使い回さない） */
+export function newConnectionId(
+  randomBytes: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(new ArrayBuffer(n))),
+): string {
+  let out = 'c'
+  for (const b of randomBytes(12).slice(0, 12)) out += (b % 36).toString(36)
+  // 乱数が足りない時（テストの差し替えなど）も 12 字にそろえる
+  return out.padEnd(13, '0')
+}
+
+/**
+ * 接続の名前の重なりを見るための形（画面で同じ名前を断る）。src/claude/refs.ts の refKey と同じ式（字の幅・空白の違いは同じ）。
+ * このファイルは vite.config.ts・Worker からも読むので、refs.ts（domain を読む）は読み込まない（同じ式かはテストで確かめる）
+ */
+export const connectionNameKey = (s: string): string =>
+  s
+    .normalize('NFKC')
+    .replace(/[\s　]+/g, ' ')
+    .trim()
+
+/** 空いている一番小さい n の「接続n」（NFKC で /^接続(\d+)$/ を見る） */
+export function defaultConnectionName(names: readonly string[]): string {
+  const used = new Set<number>()
+  for (const name of names) {
+    const m = /^接続(\d+)$/.exec(connectionNameKey(name))
+    if (m) used.add(Number(m[1]))
+  }
+  let n = 1
+  while (used.has(n)) n++
+  return `接続${n}`
+}
+
+export interface ConnectionInfo {
+  cid: string
+  name: string
+  pairing: string
+  /** 許可した時刻（ms。読めなければ null） */
+  pairedAt: number | null
+  approvedOn: string
+}
+
+/** 記録の時刻を ms にする（既定: 数だけ。Firestore の Timestamp などは呼ぶ側が変換の関数を渡す） */
+export type ToMillis = (v: unknown) => number | null
+const numberMillis: ToMillis = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/** 読んだ名前を整える（制御文字を除き、40 字まで。空・文字列でなければ「接続」） */
+function cleanConnectionName(v: unknown): string {
+  if (typeof v !== 'string') return BROKEN_CONNECTION_NAME
+  // eslint-disable-next-line no-control-regex
+  const s = Array.from(v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '').trim())
+    .slice(0, CONNECTION_NAME_READ_MAX)
+    .join('')
+    .trim()
+  return s || BROKEN_CONNECTION_NAME
+}
+
+const textOf = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
+
+/**
+ * 記録の接続（許可した時刻の順、同じなら cid の順）。時刻は呼ぶ側で ms にそろえてから渡すか、変換の関数を渡す。
+ * v1（connections が無い）は [c0 接続1（記録の pairing・pairedAt・approvedOn）]。
+ * v2 は鍵が CONNECTION_ID に合い、値が map のものだけ（名前が壊れていれば「接続」、制御文字は除き 40 字まで）。v2 で1つも無ければ null
+ * （解除と同じ）。ほかの項目は持ち主が書いたものなので、ここで用心して読む（ルールが確かめるのは新しく許可した接続だけ）
+ */
+export function connectionsOf(
+  doc: { v?: unknown; pairing?: unknown; pairedAt?: unknown; approvedOn?: unknown; connections?: unknown },
+  toMillis: ToMillis = numberMillis,
+): ConnectionInfo[] | null {
+  const ms = (v: unknown) => {
+    const n = toMillis(v)
+    return typeof n === 'number' && Number.isFinite(n) ? n : null
+  }
+  if (doc.connections === undefined)
+    return [
+      {
+        cid: LEGACY_CONNECTION_ID,
+        name: LEGACY_CONNECTION_NAME,
+        pairing: textOf(doc.pairing, 128),
+        pairedAt: ms(doc.pairedAt),
+        approvedOn: textOf(doc.approvedOn, APPROVED_ON_MAX_LENGTH),
+      },
+    ]
+  const map = doc.connections
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return null
+  const out: ConnectionInfo[] = []
+  for (const [cid, v] of Object.entries(map as Record<string, unknown>)) {
+    if (!CONNECTION_ID.test(cid) || !v || typeof v !== 'object' || Array.isArray(v)) continue
+    const c = v as Record<string, unknown>
+    out.push({
+      cid,
+      name: cleanConnectionName(c.name),
+      pairing: textOf(c.pairing, 128),
+      pairedAt: ms(c.pairedAt),
+      approvedOn: textOf(c.approvedOn, APPROVED_ON_MAX_LENGTH),
+    })
+  }
+  if (!out.length) return null
+  return out.sort((a, b) => (a.pairedAt ?? 0) - (b.pairedAt ?? 0) || (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0))
 }
 
 /** config/connector に書く内容（pairedAt はサーバー時刻を書く側で足す） */

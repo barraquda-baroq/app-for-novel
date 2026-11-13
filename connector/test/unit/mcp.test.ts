@@ -115,6 +115,10 @@ describe('ツールの決まり', () => {
     expect(notes.description).toContain('作者が書いたホームのアイデアは返さない')
     expect(notes.description).not.toContain('どのタイトルにも属さないアイデアは返さない')
     expect(TOOL_DEFS.find((t) => t.name === 'novel_status')!.description).toContain('アイデアへの追記の依頼（アプリの同期待ち）の数')
+    // 2.9: 複数の接続（どのアカウントの接続かを、アプリの一覧の名前と合わせられる）
+    expect(TOOL_DEFS.find((t) => t.name === 'novel_status')!.description).toContain(
+      'この接続の名前（アプリの 設定 → Claude 連携 の接続の一覧と同じ）',
+    )
     const trash = TOOL_DEFS.find((t) => t.name === 'novel_move_cards_to_trash')!
     expect(trash.description).toContain('相対比較の分析（n:…）・資料の記録（k:…）・アイデア（i:…）を、アプリのゴミ箱へ移す')
     expect(trash.description).toContain('アイデアは、Claude の追記だけなら直していないものとして移せる')

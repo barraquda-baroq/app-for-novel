@@ -6,6 +6,7 @@ import { CONNECTOR_MODEL } from '../../src/version'
 import { novel } from '../../../src/test/claudeFixture'
 import type { AppData, TableName } from '../../../src/domain/types'
 import type { Rec } from '../../../src/sync/merge'
+import { newConnectionId } from '../../../src/claude/pairing'
 
 const H = 'https://connector.example'
 const APP = 'https://novel-studio-3352e.web.app'
@@ -127,9 +128,21 @@ async function kvKeys(): Promise<number> {
   return (await env.OAUTH_KV.list()).keys.length
 }
 
-/** claude.ai の「接続」から、アプリでの許可・コネクタへの戻りまで（attacker で途中を変える） */
+/**
+ * claude.ai の「接続」から、アプリでの許可・コネクタへの戻りまで（attacker で途中を変える）。アプリは 2.9 の許可（接続を足す。
+ * replaceCid で入れ替える）。legacy は 2.8 のアプリ（v1 の記録を上書き）
+ */
 async function connect(
-  opts: { k?: string; keyInApp?: string; pairedAt?: number; dropCookie?: boolean; redirectUri?: string } = {},
+  opts: {
+    k?: string
+    keyInApp?: string
+    pairedAt?: number
+    dropCookie?: boolean
+    redirectUri?: string
+    name?: string
+    replaceCid?: string
+    legacy?: boolean
+  } = {},
 ) {
   const { verifier, challenge } = await pkce()
   const get = await SELF.fetch(authorizeUrl(challenge, opts.redirectUri ? { redirect_uri: opts.redirectUri } : {}), {
@@ -157,12 +170,17 @@ async function connect(
   const k = opts.keyInApp ?? b64url(crypto.getRandomValues(new Uint8Array(32)))
   fake.setOwner(OWNER)
   fake.setAppModel(OWNER, CONNECTOR_MODEL)
-  fake.setConnector({ uid, pairing: await sha256hex(`${s}.${k}`), writes: true, pairedAt: opts.pairedAt ?? Date.now() })
+  const pairing = await sha256hex(`${s}.${k}`)
+  const pairedAt = opts.pairedAt ?? Date.now()
+  // 接続の id はページを開くごとに新しい乱数（アプリと同じ）
+  const cid = opts.legacy ? 'c0' : newConnectionId()
+  if (opts.legacy) fake.setConnector({ uid, pairing, writes: true, pairedAt })
+  else fake.addConnection({ uid, cid, name: opts.name, pairing, pairedAt, replaceCid: opts.replaceCid })
   const cb = await SELF.fetch(`${H}/pair/callback?state=${encodeURIComponent(s)}&k=${opts.k ?? k}`, {
     redirect: 'manual',
     headers: opts.dropCookie ? {} : { Cookie: cookie },
   })
-  return { cb, verifier, s, k, cookie, uid }
+  return { cb, verifier, s, k, cookie, uid, cid }
 }
 
 async function token(params: Record<string, string>) {
@@ -206,6 +224,35 @@ async function mcp(accessToken: string, method: string, params: Record<string, u
 async function rpcJson(res: Response) {
   const text = await res.text()
   return text.startsWith('{') ? JSON.parse(text) : JSON.parse(/data: (.*)/.exec(text)![1])
+}
+
+/** 初回の取り込みが終わるまで読むツールを呼ぶ（401 などはそのまま返す） */
+async function ready(accessToken: string): Promise<Response> {
+  let res: Response | null = null
+  for (let i = 0; i < 20; i++) {
+    res = await mcp(accessToken, 'tools/call', { name: 'novel_list_titles', arguments: {} })
+    if (res.status !== 200) return res
+    const body = await rpcJson(res.clone())
+    if (!body.result.content[0].text.includes('取り込み中')) break
+  }
+  return res!
+}
+
+/** novel_status の答えの最後の行 */
+async function statusLastLine(accessToken: string): Promise<string> {
+  const r = await rpcJson(await mcp(accessToken, 'tools/call', { name: 'novel_status', arguments: {} }))
+  return String(r.result.content[0].text).split('\n').at(-1) ?? ''
+}
+
+async function refresh(t: { refresh_token: string }) {
+  return token({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: CLAUDE_CIMD })
+}
+
+/** KV にある持ち主の OAuth の許可のうち、この接続（cid）のもの（KV はテストの間で空にならないので、cid で見分ける） */
+async function grantsOf(...cids: string[]): Promise<{ id: string; metadata?: { label?: string; cid?: string } }[]> {
+  const list = await env.OAUTH_KV.list({ prefix: `grant:${OWNER}:` })
+  const all = await Promise.all(list.keys.map(async (k) => JSON.parse((await env.OAUTH_KV.get(k.name)) ?? 'null')))
+  return all.filter((g) => g && cids.includes(g.metadata?.cid))
 }
 
 describe('発見（メタデータ）と 401', () => {
@@ -402,16 +449,6 @@ describe('連携の代（解除した Claude のアカウントは、連携し�
     seed(novel(['本文']).data)
     const first = await connect()
     const x = await exchange(first.cb, first.verifier)
-    const ready = async (accessToken: string) => {
-      let res: Response | null = null
-      for (let i = 0; i < 20; i++) {
-        res = await mcp(accessToken, 'tools/call', { name: 'novel_list_titles', arguments: {} })
-        if (res.status !== 200) return res
-        const body = await rpcJson(res.clone())
-        if (!body.result.content[0].text.includes('取り込み中')) break
-      }
-      return res!
-    }
     expect((await ready(x.access_token)).status).toBe(200)
     // ［連携を解除］（X はその後ツールを呼ばない）→ claude.com から別の Claude のアカウント（Y）で連携し直す
     fake.setConnector(null)
@@ -429,6 +466,106 @@ describe('連携の代（解除した Claude のアカウントは、連携し�
     expect((await rpcJson(res)).result.content[0].text).toContain('『星の庭』')
     const yRefresh = await token({ grant_type: 'refresh_token', refresh_token: y.refresh_token, client_id: CLAUDE_CIMD })
     expect(yRefresh.status).toBe(200)
+  })
+})
+
+describe('複数の接続（2.9。claude.ai のアカウントごと）', () => {
+  const line = (name: string, n: number) => `この接続: ${name}（接続 ${n} / 10。名前はアプリの 設定 → Claude 連携 で変えられます）`
+
+  it('同じ戻り先から2つ接続しても、前の接続は取り消されない（どちらもツールを呼べ、トークンを更新できる）。許可に接続の id', async () => {
+    seed(novel(['本文']).data)
+    const first = await connect({ name: '接続1' })
+    expect(first.cb.status).toBe(302)
+    const x = await exchange(first.cb, first.verifier)
+    const second = await connect({ name: '接続2' })
+    expect(second.cb.status).toBe(302)
+    const y = await exchange(second.cb, second.verifier)
+    expect(first.cid).not.toBe(second.cid)
+    for (const t of [x, y]) {
+      const res = await ready(t.access_token)
+      expect(res.status).toBe(200)
+      expect((await rpcJson(res)).result.content[0].text).toContain('『星の庭』')
+    }
+    expect(await statusLastLine(x.access_token)).toBe(line('接続1', 2))
+    expect(await statusLastLine(y.access_token)).toBe(line('接続2', 2))
+    for (const t of [x, y]) expect((await refresh(t)).status).toBe(200)
+    const grants = await grantsOf(first.cid, second.cid)
+    expect(grants.map((g) => g.metadata?.cid).sort()).toEqual([first.cid, second.cid].sort())
+    expect(grants.every((g) => g.metadata?.label === 'Claude')).toBe(true)
+  })
+
+  it('1つ解除すると、その接続だけが 401・トークンの更新は invalid_grant（許可を取り消す）。ほかの接続はそのまま', async () => {
+    seed(novel(['本文']).data)
+    const first = await connect()
+    const x = await exchange(first.cb, first.verifier)
+    const second = await connect()
+    const y = await exchange(second.cb, second.verifier)
+    expect((await ready(x.access_token)).status).toBe(200)
+    expect((await ready(y.access_token)).status).toBe(200)
+    fake.removeConnection(first.cid)
+    // 写しは15秒ごと・一覧は1分ごとに読み直すので、状態のツール（毎回クラウドを読む）で確かめる
+    const gone = await mcp(x.access_token, 'tools/call', { name: 'novel_status', arguments: {} })
+    expect(gone.status).toBe(401)
+    expect(((await gone.json()) as { error_description: string }).error_description).toBe('Novel Studio 側で連携が解除されています')
+    const rx = await refresh(x)
+    expect(rx.status).toBe(400)
+    expect(((await rx.json()) as { error: string }).error).toBe('invalid_grant')
+    expect((await grantsOf(first.cid, second.cid)).map((g) => g.metadata?.cid)).toEqual([second.cid])
+    const res = await ready(y.access_token)
+    expect(res.status).toBe(200)
+    expect((await rpcJson(res)).result.content[0].text).toContain('『星の庭』')
+    expect(await statusLastLine(y.access_token)).toBe(line(second.cid, 1))
+    expect((await refresh(y)).status).toBe(200)
+  })
+
+  it('「○○と入れ替える」: 入れ替えた接続は、ツールを呼ばなくてもトークンの更新が invalid_grant。新しい接続は使える', async () => {
+    seed(novel(['本文']).data)
+    const first = await connect()
+    const x = await exchange(first.cb, first.verifier)
+    expect((await ready(x.access_token)).status).toBe(200)
+    const second = await connect({ replaceCid: first.cid })
+    expect(second.cb.status).toBe(302)
+    const y = await exchange(second.cb, second.verifier)
+    const rx = await refresh(x)
+    expect(rx.status).toBe(400)
+    expect(((await rx.json()) as { error: string }).error).toBe('invalid_grant')
+    expect((await mcp(x.access_token, 'tools/call', { name: 'novel_list_titles', arguments: {} })).status).toBe(401)
+    expect((await ready(y.access_token)).status).toBe(200)
+    expect((await refresh(y)).status).toBe(200)
+  })
+
+  it('連携をすべて解除（記録を消す）と、どの接続も 401・トークンの更新は invalid_grant', async () => {
+    seed(novel(['本文']).data)
+    const first = await connect()
+    const x = await exchange(first.cb, first.verifier)
+    const second = await connect()
+    const y = await exchange(second.cb, second.verifier)
+    expect((await ready(x.access_token)).status).toBe(200)
+    fake.setConnector(null)
+    expect((await mcp(x.access_token, 'tools/call', { name: 'novel_status', arguments: {} })).status).toBe(401)
+    // y はツールを呼ばずに更新する（Vault の連携が外れているので断る）
+    const ry = await refresh(y)
+    expect(ry.status).toBe(400)
+    expect(((await ry.json()) as { error: string }).error).toBe('invalid_grant')
+    expect((await mcp(y.access_token, 'tools/call', { name: 'novel_list_titles', arguments: {} })).status).toBe(401)
+    expect(await grantsOf(first.cid, second.cid)).toEqual([])
+  })
+
+  it('2.8 のアプリで許可した接続（v1 の記録・接続1）は、2.9 のアプリで接続を足しても使える。接続1 を解除すると使えない', async () => {
+    seed(novel(['本文']).data)
+    const old = await connect({ legacy: true })
+    expect(old.cb.status).toBe(302)
+    const x = await exchange(old.cb, old.verifier)
+    expect((await ready(x.access_token)).status).toBe(200)
+    expect(await statusLastLine(x.access_token)).toBe(line('接続1', 1))
+    const added = await connect({ name: '接続2' })
+    const y = await exchange(added.cb, added.verifier)
+    expect(Object.keys(fake.connectorConnections()!).sort()).toEqual(['c0', added.cid].sort())
+    expect(await statusLastLine(x.access_token)).toBe(line('接続1', 2))
+    expect((await refresh(x)).status).toBe(200)
+    fake.removeConnection('c0')
+    expect((await mcp(x.access_token, 'tools/call', { name: 'novel_status', arguments: {} })).status).toBe(401)
+    expect((await ready(y.access_token)).status).toBe(200)
   })
 })
 

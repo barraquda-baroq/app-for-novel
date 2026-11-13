@@ -13,7 +13,8 @@ interface Limit {
 }
 
 export const RATE_LIMITS: Record<RateKind, { source?: Limit; global: Limit }> = {
-  // 全体の 300 回 ≒ KV の 300 回の書き込み（残りの約700回はトークンの更新と連携に）
+  // 全体の 300 回 ≒ KV の 300 回の書き込み（残りの約700回はトークンの更新と連携に。トークンの更新は1回で KV に2回書くので、
+  // 2.9 の接続 10 が1時間ごとに更新すると1日に約 480 回）
   authorize: { source: { perHour: 10, perDay: 20 }, global: { perDay: 300 } },
   register: { global: { perHour: 10, perDay: 10 } },
 }

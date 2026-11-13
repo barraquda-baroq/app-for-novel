@@ -8,7 +8,8 @@ import { addPrologue, novel, splitEpisode } from '../../../src/test/claudeFixtur
 import { pairingHash } from '../../src/vault/crypto'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { FakeFirebase } from '../support/fakeFirebase'
-import { OWNER, SECRET, call, makeCore, pairedCore } from '../support/harness'
+import { OWNER, SECRET, addConnection, call, makeCore, pairedCore } from '../support/harness'
+import type { GrantProps } from '../../src/vault/core'
 
 describe('コネクタの身元（匿名のアカウント）', () => {
   it('初めて要る時に作り、更新用トークンは暗号化して保存する', async () => {
@@ -102,7 +103,7 @@ describe('連携の代（OAuth の許可を、いまの連携に結び付ける�
     const gen = core.pairing().gen!
     expect(gen).toBeTruthy()
     const old = { ownerUid: OWNER, gen }
-    expect(core.grantCurrent(old)).toBe(true)
+    expect(await core.checkGrant(old)).toBe(true)
     expect((await core.callTool('novel_list_titles', {}, { grant: old })).isError).toBeFalsy()
     // 解除（記録を消す）→ 別の Claude のアカウントで連携し直す（作り直した記録は作られた時刻が変わる）
     fake.setConnector(null)
@@ -112,22 +113,22 @@ describe('連携の代（OAuth の許可を、いまの連携に結び付ける�
     const r = await core.verifyPairing(hash)
     if (!r.ok) throw new Error(r.reason)
     expect(r.gen).not.toBe(gen)
-    expect(core.grantCurrent(old)).toBe(false)
+    expect(await core.checkGrant(old)).toBe(false)
     for (const tool of ['novel_status', 'novel_list_titles', 'novel_add_revision_ideas']) {
       const res = await core.callTool(tool, { title_id: n.titleId, items: [{ heading: '案', body: '本文' }] }, { grant: old })
       expect(res, tool).toMatchObject({ isError: true, auth: true })
     }
     const fresh = { ownerUid: OWNER, gen: r.gen }
-    expect(core.grantCurrent(fresh)).toBe(true)
+    expect(await core.checkGrant(fresh)).toBe(true)
     expect(await call(core, 'novel_list_titles')).toContain('『星の庭』')
     expect((await core.callTool('novel_list_titles', {}, { grant: fresh })).isError).toBeFalsy()
     // 持ち主が違う許可・代の無い許可（前の版の許可）も使えない
-    expect(core.grantCurrent({ ownerUid: 'other-owner', gen: r.gen })).toBe(false)
-    expect(core.grantCurrent({ ownerUid: OWNER })).toBe(false)
-    expect(core.grantCurrent(undefined)).toBe(false)
+    expect(await core.checkGrant({ ownerUid: 'other-owner', gen: r.gen })).toBe(false)
+    expect(await core.checkGrant({ ownerUid: OWNER })).toBe(false)
+    expect(await core.checkGrant(undefined)).toBe(false)
   })
 
-  it('解除しないで上書き（別の Claude を足す）・「書き込みを許可」の切り替えでは、前の許可も使える', async () => {
+  it('解除しないで上書き（2.8 のアプリで別の Claude を足す）・「書き込みを許可」の切り替えでは、前の許可も使える', async () => {
     const fake = new FakeFirebase()
     const n = novel(['本文です。'])
     const { core, uid, clock } = await pairedCore(fake, n.data)
@@ -136,7 +137,8 @@ describe('連携の代（OAuth の許可を、いまの連携に結び付ける�
     fake.setConnector({ uid, pairing: hash, writes: false, pairedAt: clock.now })
     const r = await core.verifyPairing(hash)
     if (!r.ok) throw new Error(r.reason)
-    expect(core.grantCurrent(old)).toBe(true)
+    expect(r.cid).toBe('c0')
+    expect(await core.checkGrant(old)).toBe(true)
     clock.now += 61_000
     expect((await core.callTool('novel_list_titles', {}, { grant: old })).isError).toBeFalsy()
   })
@@ -153,6 +155,312 @@ describe('連携の代（OAuth の許可を、いまの連携に結び付ける�
     expect(res).toMatchObject({ isError: true, auth: true })
     expect(res.text).not.toContain('本文です。')
     expect(core.pairingState()).toBe('unpaired')
+  })
+})
+
+describe('複数の接続（2.9。claude.ai のアカウントごとの許可）', () => {
+  const MIN = 60_000
+  /** config/connector を読んだ回数（Firestore の batchGet のうち、連携の記録） */
+  const connectorReads = (fake: FakeFirebase) => fake.calls.filter((c) => c.op === 'batchGet').length
+
+  async function bare() {
+    const fake = new FakeFirebase()
+    const made = makeCore(fake)
+    const { uid } = await made.core.connectIdentity()
+    fake.setOwner(OWNER)
+    fake.setAppModel(OWNER, CONNECTOR_MODEL)
+    return { fake, ...made, uid }
+  }
+
+  it('確かめ: v1 の記録（2.8 のアプリ）は c0。v2 は接続ごとの指紋で、15分の間に2つ許可しても両方確かめられる', async () => {
+    const { fake, core, uid, clock } = await bare()
+    const h1 = await pairingHash('s1', 'k'.repeat(43))
+    fake.setConnector({ uid, pairing: h1, pairedAt: clock.now })
+    expect(await core.verifyPairing(h1)).toMatchObject({ ok: true, ownerUid: OWNER, cid: 'c0' })
+    expect(core.pairing().cids).toEqual(['c0'])
+    const gen = fake.connectorCreateTime()
+    // 2.9 のアプリが2つ続けて許可する（2.8 の記録は c0「接続1」に移す。上の pairing は最後の許可のもの）
+    const ha = await pairingHash('sa', 'k'.repeat(43))
+    const hb = await pairingHash('sb', 'k'.repeat(43))
+    fake.addConnection({ uid, cid: 'caaa', name: '接続2', pairing: ha, pairedAt: clock.now })
+    clock.now += 5 * MIN
+    fake.addConnection({ uid, cid: 'cbbb', name: '接続3', pairing: hb, pairedAt: clock.now })
+    expect(fake.connectorCreateTime()).toBe(gen)
+    clock.now += 9 * MIN
+    // 先に許可した接続の確かめが、後の許可の後に来ても通る（期限はその接続の許可の時刻から）
+    const a = await core.verifyPairing(ha)
+    expect(a).toMatchObject({ ok: true, cid: 'caaa' })
+    const b = await core.verifyPairing(hb)
+    expect(b).toMatchObject({ ok: true, cid: 'cbbb' })
+    if (!a.ok || !b.ok) throw new Error('連携できません')
+    expect(a.gen).toBe(b.gen)
+    expect(core.pairing().cids).toEqual(['c0', 'caaa', 'cbbb'])
+    // 同じ指紋は2回使えない
+    expect(await core.verifyPairing(ha)).toMatchObject({ ok: false, reason: 'used' })
+  })
+
+  it('確かめ: 同じ指紋の接続が2つ・指紋の合う接続が無い・その接続の許可が15分より前・正しい接続が無い v2 は断る', async () => {
+    const { fake, core, uid, clock } = await bare()
+    const now = clock.now
+    const hd = await pairingHash('sd', 'k'.repeat(43))
+    fake.setConnector({ uid, pairing: hd, pairedAt: now, connections: { c1: { pairing: hd, pairedAt: now }, c2: { pairing: hd, pairedAt: now } } })
+    expect(await core.verifyPairing(hd)).toMatchObject({ ok: false, reason: 'hash' })
+    // 上の pairing だけが合う（v2 は接続の指紋で確かめる。c0 を作り出さない）
+    const hx = await pairingHash('sx', 'k'.repeat(43))
+    const hy = await pairingHash('sy', 'k'.repeat(43))
+    fake.setConnector({ uid, pairing: hx, pairedAt: now, connections: { c3: { pairing: hy, pairedAt: now } } })
+    expect(await core.verifyPairing(hx)).toMatchObject({ ok: false, reason: 'hash' })
+    // 上の pairedAt は新しくても、その接続の許可が16分前なら期限切れ
+    const he = await pairingHash('se', 'k'.repeat(43))
+    fake.setConnector({ uid, pairing: he, pairedAt: now, connections: { c4: { pairing: he, pairedAt: now - 16 * MIN } } })
+    expect(await core.verifyPairing(he)).toMatchObject({ ok: false, reason: 'expired' })
+    // 2分より先の時刻も断る
+    fake.setConnector({ uid, pairing: he, pairedAt: now, connections: { c4: { pairing: he, pairedAt: now + 3 * MIN } } })
+    expect(await core.verifyPairing(he)).toMatchObject({ ok: false, reason: 'expired' })
+    // 接続の id の形でない鍵だけ・空の一覧は、記録が無いのと同じ
+    const hz = await pairingHash('sz', 'k'.repeat(43))
+    fake.setConnector({ uid, pairing: hz, pairedAt: now, connections: { 'bad-key': { pairing: hz, pairedAt: now } } })
+    expect(await core.verifyPairing(hz)).toMatchObject({ ok: false, reason: 'not_found' })
+    fake.setConnector({ uid, pairing: hz, pairedAt: now, connections: {} })
+    expect(await core.verifyPairing(hz)).toMatchObject({ ok: false, reason: 'not_found' })
+    expect(core.pairingState()).toBe('unpaired')
+  })
+
+  it('2つの接続はどちらも使える。1つ解除すると、その許可だけが 401（Vault の連携はそのまま・ほかの接続は使える）', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock, grant: a } = await pairedCore(fake, n.data, { cid: 'caaa' })
+    const b = await addConnection(fake, core, uid, { cid: 'cbbb', name: '接続2', pairedAt: clock.now })
+    for (const g of [a, b]) {
+      expect((await core.callTool('novel_list_titles', {}, { grant: g })).text).toContain('『星の庭』')
+      expect(await core.checkGrant(g)).toBe(true)
+    }
+    fake.removeConnection('caaa')
+    clock.now += MIN + 1_000
+    const res = await core.callTool('novel_list_titles', {}, { grant: a })
+    expect(res).toMatchObject({ isError: true, auth: true })
+    expect(res.text).toContain('連携が解除')
+    expect(res.text).not.toContain('『星の庭』')
+    expect(core.pairingState()).toBe('paired')
+    expect(core.pairing().cids).toEqual(['cbbb'])
+    expect((await core.callTool('novel_list_titles', {}, { grant: b })).text).toContain('『星の庭』')
+    expect(await core.checkGrant(a)).toBe(false)
+    expect(await core.checkGrant(b)).toBe(true)
+    // 状態のツールも（毎回読む）
+    expect(await core.callTool('novel_status', {}, { grant: a })).toMatchObject({ isError: true, auth: true })
+    expect((await core.callTool('novel_status', {}, { grant: b })).isError).toBeUndefined()
+    expect(core.pairingState()).toBe('paired')
+  })
+
+  it('どのツールも（読む・書く・アイデア・ゴミ箱へ移す）、1分を過ぎたら一覧を読み直して、外された接続を断る（何も書かない）', async () => {
+    const tools: [string, (t: string) => Record<string, unknown>][] = [
+      ['novel_read_text', (t) => ({ title_id: t })],
+      ['novel_add_revision_ideas', (t) => ({ title_id: t, items: [{ heading: '案', body: '本文' }] })],
+      ['novel_add_ideas', () => ({ placement: 'outside', items: [{ content: '新作の案' }] })],
+      ['novel_append_to_idea', () => ({ id: 'i:cy-aaaa', read_mark: 'abcdefgh', content: '追記' })],
+      ['novel_move_cards_to_trash', () => ({ cards: ['n:abcdefgh'] })],
+    ]
+    for (const [tool, args] of tools) {
+      const fake = new FakeFirebase()
+      const n = novel(['本文です。'])
+      const { core, uid, clock, grant: a } = await pairedCore(fake, n.data, { cid: 'caaa' })
+      await addConnection(fake, core, uid, { cid: 'cbbb', pairedAt: clock.now })
+      fake.removeConnection('caaa')
+      // 1分以内は前に読んだ一覧のまま（遅くとも1分ほどで気付く）
+      clock.now += 30_000
+      const reads = connectorReads(fake)
+      expect(await core.checkGrant(a), tool).toBe(true)
+      expect(connectorReads(fake), tool).toBe(reads)
+      clock.now += 31_000
+      const before = fake.recordDocs(OWNER).length
+      const res = await core.callTool(tool, args(n.titleId), { grant: a })
+      expect(res, tool).toMatchObject({ isError: true, auth: true })
+      expect(fake.recordDocs(OWNER).length, tool).toBe(before)
+      expect(core.pairingState(), tool).toBe('paired')
+    }
+  })
+
+  it('一覧に無い接続は、5秒より前に読んだ一覧なら読み直してから断る（読めなければ断らない）。5秒以内に読んだ一覧なら読み直さずに断る', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock, grant: a } = await pairedCore(fake, n.data, { cid: 'caaa' })
+    // ほかの所で許可された接続（コネクタの一覧にはまだ無い）: 古い一覧では断らず、読み直して通す
+    fake.addConnection({ uid, cid: 'cbbb', pairing: await pairingHash('sb', 'k'.repeat(43)), pairedAt: clock.now })
+    const b: GrantProps = { ...a, cid: 'cbbb' }
+    clock.now += 10_000
+    let reads = connectorReads(fake)
+    expect((await core.callTool('novel_list_titles', {}, { grant: b })).text).toContain('『星の庭』')
+    expect(connectorReads(fake)).toBeGreaterThan(reads)
+    // 読んだばかりの一覧に無い接続は、読み直さずに断る
+    clock.now += 2_000
+    reads = connectorReads(fake)
+    const x: GrantProps = { ...a, cid: 'cxxx' }
+    expect(await core.callTool('novel_list_titles', {}, { grant: x })).toMatchObject({ isError: true, auth: true })
+    expect(await core.checkGrant(x)).toBe(false)
+    expect(connectorReads(fake)).toBe(reads)
+    // 5秒を過ぎてから、読み直せない（Firebase の無料枠を使い切った）: 断らない（許可を取り消さない）。一覧にある接続は使える
+    clock.now += 10_000
+    fake.exhausted = true
+    const y: GrantProps = { ...a, cid: 'cyyy' }
+    const res = await core.callTool('novel_list_titles', {}, { grant: y })
+    expect(res.isError).toBe(true)
+    expect(res.auth).toBeUndefined()
+    expect(res.text).toContain('接続できません')
+    expect(await core.checkGrant(y)).toBe(true)
+    expect(core.pairingState()).toBe('paired')
+    expect((await core.callTool('novel_list_titles', {}, { grant: a })).isError).toBeFalsy()
+    fake.exhausted = false
+    expect(await core.callTool('novel_list_titles', {}, { grant: y })).toMatchObject({ isError: true, auth: true })
+  })
+
+  it('一覧を読めない時（1分を過ぎた・Vault を作り直した）は、前に読んだ一覧・連携の状態に残した一覧のまま続ける', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, sql, uid, clock, grant: a } = await pairedCore(fake, n.data, { cid: 'caaa' })
+    const b = await addConnection(fake, core, uid, { cid: 'cbbb', pairedAt: clock.now })
+    clock.now += 2 * MIN
+    fake.exhausted = true
+    const res = await core.callTool('novel_list_titles', {}, { grant: a })
+    expect(res.isError).toBeFalsy()
+    expect(res.text).toContain('Firebase の今日の無料枠を使い切ったため')
+    expect(await core.checkGrant(b)).toBe(true)
+    expect(core.pairingState()).toBe('paired')
+    // Durable Object が作り直された（覚えた一覧は無い）: 連携の状態に残した一覧を使う
+    const again = makeCore(fake, { sql, clock }).core
+    expect(again.pairing().cids).toEqual(['caaa', 'cbbb'])
+    expect((await again.callTool('novel_list_titles', {}, { grant: b })).isError).toBeFalsy()
+    expect(await again.checkGrant(a)).toBe(true)
+    // 残した一覧に無い接続は、読めないので断らない
+    const z = await again.callTool('novel_list_titles', {}, { grant: { ...a, cid: 'czzz' } })
+    expect(z.isError).toBe(true)
+    expect(z.auth).toBeUndefined()
+  })
+
+  it('2.8 までの許可（cid が無い）は c0: v1 の記録でも、2.9 のアプリが一覧の形に移した後も使える。c0 を解除すると使えない', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock, grant: legacy } = await pairedCore(fake, n.data)
+    expect(legacy.cid).toBeUndefined()
+    expect(core.pairing().cids).toEqual(['c0'])
+    expect((await core.callTool('novel_list_titles', {}, { grant: legacy })).text).toContain('『星の庭』')
+    // 2.8 の Vault の状態（cids が無い）も c0 として読む
+    core.store.setMeta('pairing', { ...core.pairing(), cids: undefined })
+    expect(await core.checkGrant(legacy)).toBe(true)
+    const gen = fake.connectorCreateTime()
+    const b = await addConnection(fake, core, uid, { cid: 'cbbb', name: '接続2', pairedAt: clock.now })
+    // 記録は作り直さない（作られた時刻 = 連携の代が同じ）ので、2.8 の許可も使える
+    expect(fake.connectorCreateTime()).toBe(gen)
+    expect(b.gen).toBe(legacy.gen)
+    expect(Object.keys(fake.connectorConnections()!)).toEqual(['c0', 'cbbb'])
+    clock.now += MIN + 1_000
+    expect((await core.callTool('novel_list_titles', {}, { grant: legacy })).text).toContain('『星の庭』')
+    expect(await core.checkGrant(legacy)).toBe(true)
+    // 名前を変えても使える
+    fake.renameConnection('c0', '仕事用')
+    clock.now += MIN + 1_000
+    expect((await core.callTool('novel_list_titles', {}, { grant: legacy })).isError).toBeFalsy()
+    fake.removeConnection('c0')
+    clock.now += MIN + 1_000
+    expect(await core.callTool('novel_list_titles', {}, { grant: legacy })).toMatchObject({ isError: true, auth: true })
+    expect(await core.checkGrant(legacy)).toBe(false)
+    expect((await core.callTool('novel_list_titles', {}, { grant: b })).isError).toBeFalsy()
+    expect(core.pairingState()).toBe('paired')
+  })
+
+  it('解除した接続は、同じ claude.ai のアカウントで接続し直しても新しい cid（前の許可は使えないまま）。入れ替えた接続はすぐ使えない', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock, grant: a } = await pairedCore(fake, n.data, { cid: 'caaa' })
+    const b = await addConnection(fake, core, uid, { cid: 'cbbb', pairedAt: clock.now })
+    fake.removeConnection('caaa')
+    clock.now += MIN + 1_000
+    expect(await core.callTool('novel_list_titles', {}, { grant: a })).toMatchObject({ isError: true, auth: true })
+    const c = await addConnection(fake, core, uid, { cid: 'cccc', pairedAt: clock.now })
+    expect(c.cid).toBe('cccc')
+    expect(await core.callTool('novel_list_titles', {}, { grant: a })).toMatchObject({ isError: true, auth: true })
+    expect((await core.callTool('novel_list_titles', {}, { grant: c })).isError).toBeFalsy()
+    // 「接続（cbbb）と入れ替える」: 確かめた時に読んだ一覧に cbbb は無いので、読み直さずにすぐ断る
+    clock.now += 1_000
+    const d = await addConnection(fake, core, uid, { cid: 'cddd', pairedAt: clock.now, replaceCid: 'cbbb' })
+    expect(Object.keys(fake.connectorConnections()!).sort()).toEqual(['cccc', 'cddd'])
+    expect(await core.callTool('novel_list_titles', {}, { grant: b })).toMatchObject({ isError: true, auth: true })
+    expect(await core.checkGrant(b)).toBe(false)
+    for (const g of [c, d]) expect((await core.callTool('novel_list_titles', {}, { grant: g })).isError).toBeFalsy()
+  })
+
+  it('novel_status: 許可のある呼び出しだけ、最後に「この接続」の行（前の行は1字も変えない）。外された接続は 401', async () => {
+    const data = novel(['本文です。']).data
+    const run = async () => {
+      const fake = new FakeFirebase()
+      const made = await pairedCore(fake, data, { cid: 'caaa' })
+      const b = await addConnection(fake, made.core, made.uid, { cid: 'cbbb', name: '接続2', pairedAt: made.clock.now })
+      return { ...made, fake, b }
+    }
+    const one = await run()
+    const plain = (await one.core.callTool('novel_status', {})).text.split('\n')
+    expect(plain.at(-1)).toMatch(/^アイデアへの追記の依頼: /)
+    const two = await run()
+    const withGrant = (await two.core.callTool('novel_status', {}, { grant: two.b })).text.split('\n')
+    expect(withGrant.slice(0, -1)).toEqual(plain)
+    expect(withGrant.at(-1)).toBe('この接続: 接続2（接続 2 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）')
+    expect((await two.core.callTool('novel_status', {}, { grant: two.grant })).text.split('\n').at(-1)).toBe(
+      'この接続: 接続1（接続 2 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
+    )
+    // 名前を変えるとすぐ出る（状態のツールは毎回読む）
+    two.fake.renameConnection('cbbb', '仕事用')
+    expect((await two.core.callTool('novel_status', {}, { grant: two.b })).text.split('\n').at(-1)).toBe(
+      'この接続: 仕事用（接続 2 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
+    )
+    // 外された接続は、すぐ（1分を待たずに）連携の解除の答え。Vault の連携とほかの接続はそのまま
+    two.fake.removeConnection('cbbb')
+    expect(await two.core.callTool('novel_status', {}, { grant: two.b })).toMatchObject({ isError: true, auth: true, text: expect.stringContaining('連携が解除') })
+    expect(two.core.pairingState()).toBe('paired')
+    expect((await two.core.callTool('novel_status', {}, { grant: two.grant })).text.split('\n').at(-1)).toBe(
+      'この接続: 接続1（接続 1 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
+    )
+    // 2.8 までの許可と記録（v1）は「接続1」
+    const fake = new FakeFirebase()
+    const legacy = await pairedCore(fake, data)
+    expect((await legacy.core.callTool('novel_status', {}, { grant: legacy.grant })).text.split('\n').at(-1)).toBe(
+      'この接続: 接続1（接続 1 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
+    )
+  })
+
+  it('記録が消された（連携をすべて解除）・正しい接続が無くなった時は、すべての接続が使えない（Vault の連携を外す）', async () => {
+    for (const gone of ['deleted', 'empty'] as const) {
+      const fake = new FakeFirebase()
+      const n = novel(['本文です。'])
+      const { core, uid, clock, grant: a } = await pairedCore(fake, n.data, { cid: 'caaa' })
+      const b = await addConnection(fake, core, uid, { cid: 'cbbb', pairedAt: clock.now })
+      if (gone === 'deleted') fake.setConnector(null)
+      else fake.setConnector({ uid, pairing: 'x'.repeat(64), pairedAt: clock.now, connections: {} })
+      expect(await core.callTool('novel_status', {}, { grant: a }), gone).toMatchObject({ isError: true, auth: true })
+      expect(core.pairingState(), gone).toBe('unpaired')
+      expect(await core.callTool('novel_list_titles', {}, { grant: b }), gone).toMatchObject({ isError: true, auth: true })
+      expect(await core.checkGrant(a), gone).toBe(false)
+      expect(await core.checkGrant(b), gone).toBe(false)
+    }
+  })
+
+  it('トークンの更新の確かめ（checkGrant）: 1分以内は前に読んだ一覧、過ぎたら読み直す。読めない時は切らない', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文です。'])
+    const { core, uid, clock, grant: a } = await pairedCore(fake, n.data, { cid: 'caaa' })
+    const b = await addConnection(fake, core, uid, { cid: 'cbbb', pairedAt: clock.now })
+    fake.removeConnection('cbbb')
+    clock.now += 30_000
+    expect(await core.checkGrant(b)).toBe(true)
+    clock.now += 31_000
+    fake.exhausted = true
+    expect(await core.checkGrant(b)).toBe(true)
+    fake.exhausted = false
+    expect(await core.checkGrant(b)).toBe(false)
+    expect(await core.checkGrant(a)).toBe(true)
+    // 持ち主・代が違う許可は、クラウドを読まずに断る
+    const reads = connectorReads(fake)
+    expect(await core.checkGrant({ ...a, gen: 'other' })).toBe(false)
+    expect(await core.checkGrant({ ...a, ownerUid: 'other' })).toBe(false)
+    expect(connectorReads(fake)).toBe(reads)
   })
 })
 

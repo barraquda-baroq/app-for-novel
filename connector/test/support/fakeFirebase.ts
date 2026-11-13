@@ -15,6 +15,15 @@ interface Doc {
   createTime: string
 }
 
+/** config/connector の接続（2.9。テストの用意） */
+export interface FakeConnection {
+  name?: string
+  pairing: string
+  /** 許可した時刻（ms） */
+  pairedAt?: number
+  approvedOn?: string
+}
+
 export interface FakeFirebaseOptions {
   project?: string
   anonymousDisabled?: boolean
@@ -94,11 +103,49 @@ export class FakeFirebase {
     this.#write([{ path: 'config/owner', fields: { uid: s(uid) } }])
   }
 
-  setConnector(c: { uid: string; pairing: string; writes?: boolean; pairedAt?: number } | null): void {
+  /**
+   * config/connector を書く（作られた時刻 createTime は、もうある記録なら変わらない。消して作り直すと変わる）。
+   * connections を渡すと 2.9 の形（v: 2。pairingCid は省くと最後の接続）、渡さなければ 2.8 までの形（v: 1）
+   */
+  setConnector(
+    c: {
+      uid: string
+      pairing: string
+      writes?: boolean
+      pairedAt?: number
+      connections?: Record<string, FakeConnection>
+      pairingCid?: string
+    } | null,
+  ): void {
     if (!c) {
       this.docs.delete(this.name('config/connector'))
       return
     }
+    const v2: Record<string, Value> = c.connections
+      ? {
+          v: { integerValue: '2' },
+          pairingCid: s(c.pairingCid ?? Object.keys(c.connections).at(-1) ?? 'c0'),
+          connections: {
+            mapValue: {
+              fields: Object.fromEntries(
+                Object.entries(c.connections).map(([cid, e]) => [
+                  cid,
+                  {
+                    mapValue: {
+                      fields: {
+                        name: s(e.name ?? cid),
+                        pairing: s(e.pairing),
+                        pairedAt: { timestampValue: new Date(e.pairedAt ?? Date.now()).toISOString() },
+                        approvedOn: s(e.approvedOn ?? 'テストの端末'),
+                      },
+                    },
+                  },
+                ]),
+              ),
+            },
+          },
+        }
+      : { v: { integerValue: '1' } }
     this.#write([
       {
         path: 'config/connector',
@@ -108,10 +155,85 @@ export class FakeFirebase {
           pairedAt: { timestampValue: new Date(c.pairedAt ?? Date.now()).toISOString() },
           approvedOn: s('テストの端末'),
           writes: { booleanValue: c.writes ?? true },
-          v: { integerValue: '1' },
+          ...v2,
         },
       },
     ])
+  }
+
+  /** いまの config/connector の接続（v1 は c0「接続1」1つ。記録が無ければ null） */
+  connectorConnections(): Record<string, FakeConnection> | null {
+    const d = this.docs.get(this.name('config/connector'))
+    if (!d) return null
+    const f = d.fields
+    const ms = (v: Value | undefined) => Date.parse(String(v?.timestampValue ?? ''))
+    const str = (v: Value | undefined) => String(v?.stringValue ?? '')
+    if (!f.connections)
+      return { c0: { name: '接続1', pairing: str(f.pairing), pairedAt: ms(f.pairedAt), approvedOn: str(f.approvedOn) } }
+    const map = (f.connections.mapValue as { fields?: Record<string, Value> }).fields ?? {}
+    const out: Record<string, FakeConnection> = {}
+    for (const [cid, v] of Object.entries(map)) {
+      const e = (v.mapValue as { fields: Record<string, Value> }).fields
+      out[cid] = { name: str(e.name), pairing: str(e.pairing), pairedAt: ms(e.pairedAt), approvedOn: str(e.approvedOn) }
+    }
+    return out
+  }
+
+  /**
+   * アプリの許可（2.9 の addConnection と同じ）: 2.8 の記録は c0「接続1」に移し、入れ替える接続と同じ cid を外して足す。
+   * 記録が無い・別のコネクタの記録なら作り直す（作られた時刻が変わる）。10 あれば例外
+   */
+  addConnection(a: { uid: string; cid: string; pairing: string; name?: string; pairedAt?: number; writes?: boolean; replaceCid?: string }): void {
+    const cur = this.docs.get(this.name('config/connector'))
+    if (cur && cur.fields.uid?.stringValue !== a.uid) this.setConnector(null)
+    const list = { ...(this.connectorConnections() ?? {}) }
+    if (a.replaceCid) delete list[a.replaceCid]
+    delete list[a.cid]
+    if (Object.keys(list).length >= 10) throw new Error('接続が10あります')
+    const pairedAt = a.pairedAt ?? Date.now()
+    list[a.cid] = { name: a.name ?? a.cid, pairing: a.pairing, pairedAt, approvedOn: 'テストの端末' }
+    const writes = a.writes ?? (cur ? cur.fields.writes?.booleanValue === true : true)
+    this.setConnector({ uid: a.uid, pairing: a.pairing, pairedAt, writes, connections: list, pairingCid: a.cid })
+  }
+
+  /** アプリの［この接続を解除］（2.9 の removeConnection と同じ）: 最後の1つなら記録を消す。2.8 の記録は一覧の形に移す */
+  removeConnection(cid: string): void {
+    const cur = this.docs.get(this.name('config/connector'))
+    const list = this.connectorConnections()
+    if (!cur || !list) return
+    delete list[cid]
+    if (!Object.keys(list).length) return this.setConnector(null)
+    const f = cur.fields
+    this.setConnector({
+      uid: String(f.uid?.stringValue),
+      pairing: String(f.pairing?.stringValue),
+      pairedAt: Date.parse(String(f.pairedAt?.timestampValue)),
+      writes: f.writes?.booleanValue === true,
+      connections: list,
+      pairingCid: String(f.pairingCid?.stringValue ?? 'c0'),
+    })
+  }
+
+  /** アプリの「名前を変える」（2.9 の renameConnection と同じ。2.8 の記録は一覧の形に移す） */
+  renameConnection(cid: string, name: string): void {
+    const cur = this.docs.get(this.name('config/connector'))
+    const list = this.connectorConnections()
+    if (!cur || !list?.[cid]) return
+    list[cid] = { ...list[cid], name }
+    const f = cur.fields
+    this.setConnector({
+      uid: String(f.uid?.stringValue),
+      pairing: String(f.pairing?.stringValue),
+      pairedAt: Date.parse(String(f.pairedAt?.timestampValue)),
+      writes: f.writes?.booleanValue === true,
+      connections: list,
+      pairingCid: String(f.pairingCid?.stringValue ?? 'c0'),
+    })
+  }
+
+  /** config/connector の作られた時刻（連携の代） */
+  connectorCreateTime(): string | null {
+    return this.docs.get(this.name('config/connector'))?.createTime ?? null
   }
 
   setAppModel(owner: string, model: number | null): void {

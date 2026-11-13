@@ -5,7 +5,7 @@
 //   GET  /pair/callback    アプリから戻る（?state=…&k=…）。cookie と k の指紋を確かめて、claude.ai へ許可を返す
 //   GET  /connect/identity アプリの連携の画面が読むコネクタの身元 { uid, version, model }（CORS はアプリの origin だけ）
 // 連携の決まり（DECISIONS 9。URL の形・k・指紋はアプリと同じ src/claude/pairing.ts）: アプリは config/connector に
-// pairing = sha256hex(s + '.' + k) を書き、k は URL でだけ渡す。
+// pairing = sha256hex(s + '.' + k) を書き（2.9: 接続ごとに。connections の1つ）、k は URL でだけ渡す。
 // state を持つ cookie は claude.ai から始めたブラウザに、k はアプリを開いた持ち主のブラウザにだけあるので、
 // 誰かが自分の state のリンクを持ち主に開かせても、連携は完成しない。
 import { AuthorizationError, CimdFetchError, type OAuthHelpers } from '@cloudflare/workers-oauth-provider'
@@ -205,10 +205,14 @@ async function pairCallback(request: Request, env: Env): Promise<Response> {
     const { redirectTo } = await oauth.completeAuthorization({
       request: resumed.request,
       userId: check.ownerUid,
-      metadata: { label: 'Claude' },
+      // cid はログ・調べもの用（許可を確かめるのは props の cid）
+      metadata: { label: 'Claude', cid: check.cid },
       scope: grantedScopes(resumed.request.scope),
-      // 許可を、いまの連携（持ち主・連携の代）に結び付ける（解除した後に連携し直すと、前の許可は使えない）
-      props: { ownerUid: check.ownerUid, gen: check.gen },
+      // 許可を、いまの連携（持ち主・連携の代）に結び付ける（すべて解除した後に連携し直すと、前の許可は使えない）
+      props: { ownerUid: check.ownerUid, gen: check.gen, cid: check.cid },
+      // 2.9: 前の接続を取り消さない（別の claude.ai のアカウントの接続もそのまま使える。解除はアプリの接続の一覧で）。許可は接続
+      // （cid）にも結び付け、一覧から外した接続は次に使った時に断る
+      revokeExistingGrants: false,
     })
     resumed.headers.set('Location', redirectTo)
     resumed.headers.set('Cache-Control', 'no-store')

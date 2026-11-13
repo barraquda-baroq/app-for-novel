@@ -5,11 +5,19 @@ import prodRules from '../../firestore.rules?raw'
 import { PAIRING_FIXTURE as F } from '../test/pairingFixture'
 import {
   callbackUrl,
+  CONNECTION_ID,
+  connectionNameKey,
+  connectionsOf,
   connectPageUrl,
   CONNECTOR_DOC_KEYS,
+  defaultConnectionName,
   identityUrl,
   isPairingHash,
   isPairingKey,
+  LEGACY_CONNECTION_ID,
+  LEGACY_CONNECTION_NAME,
+  MAX_CONNECTIONS,
+  newConnectionId,
   normalizeOrigin,
   pairingHash,
   parseIdentity,
@@ -17,6 +25,7 @@ import {
   stateFromConnectUrl,
   validState,
 } from './pairing'
+import { refKey } from './refs'
 
 describe('連携の URL', () => {
   it('コネクタが開くアプリの画面・アプリが戻るコネクタの URL・身元の URL', () => {
@@ -97,5 +106,86 @@ describe('身元と記録の形', () => {
       const keys = m![1].split(',').map((k) => k.trim().replace(/'/g, ''))
       expect(new Set(keys)).toEqual(new Set(CONNECTOR_DOC_KEYS))
     }
+  })
+})
+
+describe('複数の接続（2.9）', () => {
+  it('接続の id は c と base36 の 12 字（c0 にならない・ルールの形に合う）', () => {
+    expect(MAX_CONNECTIONS).toBe(10)
+    const seen = new Set<string>()
+    for (let i = 0; i < 50; i++) {
+      const cid = newConnectionId()
+      expect(cid).toMatch(/^c[0-9a-z]{12}$/)
+      expect(CONNECTION_ID.test(cid)).toBe(true)
+      expect(cid).not.toBe(LEGACY_CONNECTION_ID)
+      seen.add(cid)
+    }
+    expect(seen.size).toBe(50)
+    expect(newConnectionId((n) => new Uint8Array(n).fill(0))).toBe('c000000000000')
+    expect(newConnectionId((n) => new Uint8Array(n).fill(35))).toBe('czzzzzzzzzzzz')
+    expect(newConnectionId(() => new Uint8Array(2).fill(1))).toBe('c110000000000')
+    expect(CONNECTION_ID.test(LEGACY_CONNECTION_ID)).toBe(true)
+    for (const bad of ['c', 'C1', 'x1', 'c-1', `c${'a'.repeat(32)}`]) expect(CONNECTION_ID.test(bad), bad).toBe(false)
+  })
+
+  it('既定の名前は、空いている一番小さい番号の「接続n」（全角の数字・字の幅も同じに見る）', () => {
+    expect(defaultConnectionName([])).toBe('接続1')
+    expect(defaultConnectionName([LEGACY_CONNECTION_NAME])).toBe('接続2')
+    expect(defaultConnectionName(['接続1', '接続3'])).toBe('接続2')
+    expect(defaultConnectionName(['接続１', '接続２', '仕事用'])).toBe('接続3')
+    expect(defaultConnectionName([' 接続1 ', '接続 2', '接続x'])).toBe('接続2')
+  })
+
+  it('名前の重なりの形は refKey と同じ（字の幅・空白の違いは同じ）', () => {
+    for (const name of ['接続1', '接続１', '　仕事用　', '仕事  用', 'ｃｌａｕｄｅ', '新作の　相談'])
+      expect(connectionNameKey(name), name).toBe(refKey(name))
+    expect(connectionNameKey('接続１')).toBe(connectionNameKey('接続1'))
+  })
+
+  it('v1 の記録（connections が無い）は c0「接続1」1つ', () => {
+    expect(connectionsOf({ v: 1, pairing: 'h1', pairedAt: 123, approvedOn: 'Mac' })).toEqual([
+      { cid: 'c0', name: '接続1', pairing: 'h1', pairedAt: 123, approvedOn: 'Mac' },
+    ])
+    // 時刻の変換を渡せる（Firestore の Timestamp など）
+    expect(connectionsOf({ pairing: 'h1', pairedAt: { ms: 9 } }, (v) => (v as { ms: number }).ms)).toEqual([
+      { cid: 'c0', name: '接続1', pairing: 'h1', pairedAt: 9, approvedOn: '' },
+    ])
+    expect(connectionsOf({})).toEqual([{ cid: 'c0', name: '接続1', pairing: '', pairedAt: null, approvedOn: '' }])
+  })
+
+  it('v2 は鍵が接続の id の形・値が map のものだけ。名前が壊れていれば「接続」、制御文字を除き 40 字まで。時刻の順', () => {
+    const list = connectionsOf({
+      v: 2,
+      pairing: 'h2',
+      connections: {
+        cbbb: { name: '仕事用', pairing: 'h2', pairedAt: 200, approvedOn: 'iPhone' },
+        c0: { name: '接続1', pairing: 'h0', pairedAt: 100, approvedOn: 'Mac' },
+        caaa: { name: 42, pairing: 7, pairedAt: 'x' },
+        cccc: { name: '\u0007改\n行\u0000', pairing: 'h3', pairedAt: 200, approvedOn: 'Pixel' },
+        cddd: { name: 'あ'.repeat(50), pairing: 'h4', pairedAt: 300, approvedOn: 'x'.repeat(200) },
+        'not-a-cid': { name: 'x', pairing: 'h5', pairedAt: 1 },
+        cnull: null,
+        clist: ['x'],
+        cstr: 'x',
+        C9: { name: 'x', pairing: 'h6', pairedAt: 1 },
+      },
+    })
+    expect(list).toEqual([
+      { cid: 'caaa', name: '接続', pairing: '', pairedAt: null, approvedOn: '' },
+      { cid: 'c0', name: '接続1', pairing: 'h0', pairedAt: 100, approvedOn: 'Mac' },
+      { cid: 'cbbb', name: '仕事用', pairing: 'h2', pairedAt: 200, approvedOn: 'iPhone' },
+      { cid: 'cccc', name: '改行', pairing: 'h3', pairedAt: 200, approvedOn: 'Pixel' },
+      { cid: 'cddd', name: 'あ'.repeat(40), pairing: 'h4', pairedAt: 300, approvedOn: 'x'.repeat(100) },
+    ])
+    // 空白だけ・制御文字だけの名前も「接続」
+    expect(connectionsOf({ connections: { c1: { name: ' \u0001 ', pairing: 'h' } } })![0].name).toBe('接続')
+  })
+
+  it('v2 で正しい接続が1つも無い（空の map・map でない）は null（解除と同じ）', () => {
+    expect(connectionsOf({ v: 2, connections: {} })).toBeNull()
+    expect(connectionsOf({ v: 2, connections: { bad: { name: 'x' } } })).toBeNull()
+    expect(connectionsOf({ v: 2, connections: null })).toBeNull()
+    expect(connectionsOf({ v: 2, connections: [] })).toBeNull()
+    expect(connectionsOf({ v: 2, connections: 'c1' })).toBeNull()
   })
 })
