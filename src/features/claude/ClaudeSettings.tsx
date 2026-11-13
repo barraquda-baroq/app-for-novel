@@ -1,16 +1,24 @@
 // 設定 → Claude 連携: Claude 用のコネクタ（リモート MCP）の URL、連携の状態（config/connector）、
-// 「書き込みを許可」の切り替え・［連携を解除］、Claude ができること・できないこと。
+// 2.9: 接続の一覧（claude.ai のアカウントごと。10まで。名前・許可した日時・許可した端末・［名前を変える］・［この接続を解除］）、
+// すべての接続に効く「書き込みを許可」・［連携をすべて解除］、Claude ができること・できないこと。
 import { useEffect, useId, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { isNative } from '../../platform/platform'
 import { notify, notifyError } from '../../store/uiStore'
 import { useSync } from '../../sync/controller'
-import { copyText, formatDateTime } from '../../ui/browser'
-import { confirmDialog } from '../../ui/dialogs'
+import { copyText } from '../../ui/browser'
 import { CopyIcon, LinkIcon } from '../../ui/icons'
+import type { ConnectionInfo } from '../../claude/pairing'
 import { CLAUDE_CAN, CLAUDE_CANNOT } from './claudeUi'
 import { CONNECTOR_ORIGIN, connectorMcpUrl } from './connectLogic'
 import type { ConnectorState } from './connectorDoc'
+import {
+  connectionCountLabel,
+  ConnectionList,
+  removeAllConnections,
+  removeOneConnection,
+  renameOneConnection,
+} from './ConnectionList'
 import './claude.css'
 
 /** セットアップの手順（リポジトリの docs/CONNECTOR.md） */
@@ -55,26 +63,19 @@ export function ClaudeSettings() {
     }
   }
 
-  const unpair = async () => {
-    const ok = await confirmDialog({
-      title: 'Claude との連携を解除しますか？',
-      message:
-        'コネクタはその場で何も読めず、書き込めなくなります。Claude で使うには、claude.ai でコネクタを接続し直して、もう一度許可してください（claude.ai 側のコネクタも削除しておくと確実です）。',
-      danger: true,
-      confirmLabel: '連携を解除',
-    })
-    if (!ok) return
+  /** 確かめのダイアログと書き込みの間はボタンを止める（知らせは ConnectionList.tsx の各操作が出す） */
+  const run = async (fn: () => Promise<unknown>) => {
     setBusy(true)
     try {
-      const m = await import('./connectorDoc')
-      await m.deleteConnector()
-      notify('Claude との連携を解除しました')
-    } catch {
-      notifyError('解除できませんでした。インターネットの接続を確かめてください。')
+      await fn()
     } finally {
       setBusy(false)
     }
   }
+  const connections: readonly ConnectionInfo[] = conn.state === 'paired' ? conn.status.connections : []
+  const unpairAll = () => run(() => removeAllConnections(connections.length))
+  const removeOne = (c: ConnectionInfo) => run(() => removeOneConnection(c, connections))
+  const rename = (c: ConnectionInfo) => run(() => renameOneConnection(c, connections))
 
   return (
     <section id="claude" className="card aset-card" aria-labelledby={`${id}-title`} data-testid="claude-settings">
@@ -141,46 +142,55 @@ export function ClaudeSettings() {
               連携していません。claude.ai でコネクタを接続すると、許可の画面が開きます。
             </span>
           ) : (
-            <dl className="cl-pairing" data-testid="claude-pairing-info">
-              <div>
-                <dt>連携日時</dt>
-                <dd>{conn.status.pairedAt ? formatDateTime(conn.status.pairedAt) : '—'}</dd>
+            <div className="cl-pairing" data-testid="claude-pairing-info">
+              <p className="cl-conn-count" data-testid="claude-connection-count">
+                {connectionCountLabel(connections.length)}
+                <span className="cl-conn-count-note">（claude.ai のアカウントごと。同時に10まで）</span>
+              </p>
+              <ConnectionList
+                connections={connections}
+                testIdPrefix="claude"
+                busy={busy}
+                onRename={(c) => void rename(c)}
+                onRemove={(c) => void removeOne(c)}
+              />
+              <div className="cl-writes-row">
+                <span className="cl-writes-label">
+                  書き込み: <span data-testid="claude-writes-state">{conn.status.writes ? '許可' : '停止中（読むだけ）'}</span>
+                </span>
+                <span className="cl-writes-control">
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={conn.status.writes}
+                      disabled={busy}
+                      onChange={(e) => void setWrites(e.target.checked)}
+                      data-testid="claude-writes-toggle"
+                    />
+                    <span className="track" aria-hidden="true" />
+                    <span>書き込みを許可</span>
+                  </label>
+                  <span className="cl-writes-note">（すべての接続に効きます）</span>
+                </span>
               </div>
-              <div>
-                <dt>連携した端末</dt>
-                <dd>{conn.status.approvedOn || '—'}</dd>
+              <div className="cl-unpair-row">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => void unpairAll()}
+                  disabled={busy}
+                  data-testid="claude-unpair"
+                >
+                  連携をすべて解除
+                </button>
               </div>
-              <div>
-                <dt>書き込み</dt>
-                <dd data-testid="claude-writes-state">{conn.status.writes ? '許可' : '停止中（読むだけ）'}</dd>
-              </div>
-            </dl>
+              <p className="aset-row-desc cl-conn-hint" data-testid="claude-connection-hint">
+                どの名前が claude.ai のどのアカウントかは、アプリからは分かりません。そのアカウントの Claude に「Novel Studio
+                の状態（novel_status）を見て」と頼むと、最後の行に「この接続: 接続2」と出ます。
+              </p>
+            </div>
           )}
         </div>
-        {signedIn && conn.state === 'paired' ? (
-          <div className="aset-row-control">
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={conn.status.writes}
-                disabled={busy}
-                onChange={(e) => void setWrites(e.target.checked)}
-                data-testid="claude-writes-toggle"
-              />
-              <span className="track" aria-hidden="true" />
-              <span>書き込みを許可</span>
-            </label>
-            <button
-              type="button"
-              className="btn btn-danger"
-              onClick={() => void unpair()}
-              disabled={busy}
-              data-testid="claude-unpair"
-            >
-              連携を解除
-            </button>
-          </div>
-        ) : null}
       </div>
 
       <div className="cl-cando">

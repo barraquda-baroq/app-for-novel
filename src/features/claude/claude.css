@@ -445,23 +445,113 @@
 }
 
 .cl-pairing {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 6px 14px;
-  margin: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 6px 0 0;
   font-weight: 400;
 }
 
-.cl-pairing dt {
-  font-size: 11px;
+.cl-pairing p {
+  margin: 0;
+}
+
+/* 2.9: 接続の一覧（設定 → Claude 連携・連携の画面） */
+.cl-conn-count {
+  font-size: 13px;
   font-weight: 700;
+}
+
+.cl-conn-count-note {
+  font-weight: 400;
   color: var(--text-muted);
 }
 
-.cl-pairing dd {
+.cl-conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin: 0;
-  font-size: 13px;
+  padding: 0;
+  list-style: none;
+}
+
+.cl-conn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.cl-conn-main {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cl-conn-name {
+  font-size: 14px;
   overflow-wrap: anywhere;
+}
+
+.cl-conn-meta {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.cl-conn-value {
+  color: var(--text);
+}
+
+.cl-conn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cl-conn-actions .btn,
+.cl-unpair-row .btn {
+  min-height: 34px;
+}
+
+.cl-writes-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 14px;
+  font-size: 13px;
+}
+
+.cl-writes-label {
+  font-weight: 700;
+}
+
+.cl-writes-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.cl-writes-control .switch {
+  min-height: 34px;
+  font-weight: 600;
+}
+
+.cl-writes-note {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .cl-cando {
@@ -581,6 +671,92 @@
 .cn-notice.is-danger {
   border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
   background: var(--danger-soft);
+}
+
+.cn-notice.is-info {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-soft);
+}
+
+/* 2.9: 連携の画面の「この接続」（名前・足す／入れ替える・いまの接続の一覧） */
+.cn-conn {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.cn-conn h2 {
+  font-size: 15px;
+}
+
+.cn-conn-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.cn-conn-mode legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.cn-conn-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 38px;
+}
+
+.cn-conn-option input[type='radio'] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.cn-conn-option-body {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.cn-name .input {
+  max-width: 24em;
+}
+
+.select.cn-replace-target {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cn-conn-details summary {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cn-conn-details .cl-conn-list {
+  margin-top: 6px;
 }
 
 .cn-columns {

@@ -8,9 +8,11 @@
 //   この環境から claude.ai につながらないので、connector/test/worker の workerd のテストで確かめている）
 // 流れ: 接続（/authorize）→ 同意［Novel Studio で確認する］→ アプリで見せるタイトルを選んで［許可する］→ /pair/callback
 //   → claude.ai へ code → トークン → ツール（見せないタイトルは出ない・書いた改稿案がアプリに届く）
-//   → 設定で「書き込みを許可」を切る（書き込みは断られる）→［連携を解除］（ツールは 401）
+//   → 2.9: 別の claude.ai のアカウントとして2つ目の接続（前の接続は切れない。novel_status の最後の行「この接続」）
+//   → 設定で名前を変える・「書き込みを許可」を切る（書き込みは断られる）→ 1つ解除（その接続だけ 401）
+//   →［連携をすべて解除］（ツールは 401）
 // コネクタの部品（npm --prefix connector ci）が無ければ、このテストは飛ばす。
-import { expect, test, type BrowserContext, type Route } from '@playwright/test'
+import { expect, test, type BrowserContext, type Locator, type Page, type Route } from '@playwright/test'
 import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
@@ -214,10 +216,25 @@ test.afterEach(async () => {
   await deleteDoc('config/owner')
 })
 
-test('本物のコネクタと: claude.ai の接続 → アプリで許可 → トークン → ツール → 書き込みの停止 → 連携の解除', async ({
+/** novel_status の最後の行（2.9: 許可のある呼び出しだけ「この接続: …」） */
+const lastLine = (text: string) => text.split('\n').at(-1)
+const thisConnection = (name: string, n: number) =>
+  `この接続: ${name}（接続 ${n} / 10。名前はアプリの 設定 → Claude 連携 で変えられます）`
+
+interface Connected {
+  accessToken: string
+  /** アプリの連携の画面の URL */
+  appUrl: URL
+  /** コネクタが渡した連携の印 */
+  state: string
+  /** アプリがコネクタへ戻った URL（/pair/callback?state=…&k=…） */
+  pair: URL
+}
+
+test('本物のコネクタと: claude.ai の接続 → アプリで許可 → トークン → ツール → 2つ目の接続 → 名前を変える → 書き込みの停止 → 1つ解除 → すべて解除', async ({
   browser,
 }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   const context = await browser.newContext()
   const page = await context.newPage()
   await openApp(page)
@@ -241,7 +258,7 @@ test('本物のコネクタと: claude.ai の接続 → アプリで許可 → �
   // 本物の claude.ai へは行かない
   await context.route('https://claude.ai/**', (route) => route.abort())
 
-  // claude.ai: クライアントを登録して、ブラウザで接続を始める
+  // claude.ai: クライアントを登録する
   const reg = await harness!.fetch(`${workerOrigin}/oauth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -255,48 +272,78 @@ test('本物のコネクタと: claude.ai の接続 → アプリで許可 → �
   })
   expect(reg.status).toBe(201)
   const clientId = ((await reg.json()) as { client_id: string }).client_id
-  const verifier = b64url(randomBytes(32))
-  const challenge = b64url(createHash('sha256').update(verifier).digest())
-  const q = new URLSearchParams({
-    response_type: 'code',
-    client_id: clientId,
-    redirect_uri: CLAUDE_CALLBACK,
-    code_challenge: challenge,
-    code_challenge_method: 'S256',
-    state: 'claude-state',
-    scope: 'novel offline_access',
-    resource: `${workerOrigin}/mcp`,
+
+  /**
+   * claude.ai の代わりに、ブラウザで接続を始めて、アプリの連携の画面で許可し（onForm で選ぶ）、code をトークンにする。
+   * 2.9: 呼ぶたびに新しい接続（同じクライアント・同じ戻り先でも、前の接続は取り消されない）
+   */
+  async function connect(p: Page, claudeState: string, onForm: (form: Locator) => Promise<void>): Promise<Connected> {
+    pairUrl = ''
+    claudeCallback = ''
+    const verifier = b64url(randomBytes(32))
+    const challenge = b64url(createHash('sha256').update(verifier).digest())
+    const q = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: CLAUDE_CALLBACK,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: claudeState,
+      scope: 'novel offline_access',
+      resource: `${workerOrigin}/mcp`,
+    })
+    await p.goto(`${origin}/authorize?${q}`)
+    await expect(p.getByText('Novel Studio への接続を求めています')).toBeVisible()
+    await p.getByTestId('consent-approve').click()
+    // アプリの連携の画面（コネクタが渡した印だけ。uid・origin は URL から受け取らない）
+    const form = p.getByTestId('connect-form')
+    await expect(form).toBeVisible({ timeout: 60_000 })
+    const appUrl = new URL(p.url())
+    const state = new URLSearchParams(appUrl.hash.split('?')[1]).get('s')!
+    await onForm(form)
+    await form.getByTestId('connect-approve').click()
+    // コネクタが指紋を確かめて claude.ai へ戻す
+    await expect.poll(() => claudeCallback, { timeout: 60_000 }).not.toBe('')
+    await expect(p.getByTestId('claude-returned')).toBeVisible()
+    const back = new URL(claudeCallback)
+    expect(`${back.origin}${back.pathname}`).toBe(CLAUDE_CALLBACK)
+    expect(back.searchParams.get('state')).toBe(claudeState)
+    const code = back.searchParams.get('code')!
+    expect(code).toBeTruthy()
+    const pair = new URL(pairUrl)
+    // claude.ai: code をトークンにする
+    const tokenRes = await harness!.fetch(`${workerOrigin}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: verifier,
+        client_id: clientId,
+        redirect_uri: CLAUDE_CALLBACK,
+        resource: `${workerOrigin}/mcp`,
+      }).toString(),
+    })
+    expect(tokenRes.status).toBe(200)
+    const { access_token: accessToken } = (await tokenRes.json()) as { access_token: string }
+    return { accessToken, appUrl, state, pair }
+  }
+
+  // 1つ目の接続
+  const first = await connect(page, 'claude-state', async (form) => {
+    expect(seen).toContain('GET /connect/identity')
+    await expect(form.getByTestId('connect-connection-count')).toHaveText('0 / 10')
+    await expect(form.getByTestId('connect-name')).toHaveValue('接続1')
+    const hiddenRow = form.getByTestId('connect-title').filter({ hasText: '隠す作品' })
+    await hiddenRow.getByTestId('connect-access-none').click()
+    await expect(form.getByTestId('connect-writes')).toBeChecked()
   })
-  await page.goto(`${origin}/authorize?${q}`)
-  await expect(page.getByText('Novel Studio への接続を求めています')).toBeVisible()
-  await page.getByTestId('consent-approve').click()
-
-  // アプリの連携の画面（コネクタが渡した印だけ。uid・origin は URL から受け取らない）
-  const form = page.getByTestId('connect-form')
-  await expect(form).toBeVisible({ timeout: 60_000 })
-  const appUrl = new URL(page.url())
-  expect(appUrl.origin).toBe(new URL(String(test.info().project.use.baseURL)).origin)
-  const state = new URLSearchParams(appUrl.hash.split('?')[1]).get('s')!
-  expect(state).toMatch(/^[A-Za-z0-9_-]{43}$/)
-  expect(seen).toContain('GET /connect/identity')
-  const hiddenRow = form.getByTestId('connect-title').filter({ hasText: '隠す作品' })
-  await hiddenRow.getByTestId('connect-access-none').click()
-  await expect(form.getByTestId('connect-writes')).toBeChecked()
-  await form.getByTestId('connect-approve').click()
-
-  // コネクタが指紋を確かめて claude.ai へ戻す
-  await expect.poll(() => claudeCallback, { timeout: 60_000 }).not.toBe('')
-  await expect(page.getByTestId('claude-returned')).toBeVisible()
-  const back = new URL(claudeCallback)
-  expect(`${back.origin}${back.pathname}`).toBe(CLAUDE_CALLBACK)
-  expect(back.searchParams.get('state')).toBe('claude-state')
-  const code = back.searchParams.get('code')!
-  expect(code).toBeTruthy()
+  expect(first.appUrl.origin).toBe(new URL(String(test.info().project.use.baseURL)).origin)
+  expect(first.state).toMatch(/^[A-Za-z0-9_-]{43}$/)
   // アプリはビルドの時に決めたコネクタへ、印と k を URL の引数で渡した
-  const pair = new URL(pairUrl)
-  expect(pair.origin).toBe(origin)
-  expect(pair.searchParams.get('state')).toBe(state)
-  const k = pair.searchParams.get('k')!
+  expect(first.pair.origin).toBe(origin)
+  expect(first.pair.searchParams.get('state')).toBe(first.state)
+  const k = first.pair.searchParams.get('k')!
   expect(k).toMatch(/^[A-Za-z0-9_-]{43}$/)
 
   // 連携の記録: コネクタの匿名のアカウントと指紋だけ（k は書かない）
@@ -305,30 +352,14 @@ test('本物のコネクタと: claude.ai の接続 → アプリで許可 → �
   expect(connectorUid).toBeTruthy()
   expect(connectorUid).not.toBe(ownerUid)
   expect(conn.writes.booleanValue).toBe(true)
-  expect(conn.pairing.stringValue).toBe(sha256(`${state}.${k}`))
+  expect(conn.pairing.stringValue).toBe(sha256(`${first.state}.${k}`))
   expect(JSON.stringify(conn)).not.toContain(k)
   // 隠したタイトルの設定は、連携の前に送られている
   const hiddenRecord = await readDoc(`users/${ownerUid}/records/titles:${hidden.titleId}`)
   expect(String(hiddenRecord?.json.stringValue)).toContain('"claudeAccess":"none"')
 
-  // claude.ai: code をトークンにする
-  const tokenRes = await harness!.fetch(`${workerOrigin}/oauth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      code_verifier: verifier,
-      client_id: clientId,
-      redirect_uri: CLAUDE_CALLBACK,
-      resource: `${workerOrigin}/mcp`,
-    }).toString(),
-  })
-  expect(tokenRes.status).toBe(200)
-  const { access_token: accessToken } = (await tokenRes.json()) as { access_token: string }
-
   // 同じ戻りの URL はもう使えない（一度だけ）
-  const replay = await harness!.fetch(`${workerOrigin}${pair.pathname}${pair.search}`, {
+  const replay = await harness!.fetch(`${workerOrigin}${first.pair.pathname}${first.pair.search}`, {
     redirect: 'manual',
     headers: { cookie: jar.header() },
   })
@@ -339,7 +370,7 @@ test('本物のコネクタと: claude.ai の接続 → アプリで許可 → �
   await expect
     .poll(
       async () => {
-        titles = (await callTool(accessToken, 'novel_list_titles', {})).text
+        titles = (await callTool(first.accessToken, 'novel_list_titles', {})).text
         return titles.includes('『見せる作品』')
       },
       { timeout: 60_000, intervals: [500] },
@@ -348,7 +379,7 @@ test('本物のコネクタと: claude.ai の接続 → アプリで許可 → �
   expect(titles).not.toContain('隠す作品')
 
   // ツールで改稿案を書くと、アプリに届く
-  const added = await callTool(accessToken, 'novel_add_revision_ideas', {
+  const added = await callTool(first.accessToken, 'novel_add_revision_ideas', {
     title_id: shown.titleId,
     items: [{ heading: 'コネクタからの改稿案', body: '冒頭を景色から始める' }],
   })
@@ -363,25 +394,67 @@ test('本物のコネクタと: claude.ai の接続 → アプリで許可 → �
     .toEqual(['claude:コネクタからの改稿案'])
   await expect(app.getByTestId('revision-idea').getByTestId('revision-heading')).toHaveText('コネクタからの改稿案')
 
-  // 設定 → Claude 連携: 書き込みを止めると、コネクタの書き込みは断られる（読むのは続く）
+  // 2.9: 2つ目の接続（別の claude.ai のアカウント）。前の接続は切れない
+  const second = await connect(page, 'claude-state-2', async (form) => {
+    await expect(form.getByTestId('connect-connection-count')).toHaveText('1 / 10')
+    await expect(form.getByTestId('connect-name')).toHaveValue('接続2')
+    await expect(form.getByTestId('connect-mode-add')).toBeChecked()
+  })
+  const conn2 = (await readDoc('config/connector'))!
+  expect(conn2.uid.stringValue).toBe(connectorUid)
+  const k2 = second.pair.searchParams.get('k')!
+  expect(conn2.pairing.stringValue).toBe(sha256(`${second.state}.${k2}`))
+  const entries = (conn2.connections as unknown as { mapValue: { fields: Record<string, unknown> } }).mapValue.fields
+  expect(Object.keys(entries)).toHaveLength(2)
+  for (const [token, name] of [
+    [first.accessToken, '接続1'],
+    [second.accessToken, '接続2'],
+  ] as const) {
+    const status = await callTool(token, 'novel_status', {})
+    expect(status.isError).toBe(false)
+    expect(lastLine(status.text)).toBe(thisConnection(name, 2))
+    expect((await callTool(token, 'novel_list_titles', {})).text).toContain('『見せる作品』')
+  }
+
+  // 設定 → Claude 連携: 接続の一覧（2つ）。名前を変えると novel_status の「この接続」も変わる
   const settings = app
   await openApp(settings, '/settings')
   const info = settings.getByTestId('claude-pairing-info')
   await expect(info).toBeVisible({ timeout: 30_000 })
+  const rows = info.getByTestId('claude-connection')
+  await expect(rows.getByTestId('claude-connection-name')).toHaveText(['接続1', '接続2'])
+  await rows.nth(1).getByTestId('claude-connection-rename').click()
+  await settings.getByRole('dialog').getByTestId('prompt-input').fill('仕事用')
+  await settings.getByRole('dialog').getByTestId('prompt-ok').click()
+  await expect(rows.getByTestId('claude-connection-name')).toHaveText(['接続1', '仕事用'], { timeout: 30_000 })
+  expect(lastLine((await callTool(second.accessToken, 'novel_status', {})).text)).toBe(thisConnection('仕事用', 2))
+
+  // 書き込みを止めると、どの接続の書き込みも断られる（読むのは続く）
   await settings.locator('label:has([data-testid="claude-writes-toggle"])').click()
   await expect(info.getByTestId('claude-writes-state')).toHaveText('停止中（読むだけ）', { timeout: 30_000 })
-  const refused = await callTool(accessToken, 'novel_add_revision_ideas', {
+  const refused = await callTool(second.accessToken, 'novel_add_revision_ideas', {
     title_id: shown.titleId,
     items: [{ heading: '止めた後の改稿案', body: '届かない' }],
   })
   expect(refused.isError).toBe(true)
   expect(refused.text).toContain('書き込みは停止中')
-  expect((await callTool(accessToken, 'novel_list_titles', {})).text).toContain('『見せる作品』')
+  expect((await callTool(second.accessToken, 'novel_list_titles', {})).text).toContain('『見せる作品』')
 
-  // ［連携を解除］: その場でコネクタは読めなくなり、claude.ai には接続し直しを求める（401）
+  // 1つ解除: その接続だけが 401（novel_status はすぐ気付く）。ほかの接続はそのまま使える
+  await rows.first().getByTestId('claude-connection-remove').click()
+  await settings.getByRole('dialog').getByRole('button', { name: 'この接続を解除' }).click()
+  await expect(rows.getByTestId('claude-connection-name')).toHaveText(['仕事用'], { timeout: 30_000 })
+  expect((await callTool(first.accessToken, 'novel_status', {})).status).toBe(401)
+  expect((await callTool(first.accessToken, 'novel_list_titles', {})).status).toBe(401)
+  const still = await callTool(second.accessToken, 'novel_status', {})
+  expect(still.status).toBe(200)
+  expect(lastLine(still.text)).toBe(thisConnection('仕事用', 1))
+  expect((await callTool(second.accessToken, 'novel_list_titles', {})).text).toContain('『見せる作品』')
+
+  // ［連携をすべて解除］: その場でコネクタは読めなくなり、claude.ai には接続し直しを求める（401）
   await settings.getByTestId('claude-unpair').click()
-  await settings.getByRole('dialog').getByRole('button', { name: '連携を解除' }).click()
+  await settings.getByRole('dialog').getByRole('button', { name: '連携をすべて解除' }).click()
   await expect(settings.getByTestId('claude-pairing-none')).toBeVisible({ timeout: 30_000 })
-  await expect.poll(async () => (await callTool(accessToken, 'novel_status', {})).status, { timeout: 30_000 }).toBe(401)
+  await expect.poll(async () => (await callTool(second.accessToken, 'novel_status', {})).status, { timeout: 30_000 }).toBe(401)
   await context.close()
 })

@@ -6,11 +6,20 @@
 // 5. 見せるタイトル・書き込みを許可するかを選んで［許可する］→ 連携の記録の接続の一覧（2.9。10まで）に接続（指紋だけ）を足し、
 //    送ってからコネクタへ移る。接続の id は画面を開くごとに1つ作り、記録に失敗した後のやり直しでも同じものを使う（重ならない）。
 //    コネクタがこのアプリより古い版なら許可させない（2.8 までのコネクタは、許可するとほかの接続を切ってしまう）
+// 2.9 の「この接続」: 名前（既定は空いている一番小さい「接続n」）・新しい接続として足す／前の接続と入れ替える・いまの接続の一覧
+// （行ごとに解除。10ある時は入れ替えるか解除しないと許可できない）・15分以内に許可した接続があれば入れ替えを勧める
 // 手順は connectLogic.ts（prepareConnect・approvePairing）、URL・k・指紋の決まりはコネクタと同じ src/claude/pairing.ts。
 // iPhone / Android のアプリでは連携できない（コネクタは Web 版の画面からだけ受け付ける）ので、同じ印のままブラウザで開いてもらう。
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { defaultConnectionName, newConnectionId } from '../../claude/pairing'
+import {
+  defaultConnectionName,
+  newConnectionId,
+  CONNECTION_NAME_MAX,
+  MAX_CONNECTIONS,
+  PAIRING_TTL_MS,
+  type ConnectionInfo,
+} from '../../claude/pairing'
 import { claudeAccessOf, CLAUDE_ACCESS_OPTIONS } from '../../claude/visibility'
 import { sortedTitles } from '../../domain/entityOps'
 import { TRASH_RETENTION_DAYS } from '../../domain/trash'
@@ -28,9 +37,11 @@ import { AppHeader } from '../../ui/Layout'
 import { PlugIcon } from './claudeIcons'
 import { CLAUDE_ACCESS_HINTS } from './ClaudeAccessControl'
 import { CLAUDE_CAN, CLAUDE_CANNOT } from './claudeUi'
+import { connectionNameProblem, ConnectionList, removeOneConnection } from './ConnectionList'
 import {
   approvePairing,
   CONNECTOR_ORIGIN,
+  EXISTING_READ_ERROR,
   fetchIdentity,
   prepareConnect,
   randomPairingKey,
@@ -71,6 +82,9 @@ type Step =
     }
   | { step: 'done' }
   | { step: 'cancelled' }
+
+/** 連携の画面で見ている、いまの接続の一覧（解除した後・記録に失敗した後は読み直す） */
+type ListState = { state: 'loading' } | { state: 'ok'; status: ConnectorStatus | null } | { state: 'error' }
 
 /** 同期が「同期済み」になるまで待つ（なれば true） */
 function waitForSynced(ms: number): Promise<boolean> {
@@ -138,8 +152,18 @@ export function ConnectPage() {
     mode: 'add',
     replaceCid: null,
   }))
+  const [list, setList] = useState<ListState>({ state: 'loading' })
   const host = CONNECTOR_ORIGIN ? new URL(CONNECTOR_ORIGIN).host : ''
   const [native] = useState(isNative)
+  const reloadList = async () => {
+    setList({ state: 'loading' })
+    try {
+      const doc = await import('./connectorDoc')
+      setList({ state: 'ok', status: await doc.readConnectorDoc() })
+    } catch {
+      setList({ state: 'error' })
+    }
+  }
 
   useEffect(() => {
     if (native || !CONNECTOR_ORIGIN || !state || !uid || mismatch) return
@@ -164,7 +188,9 @@ export function ConnectPage() {
         },
         uid,
       )
-      if (r.step !== 'cancelled') set(r)
+      if (cancelled || r.step === 'cancelled') return
+      if (r.step === 'ready') setList(r.existingError ? { state: 'error' } : { state: 'ok', status: r.existing })
+      set(r)
     })()
     return () => {
       cancelled = true
@@ -308,15 +334,15 @@ export function ConnectPage() {
           <ApproveForm
             identity={step.identity}
             ownerUid={step.ownerUid}
-            existing={step.existing}
-            existingError={step.existingError}
+            list={list}
+            onReloadList={reloadList}
             state={state}
             error={step.step === 'saveError' ? step.error : null}
             draft={draft}
             onDraftChange={setDraft}
             onSaving={() => setStep({ step: 'saving' })}
             onDone={() => setStep({ step: 'done' })}
-            onError={(error) =>
+            onError={(error) => {
               setStep({
                 step: 'saveError',
                 error,
@@ -325,7 +351,9 @@ export function ConnectPage() {
                 existing: step.existing,
                 existingError: step.existingError,
               })
-            }
+              // ほかの端末で接続が足された・解除された時のために、一覧を読み直す
+              void reloadList()
+            }}
             onCancel={() => setStep({ step: 'cancelled' })}
           />
         )
@@ -396,19 +424,20 @@ interface ApproveDraft {
   access: Record<ID, ClaudeAccess>
   /** 足す接続の id（画面を開くごとに1つ。やり直しでも同じ） */
   cid: string
-  /** 接続の名前（null = 既定の名前） */
+  /** 接続の名前（null = 既定の名前。入れ替える時は、その接続の名前） */
   name: string | null
-  /** 新しい接続として足す・前の接続と入れ替える */
+  /** 新しい接続として足す・前の接続と入れ替える（接続が10ある時は入れ替えるだけ） */
   mode: 'add' | 'replace'
+  /** 入れ替える接続（null = 15分以内に許可した接続、無ければ一番前の接続） */
   replaceCid: string | null
 }
 
 interface ApproveFormProps {
   identity: ConnectorIdentity
   ownerUid: string
-  /** いまの連携の記録（無ければ null） */
-  existing: ConnectorStatus | null
-  existingError: boolean
+  /** いまの接続の一覧 */
+  list: ListState
+  onReloadList: () => Promise<void>
   state: string
   error: string | null
   draft: ApproveDraft
@@ -422,7 +451,8 @@ interface ApproveFormProps {
 function ApproveForm({
   identity,
   ownerUid,
-  existing,
+  list,
+  onReloadList,
   state,
   error,
   draft,
@@ -434,19 +464,45 @@ function ApproveForm({
 }: ApproveFormProps) {
   const data = useData()
   const titles = useMemo(() => sortedTitles(data), [data])
-  // コネクタが用意し直された時（記録の uid が違う）は、前の接続は使えないので、新しく始める
-  const current = existing && existing.uid === identity.uid ? existing : null
-  const connections = current?.connections ?? []
-  const writes = draft.writes ?? current?.writes ?? true
-  const name = draft.name ?? defaultConnectionName(connections.map((c) => c.name))
   // 新しい版のアプリで書かれたデータがある間は、タイトルの設定を送れない
   const outdated = useSync((s) => !!s.status?.outdated)
+  const formId = useId()
+  const [openedAt] = useState(() => Date.now())
+  const [removing, setRemoving] = useState(false)
+  const listed = list.state === 'ok' ? list.status : null
+  // コネクタが用意し直された時（記録の uid が違う）は、前の接続は使えないので、新しく始める
+  const identityChanged = !!listed && listed.uid !== identity.uid
+  const current = listed && !identityChanged ? listed : null
+  const connections: readonly ConnectionInfo[] = current?.connections ?? []
+  const n = connections.length
+  const full = n >= MAX_CONNECTIONS
+  // 15分以内に許可した接続（claude.ai で接続できずにやり直している時の、使わない接続）
+  const recent =
+    [...connections]
+      .filter((c) => c.pairedAt !== null && openedAt - c.pairedAt < PAIRING_TTL_MS && c.pairedAt - openedAt < 2 * 60_000)
+      .sort((a, b) => (b.pairedAt ?? 0) - (a.pairedAt ?? 0))[0] ?? null
+  const target = connections.find((c) => c.cid === draft.replaceCid) ?? recent ?? connections[0] ?? null
+  const mode: 'add' | 'replace' = n === 0 ? 'add' : full ? 'replace' : draft.mode
+  const writes = draft.writes ?? current?.writes ?? true
+  const name = draft.name ?? (mode === 'replace' && target ? target.name : defaultConnectionName(connections.map((c) => c.name)))
+  const nameProblem = connectionNameProblem(name, connections, mode === 'replace' ? (target?.cid ?? null) : null)
+  const listBusy = list.state === 'loading' || removing
+  const canApprove = !outdated && !listBusy && nameProblem === null && (mode === 'add' ? !full : !!target)
+
+  const removeFromList = async (c: ConnectionInfo) => {
+    setRemoving(true)
+    try {
+      if (await removeOneConnection(c, connections)) await onReloadList()
+    } finally {
+      setRemoving(false)
+    }
+  }
   const busy = useRef(false)
   const valueOf = (id: ID): ClaudeAccess => draft.access[id] ?? claudeAccessOf(data.titles[id])
   const shown = titles.filter((t) => valueOf(t.id) !== 'none').length
 
   const approve = async () => {
-    if (busy.current) return
+    if (busy.current || !canApprove) return
     busy.current = true
     onSaving()
     try {
@@ -475,7 +531,7 @@ function ApproveForm({
           access: changes,
           cid: draft.cid,
           name,
-          replaceCid: draft.mode === 'replace' ? draft.replaceCid : null,
+          replaceCid: mode === 'replace' ? (target?.cid ?? null) : null,
         },
       )
       if (r.ok) onDone()
@@ -497,6 +553,119 @@ function ApproveForm({
           ）と違うため、コネクタは推敲案などを書き込めません（読むことはできます）。アプリかコネクタを更新してください。
         </p>
       ) : null}
+
+      <section className="cn-conn" aria-labelledby="cn-conn-heading" data-testid="connect-connection">
+        <h2 id="cn-conn-heading">
+          この接続
+          <span className="sx-count" data-testid="connect-connection-count">
+            {n} / {MAX_CONNECTIONS}
+          </span>
+        </h2>
+        {list.state === 'loading' ? <Progress text="確かめています…" testId="connect-connections-loading" /> : null}
+        {list.state === 'error' ? (
+          <p className="cn-notice is-warn" data-testid="connect-connections-error">
+            {EXISTING_READ_ERROR}
+          </p>
+        ) : null}
+        {identityChanged ? (
+          <p className="cn-notice is-warn" data-testid="connect-identity-changed">
+            コネクタが用意し直されたため、前の接続（{listed.connections.length}
+            件）は使えなくなっています。この許可で連携を新しく始めます。
+          </p>
+        ) : null}
+        {n === 0 ? (
+          <p>Novel Studio には、claude.ai のアカウントを{MAX_CONNECTIONS}まで同時に接続できます。</p>
+        ) : (
+          <p data-testid="connect-connection-lead">
+            いまの接続は {n}
+            件です。新しく足しても、前の接続は切れません（claude.ai
+            のどのアカウントかは、アプリからは分かりません。同じアカウントで接続し直した時も、新しい接続として足されます）。
+          </p>
+        )}
+        <label className="field cn-name">
+          <span>名前（あとから 設定 → Claude 連携 で変えられます）</span>
+          <input
+            className="input"
+            value={name}
+            maxLength={CONNECTION_NAME_MAX}
+            aria-invalid={nameProblem ? true : undefined}
+            aria-describedby={nameProblem ? `${formId}-name-problem` : undefined}
+            onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
+            data-testid="connect-name"
+          />
+        </label>
+        {nameProblem ? (
+          <p id={`${formId}-name-problem`} className="cl-error" role="alert" data-testid="connect-name-problem">
+            {nameProblem}
+          </p>
+        ) : null}
+        {n > 0 ? (
+          <fieldset className="cn-conn-mode">
+            <legend>前の接続</legend>
+            <label className="check cn-conn-option">
+              <input
+                type="radio"
+                name={`${formId}-mode`}
+                checked={mode === 'add'}
+                disabled={full}
+                onChange={() => onDraftChange({ ...draft, mode: 'add' })}
+                data-testid="connect-mode-add"
+              />
+              <span>新しい接続として足す（おすすめ）</span>
+            </label>
+            <div className="cn-conn-option">
+              <input
+                type="radio"
+                id={`${formId}-replace`}
+                name={`${formId}-mode`}
+                checked={mode === 'replace'}
+                onChange={() => onDraftChange({ ...draft, mode: 'replace', replaceCid: target?.cid ?? null })}
+                aria-label={`「${target?.name ?? ''}」と入れ替える（前の接続は使えなくなります）`}
+                data-testid="connect-mode-replace"
+              />
+              <span className="cn-conn-option-body">
+                <select
+                  className="select cn-replace-target"
+                  value={target?.cid ?? ''}
+                  onChange={(e) => onDraftChange({ ...draft, mode: 'replace', replaceCid: e.target.value })}
+                  aria-label="入れ替える接続"
+                  data-testid="connect-replace-target"
+                >
+                  {connections.map((c) => (
+                    <option key={c.cid} value={c.cid}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <label htmlFor={`${formId}-replace`}>と入れ替える（前の接続は使えなくなります）</label>
+              </span>
+            </div>
+          </fieldset>
+        ) : null}
+        {full ? (
+          <p className="cn-notice is-warn" data-testid="connect-full">
+            接続が{MAX_CONNECTIONS}あります（同時に{MAX_CONNECTIONS}
+            まで）。入れ替える接続を選ぶか、下の一覧で1つ解除すると許可できます。
+          </p>
+        ) : null}
+        {recent && !(mode === 'replace' && target?.cid === recent.cid) ? (
+          <p className="cn-notice is-info" data-testid="connect-recent">
+            15分以内に許可した「{recent.name}」があります。claude.ai で接続できずにやり直している時は「{recent.name}
+            と入れ替える」を選ぶと、使わない接続が一覧に残りません。
+          </p>
+        ) : null}
+        {n > 0 ? (
+          <details className="cn-conn-details" open={full}>
+            <summary>いまの接続（{n}件）</summary>
+            <ConnectionList
+              connections={connections}
+              testIdPrefix="connect"
+              busy={listBusy}
+              onRemove={(c) => void removeFromList(c)}
+            />
+          </details>
+        ) : null}
+      </section>
 
       <div className="cn-columns">
         <section className="cn-box" aria-labelledby="cn-can">
@@ -561,7 +730,7 @@ function ApproveForm({
           data-testid="connect-writes"
         />
         <span>
-          推敲案などの書き込みも許可
+          推敲案などの書き込みも許可（すべての接続に効きます）
           <span className="tiny faint cn-writes-hint">
             （Claude が推敲案・改稿案・戦略メモ・批評プロンプト・批評の結果・相対比較の分析・資料の記録・アイデアを足せ、Claude
             が足したアイデアに追記できます。頼んだ時だけ、Claude が足した相対比較の分析・資料の記録・アイデアをゴミ箱へ移せます（
@@ -591,7 +760,7 @@ function ApproveForm({
           type="button"
           className="btn btn-primary"
           onClick={() => void approve()}
-          disabled={outdated}
+          disabled={!canApprove}
           data-testid="connect-approve"
         >
           許可する

@@ -1,7 +1,8 @@
 // Claude 用のコネクタとの連携の E2E テスト（Firebase エミュレーター）。コネクタは仮のもので、ページの通信を横取りして答える
 // （/connect/identity と /pair/callback。答えの形・CORS は本物のコネクタと同じ。本物のコネクタとの通しは e2e/pairing.sync.spec.ts）。連携の記録（config/connector）には k の指紋だけが書かれ、k そのものは
 // コネクタへ移る URL にだけ入ること、タイトルの「Claude に見せる」の変更を送ってから移ること、設定の Claude 連携で
-// 「書き込みを許可」を変えても指紋・時刻が変わらないこと、［連携を解除］で記録が消えることを確かめる。
+// 「書き込みを許可」を変えても指紋・時刻が変わらないこと、［連携をすべて解除］で記録が消えることを確かめる。
+// 2.9: 2つ目の接続（既定の名前は「接続2」・前の接続は切れない）と、設定の接続の一覧（名前を変える・1つ解除する）も確かめる。
 import { expect, test, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { trashRequestId } from '../src/claude/derivedId'
@@ -86,7 +87,7 @@ test.afterEach(async () => {
   await deleteDoc('config/owner')
 })
 
-test('連携の画面: 持ち主が許可すると、指紋だけを記録し、送ってから仮のコネクタへ移る。設定で書き込みの許可を変え、解除できる', async ({
+test('連携の画面: 持ち主が許可すると、指紋だけを記録し、送ってから仮のコネクタへ移る。2つ目の接続も足せ、設定で名前を変え、1つ・すべて解除できる', async ({
   browser,
 }) => {
   const context = await browser.newContext()
@@ -169,17 +170,55 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
   const record = await readDoc(`users/${uid}/records/titles:${titleId}`)
   expect(record?.json.stringValue).toContain('"claudeAccess":"read"')
 
+  // 2.9: 2つ目の接続（別の claude.ai のアカウント）。前の接続は切れず、既定の名前は「接続2」。15分以内の許可は入れ替えを勧める
+  callback = ''
+  const state2 = 'e2e-state-2'
+  await page.goto(`/#/claude/connect?s=${state2}`)
+  const form2 = page.getByTestId('connect-form')
+  await expect(form2).toBeVisible({ timeout: 20_000 })
+  const section = form2.getByTestId('connect-connection')
+  await expect(section.getByTestId('connect-connection-count')).toHaveText('1 / 10')
+  await expect(section.getByTestId('connect-name')).toHaveValue('接続2')
+  await expect(section.getByTestId('connect-recent')).toContainText('15分以内に許可した「接続1」があります。')
+  await section.locator('summary').click()
+  await expect(section.getByTestId('connect-connection-row')).toHaveCount(1)
+  // 360px・ディープダーク
+  await noHorizontalScroll(page)
+  await tapSize(section.getByTestId('connect-name'), 'connect-name')
+  await tapSize(section.locator('label:has([data-testid="connect-mode-add"])'), 'connect-mode-add', false)
+  await tapSize(section.locator('.cn-conn-option:has([data-testid="connect-mode-replace"])'), 'connect-mode-replace', false)
+  await tapSize(section.getByTestId('connect-replace-target'), 'connect-replace-target')
+  await tapSize(section.locator('summary'), 'connect-connections-summary', false)
+  await tapSize(section.getByTestId('connect-connection-remove'), 'connect-connection-remove')
+  await darkSurfaces(page, ['.cn-conn', '.cn-conn-mode', '.cl-conn', '.cn-notice', '.select'])
+  await form2.getByTestId('connect-approve').click()
+  await expect.poll(() => callback, { timeout: 20_000 }).not.toBe('')
+  const k2 = new URL(callback).searchParams.get('k')!
+  const conn2 = (await readDoc('config/connector'))!
+  const cid2 = conn2.pairingCid.stringValue!
+  expect(cid2).not.toBe(cid)
+  expect(conn2.pairing.stringValue).toBe(sha256(`${state2}.${k2}`))
+  const entries2 = conn2.connections.mapValue!.fields
+  expect(Object.keys(entries2).sort()).toEqual([cid, cid2].sort())
+  expect(entries2[cid].mapValue!.fields.pairing.stringValue).toBe(conn!.pairing.stringValue)
+  expect(entries2[cid2].mapValue!.fields.name.stringValue).toBe('接続2')
+
   // 設定 → Claude 連携
   const settings = await context.newPage()
   await openApp(settings, '/settings')
   const info = settings.getByTestId('claude-pairing-info')
   await expect(info).toBeVisible({ timeout: 20_000 })
+  const rows = info.getByTestId('claude-connection')
+  await expect(rows.getByTestId('claude-connection-name')).toHaveText(['接続1', '接続2'])
+  await expect(info.getByTestId('claude-connection-count')).toContainText('接続 2 / 10')
   // 360px・ディープダーク（同じブラウザなので外観の設定も同じ）
   await settings.setViewportSize({ width: 360, height: 760 })
   await noHorizontalScroll(settings)
   await tapSize(settings.locator('label:has([data-testid="claude-writes-toggle"])'), 'claude-writes-toggle', false)
   await tapSize(settings.getByTestId('claude-unpair'), 'claude-unpair')
-  await darkSurfaces(settings, ['.cl-pairing', '.btn', '.segmented'])
+  await tapSize(rows.first().getByTestId('claude-connection-rename'), 'claude-connection-rename')
+  await tapSize(rows.first().getByTestId('claude-connection-remove'), 'claude-connection-remove')
+  await darkSurfaces(settings, ['.cl-pairing', '.cl-conn', '.btn', '.segmented'])
   await expect(info.getByTestId('claude-writes-state')).toHaveText('許可')
   await settings.locator('label:has([data-testid="claude-writes-toggle"])').click()
   await expect(info.getByTestId('claude-writes-state')).toHaveText('停止中（読むだけ）', { timeout: 20_000 })
@@ -187,12 +226,33 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
   await expect(settings.getByText('Claude の書き込みを止めました（読むことはできます）')).toBeVisible({ timeout: 20_000 })
   await expect.poll(async () => (await readDoc('config/connector'))?.writes.booleanValue, { timeout: 20_000 }).toBe(false)
   const after = await readDoc('config/connector')
-  expect(after!.pairing.stringValue).toBe(conn!.pairing.stringValue)
-  expect(after!.pairedAt.timestampValue).toBe(conn!.pairedAt.timestampValue)
+  expect(after!.pairing.stringValue).toBe(conn2.pairing.stringValue)
+  expect(after!.pairedAt.timestampValue).toBe(conn2.pairedAt.timestampValue)
 
+  // 名前を変える（同じ名前は断る）
+  await rows.nth(1).getByTestId('claude-connection-rename').click()
+  const rename = settings.getByRole('dialog')
+  await rename.getByTestId('prompt-input').fill('接続１')
+  await expect(rename.getByTestId('prompt-problem')).toHaveText('同じ名前の接続があります')
+  await rename.getByTestId('prompt-input').fill('仕事用')
+  await rename.getByTestId('prompt-ok').click()
+  await expect(settings.getByText('接続の名前を「仕事用」にしました')).toBeVisible({ timeout: 20_000 })
+  await expect(rows.getByTestId('claude-connection-name')).toHaveText(['接続1', '仕事用'], { timeout: 20_000 })
+  const renamed = (await readDoc('config/connector'))!
+  expect(renamed.connections.mapValue!.fields[cid2].mapValue!.fields.name.stringValue).toBe('仕事用')
+  expect(renamed.pairing.stringValue).toBe(conn2.pairing.stringValue)
+
+  // 1つ解除する（ほかの接続はそのまま）
+  await rows.first().getByTestId('claude-connection-remove').click()
+  await settings.getByRole('dialog').getByRole('button', { name: 'この接続を解除' }).click()
+  await expect(settings.getByText('「接続1」の接続を解除しました')).toBeVisible({ timeout: 20_000 })
+  await expect(rows.getByTestId('claude-connection-name')).toHaveText(['仕事用'], { timeout: 20_000 })
+  expect(Object.keys((await readDoc('config/connector'))!.connections.mapValue!.fields)).toEqual([cid2])
+
+  // 連携をすべて解除
   await settings.getByTestId('claude-unpair').click()
-  await settings.getByRole('dialog').getByRole('button', { name: '連携を解除' }).click()
-  await expect(settings.getByText('Claude との連携を解除しました')).toBeVisible({ timeout: 20_000 })
+  await settings.getByRole('dialog').getByRole('button', { name: '連携をすべて解除' }).click()
+  await expect(settings.getByText('Claude との連携をすべて解除しました')).toBeVisible({ timeout: 20_000 })
   await expect(settings.getByTestId('claude-pairing-none')).toBeVisible({ timeout: 20_000 })
   await expect.poll(() => readDoc('config/connector'), { timeout: 20_000 }).toBeNull()
   await context.close()
