@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { vaultConfig, workerConfig } from '../../src/config'
 // prettier-ignore
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import { OAUTH_KV_TITLE, answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, ensureTokenKey, isConnectorOrigin, missingLocalNotice, newTokenKey, parseWorkersUrl, readLocalConfig, wranglerProblem, wranglerProblemHint, writeLocalConfig } from '../../scripts/lib.mjs'
+import { MISSING_CONNECTOR_DEPS, OAUTH_KV_TITLE, answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, ensureTokenKey, isConnectorOrigin, missingLocalNotice, newTokenKey, parseWorkersUrl, readLocalConfig, wranglerProblem, wranglerProblemHint, writeLocalConfig } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector, parseCheckArgs } from '../../scripts/check.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
@@ -245,6 +245,24 @@ describe('スクリプトの部品', () => {
     expect(missingLocalNotice({ local: { origin: 'https://c.example.workers.dev' }, skipApp: false, connectorDeps: true })).toBeNull()
     expect(missingLocalNotice({ local: null, skipApp: true, connectorDeps: true })).toBeNull()
     expect(missingLocalNotice({ local: null, skipApp: false, connectorDeps: false })).toBeNull()
+  })
+
+  it('公開の手順の文書は、connector.local.json が無い時を「コネクタ未設定」、コネクタの公開だけ失敗した時を「コネクタがまだこのアプリの版」と書く', () => {
+    const docs = path.resolve(import.meta.dirname, '../../../docs')
+    const deps = MISSING_CONNECTOR_DEPS.split('。')[0]
+    expect(deps).toBe('コネクタの部品が入っていません')
+    // DEPLOY の「2.8 から 2.9 に上げる時」: npm --prefix connector ci を npm run deploy より前の手順にし、2つの時を分けて書く
+    const deploy = fs.readFileSync(path.join(docs, 'DEPLOY.md'), 'utf8')
+    const up = deploy.slice(deploy.indexOf('### 2.8 から 2.9 に上げる時'), deploy.indexOf('## 5.'))
+    expect(up.indexOf('`npm --prefix connector ci`')).toBeGreaterThan(0)
+    expect(up.indexOf('`npm --prefix connector ci`')).toBeLessThan(up.indexOf('続けて `npm run deploy`'))
+    for (const s of ['コネクタ未設定', 'コネクタがまだこのアプリの版になっていません', deps]) expect(up, s).toContain(s)
+    // CONNECTOR の「つながらない時」の行: connector.local.json が無いことを原因にしない（無ければ「コネクタ未設定」になる）
+    const connector = fs.readFileSync(path.join(docs, 'CONNECTOR.md'), 'utf8')
+    const row = connector.split('\n').find((l) => l.startsWith('| 連携の画面で「コネクタがまだこのアプリの版になっていません」'))
+    expect(row).toBeDefined()
+    expect(row).toContain(deps)
+    expect(row).not.toMatch(/`connector\.local\.json` の無いパソコンで公開した/)
   })
 
   it('鍵は32バイトの乱数（毎回違う）', () => {
