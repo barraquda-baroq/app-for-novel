@@ -51,6 +51,7 @@ import {
 } from './quota'
 import { claimConsent, takeRate, type RateKind, type RateResult } from './ratelimit'
 import { MirrorStore, type SqlRunner } from './store'
+import { REQUEST_TIMEOUT_MS, withTimeout } from './timeout'
 import { fail, type ToolResult } from './tools/common'
 import { ideaAddError, ideaAddResult, ideaAppendResult } from './tools/ideas'
 import * as R from './tools/read'
@@ -71,6 +72,8 @@ export interface VaultDeps {
   schedule?: (at: number | null) => void
   /** 読むツールの前に写しを新しくする間隔（ms。既定 15 秒。テストでは 0） */
   freshMs?: number
+  /** Google の API（Firestore・トークン）への1回の要求を待つ上限（ms。既定 REQUEST_TIMEOUT_MS = 15 秒。テストでは短く） */
+  timeoutMs?: number
 }
 
 export interface PairingMeta {
@@ -154,7 +157,15 @@ export class VaultCore {
   readonly #d: VaultDeps
   readonly #now: () => number
   readonly #sleep: (ms: number) => Promise<void>
+  /** 書き込みの順番（#write・#trash・#ideas。すべての接続で1つ）。写しの取り込みの順番（#sync）とは別 */
   readonly #mutex = new Mutex()
+  /**
+   * 動いている写しの取り込みの1歩（同時に1つだけ。seq は始めた順の番号）。読むツール・alarm は相乗りし、書き込み・夜の確かめは
+   * 呼ばれる前に始まった1歩の後に自分の1歩を始める（#syncStep）
+   */
+  #sync: { seq: number; promise: Promise<SyncOutcome> } | null = null
+  /** 始めた取り込みの1歩の数 */
+  #syncSeq = 0
   #lastSync = 0
   #views: { version: number; raw: AppData; view: AppData; hidden: number } | null = null
   /**
@@ -171,8 +182,10 @@ export class VaultCore {
     this.#now = deps.now ?? (() => Date.now())
     this.#sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)))
     this.store = new MirrorStore(deps.sql)
+    // Google の API への要求は、1回ごとに待つ上限を付ける（答えの来ない要求で、書き込みの順番を持ったまま止まらないように）
+    const fetch = withTimeout(deps.fetch, deps.timeoutMs ?? REQUEST_TIMEOUT_MS)
     this.identity = new Identity({
-      fetch: deps.fetch,
+      fetch,
       identityUrl: deps.config.identityUrl,
       tokenUrl: deps.config.tokenUrl,
       apiKey: deps.config.apiKey,
@@ -183,7 +196,7 @@ export class VaultCore {
       onLost: () => this.#setUnpaired('identity_lost'),
     })
     this.fs = new FirestoreRest({
-      fetch: deps.fetch,
+      fetch,
       baseUrl: deps.config.firestoreUrl,
       projectId: deps.config.projectId,
       token: (force) => this.identity.idToken(force),
@@ -368,10 +381,11 @@ export class VaultCore {
     this.store.setMeta('quota', { ...q, reads: q.reads + n } satisfies QuotaCounts)
   }
 
+  /** 書き込みを数える（負の数で戻す。書けなかった分）。上限を超えるなら数えずに false */
   #takeWrites(n: number): boolean {
     const q = this.#quota()
-    if (q.writes + n > this.#d.config.dailyWriteBudget) return false
-    this.store.setMeta('quota', { ...q, writes: q.writes + n } satisfies QuotaCounts)
+    if (n > 0 && q.writes + n > this.#d.config.dailyWriteBudget) return false
+    this.store.setMeta('quota', { ...q, writes: Math.max(0, q.writes + n) } satisfies QuotaCounts)
     return true
   }
 
@@ -441,8 +455,31 @@ export class VaultCore {
     if (this.pairingState() !== 'paired') throw new ConnectorError('unpaired', MESSAGES.unpaired)
   }
 
-  /** 写しを1歩新しくする */
-  async #syncStep(maxPages: number): Promise<SyncOutcome> {
+  /**
+   * 写しを1歩新しくする。同時に動く取り込みは1つだけ（重ねると同じページを何回も読み、遅れて届いた古いページが写しを戻す）。
+   * 動いている1歩があれば:
+   * - own = false（読むツール・alarm）: その1歩に相乗りして、同じ答え（失敗も）を受け取る
+   * - own = true（書き込みの前・書き込みの試し直し・夜の確かめ）: 呼ばれた後のクラウドを読む必要があるので、呼ばれる前に始まった
+   *   1歩は終わるのを待ってから、自分の1歩を始める（呼ばれた後に始まった1歩なら、それに相乗りする）。待った1歩が失敗したら、その
+   *   失敗を受け取る（つながらない・答えが来ない時に、すぐ後でもう一度読んで、上限まで2回待たせない）
+   * 取り込みは書き込みの順番（#mutex）を待たない（書き込みの途中でも alarm・夜の確かめ・読むツールは進む。書き込みは #mutex を
+   * 持ったまま取り込みを待つが、取り込みが #mutex を待つことは無いので、待ち合って止まらない）。失敗しても順番は空く（finally）
+   */
+  async #syncStep(maxPages: number, own = false): Promise<SyncOutcome> {
+    const arrived = this.#syncSeq
+    for (let cur = this.#sync; cur; cur = this.#sync) {
+      if (!own || cur.seq > arrived) return cur.promise
+      await cur.promise
+    }
+    const seq = ++this.#syncSeq
+    const promise = this.#runSync(maxPages).finally(() => {
+      if (this.#sync?.seq === seq) this.#sync = null
+    })
+    this.#sync = { seq, promise }
+    return promise
+  }
+
+  async #runSync(maxPages: number): Promise<SyncOutcome> {
     try {
       const out = await this.mirror.sync({
         maxPages,
@@ -462,14 +499,18 @@ export class VaultCore {
     return `初回の取り込み中${progress}。少し待ってから、もう一度試してください。`
   }
 
+  /** 書き込みの前の取り込みが5歩で終わらなかった（端末からの変更が多い。docs はこの呼び出しで取り込んだ文書の数） */
+  #catchingUpMessage(docs: number): string {
+    return `端末からの変更を取り込んでいる途中です（この呼び出しで ${docs.toLocaleString('ja-JP')}件を取り込みました）。何も書いていません。少し待ってから、もう一度試してください。`
+  }
+
   /**
    * ツールの前に写しを新しくする。初回の取り込みが終わっていなければ1歩進めて「取り込み中」を返す。
-   * 書き込みの前は最後まで読む（重複・以前に削除された記録を見分けるため）
+   * 書き込みの前は最後まで読む（重複・以前に削除された記録を見分けるため）。5歩で読み終わらなければ書かない（catching_up）
    */
   async #fresh(forWrite: boolean): Promise<{ note?: string }> {
-    const warm = this.mirror.warm()
-    if (!warm.done) {
-      const out = await this.#syncStep(8)
+    if (!this.mirror.warm().done) {
+      const out = await this.#syncStep(8, forWrite)
       if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
       if (!out.done) {
         this.#d.schedule?.(this.#now() + 1_000)
@@ -477,27 +518,50 @@ export class VaultCore {
       }
       return {}
     }
-    if (!forWrite && this.#now() - this.#lastSync < (this.#d.freshMs ?? FRESH_MS)) return {}
-    for (let i = 0; i < (forWrite ? 5 : 1); i++) {
-      let out: SyncOutcome
-      try {
-        out = await this.#syncStep(8)
-      } catch (e) {
-        // 読むだけなら、つながらない時・Firebase の無料枠を使い切った時は前に取り込んだ内容で答える
-        // （連携の解除・権限の問題はそのまま返す。書き込みは最新を読めないので止める）
-        if (!forWrite && e instanceof ConnectorError && e.code === 'unavailable')
-          return { note: '（いまクラウドに接続できないため、前に取り込んだ内容です）' }
-        if (!forWrite && e instanceof ConnectorError && e.code === 'firestore_quota')
-          return {
-            note: `（Firebase の今日の無料枠を使い切ったため、前に取り込んだ内容です。${resetLabel(this.#now())}に回復します）`,
-          }
-        throw e
+    if (forWrite) {
+      let docs = 0
+      for (let i = 0; i < 5; i++) {
+        const out = await this.#syncStep(8, true)
+        docs += out.docs
+        if (out.done) return {}
+        if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
       }
+      // 取り込みの途中の写しでは、以前に削除された作品・カードなどを見分けられないので書かない（続きは alarm で取り込む）
+      this.#d.schedule?.(this.#now() + 1_000)
+      log('write_catching_up', { docs })
+      throw new ConnectorError('catching_up', this.#catchingUpMessage(docs))
+    }
+    const out = await this.#freshRead()
+    // 待っている間に写しを消して取り込み直すことになった（夜の確かめで数が合わない・持ち主が変わった）
+    if (!this.mirror.warm().done) {
+      this.#d.schedule?.(this.#now() + 1_000)
+      throw new ConnectorError('warming', this.#warmingMessage())
+    }
+    return out
+  }
+
+  /**
+   * 読むツールの前: 動いている取り込みがあれば、その終わりを待つ（ページの間の、端末の1回の変更の一部だけを取り込んだ写しを
+   * 読まない）。終わっていれば（最後まで読んだ・15秒以内に読んだ）そのまま、まだなら1歩進める
+   */
+  async #freshRead(): Promise<{ note?: string }> {
+    const reset = () => resetLabel(this.#now())
+    try {
+      const running = this.#sync
+      if (running) {
+        const out = await running.promise
+        if (out.done) return {}
+        if (out.outOfReads) return { note: `（今日の読み取り枠を使い切ったため、最新の変更を取り込めていません。${reset()}に回復します）` }
+      } else if (this.#now() - this.#lastSync < (this.#d.freshMs ?? FRESH_MS)) return {}
+      const out = await this.#syncStep(8)
       if (out.done) return {}
-      if (out.outOfReads) {
-        if (forWrite) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
-        return { note: `（今日の読み取り枠を使い切ったため、最新の変更を取り込めていません。${resetLabel(this.#now())}に回復します）` }
-      }
+      if (out.outOfReads) return { note: `（今日の読み取り枠を使い切ったため、最新の変更を取り込めていません。${reset()}に回復します）` }
+    } catch (e) {
+      // つながらない時・Firebase の無料枠を使い切った時は前に取り込んだ内容で答える（連携の解除・権限の問題はそのまま返す）
+      if (e instanceof ConnectorError && e.code === 'unavailable') return { note: '（いまクラウドに接続できないため、前に取り込んだ内容です）' }
+      if (e instanceof ConnectorError && e.code === 'firestore_quota')
+        return { note: `（Firebase の今日の無料枠を使い切ったため、前に取り込んだ内容です。${reset()}に回復します）` }
+      throw e
     }
     this.#d.schedule?.(this.#now() + 1_000)
     return { note: '（端末からの変更が多いため、取り込みの途中の内容です）' }
@@ -537,9 +601,9 @@ export class VaultCore {
       // 連携の記録を1分ごとに確かめる（どのツールも。解除・作り直し・一覧から外された接続に、写しを新しくする間隔より遅れずに
       // 気付く）。書き込みの許可はここで読んだ内容を使う
       await this.#requireConnection(opts.grant)
-      if (name === TRASH_TOOL) return await this.#trash(args)
-      if (isIdeaTool(name)) return await this.#ideas(name, args)
-      if (isWriteTool(name)) return await this.#write(name, args)
+      if (name === TRASH_TOOL) return await this.#trash(args, opts.grant)
+      if (isIdeaTool(name)) return await this.#ideas(name, args, opts.grant)
+      if (isWriteTool(name)) return await this.#write(name, args, opts.grant)
       const { note } = await this.#fresh(false)
       const { view, hidden } = this.views()
       const ctx: R.ReadContext = { view, now: this.#now(), client: opts.client, workBudget: this.#d.config.workBudgetChars }
@@ -720,23 +784,44 @@ export class VaultCore {
     return conn
   }
 
+  /**
+   * 書き込みの前: 「書き込みを許可」とデータの形の版を確かめる。前に読んだ内容は1分（RECHECK_MS）使うが、断る内容（停止中・版が
+   * 違う）は5秒（CONNECTION_FRESH_MS）まで: それより前に読んだ内容なら、断る前に1回読み直す（作者が「書き込みを許可」をオンに
+   * 戻した・アプリを更新した後に、どの接続も1分ほど断られ続けないように）
+   */
   async #requireWrites(): Promise<void> {
     const now = this.#now()
+    const c = this.#connCheck
     const writes =
-      this.#connCheck && now - this.#connCheck.at < RECHECK_MS ? this.#connCheck.writes : (await this.#readConnectorOrUnpair()).writes
+      c && now - c.at < (c.writes ? RECHECK_MS : CONNECTION_FRESH_MS) ? c.writes : (await this.#readConnectorOrUnpair()).writes
     if (!writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
+    const m = this.#modelCheck
     const model =
-      this.#modelCheck && now - this.#modelCheck.at < RECHECK_MS ? this.#modelCheck.model : await this.#readModel()
+      m && now - m.at < (m.model === CONNECTOR_MODEL ? RECHECK_MS : CONNECTION_FRESH_MS) ? m.model : await this.#readModel()
     if (model !== CONNECTOR_MODEL) throw new ConnectorError('model_mismatch', modelMismatchMessage(model, CONNECTOR_MODEL))
   }
 
-  #write(tool: WriteTool, args: Record<string, unknown>): Promise<ToolResult> {
+  /**
+   * 書き込みの順番を待った後・書く前に、呼び出しの許可をもう一度確かめる（クラウドは読まない。最後に読めた一覧で見る）。
+   * ほかの接続の書き込みを待つ間に、この接続が一覧から外された・すべて解除して連携し直された時は書かない（アクセスルールは
+   * 接続を見分けられない）。足したばかりの接続は、後から読んだ一覧にもあるので断らない
+   */
+  #stillGranted(p: GrantProps | undefined): void {
+    if (!p) return
+    this.#requireGrantCurrent(p)
+    if (this.#listed(p.cid ?? LEGACY_CONNECTION_ID)) return
+    log('grant_removed', { waited: true })
+    throw new ConnectorError('unpaired', MESSAGES.unpaired)
+  }
+
+  #write(tool: WriteTool, args: Record<string, unknown>, grant?: GrantProps): Promise<ToolResult> {
     return this.#mutex.run(async () => {
       await this.#requireWrites()
       await this.#fresh(true)
       const owner = this.pairing().ownerUid!
       const created = new Set<string>()
       for (let attempt = 0; ; attempt++) {
+        this.#stillGranted(grant)
         const { raw, view } = this.views()
         const trashed = trashedIdsOf(raw)
         // ゴミ箱へ移す依頼の出ているカード（見せる内容からは外れている）と同じ内容は、作り直さずに「以前に削除」にする
@@ -762,7 +847,17 @@ export class VaultCore {
         }
         if (!prepared.length) return writeResult(tool, built, created)
         if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
-        if ((await this.#commitPrepared(prepared, created, attempt)) === 'retry') continue
+        let done: 'done' | 'retry'
+        try {
+          done = await this.#commitPrepared(prepared, created, attempt)
+        } catch (e) {
+          // 記録を分けて書いた（100件を超える推敲案）時に、前の組だけ書けた: 書けた分をふつうの答えの形で返し、残りは書けなかったこと・
+          // もう一度送れば残りだけ足すことを添える（何も書いていないように見せない）
+          if (!created.size || !(e instanceof ConnectorError)) throw e
+          log('records_partly_created', { tool, count: created.size, code: e.code })
+          return writeResult(tool, built, created, { failed: e.message })
+        }
+        if (done === 'retry') continue
         log('records_created', { tool, count: created.size })
         return writeResult(tool, built, created)
       }
@@ -771,17 +866,22 @@ export class VaultCore {
 
   /**
    * 作る記録を書き、書けた記録を写しにも入れる（created に {表名}:{id} を足す）。同時に同じ記録が作られた・削除の印がある時は
-   * 読み直して 'retry'（3回目まで。呼び出し側で分け直す）。ほかの失敗は日本語の説明つきの失敗にする
+   * 読み直して 'retry'（3回目まで。呼び出し側で分け直す）。ほかの失敗は日本語の説明つきの失敗にする。
+   * 書き込みの数は書く前に prepared の分を数え、書けなかった組の分は戻す（数えるのは書けた記録だけ。試し直しは、その時に書く分を
+   * また数える）
    */
   async #commitPrepared(prepared: PreparedWrite[], created: Set<string>, attempt: number): Promise<'done' | 'retry'> {
+    let committed = 0
     try {
       for (const g of groups(prepared)) {
         const res = await this.fs.commit(g.map((p) => p.write))
+        committed += g.length
         this.mirror.putOwn(rowsOfCommit(g, res))
         for (const p of g) created.add(`${p.table}:${p.id}`)
       }
       return 'done'
     } catch (e) {
+      this.#takeWrites(committed - prepared.length)
       if (
         e instanceof FirestoreError &&
         (e.code === 'ALREADY_EXISTS' || e.code === 'FAILED_PRECONDITION' || e.code === 'ABORTED' || e.status === 409) &&
@@ -790,7 +890,8 @@ export class VaultCore {
         // 同時に同じ記録が作られた・削除の印がある: 読み直して、重複・以前に削除として分け直す
         log('write_retry', { code: e.code, attempt })
         await this.#sleep(100 + Math.floor(Math.random() * 200) * (attempt + 1))
-        const out = await this.#syncStep(8)
+        // 断られた後のクラウドを読む（先に始まった取り込みに相乗りしない）
+        const out = await this.#syncStep(8, true)
         if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
         // 差分の読み取りで見えない（写しが知らない）文書は、名前を指定して確かめる
         const left = prepared.filter((p) => !created.has(`${p.table}:${p.id}`)).map((p) => `${p.table}:${p.id}`)
@@ -830,7 +931,7 @@ export class VaultCore {
    * カードをゴミ箱へ移す依頼を作る（書き込みと同じく、書き込みの許可とデータの形の版を確かめ、最後まで読んでから）。
    * 依頼を作るだけで、カードを移すのはアプリ（同期した時に確かめて移す）
    */
-  #trash(args: Record<string, unknown>): Promise<ToolResult> {
+  #trash(args: Record<string, unknown>, grant?: GrantProps): Promise<ToolResult> {
     return this.#mutex.run(async () => {
       await this.#requireWrites()
       await this.#fresh(true)
@@ -841,6 +942,7 @@ export class VaultCore {
       const targetOf = new Map<string, string>()
       const createdTargets = () => new Set([...created].map((k) => targetOf.get(k)).filter((k): k is string => Boolean(k)))
       for (let attempt = 0; ; attempt++) {
+        this.#stillGranted(grant)
         const { raw, view } = this.views()
         const built = buildTrashRequests(view, args as TrashInput, {
           now: this.#now(),
@@ -864,6 +966,8 @@ export class VaultCore {
         let done: 'done' | 'retry'
         try {
           done = await this.#commitPrepared(prepared, created, attempt)
+        } catch (e) {
+          throw partlyWritten(e, created.size)
         } finally {
           this.#addTrashDaily(created.size - before)
         }
@@ -880,13 +984,14 @@ export class VaultCore {
    * アイデアを足す（novel_add_ideas）・アイデアに追記する依頼を作る（novel_append_to_idea）。書き込みと同じく、書き込みの許可と
    * データの形の版を確かめ、最後まで読んでから作る（作るだけ。追記はアプリが同期した時に確かめてカードに足す）
    */
-  #ideas(tool: IdeaTool, args: Record<string, unknown>): Promise<ToolResult> {
+  #ideas(tool: IdeaTool, args: Record<string, unknown>, grant?: GrantProps): Promise<ToolResult> {
     return this.#mutex.run(async () => {
       await this.#requireWrites()
       await this.#fresh(true)
       const owner = this.pairing().ownerUid!
       const created = new Set<string>()
       for (let attempt = 0; ; attempt++) {
+        this.#stillGranted(grant)
         const { raw, view } = this.views()
         const trashed = trashedIdsOf(raw)
         // ゴミ箱へ移す依頼の出ているアイデア（見せる内容からは外れている）と同じ内容は、作り直さずに「以前に削除」にする。
@@ -913,7 +1018,13 @@ export class VaultCore {
         }
         if (!prepared.length) return result()
         if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
-        if ((await this.#commitPrepared(prepared, created, attempt)) === 'retry') continue
+        let done: 'done' | 'retry'
+        try {
+          done = await this.#commitPrepared(prepared, created, attempt)
+        } catch (e) {
+          throw partlyWritten(e, created.size)
+        }
+        if (done === 'retry') continue
         log(add ? 'ideas_created' : 'idea_append_requested', { count: created.size })
         return result()
       }
@@ -922,7 +1033,7 @@ export class VaultCore {
 
   // ---------- 取り込みの続き（alarm）・夜の確かめ（cron） ----------
 
-  /** 初回の取り込みを1歩進める。次に呼ぶ時刻を返す（終わった・止める時は null） */
+  /** 初回の取り込みを1歩進める（動いている取り込みがあれば相乗りする）。次に呼ぶ時刻を返す（終わった・止める時は null） */
   async alarm(): Promise<number | null> {
     if (this.pairingState() !== 'paired') return null
     try {
@@ -945,7 +1056,8 @@ export class VaultCore {
   async nightly(): Promise<'ok' | 'rescan' | 'skipped'> {
     if (this.pairingState() !== 'paired' || !this.mirror.warm().done) return 'skipped'
     try {
-      const out = await this.#syncStep(10)
+      // 呼ばれた後のクラウドまで読んでから数を比べる（先に始まった取り込みに相乗りしない）
+      const out = await this.#syncStep(10, true)
       if (!out.done) return 'skipped'
       if (!this.#takeReads(5)) return 'skipped'
       const owner = this.pairing().ownerUid!
@@ -973,6 +1085,15 @@ export class VaultCore {
   claimConsent(key: string): boolean {
     return claimConsent(this.store, key, this.#now())
   }
+}
+
+/**
+ * 記録を分けて書いた時に、前の組だけ書けた失敗（ゴミ箱へ移す依頼・アイデア。いまの上限では1回の呼び出しは1つの組なので起きないが、
+ * 書けた分があることを黙らない）。何も書けていなければ、そのままの失敗
+ */
+function partlyWritten(e: unknown, written: number): unknown {
+  if (!written || !(e instanceof ConnectorError)) return e
+  return new ConnectorError(e.code, `${e.message}（${written}件は書けました。同じ呼び出しをもう一度送ると、残りだけ作ります）`)
 }
 
 /** Firestore の REST の時刻（{ timestamp }）を ms にする（読めなければ null） */

@@ -1,8 +1,11 @@
 // Firestore の REST API（v1）。コネクタの匿名のアカウントの ID トークンで呼ぶので、アクセスルールがそのまま効く。
 // - 使うのは batchGet・runQuery・runAggregationQuery・commit だけ。記録の id には ':' や '#' が入るので、URL のパスには入れない
 //   （文書の名前は本文の JSON に入れる）
-// - Google 側の一時的な失敗（5xx）は 200ms・800ms 待って2回まで試し直す。401 は ID トークンを更新して1回だけ試し直す
+// - Google 側の一時的な失敗（5xx・つながらない）は 200ms・800ms 待って2回まで試し直す。401 は ID トークンを更新して1回だけ試し直す
+// - 1回の要求は 15 秒まで待つ（fetch は VaultCore が timeout.ts の withTimeout で包む）。待ち切った要求は試し直さず、つながらない時と
+//   同じ失敗（status 0・UNAVAILABLE）にする
 import { safeError } from '../log'
+import { RequestTimeout } from './timeout'
 import type { Fields, Value } from './values'
 
 export interface FsDoc {
@@ -77,13 +80,21 @@ export class FirestoreRest {
           body: JSON.stringify(body),
         })
       } catch (e) {
-        if (attempt < RETRY_WAITS.length) {
+        // 待ち切った要求は試し直さない（試し直すと上限の何倍も待たせる）
+        if (!(e instanceof RequestTimeout) && attempt < RETRY_WAITS.length) {
           await this.#sleep(RETRY_WAITS[attempt])
           continue
         }
         throw new FirestoreError(0, 'UNAVAILABLE', safeError(e))
       }
-      if (res.ok) return res.json()
+      if (res.ok) {
+        try {
+          return await res.json()
+        } catch (e) {
+          // 本文の途中で待ち切った・切れた
+          throw new FirestoreError(0, 'UNAVAILABLE', safeError(e))
+        }
+      }
       const err = await parseError(res)
       if (res.status === 401 && !refreshed) {
         refreshed = true

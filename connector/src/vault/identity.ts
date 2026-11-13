@@ -3,10 +3,12 @@
 //   ID トークン（1時間）はメモリにだけ置く（残り5分を切ったら更新する）
 // - 更新用トークンが使えない（削除・無効・鍵が変わった）時は identity_lost: 身元を消し、連携を解除した扱いにする。
 //   次に Claude が接続し直すと新しい身元を作り、持ち主がアプリでもう一度許可する
+// - つながらない・5xx は 200ms・800ms 待って2回まで試し直す。1回の要求は 15 秒まで待ち（timeout.ts）、待ち切った要求は試し直さない
 import { ConnectorError, MESSAGES } from './errors'
 import { DecryptError, KeyMissingError, seal, unseal } from './crypto'
 import type { MirrorStore } from './store'
 import { safeError, log } from '../log'
+import { RequestTimeout } from './timeout'
 
 export interface IdentityDeps {
   fetch: typeof fetch
@@ -76,6 +78,8 @@ export class Identity {
         last = new Error(`HTTP ${res.status}`)
       } catch (e) {
         last = e
+        // 待ち切った要求は試し直さない（firestore.ts と同じ）
+        if (e instanceof RequestTimeout) break
       }
     }
     log('identity_unavailable', { error: safeError(last) })

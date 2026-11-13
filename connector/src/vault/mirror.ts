@@ -1,7 +1,10 @@
 // 持ち主の記録の写し（Vault の SQLite と、メモリの AppData）。端末と同じ「updated の順」の差分の読み取りで新しくする。
 // - 問い合わせ: records を updated・__name__ の順に、前回の最後の文書（cursor）の次から N 件ずつ（N は前のページの大きさで 50〜5）
 //   同じ時刻の文書も名前の順で必ず次に来るので、読み直しも取りこぼしも無い（Firestore の問い合わせは強い一貫性）
-// - 1ページを1つのトランザクションで保存し、cursor も同じトランザクションで進める（保存できなかったページの先へは進まない）
+// - 1ページを1つのトランザクションで保存し、cursor も同じトランザクションで進める（保存できなかったページの先へは進まない）。
+//   取り込みは VaultCore が同時に1つにするが、写しの側でも守る: もっと新しい updated の行がある記録（遅れて届いた古いページ・
+//   名前で読んだ答え）は、行も分割文書も写しも書き換えずに飛ばし、cursor は前へだけ進める。取り込みの途中で写しを消した
+//   （reset）時は、その取り込みの続きを捨てる（消した後の写しに、前の位置・取り込み済みの印を書かない）
 // - 記録は端末と同じ decodeRecord（src/sync/codec.ts）で取り出す。分割した記録（25万文字超）は、分割文書が揃うまで待ち
 //   （同じ書き込みの分割文書は名前の順で親の後に来るので、次のページに続くことがある）、最後まで揃わなければ読み直し、
 //   それでも読めなければ端末と同じく飛ばす（unreadable に数える）
@@ -89,6 +92,8 @@ export class Mirror {
   #pending = new Set<string>()
   #unreadable = new Set<string>()
   #pageSize = PAGE_MAX
+  /** 写しを消した（reset）回数（取り込みの途中で消したら、その取り込みの続きを捨てる） */
+  #epoch = 0
   /** 写しの稿の、本文を除いた記録（修復は本文を読まずにこちらで行う。body は空） */
   #heads: Record<ID, Version> = {}
   /** 稿の本文（記録の名前 → 本文。古いものから外す） */
@@ -218,6 +223,7 @@ export class Mirror {
     this.#pending.clear()
     this.#unreadable.clear()
     this.#version += 1
+    this.#epoch += 1
   }
 
   #load(): void {
@@ -377,6 +383,9 @@ export class Mirror {
       const parent = str(f.parent)
       const idx = typeof f.index === 'number' ? f.index : -1
       if (!parent || idx < 0 || typeof f.json !== 'string') return null
+      // 親がもっと新しい版なら、古い版の分割文書で上書きしない（遅れて届いた古いページ）
+      const parentUs = this.#store.updUsOf(parent)
+      if (parentUs !== null && parentUs > updUs) return null
       this.#store.putChunk({ name, parent, idx, hash: str(f.hash), json: f.json })
       return { kind: 'chunk', parent, name }
     }
@@ -395,7 +404,9 @@ export class Mirror {
       reset: f.reset === true,
     }
     if (!row.tbl || !row.id) return null
-    this.#store.putRec(row)
+    // もっと新しい行がある（遅れて届いた古い答え）: 飛ばす（新しい行は、入れた時に写しへ反映済み。古い行を写しに当てると、
+    // メモリの写しを戻し、新しい行に古い lite を付けてしまう）
+    if (!this.#store.putRec(row)) return null
     return { kind: 'rec', row }
   }
 
@@ -406,12 +417,17 @@ export class Mirror {
     let pages = 0
     let docs = 0
     let work = 0
+    const epoch = this.#epoch
+    /** 待っている間に写しを消した（この取り込みの続きを捨てる） */
+    const dropped = () => epoch !== this.#epoch
+    const stopped = (): SyncOutcome => ({ pages, docs, done: false, outOfReads: false })
     let warm = this.warm()
     if (!warm.done && !this.cursor() && warm.total === 0) {
       // 最初の取り込み: 全体の数を数える（進み具合の表示用。1,000件ごとに1回の読み取り）
       try {
         if (opts.takeReads(1)) {
           const total = await this.#fs.count(`users/${owner}`, { from: [{ collectionId: 'records' }] })
+          if (dropped()) return stopped()
           warm = { done: false, total, seen: 0 }
           this.#store.setMeta('warm', warm)
         }
@@ -437,6 +453,7 @@ export class Mirror {
       if (cursor)
         query.startAt = { values: [{ timestampValue: cursor.ts }, { referenceValue: cursor.name }], before: false }
       const page = await this.#fs.runQuery(`users/${owner}`, query)
+      if (dropped()) return stopped()
       // 実際に読んだ数との差を返す（多めに取った分）
       opts.takeReads(Math.max(1, page.length) + 2 - (n + 2))
       pages += 1
@@ -451,7 +468,8 @@ export class Mirror {
         const last = page[page.length - 1]
         if (last) {
           const ts = (last.fields.updated as { timestampValue?: string } | undefined)?.timestampValue
-          if (ts) this.#store.setMeta('cursor', { ts, name: last.name } satisfies Cursor)
+          // 前へだけ進める（遅れて届いた古いページで戻さない）
+          if (ts && isAfter({ ts, name: last.name }, this.cursor())) this.#store.setMeta('cursor', { ts, name: last.name } satisfies Cursor)
         }
         if (!warm.done) {
           warm = { ...warm, seen: warm.seen + page.length, done: page.length < n }
@@ -477,6 +495,7 @@ export class Mirror {
       if (changed) this.#version += 1
       if (page.length < n) {
         await this.#finishPending(opts)
+        if (dropped()) return stopped()
         return { pages, docs, done: true, outOfReads: false }
       }
     }
@@ -486,6 +505,7 @@ export class Mirror {
   async #finishPending(opts: SyncOptions): Promise<void> {
     if (!this.#pending.size) return
     const owner = this.#ownerUid()
+    const epoch = this.#epoch
     let changed = false
     for (const name of [...this.#pending]) {
       const row = this.#store.getRec(name)
@@ -498,6 +518,7 @@ export class Mirror {
         from: [{ collectionId: 'records' }],
         where: { fieldFilter: { field: { fieldPath: 'parent' }, op: 'EQUAL', value: { stringValue: name } } },
       })
+      if (epoch !== this.#epoch) return
       this.#store.transaction(() => {
         for (const d of chunks) this.#parse(d)
       })
@@ -518,7 +539,9 @@ export class Mirror {
   async fetchNames(docIds: string[]): Promise<void> {
     if (!this.#data) this.#load()
     const owner = this.#ownerUid()
+    const epoch = this.#epoch
     const found = await this.#fs.batchGet(docIds.map((id) => `users/${owner}/records/${id}`))
+    if (epoch !== this.#epoch) return
     const parsed: Parsed[] = []
     this.#store.transaction(() => {
       for (const d of found.values()) if (d) parsed.push(this.#parse(d))
@@ -546,6 +569,14 @@ export class Mirror {
   counts(): { live: number; deleted: number; chunks: number } {
     return { ...this.#store.recCount(), chunks: this.#store.chunkCount() }
   }
+}
+
+/** a が b より後の位置か（updated → 文書の名前の順。問い合わせの並びと同じ。b が無ければ後） */
+function isAfter(a: Cursor, b: Cursor | null): boolean {
+  if (!b) return true
+  const d = timestampMicros(a.ts) - timestampMicros(b.ts)
+  if (Number.isNaN(d)) return true
+  return d > 0 || (d === 0 && a.name > b.name)
 }
 
 /** 稿の、本文を除いた記録 */

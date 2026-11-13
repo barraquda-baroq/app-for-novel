@@ -14,6 +14,8 @@ export type ConnectorErrorCode =
   | 'model_mismatch'
   | 'unavailable'
   | 'warming'
+  /** 書き込みの前の取り込みが終わらない（端末からの変更が多い。少し待って試し直す） */
+  | 'catching_up'
   | 'permission'
   | 'invalid'
 

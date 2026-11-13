@@ -38,6 +38,8 @@ export function makeCore(
     sql?: ReturnType<typeof nodeSql>
     /** fake.fetch の代わり（答えを遅らせるテスト用） */
     fetch?: typeof fetch
+    /** 1回の要求を待つ上限（ms。答えの来ない要求のテスト用） */
+    timeoutMs?: number
   } = {},
 ) {
   const clock = opts.clock ?? { now: Date.UTC(2026, 9, 29, 3, 0, 0) }
@@ -51,6 +53,7 @@ export function makeCore(
     now: () => clock.now,
     sleep: async () => undefined,
     schedule: (at) => scheduled.push(at),
+    timeoutMs: opts.timeoutMs,
   })
   return { core, sql, clock, scheduled }
 }

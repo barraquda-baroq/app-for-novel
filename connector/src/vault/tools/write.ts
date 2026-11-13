@@ -51,33 +51,60 @@ export function buildError(built: BuildResult): ToolResult {
 
 /**
  * 結果を作る。createdIds は実際に作った記録（{表名}:{id}）。試し直しで2回目に「重複」になった記録も、
- * 1回目に作っていれば「追加」として返す
+ * 1回目に作っていれば「追加」として返す。
+ * failed は、記録を分けて書いた（100件を超える推敲案）時に前の組だけ書けた失敗の説明: 書けなかった項目を「- 書けなかった」の行に
+ * 出し（structuredContent では skipped の not_written）、補足に理由と、同じ呼び出しをもう一度送れば残りだけ足すことを書く。
+ * 書けた分があるので失敗（isError）にはしない
  */
-export function writeResult(tool: WriteTool, built: BuildResult, createdIds: ReadonlySet<string>): ToolResult {
+export function writeResult(
+  tool: WriteTool,
+  built: BuildResult,
+  createdIds: ReadonlySet<string>,
+  opts: { failed?: string } = {},
+): ToolResult {
   const items: ItemResult[] = built.items.map((it) =>
     it.id && it.table && createdIds.has(`${it.table}:${it.id}`) && it.status !== 'created' ? { ...it, status: 'created', hint: undefined } : it,
   )
   const created = items.filter((it) => it.status === 'created' && it.id && it.table && createdIds.has(`${it.table}:${it.id}`))
-  const skipped = items.filter((it) => !created.includes(it))
+  /** 作るはずだったが書けなかった（failed の時だけ） */
+  const unwritten = opts.failed ? items.filter((it) => it.status === 'created' && !created.includes(it)) : []
+  const skipped = items.filter((it) => !created.includes(it) && !unwritten.includes(it))
   const batch = built.records.find((r) => r.table === 'proofBatches')
   const batchMade = batch ? createdIds.has(`proofBatches:${batch.record.id}`) : false
-  const lines: string[] = [`${WRITE_TOOL_LABELS[tool]}: ${summarizeItems(items) || '追加するものはありませんでした'}`]
+  const batchLeft = Boolean(opts.failed && batch && !batchMade)
+  const summary = [summarizeItems(items.filter((it) => !unwritten.includes(it))), unwritten.length ? `書けなかった ${unwritten.length}件` : '']
+    .filter(Boolean)
+    .join('・')
+  const lines: string[] = [`${WRITE_TOOL_LABELS[tool]}: ${summary || '追加するものはありませんでした'}`]
   for (const it of created) lines.push(`- 追加 ${shortId(KIND[it.table!], it.id!)} ${it.label}`)
   for (const it of skipped) {
     lines.push(`- ${STATUS_LABELS[it.status]} ${it.label}${it.hint ? `: ${it.hint}` : ''}`)
     if (it.candidates?.length) for (const c of it.candidates.slice(0, 5)) lines.push(`    候補: ${c}`)
   }
+  for (const it of unwritten) lines.push(`- 書けなかった ${it.label}`)
   if (batchMade) lines.push('- 実行の記録（確認した話・追加した案）を残しました')
   for (const n of built.notes) lines.push(`補足: ${n}`)
+  if (opts.failed) {
+    const rest = [unwritten.length ? `残りの ${unwritten.length}件` : '', batchLeft ? '実行の記録（確認した話・追加した案）' : '']
+      .filter(Boolean)
+      .join('と')
+    const reason = opts.failed.endsWith('。') ? opts.failed : `${opts.failed}。`
+    lines.push(
+      `補足: ${rest || '残り'}は書けませんでした。理由: ${reason}同じ呼び出しをもう一度送ると、残りだけ追加します（書けた分は重複として飛ばします）。`,
+    )
+  }
   if (created.length || batchMade)
     lines.push(`${WHERE[tool]}に、各端末が同期すると出ます。本文（稿）は書き換えていません。`)
   const needsFix = skipped.some((it) => it.status === 'not_found' || it.status === 'ambiguous' || it.status === 'invalid')
   return {
     text: capText(lines.join('\n')),
-    isError: !created.length && !batchMade && needsFix ? true : undefined,
+    isError: !created.length && !batchMade && (needsFix || opts.failed) ? true : undefined,
     structured: {
       created: created.map((it) => ({ id: shortId(KIND[it.table!], it.id!), label: it.label })),
-      skipped: skipped.map((it) => ({ index: it.index, reason: it.status, ...(it.hint ? { hint: it.hint } : {}) })),
+      skipped: [
+        ...skipped.map((it) => ({ index: it.index, reason: it.status, ...(it.hint ? { hint: it.hint } : {}) })),
+        ...unwritten.map((it) => ({ index: it.index, reason: 'not_written', hint: '書けませんでした（もう一度送ると追加します）' })),
+      ],
     },
   }
 }

@@ -231,6 +231,12 @@ export class FakeFirebase {
     })
   }
 
+  /** アプリの「書き込みを許可」の切り替え（記録のほかの項目・作られた時刻は変えない） */
+  setWrites(writes: boolean): void {
+    const cur = this.docs.get(this.name('config/connector'))
+    if (cur) this.#write([{ path: 'config/connector', fields: { ...cur.fields, writes: { booleanValue: writes } } }])
+  }
+
   /** config/connector の作られた時刻（連携の代） */
   connectorCreateTime(): string | null {
     return this.docs.get(this.name('config/connector'))?.createTime ?? null

@@ -20,7 +20,12 @@ import type { CommitResult, CommitWrite, FirestoreRest } from './firestore'
 import type { RecRow } from './store'
 import { timestampMicros, type Fields } from './values'
 
-/** 1回の commit に入れる書き込みの数 */
+/**
+ * 1回の commit に入れる書き込みの数の上限。超える時（推敲案 100件と実行の記録で 101件）は、同じくらいの数の組に分ける（groups）。
+ * 実行の記録（proofBatches。records.ts で最後）は、いつも推敲案と同じ組に入る: 後の組が書けなかった時、同じ呼び出しをもう一度
+ * 送ると、その組の推敲案はまだ無いので作り直され、実行の記録も一緒に作られる（実行の記録だけの組が書けずに残ると、もう一度送っても
+ * 推敲案はすべて「重複」で、確かめた話（covered）が無ければ実行の記録が作られない）
+ */
 export const COMMIT_GROUP = 100
 
 /**
@@ -162,8 +167,16 @@ export function rowsOfCommit(prepared: PreparedWrite[], result: CommitResult): R
   })
 }
 
+/** size 件までの、いちばん少ない数の組に、同じくらいの数で分ける（101件なら 51件と 50件。最後の組が小さくならない） */
 export function groups<T>(list: readonly T[], size = COMMIT_GROUP): T[][] {
+  const n = Math.ceil(list.length / size)
+  const base = Math.floor(list.length / Math.max(1, n))
+  const extra = list.length % Math.max(1, n)
   const out: T[][] = []
-  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
+  for (let k = 0, i = 0; k < n; k++) {
+    const len = base + (k < extra ? 1 : 0)
+    out.push(list.slice(i, i + len))
+    i += len
+  }
   return out
 }

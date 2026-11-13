@@ -132,11 +132,17 @@ export class MirrorStore {
     return rows.length ? toRec(rows[0]) : null
   }
 
+  /** 保存した記録の updated（マイクロ秒。無ければ null） */
+  updUsOf(name: string): number | null {
+    const rows = this.sql.all<{ upd_us: number }>('SELECT upd_us FROM rec WHERE name = ?', name)
+    return rows.length ? Number(rows[0].upd_us) : null
+  }
+
   /** 記録を入れる（もっと新しい updated の行があれば入れない）。入れたら true */
   putRec(row: RecRow): boolean {
     // 同じ文書へのあとの書き込みは、どの端末のものでも updated（サーバー時刻）が必ず後になる
-    const cur = this.sql.all<{ upd_us: number }>('SELECT upd_us FROM rec WHERE name = ?', row.name)
-    if (cur.length && Number(cur[0].upd_us) > row.updUs) return false
+    const cur = this.updUsOf(row.name)
+    if (cur !== null && cur > row.updUs) return false
     this.sql.run(
       `INSERT INTO rec (name, tbl, id, deleted, chunks, hash, upd_us, updated, update_time, device, json, reset)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
