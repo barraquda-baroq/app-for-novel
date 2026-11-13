@@ -372,6 +372,7 @@ describe('フォルダを作る・名前を変える・削除する', () => {
       'idea-folder-rename',
       'idea-folder-up（押せない）',
       'idea-folder-down',
+      'idea-folder-move',
       'idea-folder-delete',
     ])
     await user.keyboard('{Escape}')
@@ -380,6 +381,7 @@ describe('フォルダを作る・名前を変える・削除する', () => {
       'idea-folder-rename',
       'idea-folder-up（押せない）',
       'idea-folder-down（押せない）',
+      'idea-folder-move',
       'idea-folder-delete',
     ])
     await user.keyboard('{Escape}')

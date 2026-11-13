@@ -3,15 +3,13 @@
 import { useEffect, useMemo } from 'react'
 import { ideaSections, type IdeaSection } from '../../domain/entityOps'
 import type { ID } from '../../domain/types'
-import { effectiveFolderId, folderChain } from '../../domain/ideaFolders'
-import { getData, useData } from '../../store/appStore'
+import { useData } from '../../store/appStore'
 import { BookIcon, BulbIcon } from '../../ui/icons'
-import { expandFolders } from '../ideas/folderCollapse'
 import { InboxIcon } from '../ideas/ideaIcons'
 import { sectionDisplayName, sectionKey } from '../ideas/ideaLogic'
 import { IdeaSectionView } from '../ideas/IdeaSectionView'
 import { QuickCapture } from '../ideas/QuickCapture'
-import { revealIdea } from '../ideas/reveal'
+import { IdeaSectionOpenContext, revealIdeaInTree } from '../ideas/reveal'
 import { useCollapsedSections } from '../ideas/storage'
 
 function prefersReducedMotion(): boolean {
@@ -51,13 +49,7 @@ export function IdeaArea({ headingId, focusSection }: { headingId: string; focus
   }
 
   // すばやく追加の「表示」: 仕切りと、入っているフォルダ（2.9）を折りたたんでいれば開いてから、追加したカードを見せる
-  const reveal = (ideaId: ID, titleId: ID | null) => {
-    const key = sections.some((s) => s.titleId === titleId) ? sectionKey(titleId) : sectionKey(null)
-    expand(key)
-    const idea = getData().ideas[ideaId]
-    if (idea) expandFolders(folderChain(getData(), effectiveFolderId(getData(), idea)).map((f) => f.id))
-    revealIdea(ideaId, true)
-  }
+  const reveal = (ideaId: ID) => revealIdeaInTree(ideaId, expand)
 
   // 一覧では「どのタイトルにも属さない」（受け箱）を先頭に置く。仕切りの並びでは一番下にあって遠いため
   const indexSections = useMemo(() => {
@@ -113,21 +105,24 @@ export function IdeaArea({ headingId, focusSection }: { headingId: string; focus
         </nav>
       ) : null}
 
-      <div className="idea-sections" data-testid="idea-sections">
-        {sections.map((s) => {
-          const key = sectionKey(s.titleId)
-          return (
-            <IdeaSectionView
-              key={key}
-              section={s}
-              collapsible
-              collapsed={collapsed.has(key)}
-              onToggleCollapsed={() => toggle(key)}
-              showOpenLink
-            />
-          )
-        })}
-      </div>
+      {/* 移した後などに、移した先の仕切りを開けるように（IdeaMoveDialog・IdeaFolderMoveDialog） */}
+      <IdeaSectionOpenContext.Provider value={expand}>
+        <div className="idea-sections" data-testid="idea-sections">
+          {sections.map((s) => {
+            const key = sectionKey(s.titleId)
+            return (
+              <IdeaSectionView
+                key={key}
+                section={s}
+                collapsible
+                collapsed={collapsed.has(key)}
+                onToggleCollapsed={() => toggle(key)}
+                showOpenLink
+              />
+            )
+          })}
+        </div>
+      </IdeaSectionOpenContext.Provider>
     </>
   )
 }

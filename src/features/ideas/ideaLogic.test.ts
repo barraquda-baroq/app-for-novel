@@ -10,19 +10,25 @@ import {
   sortIdeas,
 } from '../../domain/entityOps'
 import { parseBackup, toBackup } from '../../domain/backup'
+import { containerKey } from '../../domain/ideaFolders'
+import { createIdeaFolder } from '../../domain/ideaFolderOps'
 import { repairData } from '../../domain/repair'
 import { restoreTrashEntry } from '../../domain/trash'
 import { emptyData, type AppData, type ID } from '../../domain/types'
 import {
   UNASSIGNED_KEY,
   UNASSIGNED_NAME,
+  bulkMovedMessage,
   canSaveIdea,
   CLAUDE_IDEA_BADGE,
+  containerIdeas,
   cutAtBoundary,
   folderCountTitle,
   folderDeleteSubject,
+  folderMoveTargets,
   ideaEditText,
   ideaModalDraftKey,
+  ideaPlace,
   ideaPlaceName,
   ideaShortLabel,
   isSubmitShortcut,
@@ -335,7 +341,7 @@ describe('ショートカット', () => {
 })
 
 describe('移動先の候補', () => {
-  it('すべての仕切りを並び順どおりに返し、今いる仕切りに印を付ける', () => {
+  it('すべての仕切りを並び順どおりに返し、今いる入れ物に印を付ける', () => {
     let data = emptyData()
     const a = createTitle(data, '星の海')
     data = a.data
@@ -345,18 +351,85 @@ describe('移動先の候補', () => {
     data = idea.data
     data = addIdea(data, null, '', '別の案').data
     const sections = ideaSections(data)
-    const targets = moveTargets(sections, data.ideas[idea.result], (id) => Boolean(data.titles[id]))
-    expect(targets.map((t) => [t.name, t.count, t.current])).toEqual([
-      ['星の海', 1, true],
-      ['風の街', 0, false],
-      [UNASSIGNED_NAME, 1, false],
+    const targets = moveTargets(sections, ideaPlace(data, data.ideas[idea.result]))
+    expect(targets.map((t) => [t.name, t.depth, t.count, t.current])).toEqual([
+      ['星の海', 0, 1, true],
+      ['風の街', 0, 0, false],
+      [UNASSIGNED_NAME, 0, 1, false],
     ])
+    expect(targets[0]).toMatchObject({ key: containerKey(a.result, null), titleId: a.result, folderId: null })
   })
 
   it('削除済みのタイトルを指すアイデアは「どのタイトルにも属さない」にいるとみなす', () => {
     const data = emptyData()
-    const targets = moveTargets(ideaSections(data), { titleId: 'gone' }, () => false)
-    expect(targets).toEqual([{ titleId: null, name: UNASSIGNED_NAME, count: 0, current: true }])
+    const targets = moveTargets(ideaSections(data), ideaPlace(data, { titleId: 'gone' }))
+    expect(targets).toEqual([
+      { key: containerKey(null, null), titleId: null, folderId: null, depth: 0, name: UNASSIGNED_NAME, count: 0, current: true },
+    ])
+  })
+
+  it('2.9: 木の形（仕切り → 1段目 → その中の2段目）。フォルダのある仕切りは「（フォルダの外）」、数はその入れ物にじかに入っているカード', () => {
+    let data = emptyData()
+    const t = createTitle(data, '星の庭')
+    data = t.data
+    const top = createIdeaFolder(data, t.result, null, '場面の相談')
+    data = top.data
+    const sub = createIdeaFolder(data, t.result, top.result, '雨の駅')
+    data = sub.data
+    const other = createIdeaFolder(data, t.result, null, '人物の相談')
+    data = other.data
+    data = addIdea(data, t.result, '', '外').data
+    const inSub = addIdea(data, t.result, '', '駅の案', sub.result)
+    data = inSub.data
+    data = addIdea(data, t.result, '', '駅の案2', sub.result).data
+    data = addIdea(data, t.result, '', '相談の案', top.result).data
+    const targets = moveTargets(ideaSections(data), ideaPlace(data, data.ideas[inSub.result]))
+    expect(targets.map((t) => [t.name, t.depth, t.count, t.current])).toEqual([
+      ['星の庭（フォルダの外）', 0, 1, false],
+      ['人物の相談', 1, 0, false],
+      ['場面の相談', 1, 1, false],
+      ['雨の駅', 2, 2, true],
+      [UNASSIGNED_NAME, 0, 0, false],
+    ])
+    expect(targets[3]).toMatchObject({ titleId: t.result, folderId: sub.result, key: containerKey(t.result, sub.result) })
+    // まとめて移す時に場所がそろっていなければ、印を付けない
+    expect(moveTargets(ideaSections(data), null).some((t) => t.current)).toBe(false)
+    // 入れ物のカード
+    const section = ideaSections(data)[0]
+    expect(containerIdeas(section, sub.result).map((i) => i.body)).toEqual(['駅の案', '駅の案2'])
+    expect(containerIdeas(section, null).map((i) => i.body)).toEqual(['外'])
+    expect(containerIdeas(section, 'gone')).toEqual([])
+  })
+
+  it('2.9: フォルダの移動先は、仕切りごとに「1段目にする」と自分以外の1段目。中にフォルダがあるとフォルダの行は選べない', () => {
+    let data = emptyData()
+    const t = createTitle(data, '星の庭')
+    data = t.data
+    const top = createIdeaFolder(data, t.result, null, '場面の相談')
+    data = top.data
+    const sub = createIdeaFolder(data, t.result, top.result, '雨の駅')
+    data = sub.data
+    const other = createIdeaFolder(data, null, null, '新作の相談')
+    data = other.data
+    const sections = ideaSections(data)
+    const rows = (id: ID, hasSubfolders: boolean, place: { titleId: ID | null; parentId: ID | null }) =>
+      folderMoveTargets(sections, { id, place, hasSubfolders }).map((r) => [r.name, r.depth, r.current, r.disabled])
+    expect(rows(sub.result, false, { titleId: t.result, parentId: top.result })).toEqual([
+      ['星の庭', 0, false, false],
+      ['場面の相談', 1, true, false],
+      [UNASSIGNED_NAME, 0, false, false],
+      ['新作の相談', 1, false, false],
+    ])
+    expect(rows(top.result, true, { titleId: t.result, parentId: null })).toEqual([
+      ['星の庭', 0, true, false],
+      [UNASSIGNED_NAME, 0, false, false],
+      ['新作の相談', 1, false, true],
+    ])
+  })
+
+  it('まとめて移した時の知らせ: もう無かったカードの数を添える', () => {
+    expect(bulkMovedMessage(8, 8, '新作の相談 › 2026/11/12　港町')).toBe('8件を「新作の相談 › 2026/11/12　港町」へ移しました')
+    expect(bulkMovedMessage(6, 8, '星の庭')).toBe('6件を「星の庭」へ移しました（2件はもうありません）')
   })
 })
 

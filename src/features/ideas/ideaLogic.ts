@@ -2,6 +2,15 @@
 import { jstSlashDate } from '../../claude/dates'
 import { appendedTail, ideaLabelLine } from '../../claude/ideaAppend'
 import type { IdeaSection } from '../../domain/entityOps'
+import {
+  containerKey,
+  effectiveFolderId,
+  ideaFolderName,
+  sectionOf,
+  type IdeaFolderData,
+  type IdeaFolderNode,
+} from '../../domain/ideaFolders'
+import type { IdeaPlace } from '../../domain/ideaFolderOps'
 import type { ID, Idea } from '../../domain/types'
 
 /** Claude がコネクタで作ったアイデアのカードの印（2.8。isClaudeIdea のもの） */
@@ -145,27 +154,121 @@ export function submitShortcutLabel(platform: string = typeof navigator === 'und
   return /Mac|iPhone|iPad|iPod/i.test(platform) ? '⌘+Enter' : 'Ctrl+Enter'
 }
 
-/** 移動先の候補。今いる仕切りは current として印を付ける */
+/**
+ * カードの移動先の候補（2.9: 木の形。仕切り（depth 0。フォルダの外）、その中の1段目（depth 1）、その中の2段目（depth 2））。
+ * 今いる入れ物は current として印を付ける。count はその入れ物にじかに入っているカードの数
+ */
 export interface MoveTarget {
+  /** 入れ物の鍵（containerKey） */
+  key: string
   titleId: ID | null
+  /** null = 仕切りのフォルダの外 */
+  folderId: ID | null
+  depth: 0 | 1 | 2
+  /** 表示名（仕切りは名前。フォルダがある仕切りは「（フォルダの外）」を付ける。フォルダは名前） */
   name: string
   count: number
   current: boolean
 }
 
-export function moveTargets(
+/** カードの今の入れ物（見せ方の決まりで。削除済みのタイトルを指すカードは「どのタイトルにも属さない」） */
+export function ideaPlace(data: IdeaFolderData, idea: Pick<Idea, 'titleId' | 'folderId'>): IdeaPlace {
+  return { titleId: sectionOf(data.titles, idea.titleId), folderId: effectiveFolderId(data, idea) }
+}
+
+/** 移動先の候補を、仕切りの並び・木の順に返す。current（今いる入れ物）が null なら印を付けない（まとめて移す時の、場所の違うカード） */
+export function moveTargets(sections: IdeaSection[], current: IdeaPlace | null): MoveTarget[] {
+  const rows: MoveTarget[] = []
+  const isCurrent = (titleId: ID | null, folderId: ID | null) =>
+    current !== null && current.titleId === titleId && current.folderId === folderId
+  for (const s of sections) {
+    const name = sectionDisplayName(s)
+    rows.push({
+      key: containerKey(s.titleId, null),
+      titleId: s.titleId,
+      folderId: null,
+      depth: 0,
+      name: s.tree.folders.length ? `${name}（フォルダの外）` : name,
+      count: s.tree.loose.length,
+      current: isCurrent(s.titleId, null),
+    })
+    const add = (n: IdeaFolderNode) => {
+      rows.push({
+        key: containerKey(s.titleId, n.folder.id),
+        titleId: s.titleId,
+        folderId: n.folder.id,
+        depth: n.depth,
+        name: ideaFolderName(n.folder),
+        count: n.ideas.length,
+        current: isCurrent(s.titleId, n.folder.id),
+      })
+      for (const sub of n.folders) add(sub)
+    }
+    for (const top of s.tree.folders) add(top)
+  }
+  return rows
+}
+
+/** 仕切りの木の中の入れ物のカード（folderId = null はフォルダの外。見つからなければ空） */
+export function containerIdeas(section: Pick<IdeaSection, 'tree'>, folderId: ID | null): Idea[] {
+  if (folderId === null) return section.tree.loose
+  const find = (nodes: IdeaFolderNode[]): IdeaFolderNode | undefined => {
+    for (const n of nodes) {
+      if (n.folder.id === folderId) return n
+      const sub = find(n.folders)
+      if (sub) return sub
+    }
+    return undefined
+  }
+  return find(section.tree.folders)?.ideas ?? []
+}
+
+/**
+ * フォルダの移動先の候補（2.9）。仕切りごとに、1段目にする行（depth 0）と、1段目のフォルダ（depth 1。移すフォルダ自身は除く）。
+ * 今の場所に印を付ける。中にフォルダのあるフォルダは、フォルダの行を選べない（3段目は作れない）
+ */
+export interface FolderMoveTarget {
+  key: string
+  titleId: ID | null
+  /** 移す先の親（null = 1段目にする） */
+  parentId: ID | null
+  depth: 0 | 1
+  /** 仕切りの名前（depth 0）・フォルダの名前（depth 1） */
+  name: string
+  current: boolean
+  disabled: boolean
+}
+
+export function folderMoveTargets(
   sections: IdeaSection[],
-  idea: Pick<Idea, 'titleId'>,
-  titleExists: (id: ID) => boolean,
-): MoveTarget[] {
-  // 削除済みタイトルを指すアイデアは「どのタイトルにも属さない」に表示されている
-  const currentTitleId = idea.titleId !== null && titleExists(idea.titleId) ? idea.titleId : null
-  return sections.map((s) => ({
-    titleId: s.titleId,
-    name: sectionDisplayName(s),
-    count: s.ideas.length,
-    current: s.titleId === currentTitleId,
-  }))
+  moving: { id: ID; place: { titleId: ID | null; parentId: ID | null }; hasSubfolders: boolean },
+): FolderMoveTarget[] {
+  const rows: FolderMoveTarget[] = []
+  for (const s of sections) {
+    const isCurrent = (parentId: ID | null) => moving.place.titleId === s.titleId && moving.place.parentId === parentId
+    rows.push({
+      key: containerKey(s.titleId, null),
+      titleId: s.titleId,
+      parentId: null,
+      depth: 0,
+      name: sectionDisplayName(s),
+      current: isCurrent(null),
+      disabled: false,
+    })
+    for (const top of s.tree.folders) {
+      if (top.folder.id === moving.id) continue
+      rows.push({
+        key: containerKey(s.titleId, top.folder.id),
+        titleId: s.titleId,
+        parentId: top.folder.id,
+        depth: 1,
+        name: ideaFolderName(top.folder),
+        current: isCurrent(top.folder.id),
+        disabled: moving.hasSubfolders,
+      })
+    }
+  }
+  return rows
 }
 
 // ---------- フォルダ（2.9） ----------
@@ -190,6 +293,12 @@ export function folderCountTitle(count: number, done: number): string {
 export function folderDeleteSubject(name: string, folders: number, cards: number): string {
   const inner = [folders ? `フォルダ${folders}つ` : '', cards ? `カード${cards}件` : ''].filter(Boolean).join('・')
   return inner ? `フォルダ「${name}」と、中の${inner}を` : `フォルダ「${name}」を`
+}
+
+/** まとめて移した時の知らせ（「8件を「…」へ移しました（2件はもうありません）」） */
+export function bulkMovedMessage(moved: number, requested: number, place: string): string {
+  const missing = requested - moved
+  return `${moved}件を「${place}」へ移しました${missing > 0 ? `（${missing}件はもうありません）` : ''}`
 }
 
 /** 2段目のフォルダを作る時の名前の初期値（今日の日付と全角の空白。後ろにテーマを書く。「2026/11/13　」） */

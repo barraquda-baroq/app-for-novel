@@ -5,6 +5,8 @@
 // 古い版で付けた見出しがあれば、編集して保存するまでは見出しとして出す。
 // 2.8: Claude がコネクタで作ったアイデア（isClaudeIdea）には「Claude が作成」の印を付ける（内容の表示は変えない。Markdown も変換しない）。
 // 編集している間に Claude の追記が足されていれば、保存する内容の後ろに残す（rebaseIdeaEdit）。
+// 2.9: 「選んで移す」で仕切りのカードを選んでいる間は、済みのチェックボックスの代わりに選ぶチェックボックスを出し、カードの中を押しても
+// 選べる（並べ替え・移動・編集・削除・「この案でタイトルを作る」は出さない）。選ばれているかは自分の分だけ読む（useIsSelected）。
 import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { isJstTimestamp } from '../../claude/dates'
@@ -26,10 +28,13 @@ import { SparkIcon } from './ideaIcons'
 import { ideaEditText, ideaModalDraftKey, ideaShortLabel, rebaseIdeaEdit, splitLead, titleNameFromIdea } from './ideaLogic'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { REVEAL_MS, revealIdea, useReveal } from './reveal'
+import { toggleSelected, useIsSelected } from './selection'
 import { writeLocal } from './storage'
 
 export interface IdeaCardProps {
   idea: Idea
+  /** 仕切りのキー（sectionKey。「選んで移す」で選んでいる仕切りか） */
+  section: string
   /** 表示している場所（仕切りの名前。フォルダの中なら「星の庭 › 場面の相談」。編集ダイアログの「場所」に出す） */
   sectionName: string
   /** 「どのタイトルにも属さない」仕切りにあるか（「この案でタイトルを作る」を出す） */
@@ -135,7 +140,7 @@ function useKeepCheckFocus(checked: boolean) {
   return { ref, mark, cancel }
 }
 
-function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardProps) {
+function IdeaCardView({ idea, section, sectionName, unassigned, first, last }: IdeaCardProps) {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
   const [moving, setMoving] = useState(false)
@@ -152,6 +157,9 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
   const revealed = useRevealed(idea.id, cardRef)
   const check = useKeepCheckFocus(checked)
   const byClaude = isClaudeIdea(idea)
+  // 選んで移す（2.9）: null = この仕切りで選んでいない
+  const selected = useIsSelected(section, idea.id)
+  const selecting = selected !== null
 
   const toggleChecked = (next: boolean) => {
     check.mark()
@@ -232,7 +240,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
   return (
     <li
       ref={cardRef}
-      className={`idea-card${checked ? ' is-checked' : ''}${revealed ? ' is-revealed' : ''}`}
+      className={`idea-card${checked ? ' is-checked' : ''}${revealed ? ' is-revealed' : ''}${selecting ? ' is-selecting' : ''}${selected ? ' is-selected' : ''}`}
       tabIndex={-1}
       data-testid="idea-card"
       data-idea-id={idea.id}
@@ -240,20 +248,33 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
       data-source={byClaude ? 'claude' : 'manual'}
     >
       <div className="idea-card-top">
-        <label
-          className="idea-check"
-          title={checked ? '済みを外す（済みでないアイデアの末尾に戻す）' : '済みにする（実装した・没にした）'}
-        >
-          <input
-            ref={check.ref}
-            type="checkbox"
-            checked={checked}
-            onChange={(e) => toggleChecked(e.target.checked)}
-            aria-label={checked ? `「${label}」の済みを外す` : `「${label}」を済みにする`}
-            data-testid="idea-check"
-          />
-        </label>
-        <div className="idea-card-main">
+        {selecting ? (
+          <label className="idea-select" title="選ぶ（まとめて移す）">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={() => toggleSelected(idea.id)}
+              aria-label={`『${label}』を選ぶ`}
+              data-testid="idea-select"
+            />
+          </label>
+        ) : (
+          <label
+            className="idea-check"
+            title={checked ? '済みを外す（済みでないアイデアの末尾に戻す）' : '済みにする（実装した・没にした）'}
+          >
+            <input
+              ref={check.ref}
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => toggleChecked(e.target.checked)}
+              aria-label={checked ? `「${label}」の済みを外す` : `「${label}」を済みにする`}
+              data-testid="idea-check"
+            />
+          </label>
+        )}
+        {/* 選んでいる間は、カードの中を押しても選べる（指で押しやすいように） */}
+        <div className="idea-card-main" onClick={selecting ? () => toggleSelected(idea.id) : undefined}>
           {heading ? (
             <h4 className="idea-card-heading" data-testid="idea-heading">
               {heading}
@@ -274,7 +295,11 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
               type="button"
               className="idea-card-more"
               aria-expanded={expanded}
-              onClick={() => setExpanded((v) => !v)}
+              onClick={(e) => {
+                // 選んでいる間に押しても、選ぶ・外すにしない
+                e.stopPropagation()
+                setExpanded((v) => !v)
+              }}
               data-testid="idea-more"
             >
               {expanded ? '折りたたむ' : '続きを表示'}
@@ -285,7 +310,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
 
       <div className="idea-card-actions" role="group" aria-label={`「${label}」の操作`}>
         {/* 並べ替えは済みでないアイデアの中だけ（済みのものは済みにした順で下にまとまる） */}
-        {checked ? null : (
+        {checked || selecting ? null : (
           <>
             <button
               type="button"
@@ -322,7 +347,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
           <ClaudeMadeBadge className="idea-card-by" testId="idea-by-claude" title="Claude がコネクタで作ったアイデア" />
         ) : null}
         <span className="grow" />
-        {unassigned ? (
+        {unassigned && !selecting ? (
           <button
             type="button"
             className="btn btn-sm btn-ghost idea-card-make"
@@ -333,26 +358,28 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
             この案でタイトルを作る
           </button>
         ) : null}
-        <span className="idea-card-buttons">
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setMoving(true)} data-testid="idea-move">
-            <MoveIcon />
-            移動
-          </button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(true)} data-testid="idea-edit">
-            <EditIcon />
-            編集
-          </button>
-          <button
-            type="button"
-            className="icon-btn idea-card-delete"
-            onClick={() => void remove()}
-            aria-label="削除"
-            title="削除"
-            data-testid="idea-delete"
-          >
-            <TrashIcon />
-          </button>
-        </span>
+        {selecting ? null : (
+          <span className="idea-card-buttons">
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setMoving(true)} data-testid="idea-move">
+              <MoveIcon />
+              移動
+            </button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(true)} data-testid="idea-edit">
+              <EditIcon />
+              編集
+            </button>
+            <button
+              type="button"
+              className="icon-btn idea-card-delete"
+              onClick={() => void remove()}
+              aria-label="削除"
+              title="削除"
+              data-testid="idea-delete"
+            >
+              <TrashIcon />
+            </button>
+          </span>
+        )}
       </div>
 
       {editing ? (
@@ -368,7 +395,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
           onSave={saveEdit}
         />
       ) : null}
-      {moving ? <IdeaMoveDialog ideaId={idea.id} onClose={() => setMoving(false)} /> : null}
+      {moving ? <IdeaMoveDialog ideaIds={[idea.id]} onClose={() => setMoving(false)} /> : null}
     </li>
   )
 }

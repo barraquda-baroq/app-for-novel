@@ -4,6 +4,8 @@
 // ［＋］（このフォルダにアイデアを追加）・［…］（操作のメニュー。見出しの長押し・右クリックでも開く）。
 // メニューは仕切りごとに1つだけ置き（IdeaFolderMenuProvider）、見出しは開く対象（フォルダの id）を渡すだけにする
 // （本編の一覧の RowMenu と同じ。メニューの中身は開いた時のデータから作る）。
+// 「選んで移す」で選んでいる間は、見出しに中のカード（中のフォルダのものも）をまとめて選ぶ□を出し、［＋］［…］は出さない
+// （閉じたままでも選べる）。
 import { createContext, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { isClaudeFolder } from '../../claude/ideaFolders'
 import { folderChain, folderDepth, ideaFolderName, type IdeaFolderNode } from '../../domain/ideaFolders'
@@ -13,7 +15,7 @@ import type { AppData, ID, Idea } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { getData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
-import { ChevronRightIcon, DownIcon, EditIcon, FolderIcon, MoreIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
+import { ChevronRightIcon, DownIcon, EditIcon, FolderIcon, MoreIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
 import { scrollByInstant } from '../../ui/keepInPlace'
 import { useMenuTrigger, type MenuTriggerHandlers } from '../../ui/longPress'
 import { PopupMenu, type MenuPlacement, type PopupMenuItem } from '../../ui/PopupMenu'
@@ -22,13 +24,17 @@ import { expandFolders, toggleFolder, useFolderCollapsed } from './folderCollaps
 import { createFolderFlow, deleteFolderFlow, folderElement, renameFolderFlow } from './folderFlows'
 import { IdeaCard } from './IdeaCard'
 import { IdeaEditorModal } from './IdeaEditorModal'
-import { folderCountTitle, ideaModalDraftKey, ideaPlaceName } from './ideaLogic'
+import { IdeaFolderMoveDialog } from './IdeaFolderMoveDialog'
+import { folderCountTitle, ideaModalDraftKey, ideaPlaceName, sectionKey } from './ideaLogic'
+import { setSelected, useSelectedCount, useSelectMode } from './selection'
 
 // ---------- カードの並び（入れ物ごと） ----------
 
 export interface IdeaCardListProps {
   /** 入れ物のカード（sortIdeas: 済みでないもの → 済み） */
   ideas: Idea[]
+  /** 仕切りのキー（sectionKey） */
+  section: string
   /** 場所の表記（編集ダイアログの「場所」。「星の庭 › 場面の相談」） */
   place: string
   /** 「どのタイトルにも属さない」仕切りのカードか（「この案でタイトルを作る」を出す） */
@@ -36,7 +42,7 @@ export interface IdeaCardListProps {
 }
 
 /** 1つの入れ物（仕切りのフォルダの外・フォルダの中）のカード。並べ替えの端と「済み」の区切りはこの入れ物の中で決める */
-export function IdeaCardList({ ideas, place, unassigned }: IdeaCardListProps) {
+export function IdeaCardList({ ideas, section, place, unassigned }: IdeaCardListProps) {
   const doneCount = ideas.reduce((n, i) => (isIdeaChecked(i) ? n + 1 : n), 0)
   const openCount = ideas.length - doneCount
   return (
@@ -47,6 +53,7 @@ export function IdeaCardList({ ideas, place, unassigned }: IdeaCardListProps) {
           <IdeaCard
             key={idea.id}
             idea={idea}
+            section={section}
             sectionName={place}
             unassigned={unassigned}
             first={i === 0}
@@ -84,6 +91,7 @@ export interface FolderMenuDeps {
   createSub: (id: ID) => void
   rename: (id: ID) => void
   step: (id: ID, dir: -1 | 1) => void
+  move: (id: ID) => void
   remove: (id: ID) => void
 }
 
@@ -113,6 +121,7 @@ export function folderMenuItems(data: AppData, id: ID, deps: FolderMenuDeps): { 
       onSelect: () => deps.step(id, 1),
       testId: 'idea-folder-down',
     },
+    { label: '移動…', icon: <MoveIcon />, onSelect: () => deps.move(id), testId: 'idea-folder-move' },
     { label: '削除', icon: <TrashIcon />, danger: true, onSelect: () => deps.remove(id), testId: 'idea-folder-delete' },
   )
   return { label: `『${name}』の操作`, items }
@@ -121,6 +130,7 @@ export function folderMenuItems(data: AppData, id: ID, deps: FolderMenuDeps): { 
 /** 仕切り1つ分のフォルダのメニュー（右クリック・長押し・［…］で開く） */
 export function IdeaFolderMenuProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<MenuRequest | null>(null)
+  const [moving, setMoving] = useState<ID | null>(null)
   /** 並べ替えたフォルダを、動かす前と同じ画面の位置に残す（描き終わった直後に合わせる） */
   const keep = useRef<{ id: ID; top: number } | null>(null)
   const api = useMemo<FolderMenuApi>(
@@ -162,6 +172,7 @@ export function IdeaFolderMenuProvider({ children }: { children: ReactNode }) {
         keep.current = null
       })
     },
+    move: setMoving,
     remove: (id) => void deleteFolderFlow(id),
   }
   const menu = request ? folderMenuItems(getData(), request.id, deps) : null
@@ -179,6 +190,7 @@ export function IdeaFolderMenuProvider({ children }: { children: ReactNode }) {
           testId="idea-folder-menu-popup"
         />
       ) : null}
+      {moving ? <IdeaFolderMoveDialog folderId={moving} onClose={() => setMoving(null)} /> : null}
     </FolderMenuContext.Provider>
   )
 }
@@ -229,6 +241,16 @@ export function IdeaFolderView({ node, titleId, sectionName, unassigned, parentN
   const collapsed = useFolderCollapsed(id)
   const [adding, setAdding] = useState(false)
   const menu = useFolderMenu(id)
+  const key = sectionKey(titleId)
+  const selecting = useSelectMode(key)
+  // 中のすべてのカード（中のフォルダのものも）。見出しの□でまとめて選ぶ
+  const inside = useMemo(() => [...node.folders.flatMap((sub) => sub.ideas), ...node.ideas].map((i) => i.id), [node])
+  const selectedCount = useSelectedCount(key, inside)
+  const allSelected = inside.length > 0 && selectedCount === inside.length
+  const selectRef = useRef<HTMLInputElement>(null)
+  useLayoutEffect(() => {
+    if (selectRef.current) selectRef.current.indeterminate = selectedCount > 0 && !allSelected
+  })
   const name = ideaFolderName(folder)
   const names = useMemo(() => [...parentNames, name], [parentNames, name])
   const place = ideaPlaceName(sectionName, names)
@@ -252,7 +274,20 @@ export function IdeaFolderView({ node, titleId, sectionName, unassigned, parentN
       data-depth={depth}
       aria-labelledby={nameId}
     >
-      <div className="idea-folder-head" {...menu?.handlers}>
+      <div className="idea-folder-head" {...(selecting ? undefined : menu?.handlers)}>
+        {selecting ? (
+          <label className="idea-folder-select" title="中のカードをすべて選ぶ・外す">
+            <input
+              ref={selectRef}
+              type="checkbox"
+              checked={allSelected}
+              disabled={inside.length === 0}
+              onChange={() => setSelected(inside, !allSelected)}
+              aria-label={`『${name}』の中のカードをすべて選ぶ`}
+              data-testid="idea-folder-select"
+            />
+          </label>
+        ) : null}
         <button
           type="button"
           className="idea-folder-toggle"
@@ -285,17 +320,19 @@ export function IdeaFolderView({ node, titleId, sectionName, unassigned, parentN
             />
           ) : null}
         </button>
-        <button
-          type="button"
-          className="icon-btn idea-folder-add"
-          onClick={() => setAdding(true)}
-          aria-label={`『${name}』にアイデアを追加`}
-          title="このフォルダにアイデアを追加"
-          data-testid="idea-folder-add"
-        >
-          <PlusIcon />
-        </button>
-        {menu ? (
+        {selecting ? null : (
+          <button
+            type="button"
+            className="icon-btn idea-folder-add"
+            onClick={() => setAdding(true)}
+            aria-label={`『${name}』にアイデアを追加`}
+            title="このフォルダにアイデアを追加"
+            data-testid="idea-folder-add"
+          >
+            <PlusIcon />
+          </button>
+        )}
+        {menu && !selecting ? (
           <button
             type="button"
             className="icon-btn idea-folder-menu"
@@ -325,8 +362,8 @@ export function IdeaFolderView({ node, titleId, sectionName, unassigned, parentN
             ))}
           </div>
         ) : null}
-        {node.ideas.length ? <IdeaCardList ideas={node.ideas} place={place} unassigned={unassigned} /> : null}
-        {empty ? (
+        {node.ideas.length ? <IdeaCardList ideas={node.ideas} section={key} place={place} unassigned={unassigned} /> : null}
+        {empty && !selecting ? (
           <button type="button" className="idea-folder-empty" onClick={() => setAdding(true)} data-testid="idea-folder-empty">
             <span>まだカードはありません。</span>
             <span className="idea-folder-empty-add">

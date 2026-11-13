@@ -3,18 +3,22 @@
 // 2.9: 中は、道具の行（［＋ フォルダ］）→ フォルダ（2段まで。IdeaFolderView）→ フォルダに入っていないカードの順。
 // 済み（実装した・没にした）のアイデアは、入れ物（フォルダの外・フォルダの中）ごとに、済みでないものの下に「済み n件」の区切りを
 // 挟んでまとまる。件数は仕切りのすべてのカード（フォルダの中も）。
-import { useId, useState } from 'react'
+// ［選んで移す］（カードが1枚以上ある時）: この仕切りのカードを選び、下の帯の［移す…］でまとめて移す（IdeaMoveDialog）。
+// Esc・［やめる］・移した後・画面を離れた時にやめる。もう無いカード（この仕切りに見えないカード）は選択から除く。
+import { useEffect, useId, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { isIdeaChecked, type IdeaSection } from '../../domain/entityOps'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
 import { attempt, notify } from '../../store/uiStore'
-import { BookIcon, ChevronRightIcon, FolderIcon, PlusIcon } from '../../ui/icons'
+import { BookIcon, CheckIcon, ChevronRightIcon, FolderIcon, MoveIcon, PlusIcon } from '../../ui/icons'
 import { createFolderFlow } from './folderFlows'
 import { IdeaCardList, IdeaFolderList, IdeaFolderMenuProvider } from './IdeaFolderView'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { InboxIcon } from './ideaIcons'
 import { ideaModalDraftKey, sectionDisplayName, sectionKey } from './ideaLogic'
+import { IdeaMoveDialog } from './IdeaMoveDialog'
+import { pruneSelection, startSelect, stopSelect, useSelection, useSelectMode } from './selection'
 import './ideas.css'
 
 export interface IdeaSectionViewProps {
@@ -48,6 +52,41 @@ export function IdeaSectionView({
   const empty = count === 0 && tree.folders.length === 0
   const isCollapsed = collapsible && collapsed
   const key = sectionKey(section.titleId)
+  const selecting = useSelectMode(key)
+  const selectedCount = useSelection((s) => (s.section === key ? s.ids.size : 0))
+  /** まとめて移すダイアログで移すカード（開いた時に選んでいたもの） */
+  const [bulk, setBulk] = useState<string[] | null>(null)
+
+  // 選んでいる間に、カードがもう無くなった・ほかの仕切りへ移った時は、選択から除く。カードが無くなったらやめる
+  useEffect(() => {
+    if (!selecting) return
+    if (section.ideas.length === 0) {
+      stopSelect()
+      return
+    }
+    const alive = new Set(section.ideas.map((i) => i.id))
+    pruneSelection((id) => alive.has(id))
+  }, [selecting, section.ideas])
+
+  // Esc でやめる（ダイアログ・メニューが開いている時は、そちらを閉じるだけ）
+  useEffect(() => {
+    if (!selecting) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
+      if (document.querySelector('[aria-modal="true"], [role="menu"]')) return
+      stopSelect()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [selecting])
+
+  // 画面を離れる時（仕切りが無くなる時も）はやめる
+  useEffect(
+    () => () => {
+      if (useSelection.getState().section === key) stopSelect()
+    },
+    [key],
+  )
 
   const add = (b: string) => {
     const id = attempt(() => actions.addIdea(section.titleId, '', b))
@@ -139,6 +178,19 @@ export function IdeaSectionView({
               <FolderIcon />
               <span className="idea-folder-create-label">フォルダ</span>
             </button>
+            {count > 0 ? (
+              <button
+                type="button"
+                className={`btn btn-sm btn-ghost idea-select-start${selecting ? ' is-active' : ''}`}
+                aria-pressed={selecting}
+                onClick={() => (selecting ? stopSelect() : startSelect(key))}
+                title="カードを選んで、まとめてほかのフォルダや仕切りへ移す"
+                data-testid="idea-select-start"
+              >
+                <CheckIcon />
+                選んで移す
+              </button>
+            ) : null}
           </div>
           {tree.folders.length ? (
             <IdeaFolderList nodes={tree.folders} titleId={section.titleId} sectionName={name} unassigned={unassigned} />
@@ -152,11 +204,38 @@ export function IdeaSectionView({
               </span>
             </button>
           ) : tree.loose.length ? (
-            <IdeaCardList ideas={tree.loose} place={name} unassigned={unassigned} />
+            <IdeaCardList ideas={tree.loose} section={key} place={name} unassigned={unassigned} />
           ) : null}
         </IdeaFolderMenuProvider>
+        {selecting ? (
+          <div className="idea-select-bar" role="region" aria-label="選んだアイデア" data-testid="idea-select-bar">
+            <span className="idea-select-count" data-testid="idea-select-count" aria-live="polite">
+              {selectedCount}件を選択中
+            </span>
+            <span className="grow" />
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={selectedCount === 0}
+              onClick={() => setBulk([...useSelection.getState().ids])}
+              data-testid="idea-select-move"
+            >
+              <MoveIcon />
+              移す…
+            </button>
+            <button type="button" className="btn btn-sm" onClick={stopSelect} data-testid="idea-select-cancel">
+              やめる
+            </button>
+            {selectedCount === 0 ? (
+              <p className="idea-select-hint" data-testid="idea-select-hint">
+                移すカードを選んでください（フォルダの見出しの□で中をまとめて選べます）
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
+      {bulk ? <IdeaMoveDialog ideaIds={bulk} bulk onMoved={stopSelect} onClose={() => setBulk(null)} /> : null}
       {adding ? (
         <IdeaEditorModal
           mode="add"
