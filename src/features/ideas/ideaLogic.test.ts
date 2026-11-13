@@ -19,8 +19,11 @@ import {
   canSaveIdea,
   CLAUDE_IDEA_BADGE,
   cutAtBoundary,
+  folderCountTitle,
+  folderDeleteSubject,
   ideaEditText,
   ideaModalDraftKey,
+  ideaPlaceName,
   ideaShortLabel,
   isSubmitShortcut,
   moveTargets,
@@ -32,6 +35,7 @@ import {
   sectionKey,
   serializeIdeaModalDraft,
   splitLead,
+  subfolderInitialName,
   submitShortcutLabel,
   titleIdFromKey,
   titleNameFromIdea,
@@ -383,11 +387,37 @@ describe('位置を選んで移動の候補', () => {
   })
 })
 
+describe('フォルダの表記（2.9）', () => {
+  it('場所は仕切りの名前とフォルダの名前を「 › 」でつなぐ', () => {
+    expect(ideaPlaceName('星の庭', [])).toBe('星の庭')
+    expect(ideaPlaceName('星の庭', ['場面の相談', '雨の駅'])).toBe('星の庭 › 場面の相談 › 雨の駅')
+  })
+
+  it('件数の説明は済みがある時だけ内訳を付ける', () => {
+    expect(folderCountTitle(12, 2)).toBe('12件（うち済み 2件）')
+    expect(folderCountTitle(3, 0)).toBe('3件')
+  })
+
+  it('削除の確かめの主語: 中のフォルダ・カードがあれば数を添え、空なら名前だけ', () => {
+    expect(folderDeleteSubject('場面の相談', 2, 12)).toBe('フォルダ「場面の相談」と、中のフォルダ2つ・カード12件を')
+    expect(folderDeleteSubject('場面の相談', 0, 5)).toBe('フォルダ「場面の相談」と、中のカード5件を')
+    expect(folderDeleteSubject('場面の相談', 1, 0)).toBe('フォルダ「場面の相談」と、中のフォルダ1つを')
+    expect(folderDeleteSubject('場面の相談', 0, 0)).toBe('フォルダ「場面の相談」を')
+  })
+
+  it('2段目の名前の初期値は日本時間の今日の日付と全角の空白', () => {
+    expect(subfolderInitialName(Date.UTC(2026, 10, 12, 14, 59))).toBe('2026/11/12\u3000')
+    expect(subfolderInitialName(Date.UTC(2026, 10, 12, 15, 0))).toBe('2026/11/13\u3000')
+  })
+})
+
 describe('追加・編集ダイアログの下書き', () => {
   it('追加は仕切りごと、編集はアイデアごとに別のキー', () => {
     expect(ideaModalDraftKey({ mode: 'add', section: 'none' })).toBe('novel-studio:idea-modal-draft:new:none')
     expect(ideaModalDraftKey({ mode: 'add', section: 't1' })).toBe('novel-studio:idea-modal-draft:new:t1')
     expect(ideaModalDraftKey({ mode: 'edit', ideaId: 'i1' })).toBe('novel-studio:idea-modal-draft:edit:i1')
+    // 2.9: フォルダに足す時はフォルダごと（仕切りのキーと重ならない）
+    expect(ideaModalDraftKey({ mode: 'add', folderId: 'f1' })).toBe('novel-studio:idea-modal-draft:new:f:f1')
   })
 
   it('壊れた値は null', () => {

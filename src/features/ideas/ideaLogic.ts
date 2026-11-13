@@ -1,4 +1,5 @@
 // アイデア領域（仕切り・カード）で使う、表示用の純粋な計算。データは変更しない。
+import { jstSlashDate } from '../../claude/dates'
 import { appendedTail, ideaLabelLine } from '../../claude/ideaAppend'
 import type { IdeaSection } from '../../domain/entityOps'
 import type { ID, Idea } from '../../domain/types'
@@ -167,6 +168,35 @@ export function moveTargets(
   }))
 }
 
+// ---------- フォルダ（2.9） ----------
+
+/** アプリの画面で場所をつなぐ記号（「星の庭 › 場面の相談 › 雨の駅」。Claude 側は「＞」） */
+export const PLACE_SEP = ' › '
+
+/** 場所の表記（仕切りの名前と、入っているフォルダの名前のつながり）。編集ダイアログの「場所」「追加先」 */
+export function ideaPlaceName(sectionName: string, folderNames: readonly string[]): string {
+  return [sectionName, ...folderNames].join(PLACE_SEP)
+}
+
+/** フォルダの件数の説明（「12件（うち済み 2件）」） */
+export function folderCountTitle(count: number, done: number): string {
+  return done ? `${count}件（うち済み ${done}件）` : `${count}件`
+}
+
+/**
+ * フォルダを削除する時の確かめの主語（trashNotice に渡す）。「フォルダ「場面の相談」と、中のフォルダ2つ・カード12件を」。
+ * 中に何も無ければ「フォルダ「場面の相談」を」
+ */
+export function folderDeleteSubject(name: string, folders: number, cards: number): string {
+  const inner = [folders ? `フォルダ${folders}つ` : '', cards ? `カード${cards}件` : ''].filter(Boolean).join('・')
+  return inner ? `フォルダ「${name}」と、中の${inner}を` : `フォルダ「${name}」を`
+}
+
+/** 2段目のフォルダを作る時の名前の初期値（今日の日付と全角の空白。後ろにテーマを書く。「2026/11/13　」） */
+export function subfolderInitialName(now: number): string {
+  return `${jstSlashDate(now)}\u3000`
+}
+
 /** 折りたたんだ仕切りのキー一覧を読み込む（壊れた値は無視） */
 export function parseCollapsed(raw: string | null): string[] {
   if (!raw) return []
@@ -208,9 +238,12 @@ export function positionOptions(names: string[], nameMax = 16): PositionOption[]
 
 const MODAL_DRAFT_PREFIX = 'novel-studio:idea-modal-draft:'
 
-/** 追加は仕切りごと、編集はアイデアごとに下書きを分ける */
-export function ideaModalDraftKey(target: { mode: 'add'; section: string } | { mode: 'edit'; ideaId: ID }): string {
-  return target.mode === 'add' ? `${MODAL_DRAFT_PREFIX}new:${target.section}` : `${MODAL_DRAFT_PREFIX}edit:${target.ideaId}`
+/** 追加は仕切りごと（2.9: フォルダに足す時はフォルダごと。new:f:<フォルダの id>）、編集はアイデアごとに下書きを分ける */
+export function ideaModalDraftKey(
+  target: { mode: 'add'; section: string } | { mode: 'add'; folderId: ID } | { mode: 'edit'; ideaId: ID },
+): string {
+  if (target.mode === 'edit') return `${MODAL_DRAFT_PREFIX}edit:${target.ideaId}`
+  return 'folderId' in target ? `${MODAL_DRAFT_PREFIX}new:f:${target.folderId}` : `${MODAL_DRAFT_PREFIX}new:${target.section}`
 }
 
 export interface IdeaModalDraft {

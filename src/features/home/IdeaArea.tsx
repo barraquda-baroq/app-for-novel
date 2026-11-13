@@ -3,8 +3,10 @@
 import { useEffect, useMemo } from 'react'
 import { ideaSections, type IdeaSection } from '../../domain/entityOps'
 import type { ID } from '../../domain/types'
-import { useData } from '../../store/appStore'
+import { effectiveFolderId, folderChain } from '../../domain/ideaFolders'
+import { getData, useData } from '../../store/appStore'
 import { BookIcon, BulbIcon } from '../../ui/icons'
+import { expandFolders } from '../ideas/folderCollapse'
 import { InboxIcon } from '../ideas/ideaIcons'
 import { sectionDisplayName, sectionKey } from '../ideas/ideaLogic'
 import { IdeaSectionView } from '../ideas/IdeaSectionView'
@@ -48,10 +50,12 @@ export function IdeaArea({ headingId, focusSection }: { headingId: string; focus
     scrollToSection(key, true)
   }
 
-  // すばやく追加の「表示」: 折りたたんでいれば開いてから、追加したカードを見せる
+  // すばやく追加の「表示」: 仕切りと、入っているフォルダ（2.9）を折りたたんでいれば開いてから、追加したカードを見せる
   const reveal = (ideaId: ID, titleId: ID | null) => {
     const key = sections.some((s) => s.titleId === titleId) ? sectionKey(titleId) : sectionKey(null)
     expand(key)
+    const idea = getData().ideas[ideaId]
+    if (idea) expandFolders(folderChain(getData(), effectiveFolderId(getData(), idea)).map((f) => f.id))
     revealIdea(ideaId, true)
   }
 
@@ -72,7 +76,7 @@ export function IdeaArea({ headingId, focusSection }: { headingId: string; focus
           {total}
         </span>
         <span className="grow" />
-        <span className="home-pane-note small muted hide-mobile">タイトルごとに仕切られています</span>
+        <span className="home-pane-note small muted hide-mobile">タイトルごとに仕切られ、フォルダ（2段まで）に分けられます</span>
       </div>
 
       <QuickCapture sections={sections} draftKey="home" onReveal={reveal} />

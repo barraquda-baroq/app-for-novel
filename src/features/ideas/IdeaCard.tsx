@@ -1,5 +1,6 @@
 // アイデア1件のカード。済みのチェックボックス、内容（長い場合は6行で折りたたみ。2行以上なら1行目を少し目立たせる）と、
-// 編集・移動・並べ替え（済みでないものだけ）・削除。済み（実装した・没にした）にすると斜線＋グレーで仕切りの下へ沈む
+// 編集・移動・並べ替え（済みでないものだけ。入れ物（仕切りのフォルダの外・フォルダの中）の中で）・削除。済み（実装した・没にした）に
+// すると斜線＋グレーで入れ物の下へ沈む
 // （通知で知らせ、移った先で少しの間目立たせる）。
 // 古い版で付けた見出しがあれば、編集して保存するまでは見出しとして出す。
 // 2.8: Claude がコネクタで作ったアイデア（isClaudeIdea）には「Claude が作成」の印を付ける（内容の表示は変えない。Markdown も変換しない）。
@@ -18,30 +19,22 @@ import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatRelative } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { DownIcon, EditIcon, MoveIcon, TrashIcon, UpIcon } from '../../ui/icons'
-import { SparkIcon as ClaudeMarkIcon } from '../claude/claudeIcons'
+import { ClaudeMadeBadge } from './ClaudeMadeBadge'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { IdeaMoveDialog } from './IdeaMoveDialog'
 import { SparkIcon } from './ideaIcons'
-import {
-  CLAUDE_IDEA_BADGE,
-  ideaEditText,
-  ideaModalDraftKey,
-  ideaShortLabel,
-  rebaseIdeaEdit,
-  splitLead,
-  titleNameFromIdea,
-} from './ideaLogic'
+import { ideaEditText, ideaModalDraftKey, ideaShortLabel, rebaseIdeaEdit, splitLead, titleNameFromIdea } from './ideaLogic'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { REVEAL_MS, revealIdea, useReveal } from './reveal'
 import { writeLocal } from './storage'
 
 export interface IdeaCardProps {
   idea: Idea
-  /** 表示している仕切りの名前（編集ダイアログに出す） */
+  /** 表示している場所（仕切りの名前。フォルダの中なら「星の庭 › 場面の相談」。編集ダイアログの「場所」に出す） */
   sectionName: string
   /** 「どのタイトルにも属さない」仕切りにあるか（「この案でタイトルを作る」を出す） */
   unassigned: boolean
-  /** 済みでないアイデアの中で先頭・末尾か（並べ替えのボタン。済みのカードでは使わない） */
+  /** 入れ物（仕切りのフォルダの外・フォルダの中）の済みでないアイデアの中で先頭・末尾か（並べ替えのボタン。済みのカードでは使わない） */
   first: boolean
   last: boolean
 }
@@ -326,10 +319,7 @@ function IdeaCardView({ idea, sectionName, unassigned, first, last }: IdeaCardPr
           {formatRelative(idea.updatedAt)}
         </time>
         {byClaude ? (
-          <span className="badge idea-card-by" data-testid="idea-by-claude" title="Claude がコネクタで作ったアイデア">
-            <ClaudeMarkIcon />
-            {CLAUDE_IDEA_BADGE}
-          </span>
+          <ClaudeMadeBadge className="idea-card-by" testId="idea-by-claude" title="Claude がコネクタで作ったアイデア" />
         ) : null}
         <span className="grow" />
         {unassigned ? (

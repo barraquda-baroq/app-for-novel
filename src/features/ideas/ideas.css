@@ -161,6 +161,234 @@
   height: 15px;
 }
 
+/* ---------- 仕切りの道具の行（［＋ フォルダ］・［選んで移す］。2.9） ---------- */
+.idea-section-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.btn.idea-folder-create {
+  gap: 2px;
+  padding-inline: 8px 10px;
+  color: var(--text-muted);
+}
+
+.btn.idea-folder-create:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.btn.idea-folder-create .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.idea-folder-create-label {
+  margin-left: 2px;
+}
+
+/* フォルダの後にフォルダの外のカード・空の表示が続く時の間 */
+.idea-folders + .idea-list,
+.idea-folders + .idea-section-empty {
+  margin-top: 10px;
+}
+
+/* ---------- フォルダ（2.9。2段まで） ---------- */
+.idea-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  overflow-anchor: none;
+}
+
+.idea-folder {
+  min-width: 0;
+  scroll-margin-top: calc(var(--header-h) + var(--safe-top) + 64px);
+}
+
+.idea-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 2px 4px 2px 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  /* 長押しでメニューを開く時に、文字を選んだり iOS のメニューを出したりしない */
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.idea-folder-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  margin: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.idea-folder-toggle:hover {
+  background: var(--surface-2);
+}
+
+.idea-folder-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.idea-folder-chevron {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 0.15s;
+  transform: rotate(90deg);
+}
+
+.idea-folder.is-collapsed > .idea-folder-head .idea-folder-chevron {
+  transform: rotate(0deg);
+}
+
+.idea-folder-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.idea-folder-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.idea-folder-count {
+  flex: none;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge.idea-folder-by {
+  flex: none;
+  font-weight: 600;
+}
+
+.icon-btn.idea-folder-add,
+.icon-btn.idea-folder-menu {
+  width: 36px;
+  height: 36px;
+}
+
+.icon-btn.idea-folder-add {
+  color: var(--accent);
+}
+
+/* 中（中のフォルダ → このフォルダのカード）。左の線で段を示す */
+.idea-folder-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin-left: 8px;
+  padding: 8px 0 2px 12px;
+  border-left: 2px solid var(--border);
+}
+
+.idea-folder-body[hidden] {
+  display: none;
+}
+
+.idea-folder-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.idea-folder-empty:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.idea-folder-empty-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.idea-folder-empty-add .icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* 狭い画面: 段の字下げを詰め、［＋ フォルダ］と見出しの「Claude が作成」はアイコンだけにする（文字は読み上げに残す） */
+@media (max-width: 719px) {
+  .idea-folder-body {
+    margin-left: 6px;
+    padding-left: 8px;
+  }
+
+  .btn.idea-folder-create {
+    min-width: 40px;
+    min-height: 36px;
+    padding-inline: 8px;
+  }
+
+  .idea-folder-create-label {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .badge.idea-claude-badge.is-compact {
+    padding-inline: 4px;
+  }
+
+  .badge.idea-claude-badge.is-compact .idea-claude-badge-label {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
 /* ---------- カード ---------- */
 .idea-list {
   display: flex;
@@ -407,20 +635,25 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Claude がコネクタで作ったアイデアの印（Claude 連携の .badge.cl-badge と同じ見た目。claude.css はホームで読み込まない） */
-.badge.idea-card-by {
+/* 「Claude が作成」の印（Claude が作ったアイデア・フォルダ。ClaudeMadeBadge。Claude 連携の .badge.cl-badge と同じ見た目。
+   claude.css はホームで読み込まない） */
+.badge.idea-claude-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 6px;
   white-space: nowrap;
   background: var(--area-critique-soft);
   color: var(--area-critique-text);
 }
 
-.badge.idea-card-by .icon {
+.badge.idea-claude-badge .icon {
+  flex: none;
   width: 12px;
   height: 12px;
+}
+
+.badge.idea-card-by {
+  margin-left: 6px;
 }
 
 /* ---------- 追加・編集ダイアログ ---------- */

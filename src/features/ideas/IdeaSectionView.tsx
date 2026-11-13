@@ -1,14 +1,17 @@
 // アイデア領域の仕切り1つ分（タイトルごと、または「どのタイトルにも属さない」）。
 // ホームでは折りたたみでき、タイトル画面のアイデアタブでは常に開いた状態で使う。
-// 済み（実装した・没にした）のアイデアは、済みでないものの下に「済み n件」の区切りを挟んでまとまる。
+// 2.9: 中は、道具の行（［＋ フォルダ］）→ フォルダ（2段まで。IdeaFolderView）→ フォルダに入っていないカードの順。
+// 済み（実装した・没にした）のアイデアは、入れ物（フォルダの外・フォルダの中）ごとに、済みでないものの下に「済み n件」の区切りを
+// 挟んでまとまる。件数は仕切りのすべてのカード（フォルダの中も）。
 import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { isIdeaChecked, type IdeaSection } from '../../domain/entityOps'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
 import { attempt, notify } from '../../store/uiStore'
-import { BookIcon, ChevronRightIcon, PlusIcon } from '../../ui/icons'
-import { IdeaCard } from './IdeaCard'
+import { BookIcon, ChevronRightIcon, FolderIcon, PlusIcon } from '../../ui/icons'
+import { createFolderFlow } from './folderFlows'
+import { IdeaCardList, IdeaFolderList, IdeaFolderMenuProvider } from './IdeaFolderView'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { InboxIcon } from './ideaIcons'
 import { ideaModalDraftKey, sectionDisplayName, sectionKey } from './ideaLogic'
@@ -41,7 +44,8 @@ export function IdeaSectionView({
   // 件数は済みのものも含めた数（仕切りに入っているアイデアの数）。済みの数は区切りと読み上げで伝える
   const count = section.ideas.length
   const doneCount = section.ideas.reduce((n, i) => (isIdeaChecked(i) ? n + 1 : n), 0)
-  const openCount = count - doneCount
+  const { tree } = section
+  const empty = count === 0 && tree.folders.length === 0
   const isCollapsed = collapsible && collapsed
   const key = sectionKey(section.titleId)
 
@@ -121,39 +125,36 @@ export function IdeaSectionView({
       </div>
 
       <div id={bodyId} className="idea-section-body" hidden={isCollapsed}>
-        {count === 0 ? (
-          <button type="button" className="idea-section-empty" onClick={() => setAdding(true)} data-testid="idea-section-empty">
-            <span>まだアイデアはありません。</span>
-            <span className="idea-section-empty-add">
+        <IdeaFolderMenuProvider>
+          <div className="idea-section-tools">
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost idea-folder-create"
+              onClick={() => void createFolderFlow({ titleId: section.titleId, parentId: null })}
+              aria-label={`『${name}』にフォルダを作る`}
+              title="この仕切りにフォルダを作る"
+              data-testid="idea-folder-create"
+            >
               <PlusIcon />
-              ここに追加
-            </span>
-          </button>
-        ) : (
-          <ul className="idea-list">
-            {/* 1つの平らな並びにする（済みにしたカードが動いても作り直さず、開いている編集ダイアログなどが残る） */}
-            {section.ideas.flatMap((idea, i) => {
-              const card = (
-                <IdeaCard
-                  key={idea.id}
-                  idea={idea}
-                  sectionName={name}
-                  unassigned={unassigned}
-                  first={i === 0}
-                  last={i === openCount - 1}
-                />
-              )
-              // 済みのアイデアの前に区切り（並びは sortIdeas: 済みでないもの → 済み）
-              if (i !== openCount) return [card]
-              return [
-                <li key="done-divider" className="idea-list-done" aria-hidden="true" data-testid="idea-done-divider">
-                  済み {doneCount}件
-                </li>,
-                card,
-              ]
-            })}
-          </ul>
-        )}
+              <FolderIcon />
+              <span className="idea-folder-create-label">フォルダ</span>
+            </button>
+          </div>
+          {tree.folders.length ? (
+            <IdeaFolderList nodes={tree.folders} titleId={section.titleId} sectionName={name} unassigned={unassigned} />
+          ) : null}
+          {empty ? (
+            <button type="button" className="idea-section-empty" onClick={() => setAdding(true)} data-testid="idea-section-empty">
+              <span>まだアイデアはありません。</span>
+              <span className="idea-section-empty-add">
+                <PlusIcon />
+                ここに追加
+              </span>
+            </button>
+          ) : tree.loose.length ? (
+            <IdeaCardList ideas={tree.loose} place={name} unassigned={unassigned} />
+          ) : null}
+        </IdeaFolderMenuProvider>
       </div>
 
       {adding ? (

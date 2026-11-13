@@ -2,7 +2,7 @@
 //   if (await confirmDialog({ title: '削除しますか？', danger: true })) { ... }
 //   const name = await promptDialog({ title: 'タイトル名', initial: '' })
 //   const choice = await choiceDialog({ title: '…', choices: [{ value: 'save', label: '保存する', primary: true }, …] })
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { create } from 'zustand'
 import { Modal } from './Modal'
 
@@ -23,8 +23,14 @@ interface PromptOptions {
   multiline?: boolean
   /** 空欄を許可するか（既定: 許可しない） */
   allowEmpty?: boolean
-  /** 開いた時に初期値を全選択する（そのまま打ち直せるように） */
+  /** 開いた時に初期値を全選択する（そのまま打ち直せるように）。選ばない時は、カーソルを初期値の後ろに置く */
   selectOnOpen?: boolean
+  /** 入力欄の下に出す短い説明 */
+  hint?: string
+  /** 入力できる長さ（1行の入力欄だけ） */
+  maxLength?: number
+  /** 入力の確かめ。問題があればその文（入力欄の下に出し、OK を押せない）、無ければ null。空欄の時は呼ばない（allowEmpty を除く） */
+  validate?: (value: string) => string | null
 }
 
 export interface Choice<T extends string> {
@@ -181,14 +187,19 @@ function ConfirmView({ req }: { req: Extract<DialogRequest, { kind: 'confirm' }>
 function PromptView({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }> }) {
   const { opts } = req
   const [value, setValue] = useState(opts.initial ?? '')
+  const hintId = useId()
+  const problemId = useId()
   const close = (v: string | null) => {
     dequeue()
     req.resolve(v)
   }
-  const canSubmit = opts.allowEmpty || value.trim().length > 0
+  const filled = opts.allowEmpty || value.trim().length > 0
+  const problem = filled && opts.validate ? opts.validate(value) : null
+  const canSubmit = filled && problem === null
   const submit = () => {
     if (canSubmit) close(value)
   }
+  const describedBy = [opts.hint ? hintId : '', problem ? problemId : ''].filter(Boolean).join(' ') || undefined
   return (
     <Modal
       title={opts.title}
@@ -198,7 +209,7 @@ function PromptView({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }> }
           <button type="button" className="btn" onClick={() => close(null)}>
             キャンセル
           </button>
-          <button type="button" className="btn btn-primary" onClick={submit} disabled={!canSubmit}>
+          <button type="button" className="btn btn-primary" onClick={submit} disabled={!canSubmit} data-testid="prompt-ok">
             {opts.confirmLabel ?? 'OK'}
           </button>
         </>
@@ -218,6 +229,8 @@ function PromptView({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }> }
               rows={5}
               value={value}
               placeholder={opts.placeholder}
+              aria-describedby={describedBy}
+              aria-invalid={problem ? true : undefined}
               onChange={(e) => setValue(e.target.value)}
             />
           ) : (
@@ -225,11 +238,30 @@ function PromptView({ req }: { req: Extract<DialogRequest, { kind: 'prompt' }> }
               className="input"
               value={value}
               placeholder={opts.placeholder}
+              maxLength={opts.maxLength}
+              aria-describedby={describedBy}
+              aria-invalid={problem ? true : undefined}
               onChange={(e) => setValue(e.target.value)}
-              onFocus={opts.selectOnOpen ? (e) => e.currentTarget.select() : undefined}
+              onFocus={(e) => {
+                const el = e.currentTarget
+                if (opts.selectOnOpen) el.select()
+                // 初期値の後ろから続けて書けるように（「2026/11/13　」の後ろにテーマを書く）
+                else el.setSelectionRange(el.value.length, el.value.length)
+              }}
+              data-testid="prompt-input"
             />
           )}
         </label>
+        {opts.hint ? (
+          <p id={hintId} className="dialog-hint small muted">
+            {opts.hint}
+          </p>
+        ) : null}
+        {problem ? (
+          <p id={problemId} className="dialog-problem small" role="alert" data-testid="prompt-problem">
+            {problem}
+          </p>
+        ) : null}
       </form>
     </Modal>
   )

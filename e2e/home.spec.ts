@@ -1219,7 +1219,7 @@ test.describe('タイトル画面のアイデアタブ', () => {
     await openApp(page, `/t/${a}?tab=ideas`)
     await expect(page.getByTestId('tab-ideas')).toHaveAttribute('aria-selected', 'true')
     const tab = page.getByTestId('title-ideas')
-    await expect(tab).toContainText('「どのタイトルにも属さない」へ移せます')
+    await expect(tab).toContainText('ほかのタイトルやフォルダへ移せます')
     await expect(tab.getByTestId('idea-section')).toHaveCount(1)
     await expect(tab.getByTestId('idea-section')).toHaveAttribute('data-section', a)
     await expect(cardsIn(tab)).toHaveCount(2)

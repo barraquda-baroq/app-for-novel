@@ -1,4 +1,5 @@
 // タイトル画面のアイデアタブ: このタイトルの仕切りだけを表示する（ホームのアイデア領域と同じ部品）。
+// 仕切りは閉じられないが、フォルダ（2.9）は開け閉めでき、ホームと同じくこの端末に覚えておく（folderCollapse.ts）。
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { ideaSections } from '../../../domain/entityOps'
@@ -20,8 +21,9 @@ export function TitleIdeasTab({ titleId }: { titleId: ID }) {
   return (
     <div className="tideas" data-testid="title-ideas">
       <div className="tideas-head">
-        <p className="tideas-hint">
-          このタイトルのアイデアです。各アイデアの「移動」から、ほかのタイトルや「どのタイトルにも属さない」へ移せます。
+        <p className="tideas-hint" data-testid="title-ideas-hint">
+          フォルダ（2段まで）に分けられます（［＋
+          フォルダ］）。カードは［移動］か［選んで移す］で、ほかのタイトルやフォルダへ移せます。
         </p>
         <Link
           to={{ pathname: paths.home(), search: `?view=ideas&focus=${encodeURIComponent(titleId)}` }}

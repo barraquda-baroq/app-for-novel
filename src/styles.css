@@ -1022,6 +1022,19 @@ h4 {
   width: 100%;
 }
 
+/* 入力ダイアログの入力欄の下の説明・入力の問題（OK を押せない理由） */
+.dialog-hint,
+.dialog-problem {
+  margin: 8px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.dialog-problem {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 @media (max-width: 720px) {
   .dialog-choices {
     flex-direction: column-reverse;
