@@ -30,7 +30,7 @@ import { applyTrashRequests } from '../domain/claudeTrash'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
 import * as F from '../domain/ideaFolderOps'
-import { buildIdeaTree, type IdeaFolderNode } from '../domain/ideaFolders'
+import { buildIdeaTree, isTopFolder, type IdeaFolderNode } from '../domain/ideaFolders'
 import { hashJson } from '../domain/hash'
 import * as M from '../domain/materialOps'
 import { repairData } from '../domain/repair'
@@ -2694,6 +2694,247 @@ describe('アイデアのフォルダの同期（2.9。エミュレーター）'
       loose: ['案3', '案4', '案5', '案6', '案7', '案8'],
     })
     expect(back.trashEntries).toEqual({})
+  })
+
+  /** 画面と同じく、修復した表示用の内容（見せ方はフォルダの外）で操作し、触ったカードだけを表示用の形で書く（appStore と同じ） */
+  function touchIdea(raw: AppData, id: string, op: (view: AppData) => AppData): AppData {
+    const next = op(repairData(raw).data)
+    return { ...raw, ideas: { ...raw.ideas, [id]: next.ideas[id] } }
+  }
+
+  it('フォルダがゴミ箱にある間に、そのフォルダを指すカード（見せ方はフォルダの外）を直して済みにしても、参照は消えず、フォルダを戻すと中に戻る', async () => {
+    const { a, b, ids } = await twoDevices()
+    let folderId = ''
+    await a.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, null, '新作の相談', ids.slice(0, 2))
+      folderId = r.result.folderId
+      return r.data
+    })
+    await settle(a, b)
+    b.offline()
+    await a.edit((d) => F.deleteIdeaFolder(d, folderId))
+    await settle(a)
+    let added = ''
+    await b.edit((d) => {
+      const r = E.addIdea(d, null, '', 'オフラインで足した案', folderId)
+      added = r.result
+      return r.data
+    })
+    await b.online()
+    await settle(a, b)
+    // フォルダの外に見えているカードを、b で直して済みにする（修復した内容から書く。フォルダへの参照は消さない）
+    await b.edit((d) => touchIdea(d, added, (v) => E.setIdeaChecked(E.updateIdea(v, added, { body: '直した案' }), added, true)))
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.ideas[added]).toMatchObject({ body: '直した案', checked: true, folderId })
+      expect(treeOf(data, null).folders).toEqual([])
+      expect(treeOf(data, null).loose).toContain('直した案')
+    }
+    const cloudIdea = decodeRecord((await cloud(a, `ideas:${added}`)) as RecordDoc, () => undefined) as Idea
+    expect(cloudIdea).toMatchObject({ body: '直した案', folderId })
+    // フォルダを戻すと、直したカードも中に戻る（済みは中で下に沈む）
+    const entry = Object.values((await a.load()).trashEntries).find((e) => e.kind === 'ideaFolder')!
+    await a.edit((d) => T.restoreTrashEntry(d, entry.id).data)
+    await settle(a, b)
+    expect(treeOf(await b.load(), null)).toEqual({
+      folders: [{ name: '新作の相談', folders: [], ideas: ['案1', '案2', '直した案'] }],
+      loose: ['案3', '案4', '案5', '案6', '案7', '案8'],
+    })
+    expect([...a.notes, ...b.notes]).toEqual([])
+  })
+
+  it('片方でフォルダを削除・片方でその中のカードの文を直すと、カードは消えて直した文の控えがゴミ箱に残る（フォルダを戻すと前の文で戻り、控えは残る）', async () => {
+    const { a, b, ids } = await twoDevices()
+    let folderId = ''
+    await a.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, null, '新作の相談', ids.slice(0, 2))
+      folderId = r.result.folderId
+      return r.data
+    })
+    await settle(a, b)
+    b.offline()
+    await a.edit((d) => F.deleteIdeaFolder(d, folderId))
+    await settle(a)
+    await b.edit((d) => E.updateIdea(d, ids[0], { body: '案1。オフラインで書き足した' }))
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.ideaFolders[folderId]).toBeUndefined()
+      expect(data.ideas[ids[0]]).toBeUndefined()
+      expect(treeOf(data, null)).toEqual({ folders: [], loose: ['案3', '案4', '案5', '案6', '案7', '案8'] })
+      // ゴミ箱はフォルダの1件と、直した文の控え（競合）の1件
+      const entries = Object.values(data.trashEntries)
+      expect(entries.map((e) => [e.kind, e.reason]).sort()).toEqual([
+        ['idea', 'conflict'],
+        ['ideaFolder', 'deleted'],
+      ])
+      const copy = entries.find((e) => e.reason === 'conflict')!
+      expect(copy.recordIds.map((id) => (data.trashRecords[id].record as Idea).body)).toEqual(['案1。オフラインで書き足した'])
+    }
+    // フォルダを戻すと、カードはフォルダの削除の時の文で戻る。直した文の控えはゴミ箱に残る
+    const entry = Object.values((await a.load()).trashEntries).find((e) => e.kind === 'ideaFolder')!
+    await a.edit((d) => T.restoreTrashEntry(d, entry.id).data)
+    await settle(a, b)
+    const back = await b.load()
+    expect(treeOf(back, null)).toEqual({
+      folders: [{ name: '新作の相談', folders: [], ideas: ['案1', '案2'] }],
+      loose: ['案3', '案4', '案5', '案6', '案7', '案8'],
+    })
+    expect(Object.values(back.trashEntries).map((e) => [e.kind, e.reason])).toEqual([['idea', 'conflict']])
+  })
+
+  it('片方でフォルダを削除・片方でその中のフォルダ（2段目）をほかの1段目へ移すと、削除が勝つ（控えは作らない）。戻すと2段目も元の場所に戻る', async () => {
+    const { a, b, ids } = await twoDevices()
+    let parent = ''
+    let sub = ''
+    let other = ''
+    await a.edit((d) => {
+      const p = F.createIdeaFolderAndMove(d, null, null, '場面の相談', [ids[2]])
+      parent = p.result.folderId
+      const s = F.createIdeaFolderAndMove(p.data, null, parent, '雨の駅', ids.slice(0, 2))
+      sub = s.result.folderId
+      const o = F.createIdeaFolder(s.data, null, null, '別の相談')
+      other = o.result
+      return o.data
+    })
+    await settle(a, b)
+    const start = treeOf(await a.load(), null)
+    expect(start.folders).toEqual([
+      { name: '別の相談', folders: [], ideas: [] },
+      { name: '場面の相談', folders: [{ name: '雨の駅', folders: [], ideas: ['案1', '案2'] }], ideas: ['案3'] },
+    ])
+    b.offline()
+    await a.edit((d) => F.deleteIdeaFolder(d, parent))
+    await settle(a)
+    await b.edit((d) => F.moveIdeaFolder(d, sub, { titleId: null, parentId: other }))
+    expect(treeOf(await b.load(), null).folders[0]).toEqual({
+      name: '別の相談',
+      folders: [{ name: '雨の駅', folders: [], ideas: ['案1', '案2'] }],
+      ideas: [],
+    })
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.ideaFolders[parent]).toBeUndefined()
+      expect(data.ideaFolders[sub]).toBeUndefined()
+      expect(treeOf(data, null)).toEqual({
+        folders: [{ name: '別の相談', folders: [], ideas: [] }],
+        loose: ['案4', '案5', '案6', '案7', '案8'],
+      })
+      // フォルダは文の表ではないので、移した方の控えは作らない（ゴミ箱はフォルダの削除の1件だけ）
+      expect(Object.values(data.trashEntries).map((e) => [e.kind, e.reason])).toEqual([['ideaFolder', 'deleted']])
+    }
+    // 戻すと、2段目は削除の時の場所（場面の相談の中）に、中のカードと一緒に戻る
+    const entry = Object.values((await a.load()).trashEntries)[0]
+    await a.edit((d) => T.restoreTrashEntry(d, entry.id).data)
+    await settle(a, b)
+    const back = await b.load()
+    expect(back.ideaFolders[sub].parentId).toBe(parent)
+    expect(treeOf(back, null)).toEqual(start)
+    expect(back.trashEntries).toEqual({})
+  })
+
+  it('片方でフォルダを削除・片方でその中にフォルダ（2段目）を作ると、作ったフォルダは1段目に見え（親への参照はそのまま）、戻すと中に戻る', async () => {
+    const { a, b, ids } = await twoDevices()
+    let folderId = ''
+    await a.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, null, '新作の相談', ids.slice(0, 2))
+      folderId = r.result.folderId
+      return r.data
+    })
+    await settle(a, b)
+    b.offline()
+    await a.edit((d) => F.deleteIdeaFolder(d, folderId))
+    await settle(a)
+    let sub = ''
+    await b.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, folderId, '2026/11/12　港町', [ids[5]])
+      sub = r.result.folderId
+      return r.data
+    })
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.ideaFolders[folderId]).toBeUndefined()
+      expect(data.ideaFolders[sub].parentId).toBe(folderId)
+      expect(isTopFolder(data, data.ideaFolders[sub])).toBe(true)
+      expect(treeOf(data, null)).toEqual({
+        folders: [{ name: '2026/11/12　港町', folders: [], ideas: ['案6'] }],
+        loose: ['案3', '案4', '案5', '案7', '案8'],
+      })
+    }
+    const entry = Object.values((await a.load()).trashEntries).find((e) => e.kind === 'ideaFolder')!
+    await a.edit((d) => T.restoreTrashEntry(d, entry.id).data)
+    await settle(a, b)
+    expect(treeOf(await b.load(), null)).toEqual({
+      folders: [
+        { name: '新作の相談', folders: [{ name: '2026/11/12　港町', folders: [], ideas: ['案6'] }], ideas: ['案1', '案2'] },
+      ],
+      loose: ['案3', '案4', '案5', '案7', '案8'],
+    })
+    expect([...a.notes, ...b.notes]).toEqual([])
+  })
+
+  it('120枚をまとめてフォルダへ移すと、送信が2回に分かれ、途中で届いたカードはフォルダの外に見え（なくならない）、最後は同じ木になる', async () => {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    await a.edit((d) => {
+      let data = d
+      for (let i = 1; i <= 120; i++) data = E.addIdea(data, null, '', `案${i}`).data
+      return data
+    })
+    await settle(a, b)
+    const ids = Object.values((await a.load()).ideas)
+      .sort((x, y) => x.order - y.order)
+      .map((i) => i.id)
+    const bodies = ids.map((_, i) => `案${i + 1}`)
+    let folderId = ''
+    let partial: { moved: number; folder: boolean; tree: ReturnType<typeof treeOf> } | null = null
+    // 1回目の送信（100件まで。カードはフォルダより先に送る）が届いた所で、もう一方の端末の見え方を控える
+    listen.afterTx.set(a.fs, async () => {
+      try {
+        await waitFor(
+          async () => Object.values((await b.load()).ideas).filter((i) => i.folderId === folderId).length >= 100,
+          '1回目の送信が届く',
+        )
+        const data = await b.load()
+        partial = {
+          moved: Object.values(data.ideas).filter((i) => i.folderId === folderId).length,
+          folder: !!data.ideaFolders[folderId],
+          tree: treeOf(data, null),
+        }
+      } catch {
+        // 下の expect で分かる
+      }
+    })
+    await a.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, null, '大きな相談', ids)
+      folderId = r.result.folderId
+      expect(r.result.moved).toBe(120)
+      return r.data
+    })
+    await settle(a, b)
+    // 途中: 100枚はフォルダへの参照を持って届いたが、フォルダはまだ無いので、120枚ともフォルダの外に見える
+    expect(partial).not.toBeNull()
+    expect(partial!.moved).toBe(100)
+    expect(partial!.folder).toBe(false)
+    expect(partial!.tree.folders).toEqual([])
+    expect([...partial!.tree.loose].sort()).toEqual([...bodies].sort())
+    // 最後: 同じ木（並びも元のまま）
+    for (const d of [a, b]) {
+      expect(treeOf(await d.load(), null)).toEqual({
+        folders: [{ name: '大きな相談', folders: [], ideas: bodies }],
+        loose: [],
+      })
+    }
+    expect([...a.notes, ...b.notes]).toEqual([])
   })
 
   it('同期の形の版が古い端末（2.8）は、次の同期でフォルダを受け取り直す', async () => {

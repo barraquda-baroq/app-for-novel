@@ -1,7 +1,7 @@
 // コネクタの結合テスト（Firebase エミュレーターの Auth・Firestore、本番のアクセスルール）。
 // 実行: npm run test:connector:emu（リポジトリの直下で）
 // アプリの端末（同期のエンジン・端末内の保存）と、コネクタの Vault の中身（node:sqlite）を一緒に動かす。
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import { appModelRef } from '../../../src/sync/appModel'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import * as B from '../../../src/domain/benchOps'
@@ -10,13 +10,19 @@ import { applyClaudeRequests } from '../../../src/domain/claudeRequests'
 import { applyTrashRequests } from '../../../src/domain/claudeTrash'
 import * as C from '../../../src/domain/claudeOps'
 import * as E from '../../../src/domain/entityOps'
+import { buildIdeaTree, effectiveParentId, isTopFolder, type IdeaFolderNode } from '../../../src/domain/ideaFolders'
 import * as M from '../../../src/domain/materialOps'
+import { repairData } from '../../../src/domain/repair'
 import * as S from '../../../src/domain/storyOps'
+import type { AppData, IdeaFolder } from '../../../src/domain/types'
+import { jstSlashDate } from '../../../src/claude/dates'
 import { isClaudeIdea } from '../../../src/claude/ideaAppend'
+import { isClaudeFolder } from '../../../src/claude/ideaFolders'
 import { pairingHash, randomPairingKey } from '../../../src/claude/pairing'
 import { deleteConnector, removeConnection, renameConnection } from '../../../src/features/claude/connectorDoc'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { FirestoreError } from '../../src/vault/firestore'
+import { prepareWrite } from '../../src/vault/writer'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import { stableStringify } from '../../../src/sync/merge'
 import {
@@ -51,8 +57,41 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const stop of watching.splice(0)) stop()
   await cleanup()
 })
+
+const watching: (() => void)[] = []
+
+/**
+ * 端末の Firestore が受け取った通知ごとに、コネクタが作った記録の文書（「表:id」）を控える（1回の書き込みが1つの通知で
+ * 届くかを見る）
+ */
+function watchConnectorWrites(d: Device): string[][] {
+  const batches: string[][] = []
+  watching.push(
+    onSnapshot(collection(d.fs, 'users', d.uid, 'records'), (snap) => {
+      const keys = snap
+        .docChanges()
+        .filter((c) => c.type !== 'removed' && c.doc.data().device === 'claude-connector')
+        .map((c) => c.doc.id)
+      if (keys.length) batches.push(keys)
+    }),
+  )
+  return batches
+}
+
+/** 見せ方の木（仕切りの中の1段目・2段目と、そのカードの名前（1行目の日時の後ろ））を書き出す */
+function treeOf(data: AppData, section: string | null) {
+  const tree = buildIdeaTree(data, section)
+  const name = (body: string) => body.split('\n')[0].split('　').slice(1).join('　')
+  const node = (n: IdeaFolderNode): unknown => ({
+    name: n.folder.name,
+    folders: n.folders.map(node),
+    ideas: n.ideas.map((i) => name(i.body)),
+  })
+  return { folders: tree.folders.map(node), loose: tree.loose.map((i) => name(i.body)) }
+}
 
 /** 持ち主の端末で、本文の入った話を並べたタイトルを作る */
 async function writeNovel(d: Device, bodies: string[], name = '星の庭') {
@@ -670,6 +709,161 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     const d = snap.data() as RecordDoc
     expect(d.device).toBe('claude-connector')
     expect(decodeRecord(d, () => undefined)).toMatchObject({ id, titleId: null, name: '全体の批評', source: 'claude' })
+  })
+
+  it('アイデアのフォルダ（2.9）: folder・subfolder で足すと、フォルダとカードが1回の書き込みで届き（端末の1つの通知に全部）、アプリの木にそのまま出る', async () => {
+    const { owner, titleId } = await ownerWithNovel(['本文の一話目。'])
+    const { core } = makeConnector()
+    await pair(core, owner)
+    const batches = watchConnectorWrites(owner)
+    const card = (name: string, content: string) => ({ name, content })
+    // ホーム: 1段目だけを言った（その中に「日付　theme」の2段目を作ってまとめる）
+    const before = new Set(Object.keys(core.views().raw.ideas))
+    const home = await tool(core, 'novel_add_ideas', {
+      folder: '新作の相談',
+      theme: '港町',
+      items: [card('灯台', '【場面】\n・灯台の下'), card('手紙', '【小道具】\n・古い手紙'), card('兄', '【人物】\n・兄を探す')],
+    })
+    expect(home.isError).toBeUndefined()
+    const dated = `${jstSlashDate(Date.now())}　港町`
+    expect(home.text).toContain('アイデアを足す: 追加 3件')
+    expect(home.text).toContain(`フォルダ: 新作の相談 [f:`)
+    expect(home.text).toContain(`（新しく作成）＞${dated} [f:`)
+    // タイトル: 2段とも言った（無ければ作る）
+    const inTitle = await tool(core, 'novel_add_ideas', {
+      title_id: titleId,
+      folder: '場面の相談',
+      subfolder: '雨の駅',
+      items: [card('雨宿り', '【場面】\n・駅で雨宿り'), card('終電', '【場面】\n・終電を逃す')],
+    })
+    expect(inTitle.isError).toBeUndefined()
+    expect(inTitle.text).toContain('入れた場所: タイトル『星の庭』のアイデア＞場面の相談＞雨の駅（')
+    const raw = core.views().raw
+    const made = [
+      ...Object.keys(raw.ideaFolders).map((id) => `ideaFolders:${id}`),
+      ...Object.keys(raw.ideas)
+        .filter((id) => !before.has(id))
+        .map((id) => `ideas:${id}`),
+    ]
+    expect(made).toHaveLength(4 + 5)
+    await waitFor(async () => {
+      const d = await owner.load()
+      return made.every((k) => {
+        const [t, id] = k.split(':')
+        return t === 'ideas' ? d.ideas[id] : d.ideaFolders[id]
+      })
+    }, '端末にフォルダとカードが届く')
+    // 1回の呼び出しの記録（フォルダ2つ・カード）は、1つの通知でまとめて届く（カードだけが先に見えることはない）
+    for (const [t, n] of [
+      [null, 5],
+      [titleId, 4],
+    ] as const) {
+      const keys = made.filter((k) => {
+        const [table, id] = k.split(':')
+        return (table === 'ideas' ? raw.ideas[id].titleId : raw.ideaFolders[id].titleId) === t
+      })
+      expect(keys).toHaveLength(n)
+      const first = batches.find((b) => b.some((k) => keys.includes(k)))!
+      expect(keys.filter((k) => !first.includes(k))).toEqual([])
+    }
+    // アプリ（修復した表示用の内容）の木と、Claude に見せる木は同じ。どのフォルダも Claude のフォルダ（印が付く）
+    const app = repairData(await owner.load()).data
+    for (const d of [app, core.views().view]) {
+      expect(treeOf(d, null)).toEqual({
+        folders: [{ name: '新作の相談', folders: [{ name: dated, folders: [], ideas: ['灯台', '手紙', '兄'] }], ideas: [] }],
+        loose: [],
+      })
+      expect(treeOf(d, titleId)).toEqual({
+        folders: [{ name: '場面の相談', folders: [{ name: '雨の駅', folders: [], ideas: ['雨宿り', '終電'] }], ideas: [] }],
+        loose: [],
+      })
+    }
+    expect(Object.values(app.ideaFolders).every((f) => isClaudeFolder(f))).toBe(true)
+    expect(owner.notes).toEqual([])
+  })
+
+  it('アイデアのフォルダ（2.9）: 作り物のフォルダ（3段目・別の仕切りの親）とカード（別の仕切りのフォルダ）も、アプリと Claude は2段までに見せ、ほかの仕切りへつながない', async () => {
+    const { owner, titleId } = await ownerWithNovel(['本文の一話目。'])
+    const { core } = makeConnector()
+    await pair(core, owner)
+    const added = await tool(core, 'novel_add_ideas', {
+      folder: '新作の相談',
+      subfolder: '港町',
+      items: [
+        { name: '灯台', content: '【場面】\n・灯台の下' },
+        { name: '手紙', content: '【小道具】\n・古い手紙' },
+      ],
+    })
+    expect(added.isError).toBeUndefined()
+    const raw = core.views().raw
+    const top = Object.values(raw.ideaFolders).find((f) => f.name === '新作の相談')!
+    const sub = Object.values(raw.ideaFolders).find((f) => f.name === '港町')!
+    const sample = Object.values(raw.ideas)[0]
+    // 乗っ取られたコネクタが、ルールの通る形（cf-・cy-・作るだけ）で、つながりのおかしな記録を作った
+    const ts = Date.now()
+    const folder = (id: string, t: string | null, parentId: string | null, name: string, order: number): IdeaFolder => ({
+      id,
+      titleId: t,
+      parentId,
+      name,
+      order,
+      source: 'claude',
+      v: 1,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+    const forged = [
+      // 2段目の中のフォルダ（3段目）
+      { table: 'ideaFolders' as const, record: folder('cf-forged.depth3', null, sub.id, '作り物の3段目', 5) },
+      // タイトルのフォルダの親がホームのフォルダ
+      { table: 'ideaFolders' as const, record: folder('cf-forged.cross', titleId, top.id, '作り物の別の仕切り', 0) },
+      // 3段目のフォルダに入ったカード
+      {
+        table: 'ideas' as const,
+        record: { ...sample, id: 'cy-forged.deep', body: '2026/11/13 09:00　作り物の深いカード', folderId: 'cf-forged.depth3' },
+      },
+      // ホームのカードが、タイトルのフォルダを指す
+      {
+        table: 'ideas' as const,
+        record: {
+          ...sample,
+          id: 'cy-forged.other',
+          titleId: null,
+          body: '2026/11/13 09:00　作り物の外のカード',
+          folderId: 'cf-forged.cross',
+        },
+      },
+    ]
+    await core.fs.commit(forged.map((r) => prepareWrite(core.fs, owner.uid, r).write))
+    await waitFor(async () => (await owner.load()).ideas['cy-forged.other'], '端末に作り物の記録が届く')
+    // Claude の写しにも届く（ツールを呼ぶと読み直す）
+    const notes = (await tool(core, 'novel_get_notes', { kind: 'ideas' })).text.split('\n')
+    expect(core.views().raw.ideaFolders['cf-forged.depth3']).toBeDefined()
+    const app = repairData(await owner.load()).data
+    for (const d of [app, core.views().view]) {
+      // 3段目は1段目として見せ（中のカードもそこ）、ホームのカードはタイトルのフォルダに入れず、フォルダの外に見せる
+      expect(treeOf(d, null)).toEqual({
+        folders: [
+          { name: '新作の相談', folders: [{ name: '港町', folders: [], ideas: ['灯台', '手紙'] }], ideas: [] },
+          { name: '作り物の3段目', folders: [], ideas: ['作り物の深いカード'] },
+        ],
+        loose: ['作り物の外のカード'],
+      })
+      // 親がホームにあるタイトルのフォルダは、タイトルの1段目
+      expect(treeOf(d, titleId)).toEqual({ folders: [{ name: '作り物の別の仕切り', folders: [], ideas: [] }], loose: [] })
+      // 3段目は親へのつながりはあるが、親が2段目なので1段目として見せる。別の仕切りの親にはつながらない
+      expect(isTopFolder(d, d.ideaFolders['cf-forged.depth3'])).toBe(false)
+      expect(effectiveParentId(d, d.ideaFolders['cf-forged.depth3'])).toBeNull()
+      expect(isTopFolder(d, d.ideaFolders['cf-forged.cross'])).toBe(true)
+    }
+    // Claude の一覧も同じ形（字下げは2段まで）
+    const line = (name: string) => notes.find((l) => l.includes(name))!
+    expect(line('作り物の3段目')).toMatch(/^【フォルダ】f:[0-9a-z]+ 【Claude】作り物の3段目$/)
+    expect(line('作り物の深いカード')).toMatch(/^ {2}i:/)
+    expect(line('港町')).toMatch(/^ {2}【フォルダ】/)
+    expect(notes.indexOf('（フォルダの外）')).toBeLessThan(notes.indexOf(line('作り物の外のカード')))
+    expect(line('作り物の外のカード')).toMatch(/^i:/)
+    expect(notes.filter((l) => /^ {6}/.test(l))).toEqual([])
   })
 
   it('複数の接続（2.9）: 2回許可すると一覧に2つ。どちらの許可も使え、1つ解除するとその許可だけ使えない（Vault は連携したまま）。すべて解除で両方とも使えない', async () => {

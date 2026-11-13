@@ -11,7 +11,7 @@ import { buildAddIdeas, buildIdeaAppend } from '../src/claude/ideaWrite'
 import { shortId } from '../src/claude/refs'
 import { buildTrashRequests } from '../src/claude/trashRequest'
 import { claudeView } from '../src/claude/visibility'
-import type { Idea } from '../src/domain/types'
+import type { Idea, IdeaFolder } from '../src/domain/types'
 import { DATA_MODEL } from '../src/sync/appModel'
 import { encodeRecord } from '../src/sync/codec'
 import type { Rec } from '../src/sync/merge'
@@ -471,5 +471,80 @@ test('Claude のアイデア（2.8）: コネクタが作ったアイデアが�
   await expect
     .poll(async () => (await readDoc(`users/${uid}/records/ideas:${home.id}`))?.deleted?.booleanValue, { timeout: 20_000 })
     .toBe(false)
+  await ctx.close()
+})
+
+test('Claude のアイデアのフォルダ（2.9）: コネクタが作ったフォルダ（cf-…）とカードが同期で届くと、木の形（1段目＞2段目＞カード）で「Claude が作成」の印つきで出る', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext()
+  const page = await ctx.newPage()
+  await openApp(page)
+  await openHomeBands(page, 'ideas')
+  const uid = await signIn(page, `e2e-folders-${Date.now()}`)
+  const titleId = await seed(page, ({ actions }) => {
+    const t = actions.createTitle('灰の庭')
+    actions.addIdea(null, '', 'ホームの作者の案')
+    return t
+  })
+  await expect.poll(() => readDoc(`users/${uid}/records/titles:${titleId}`), { timeout: 20_000 }).not.toBeNull()
+  // Claude が「新作の相談に入れて」と言われて足した（コネクタと同じ buildAddIdeas。2026/11/12 14:32 日本時間）
+  const madeAt = Date.UTC(2026, 10, 12, 5, 32)
+  const data = await page.evaluate(() => window.__ns.getData())
+  const built = buildAddIdeas(
+    data,
+    claudeView(data),
+    {
+      folder: '新作の相談',
+      theme: '港町',
+      items: [
+        { name: '灯台', content: '【場面】\n・灯台の下' },
+        { name: '手紙', content: '【小道具】\n・古い手紙' },
+      ],
+    },
+    { now: madeAt, wasDeleted: () => false },
+  )
+  expect(built.items.map((i) => i.status)).toEqual(['created', 'created'])
+  expect(built.records.map((r) => r.table)).toEqual(['ideaFolders', 'ideaFolders', 'ideas', 'ideas'])
+  const [top, sub] = built.records.slice(0, 2).map((r) => r.record as IdeaFolder)
+  expect([top.name, sub.name, sub.parentId]).toEqual(['新作の相談', '2026/11/12　港町', top.id])
+  for (const r of built.records) await putConnectorRecord(uid, r.table, r.record as unknown as Rec)
+
+  const home = page.locator('[data-testid="idea-section"][data-section="none"]')
+  const topFolder = home.locator(`[data-testid="idea-folder"][data-folder-id="${top.id}"]`)
+  const subFolder = topFolder.locator(`[data-testid="idea-folder"][data-folder-id="${sub.id}"]`)
+  const headOf = (f: typeof topFolder, testId: string) => f.locator(`:scope > .idea-folder-head [data-testid="${testId}"]`)
+  await expect(subFolder).toBeVisible({ timeout: 20_000 })
+  await expect(topFolder).toHaveAttribute('data-depth', '1')
+  await expect(subFolder).toHaveAttribute('data-depth', '2')
+  // どちらのフォルダにも「Claude が作成」の印。数は中のカード（2段目の分も）
+  for (const [f, name] of [
+    [topFolder, '新作の相談'],
+    [subFolder, '2026/11/12　港町'],
+  ] as const) {
+    await expect(headOf(f, 'idea-folder-name')).toHaveText(name)
+    await expect(headOf(f, 'idea-folder-by')).toHaveAttribute('title', 'Claude がコネクタで作ったフォルダ')
+    await expect(headOf(f, 'idea-folder-by')).toContainText('Claude が作成')
+    await expect(headOf(f, 'idea-folder-count')).toHaveAttribute('data-count', '2')
+  }
+  // カードは2段目にじかに、渡した順で（印つき）。1段目にじかに入ったカードは無い
+  const subCards = subFolder.locator(':scope > .idea-folder-body > .idea-list > [data-testid="idea-card"]')
+  await expect(subCards).toHaveCount(2)
+  await expect(subCards.getByTestId('idea-lead')).toHaveText(['2026/11/12 14:32　灯台', '2026/11/12 14:32　手紙'])
+  for (const c of await subCards.all()) {
+    await expect(c).toHaveAttribute('data-source', 'claude')
+    await expect(c.getByTestId('idea-by-claude')).toHaveText('Claude が作成')
+  }
+  await expect(topFolder.locator(':scope > .idea-folder-body > .idea-list > [data-testid="idea-card"]')).toHaveCount(0)
+  // 作者のカードはフォルダの外のまま。仕切りの数は全部のカード
+  const loose = home.locator(':scope > .idea-section-body > .idea-list > [data-testid="idea-card"]')
+  await expect(loose).toHaveCount(1)
+  await expect(loose.getByTestId('idea-body')).toContainText('ホームの作者の案')
+  const stored = await page.evaluate(() => window.__ns.getData())
+  expect(Object.values(stored.ideaFolders).map((f) => [f.name, f.source])).toEqual([
+    ['新作の相談', 'claude'],
+    ['2026/11/12　港町', 'claude'],
+  ])
+  expect(stored.ideas[(built.records[2].record as Idea).id].folderId).toBe(sub.id)
   await ctx.close()
 })
