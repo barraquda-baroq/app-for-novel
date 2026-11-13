@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence } from '../../db/persistence'
 import { actions } from '../../store/actions'
-import { getData, initStore, resetStoreForTests } from '../../store/appStore'
+import { commit, getData, initStore, resetStoreForTests } from '../../store/appStore'
 import { useToasts } from '../../store/uiStore'
 import { AppFrame } from '../../ui/Layout'
 import { IdeaArea } from '../home/IdeaArea'
@@ -177,6 +177,41 @@ describe('フォルダを移す', () => {
     await openMove(user, 'ｱﾒの 駅')
     await user.click(row('星の庭'))
     expect(screen.getByTestId('idea-folder-move-summary').textContent).toBe('移す先に同じ名前のフォルダがあります。')
+    expect(within(dialog()).getByTestId('idea-folder-move-submit')).toHaveProperty('disabled', true)
+  })
+
+  it('1段目に見えても記録に親へのつながりが残るフォルダ（同期で移動がぶつかった）は、今の場所のまま「1段目にする」で直せる', async () => {
+    const user = userEvent.setup()
+    const ids = { b: '', a: '', c: '' }
+    act(() => {
+      ids.b = actions.createIdeaFolder(null, null, '置き場')
+      ids.a = actions.createIdeaFolder(null, null, '別')
+      ids.c = actions.createIdeaFolder(null, ids.a, '新作の相談')
+      // 端末1が「別」を「置き場」の中へ移し、同じ時に端末2が「別」の中に「新作の相談」を作った（まとめた後の形: C→A→B）
+      const d = getData()
+      commit({ ...d, ideaFolders: { ...d.ideaFolders, [ids.a]: { ...d.ideaFolders[ids.a], parentId: ids.b } } })
+    })
+    render(
+      <MemoryRouter>
+        <AppFrame>
+          <IdeaArea headingId="h" />
+        </AppFrame>
+      </MemoryRouter>,
+    )
+    await openMove(user, '新作の相談')
+    expect(rows()).toEqual(['どのタイトルにも属さない（1段目にする）現在の場所', '  置き場'])
+    // 見せ方では今の場所・今の位置でも、記録のつながりが違うので移せる
+    expect(within(dialog()).getByTestId('idea-folder-move-submit')).toHaveProperty('disabled', false)
+    expect(screen.getByTestId('idea-folder-move-summary').textContent).toMatch(
+      /^「新作の相談」を「どのタイトルにも属さない」の1段目の.+に移します$/,
+    )
+    await user.click(within(dialog()).getByTestId('idea-folder-move-submit'))
+    expect(getData().ideaFolders[ids.c].parentId).toBeNull()
+    expect(useToasts.getState().toasts.map((t) => t.message)).toContain(
+      '「新作の相談」を「どのタイトルにも属さない」の1段目へ移しました',
+    )
+    // 直した後は、今の場所・今の位置なら移せない（いつもどおり）
+    await openMove(user, '新作の相談')
     expect(within(dialog()).getByTestId('idea-folder-move-submit')).toHaveProperty('disabled', true)
   })
 })

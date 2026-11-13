@@ -901,4 +901,91 @@ describe('novel_add_ideas: フォルダ（2.9）', () => {
     expect(Object.keys(cloud.ideaFolders).sort()).toEqual([top, sub].sort())
     expect(cloud.ideas[claudeIdeaId(null, DAY, '', '・案')].folderId).toBe(sub)
   })
+
+  /** 答えの結びの「folder に f:… を渡してください（…）」のとおりの入力（f:… と、渡さないと言われたものを除いた入力） */
+  const followAdvice = (text: string) => {
+    const m = /同じ相談で続けて足す時は folder に (f:[0-9a-z]+) を渡してください(（theme・subfolder は渡さない）)?。/.exec(text)
+    expect(m, text).not.toBeNull()
+    return { ref: m![1], only: Boolean(m![2]) }
+  }
+
+  it('任せる（2件）の答えの結びのとおりに、f:… だけで続けて足すと、同じ1段目にじかに入る（入れ子のフォルダを作らない）', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    const first = await core.callTool('novel_add_ideas', {
+      placement: 'auto',
+      theme: '港町',
+      items: [{ content: '・一' }, { content: '・二' }],
+    })
+    const top = claudeFolderId(null, null, DATED)
+    const ref = shortId('ideaFolder', top)
+    const closing = `アプリのホームのアイデア欄の「どのタイトルにも属さない」のフォルダ「${DATED}」に、各端末が同期すると出ます。同じ相談で続けて足す時は folder に ${ref} を渡してください（theme・subfolder は渡さない）。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。`
+    const placeLine = `入れた場所: ホームのアイデア＞${DATED}（そのフォルダの済みでないアイデアの先頭。カードと、Claude が作ったフォルダに「Claude が作成」の印が付きます）`
+    expect(first.text.split('\n').slice(3)).toEqual([`フォルダ: ${DATED} [${ref}]（新しく作成）`, placeLine, closing])
+    const advice = followAdvice(first.text)
+    expect(advice).toEqual({ ref, only: true })
+    // 結びのとおり: folder に f:… だけ（theme・subfolder は渡さない）
+    const next = await core.callTool('novel_add_ideas', { folder: advice.ref, items: [{ content: '・三' }] })
+    const c = claudeIdeaId(null, DAY, '', '・三')
+    expect(next.isError).toBeUndefined()
+    expect(next.text).toBe(
+      [
+        'アイデアを足す: 追加 1件',
+        `- 追加 ${shortId('idea', c)} 「2026/10/29 12:00　・三」`,
+        `フォルダ: ${DATED} [${ref}]（もとからあるフォルダ）`,
+        placeLine,
+        closing,
+      ].join('\n'),
+    )
+    expect(followAdvice(next.text)).toEqual({ ref, only: true })
+    const cloud = cloudData(fake)
+    expect(cloud.ideas[c]).toMatchObject({ folderId: top, order: -3 })
+    expect(connectorDocs(fake, 'ideaFolders')).toHaveLength(1)
+    const tree = buildIdeaTree(cloud, null)
+    expect(tree.folders.map((f) => [f.folder.id, f.folders.length, f.ideas.length])).toEqual([[top, 0, 3]])
+  })
+
+  it('1段目に見えても記録に親へのつながりが残るフォルダ（同期で C→A→B）: 中に2段目を作らず、じかに入れて補足で言う。結びのとおりに続けて足せる', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const folder = (id: string, name: string, parentId: string | null, order: number): IdeaFolder => ({
+      id,
+      titleId: null,
+      parentId,
+      name,
+      order,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    // 作者のフォルダ: 「別」（A）は「置き場」（B）の中、「新作の相談」（C）は記録では A の中（1段目に見える）
+    const bId = 'b1b1b1b1-0000-4000-8000-000000000001'
+    const aId = 'a1a1a1a1-0000-4000-8000-000000000002'
+    const cId = 'c1c1c1c1-0000-4000-8000-000000000003'
+    const folders = [folder(bId, '置き場', null, 0), folder(aId, '別', bId, 0), folder(cId, '新作の相談', aId, 1)]
+    const { core } = await pairedCore(fake, { ...s.data, ideaFolders: Object.fromEntries(folders.map((f) => [f.id, f])) })
+    const ref = shortId('ideaFolder', cId)
+    const r = await core.callTool('novel_add_ideas', { folder: '新作の相談', theme: '港町', items: [{ content: '・一' }] })
+    expect(r.isError).toBeUndefined()
+    expect(r.text.split('\n').slice(2, 4)).toEqual([
+      `フォルダ: 新作の相談 [${ref}]（もとからあるフォルダ）`,
+      '補足: フォルダ「新作の相談」は、アプリでの移動がぶつかって中にフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）',
+    ])
+    expect(connectorDocs(fake, 'ideaFolders')).toHaveLength(0)
+    expect(cloudData(fake).ideas[claudeIdeaId(null, DAY, '', '・一')].folderId).toBe(cId)
+    // 結びのとおり f:… だけで続けて足す: 同じフォルダにじかに（補足は出ない）
+    const advice = followAdvice(r.text)
+    expect(advice).toEqual({ ref, only: true })
+    const next = await core.callTool('novel_add_ideas', { folder: advice.ref, items: [{ content: '・二' }] })
+    expect(next.isError).toBeUndefined()
+    expect(next.text).not.toContain('補足:')
+    const cloud = cloudData(fake)
+    expect(cloud.ideas[claudeIdeaId(null, DAY, '', '・二')].folderId).toBe(cId)
+    // アプリの木でも、2枚とも1段目「新作の相談」にじかに見える
+    const tree = buildIdeaTree(cloud, null)
+    expect(tree.folders.map((f) => [f.folder.name, f.folders.length, f.ideas.length])).toEqual([
+      ['置き場', 1, 0],
+      ['新作の相談', 0, 2],
+    ])
+  })
 })

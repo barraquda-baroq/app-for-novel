@@ -1,7 +1,8 @@
 // アイデアのツール（2.8。novel_add_ideas・novel_append_to_idea）の結果の形。テキストに加えて structuredContent に
 // 書き込みツールと同じ { created: [{ id, label }], skipped: [{ index, reason, hint }] } を返す（カードの中身は入れない）。
 // - アイデアを足す: 入れた場所（タイトル『…』のアイデアか、ホームのアイデア）と、足したアイデアの id（i:…）を必ず書く。
-//   2.9: フォルダに入れた時は、フォルダの名前と f:…（もとからあるか・新しく作ったか）と、続けて足す時に渡す f:… も書く。
+//   2.9: フォルダに入れた時は、フォルダの名前と f:…（もとからあるか・新しく作ったか）と、続けて足す時に渡す f:… も書く
+//   （入れたのが1段目なら、theme・subfolder を渡さないことも。渡すとその中に2段目を作るため）。
 //   フォルダの外（placement="outside"）の答えは 2.8 と1字も変えない
 // - アイデアに追記: コネクタは依頼を作るだけなので、答えの時点ではまだカードに足されていない（アプリが同期した時に足す）。
 //   そのことと、Claude からはもう追記した後の中身が見えること、続けて追記する時は読み直すことを書く
@@ -57,14 +58,17 @@ export function ideaAddResult(built: IdeaAddBuild, created: ReadonlySet<string>)
     lines.push(
       `フォルダ: ${folders.map((f) => `${f.name} [${shortId('ideaFolder', f.id)}]（${wrote(f.id) ? '新しく作成' : 'もとからあるフォルダ'}）`).join(CLAUDE_PATH_SEP)}`,
     )
+    if (built.directNote) lines.push(`補足: ${built.directNote}`)
     if (folders.some((f) => wrote(f.id))) for (const note of built.notes ?? []) lines.push(`補足: ${note}`)
     lines.push(
       `入れた場所: ${built.place}（そのフォルダの済みでないアイデアの先頭。カードと、Claude が作ったフォルダに「Claude が作成」の印が付きます）`,
     )
     const path = folders.map((f) => `「${f.name}」`).join(CLAUDE_PATH_SEP)
     const target = folders[folders.length - 1]
+    // 1段目に入れた時: f:… だけを渡せば同じフォルダにじかに入る（theme・subfolder を付けると、その中に2段目を作る）
+    const only = target.depth === 1 ? '（theme・subfolder は渡さない）' : ''
     lines.push(
-      `${home ? 'アプリのホームのアイデア欄の「どのタイトルにも属さない」の' : `アプリのタイトル『${built.titleName}』の「アイデア」と、ホームのアイデア欄のその仕切りの、`}フォルダ${path}に、各端末が同期すると出ます。同じ相談で続けて足す時は folder に ${shortId('ideaFolder', target.id)} を渡してください。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。`,
+      `${home ? 'アプリのホームのアイデア欄の「どのタイトルにも属さない」の' : `アプリのタイトル『${built.titleName}』の「アイデア」と、ホームのアイデア欄のその仕切りの、`}フォルダ${path}に、各端末が同期すると出ます。同じ相談で続けて足す時は folder に ${shortId('ideaFolder', target.id)} を渡してください${only}。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。`,
     )
   } else if (made.length) {
     // 2.9: 「任せる」で1件だった時は、フォルダの外に入れたことを書く（それ以外は 2.8 と1字も変えない）

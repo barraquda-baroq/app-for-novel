@@ -2,6 +2,8 @@
 // 2段目は、どの仕切りの1段目の中へも・1段目にもできる。中にフォルダの無い1段目は、ほかの1段目の中へ移せる（「任せる」で作られた
 // フォルダの整理のため）。中にフォルダのあるフォルダは、フォルダの中へは移せない（3段目は作れない）。
 // 位置は移す先の兄弟のフォルダの中で選ぶ（既定は先頭）。仕切りが変わる時は、中のフォルダとカードも一緒にその仕切りへ移る。
+// 1段目として見せているのに記録に親へのつながりが残るフォルダ（同期で移動がぶつかった）は、今の場所の「1段目にする」でも移せる
+// （つながりを消して、中にフォルダを作れるようにする。moveIdeaFolder）。
 import { useContext, useId, useMemo, useState } from 'react'
 import { ideaSections } from '../../domain/entityOps'
 import { folderNameKey, folderSubtree, ideaFolderName } from '../../domain/ideaFolders'
@@ -57,7 +59,9 @@ export function IdeaFolderMoveDialog({ folderId, onClose }: { folderId: ID; onCl
   if (!folder || !place) return null
   const name = ideaFolderName(folder)
   const cards = subtree.ideas.length
-  const unchanged = chosen !== null && chosen.current && index === currentIndex
+  /** 今の場所でも、記録の仕切り・親が見せ方と違う（書いてそろえる） */
+  const relink = chosen !== null && chosen.current && (folder.titleId !== chosen.titleId || folder.parentId !== chosen.parentId)
+  const unchanged = chosen !== null && chosen.current && index === currentIndex && !relink
   const duplicate =
     chosen !== null && !chosen.current && siblings.some((f) => folderNameKey(f.name) === folderNameKey(folder.name))
   const section = chosen ? sections.find((s) => s.titleId === chosen.titleId) : undefined
@@ -75,7 +79,7 @@ export function IdeaFolderMoveDialog({ folderId, onClose }: { folderId: ID; onCl
     const to = { titleId: chosen.titleId, parentId: chosen.parentId }
     const ok = attempt(() => (actions.moveIdeaFolder(folderId, to, index), true))
     if (!ok) return
-    notify(chosen.current ? '並び順を変えました' : `「${name}」を${dest}へ移しました`)
+    notify(chosen.current && !relink ? '並び順を変えました' : `「${name}」を${dest}へ移しました`)
     // 移した先の仕切りと親のフォルダを開いて、見出しを見せる
     const moved = getData().ideaFolders[folderId]
     if (moved) {

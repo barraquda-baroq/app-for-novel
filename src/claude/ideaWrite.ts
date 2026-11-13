@@ -202,6 +202,8 @@ export interface IdeaAddBuild {
   targetFolderId?: ID
   /** 2.9: 補足（フォルダを作る時だけ。ゴミ箱・ほかの場所に同じ名前のフォルダがある） */
   notes: string[]
+  /** 2.9: 1段目の中にフォルダを作れない形だったので、その1段目にじかに入れた（答えの補足。フォルダを作ったかによらず出す） */
+  directNote?: string
   /** 2.9: 「任せる」で1件だったのでフォルダの外に入れた */
   auto1?: true
 }
@@ -234,6 +236,8 @@ export const IDEA_FOLDER_TEXTS = {
   noThird: (ref: string) =>
     `${ref} は2段目のフォルダなので、中にフォルダは作れません（3段目は作れません。subfolder を省くと、そのフォルダにじかに入れます）`,
   notChild: (ref: string, parent: string) => `${ref} は「${parent}」の中のフォルダではありません`,
+  stuck: (name: string) =>
+    `フォルダ「${name}」は、アプリでの移動がぶつかって中にフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）`,
   exhausted: 'このフォルダはもう作れません（同じ名前のフォルダの削除と作り直しが多すぎます）。別の名前にしてください',
   trashed: (name: string) =>
     `ゴミ箱にも同じ名前のフォルダ「${name}」があります（新しく作りました。前のフォルダは作者がアプリのゴミ箱から戻せます）`,
@@ -256,6 +260,13 @@ const titleName = (t: Pick<Title, 'name'>) => (typeof t.name === 'string' ? t.na
 /** f:… の形（アイデアのフォルダの短い id） */
 const FOLDER_REF = /^f:/i
 
+/**
+ * 1段目として見せているのに、記録に親へのつながりが残るフォルダ（同期で C→A→B・A↔B になった・親が消えた）。中に2段目を作ると、
+ * その2段目は今すぐ（C→A→B・輪）か、つながりが生き返った時（親が戻った）に、このフォルダの外の1段目に見える。コネクタは作者の
+ * フォルダを書き換えない（つながりを消せない）ので、中にフォルダを作らずに、このフォルダにじかに入れる
+ */
+const stuckTop = (f: IdeaFolder) => typeof f.parentId === 'string'
+
 /** 決めたフォルダ（もうあるもの・新しく作るもの） */
 type FolderPick = { folder: IdeaFolder } | { name: string }
 
@@ -275,6 +286,9 @@ function folderNameOf(v: string, max: number): string | null {
  * （raw の済みでないアイデアの最小の order より前。見せないアイデアも数える）。
  * 2.9: フォルダに入れる（folder・subfolder・theme）か、作者がフォルダを言わなかった時の placement（"auto" = 任せる・
  * "outside" = フォルダの外）のどちらかが要る（どちらも無ければ、何も書かずに候補のフォルダと「どのフォルダに入れますか」を返す）。
+ * folder に1段目の f:… だけ（theme・subfolder 無し）を渡すとその1段目にじかに入れ（前の答えの f:… で続けて足す）、1段目を名前で
+ * 言われた時（と f:… に theme を付けた時）はその中に2段目「日付　theme」を作る。中にフォルダを作れない1段目（stuckTop）には、
+ * じかに入れて補足（directNote）で言う。
  * フォルダの名前は見せる内容で探し（書ける仕切りのフォルダはすべて見えている）、並びと作り直しの番号は raw で決める。
  * 新しいフォルダ（cf-…）は、カードを1件以上足す時だけ、カードと同じ1回の書き込みで作る（空のフォルダは作らない）
  */
@@ -392,19 +406,32 @@ export function buildAddIdeas(raw: AppData, view: AppData, input: AddIdeasInput,
     return hits.length ? { folder: hits[0] } : { name }
   }
   let plan: FolderPlan | null = null
+  let directNote: string | undefined
+  /** 1段目の中（2段目）の決め方。中にフォルダを作れない1段目は、そこにじかに入れて補足で言う */
+  const inTop = (top: FolderPick): FolderPlan | IdeaAddBuild => {
+    if ('folder' in top && stuckTop(top.folder)) {
+      directNote = IDEA_FOLDER_TEXTS.stuck(ideaFolderName(top.folder))
+      return { top, sub: null }
+    }
+    const sub = pickSub(top)
+    return isBuild(sub) ? sub : { top, sub }
+  }
   if (folderRef) {
     if (FOLDER_REF.test(folderRef)) {
       const f = byRef(folderRef)
       if (isBuild(f)) return f
       const parentId = effectiveParentId(view, f)
       if (parentId) {
-        // 2段目のフォルダ: そこにじかに入れる（中にフォルダは作れない）
+        // 2段目のフォルダ: そこにじかに入れる（中にフォルダは作れない。theme は使わない）
         if (subRef) return fail(IDEA_FOLDER_TEXTS.noThird(ref(f)))
         plan = { top: { folder: view.ideaFolders[parentId] }, sub: { folder: f } }
+      } else if (!subRef && !theme) {
+        // 1段目の f:…（前の答えに出たもの）だけ: そのフォルダにじかに入れる（名前で言われた1段目だけが「日付　theme」を作る）
+        plan = { top: { folder: f }, sub: null }
       } else {
-        const sub = pickSub({ folder: f })
-        if (isBuild(sub)) return sub
-        plan = { top: { folder: f }, sub }
+        const p = inTop({ folder: f })
+        if (isBuild(p)) return p
+        plan = p
       }
     } else {
       const name = folderNameOf(folderRef, IDEA_LIMITS.folderName)
@@ -422,10 +449,9 @@ export function buildAddIdeas(raw: AppData, view: AppData, input: AddIdeasInput,
         if (subRef) return fail(IDEA_FOLDER_TEXTS.noThird(ref(subs[0])))
         plan = { top: { folder: view.ideaFolders[effectiveParentId(view, subs[0])!] }, sub: { folder: subs[0] } }
       } else {
-        const top: FolderPick = tops.length ? { folder: tops[0] } : { name }
-        const sub = pickSub(top)
-        if (isBuild(sub)) return sub
-        plan = { top, sub }
+        const p = inTop(tops.length ? { folder: tops[0] } : { name })
+        if (isBuild(p)) return p
+        plan = p
       }
     }
   } else if (placement === 'auto' && items.length >= 2) {
@@ -631,6 +657,7 @@ export function buildAddIdeas(raw: AppData, view: AppData, input: AddIdeasInput,
     folderPath,
     ...(target ? { targetFolderId: target } : {}),
     notes,
+    ...(directNote ? { directNote } : {}),
     ...(placement === 'auto' && !target ? { auto1: true as const } : {}),
   }
 }

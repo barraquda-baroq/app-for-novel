@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { createTitle } from '../domain/entityOps'
 import { hashJson } from '../domain/hash'
+import { buildIdeaTree, ideaFolderName } from '../domain/ideaFolders'
 import type { AppData, ClaudeAccess, ID, Idea, IdeaAppend, IdeaFolder, TrashRecord, TrashRequest } from '../domain/types'
 import { novel } from '../test/claudeFixture'
 import { jstDate } from './dates'
@@ -337,6 +338,25 @@ const folderRecords = (b: ReturnType<typeof addTo>) =>
 const cardRecords = (b: ReturnType<typeof addTo>) => b.records.filter((r) => r.table === 'ideas').map((r) => r.record as Idea)
 
 const DATED = '2026/11/12\u3000港町'
+
+/** 書いた後の形（組み立てた記録を足す） */
+function applied(data: AppData, b: ReturnType<typeof addTo>): AppData {
+  const out = { ...data, ideaFolders: { ...data.ideaFolders }, ideas: { ...data.ideas } }
+  for (const r of b.records) (out[r.table] as Record<ID, unknown>)[r.record.id] = r.record
+  return out
+}
+
+/** 足したカードが、書いた後のアプリの木（buildIdeaTree）で見えるフォルダの道（「新作の相談＞2026/11/12　港町」。外なら空） */
+function shownPaths(data: AppData, b: ReturnType<typeof addTo>): string[] {
+  const tree = buildIdeaTree(applied(data, b), b.titleId)
+  const paths = new Map<ID, string>()
+  for (const top of tree.folders) {
+    const name = ideaFolderName(top.folder)
+    for (const i of top.ideas) paths.set(i.id, name)
+    for (const sub of top.folders) for (const i of sub.ideas) paths.set(i.id, `${name}＞${ideaFolderName(sub.folder)}`)
+  }
+  return cardRecords(b).map((c) => paths.get(c.id) ?? '')
+}
 
 describe('buildAddIdeas: フォルダ（2.9）', () => {
   it('folder も placement も無ければ、何も書かずに断り、候補のフォルダ（無ければ「まだありません」）を返す', () => {
@@ -674,6 +694,99 @@ describe('buildAddIdeas: フォルダ（2.9）', () => {
     )
     // カードを足さなければ補足も出さない
     expect(addTo(data, { folder: '新作の相談', theme: '港町', items: [{ content: '' }] }).notes).toEqual([])
+  })
+
+  it('1段目の f:… だけ（theme・subfolder 無し）はその1段目にじかに入れる。theme を付ければ、今までどおり中に「日付　theme」', () => {
+    const s = setup()
+    const data = withFolders(s.data, [
+      folder('f-top', null, '新作の相談', 0),
+      folder('f-old', null, '2026/11/01　灯台', 0, { parentId: 'f-top' }),
+    ])
+    const direct = addTo(data, { folder: 'f:ftop', items: [{ content: '一' }] })
+    expect(direct.ok).toBe(true)
+    expect(folderRecords(direct)).toEqual([])
+    expect(cardRecords(direct)[0].folderId).toBe('f-top')
+    expect([direct.place, direct.folderPath, direct.targetFolderId, direct.directNote]).toEqual([
+      'ホームのアイデア＞新作の相談',
+      '新作の相談',
+      'f-top',
+      undefined,
+    ])
+    expect(direct.folders).toEqual([{ id: 'f-top', name: '新作の相談', depth: 1, created: false, isNew: false }])
+    expect(shownPaths(data, direct)).toEqual(['新作の相談'])
+    // theme を付けると、その中に2段目「日付　theme」を作る（名前で言った時と同じ）
+    const dated = addTo(data, { folder: 'f:ftop', theme: '港町', items: [{ content: '一' }] })
+    const sub = claudeFolderId(null, 'f-top', DATED)
+    expect(folderRecords(dated).map((f) => [f.id, f.parentId, f.name])).toEqual([[sub, 'f-top', DATED]])
+    expect([cardRecords(dated)[0].folderId, dated.folderPath]).toEqual([sub, `新作の相談＞${DATED}`])
+    expect(shownPaths(data, dated)).toEqual([`新作の相談＞${DATED}`])
+    // 名前で言った1段目は、今までどおり theme が要る
+    expect(addTo(data, { folder: '新作の相談', items: [{ content: '一' }] }).error).toBe(
+      'folder だけの時は、その中に「2026/11/12　テーマ」の2段目のフォルダを作るので、theme（相談のテーマ。短く）も渡してください（作者が2段目の名前を言った時は subfolder に渡す）',
+    )
+    // 2段目の f:… に theme を付けても、断らずにそのフォルダにじかに入れる（theme は使わない）
+    const second = addTo(data, { folder: 'f:fold', theme: '港町', items: [{ content: '一' }] })
+    expect([second.ok, folderRecords(second), cardRecords(second)[0].folderId]).toEqual([true, [], 'f-old'])
+  })
+
+  it('任せる（2件）で作った1段目に、答えの f:… だけで続けて1件足すと、同じフォルダにじかに入る', () => {
+    const s = setup()
+    const first = addTo(s.data, { placement: 'auto', theme: '港町', items: [{ content: '一' }, { content: '二' }] })
+    const top = claudeFolderId(null, null, DATED)
+    expect(first.folders.map((f) => [f.id, f.depth])).toEqual([[top, 1]])
+    const after = applied(s.data, first)
+    const next = addTo(after, { folder: shortId('ideaFolder', top), items: [{ content: '三' }] })
+    expect(next.ok).toBe(true)
+    expect(folderRecords(next)).toEqual([])
+    expect(cardRecords(next)[0]).toMatchObject({ folderId: top, order: -3 })
+    expect(next.folders).toEqual([{ id: top, name: DATED, depth: 1, created: false, isNew: false }])
+    const tree = buildIdeaTree(applied(after, next), null)
+    expect(tree.folders.map((f) => [ideaFolderName(f.folder), f.folders.length, f.ideas.length])).toEqual([[DATED, 0, 3]])
+  })
+
+  it('1段目に見えても記録に親へのつながりが残るフォルダ（同期で C→A→B・A↔B）は、中にフォルダを作らずにじかに入れ、補足で言う', () => {
+    const s = setup()
+    // C→A→B: A は B の中の2段目、「新作の相談」（C）は記録では A の中だが1段目に見える
+    const chain = withFolders(s.data, [
+      folder('f-bbbb', null, '置き場', 0),
+      folder('f-aaaa', null, '別', 0, { parentId: 'f-bbbb' }),
+      folder('f-cccc', null, '新作の相談', 1, { parentId: 'f-aaaa' }),
+    ])
+    const note =
+      'フォルダ「新作の相談」は、アプリでの移動がぶつかって中にフォルダを作れない状態なので、そのフォルダにじかに入れました（作者がアプリでそのフォルダの「移動…」から「1段目にする」を選ぶと直ります）'
+    for (const input of [
+      { folder: '新作の相談', theme: '港町' },
+      { folder: '新作の相談' },
+      { folder: 'f:fcccc', theme: '港町' },
+      { folder: '新作の相談', subfolder: '雨の駅' },
+      { folder: 'f:fcccc' },
+    ]) {
+      const r = addTo(chain, { ...input, items: [{ content: '一' }] })
+      expect(r.ok, JSON.stringify(input)).toBe(true)
+      expect(folderRecords(r)).toEqual([])
+      expect(cardRecords(r)[0].folderId).toBe('f-cccc')
+      expect([r.place, r.folderPath, r.folders.map((f) => f.depth)]).toEqual(['ホームのアイデア＞新作の相談', '新作の相談', [1]])
+      // f:… だけなら、もともと1段目にじかに入れるので補足は無い
+      expect(r.directNote).toBe(input.folder === 'f:fcccc' && Object.keys(input).length === 1 ? undefined : note)
+      // アプリの木でも、答えの場所と同じ段に見える
+      expect(shownPaths(chain, r)).toEqual([r.folderPath])
+    }
+    // 2段目に見えるフォルダ（A）は今までどおり、そこにじかに入れる
+    const inA = addTo(chain, { folder: 'f:faaaa', items: [{ content: '一' }] })
+    expect([inA.folderPath, inA.directNote, shownPaths(chain, inA)]).toEqual(['置き場＞別', undefined, ['置き場＞別']])
+    // A↔B の輪: どちらも1段目に見え、中にフォルダを作らない
+    const cycle = withFolders(s.data, [
+      folder('f-xxxx', null, '場面の相談', 0, { parentId: 'f-yyyy' }),
+      folder('f-yyyy', null, '人物の相談', 1, { parentId: 'f-xxxx' }),
+    ])
+    const r = addTo(cycle, { folder: '場面の相談', theme: '港町', items: [{ content: '一' }] })
+    expect([folderRecords(r), cardRecords(r)[0].folderId, r.folderPath]).toEqual([[], 'f-xxxx', '場面の相談'])
+    expect(r.directNote).toContain('フォルダ「場面の相談」は、アプリでの移動がぶつかって')
+    expect(shownPaths(cycle, r)).toEqual(['場面の相談'])
+    // ふつうの1段目（記録でも1段目）は、今までどおり中に「日付　theme」を作る
+    const plain = addTo(chain, { folder: '置き場', theme: '港町', items: [{ content: '一' }] })
+    expect([folderRecords(plain).length, plain.folderPath, plain.directNote]).toEqual([1, `置き場＞${DATED}`, undefined])
+    expect(shownPaths(chain, plain)).toEqual([`置き場＞${DATED}`])
   })
 })
 

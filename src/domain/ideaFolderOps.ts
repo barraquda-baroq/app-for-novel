@@ -1,6 +1,8 @@
 // アイデアのフォルダ（2.9）の操作: 作る・名前を変える・並べ替える・移す・削除する（ゴミ箱の1件）と、カードをまとめて移す。
 // どこにあるか（仕切り・段・入っているフォルダ）は見せ方の決まり（ideaFolders.ts）だけで決める。3段目は操作では作れない
-// （親にできるのは1段目だけ・中にフォルダのあるフォルダは親を持てない）。同期や作り物の記録で崩れた形は見せ方の決まりが外す。
+// （親にできるのは1段目として見せているフォルダだけ・中にフォルダのあるフォルダは親を持てない）。同期や作り物の記録で崩れた形は
+// 見せ方の決まりが外す。1段目として見せているのに親へのつながりが残るフォルダ（同期で C→A→B・A↔B になった）は、親にする時・
+// 1段目にする時につながりを消して（parentId = null）、記録を見せ方にそろえる（後でつながりが生き返って、黙って中へ動かないように）。
 // カードの folderId は、フォルダの外へ出す時に項目ごと消す（null は書かない。ideaFolders.withIdeaFolder）。
 import {
   IDEA_FOLDER_NAME_MAX,
@@ -9,7 +11,6 @@ import {
   effectiveParentId,
   folderNameKey,
   ideaFolderName,
-  isTopFolder,
   sectionOf,
   tidyFolderName,
   withIdeaFolder,
@@ -79,14 +80,18 @@ function checkedName(data: AppData, place: FolderPlace, name: string, exceptId?:
   return tidyFolderName(name)
 }
 
-/** 仕切り（タイトルがある）と、親にするフォルダ（同じ仕切りの1段目）を確かめる */
+/**
+ * 仕切り（タイトルがある）と、親にするフォルダ（同じ仕切りで、1段目として見せているもの）を確かめる。親が見せ方では1段目でも、記録に
+ * 親へのつながりが残っていれば、同じ操作の中でつながりを消す（parentId = null。見せ方と記録をそろえる）
+ */
 function requirePlace(tx: Tx, place: FolderPlace): void {
   if (place.titleId !== null && !tx.get('titles', place.titleId)) throw new DomainError('タイトルが見つかりません')
   if (place.parentId === null) return
   const p = tx.get('ideaFolders', place.parentId)
   if (!p) throw new DomainError('フォルダが見つかりません')
-  if (sectionOf(tx.data.titles, p.titleId) !== place.titleId || !isTopFolder(tx.data, p))
+  if (sectionOf(tx.data.titles, p.titleId) !== place.titleId || effectiveParentId(tx.data, p) !== null)
     throw new DomainError('3段目のフォルダは作れません')
+  if (p.parentId !== null) tx.put('ideaFolders', { ...p, parentId: null, updatedAt: now() })
 }
 
 function createInTx(tx: Tx, place: FolderPlace, name: string): ID {
@@ -147,20 +152,24 @@ export function moveIdeaFolderStep(data: AppData, id: ID, dir: -1 | 1): AppData 
  * - 2段目は、どの仕切りの1段目の中へも・1段目にもできる。中にフォルダの無い1段目は、ほかの1段目の中へ移せる
  * - 中にフォルダのあるフォルダは1段目にしか移せない（3段目は作れない）。移す先に同じ名前のフォルダがあれば断る
  * - 仕切りが変わる時は、中のフォルダと、見せ方で中にあるカードの titleId も書き換える（カードの folderId はそのまま）
- * - 同じ入れ物の中なら、位置だけを変える
+ * - 同じ入れ物の中なら、位置だけを変える（見せ方で同じでも、記録の仕切り・親が違えば書いてそろえる: 「1段目にする」で、同期でずれた
+ *   親へのつながりを消す）
  */
 export function moveIdeaFolder(data: AppData, id: ID, to: FolderPlace, index = 0): AppData {
   return transact(data, (tx) => {
     const f = tx.get('ideaFolders', id)
     if (!f) throw new DomainError('フォルダが見つかりません')
     if (to.parentId === id) throw new DomainError('フォルダをそのフォルダの中へは移せません')
+    // 今の場所は、移す先の親のつながりを消す前の見せ方で（画面で見ていた場所）
+    const from = folderPlaceOf(tx.data, f)
     requirePlace(tx, to)
     const subs = subfoldersOf(tx.data, id)
     if (subs.length && to.parentId !== null) {
       throw new DomainError('中にフォルダがあるフォルダは、ほかのフォルダの中へは移せません（3段目は作れません）')
     }
-    const from = folderPlaceOf(tx.data, f)
     const same = from.titleId === to.titleId && from.parentId === to.parentId
+    // 記録も同じ入れ物（仕切り・親を書き換えない）
+    const kept = same && f.titleId === to.titleId && f.parentId === to.parentId
     // 移す先の兄弟と中のカードは、書き換える前に見せ方の決まりで集める（中のフォルダは一緒に移るので兄弟に数えない）
     const inner = new Set(subs.map((s) => s.id))
     const list = siblingFolders(tx.data, to, id).filter((s) => !inner.has(s.id))
@@ -173,10 +182,10 @@ export function moveIdeaFolder(data: AppData, id: ID, to: FolderPlace, index = 0
       for (const s of subs) tx.put('ideaFolders', { ...s, titleId: to.titleId, updatedAt: ts })
       for (const c of cards) tx.put('ideas', { ...c, titleId: to.titleId, updatedAt: ts })
     }
-    const moved: IdeaFolder = same ? f : { ...f, titleId: to.titleId, parentId: to.parentId }
+    const moved: IdeaFolder = kept ? f : { ...f, titleId: to.titleId, parentId: to.parentId }
     list.splice(Math.max(0, Math.min(index, list.length)), 0, moved)
     list.forEach((r, i) => {
-      if (r.order !== i || (r.id === id && !same)) tx.put('ideaFolders', { ...r, order: i, updatedAt: ts })
+      if (r.order !== i || (r.id === id && !kept)) tx.put('ideaFolders', { ...r, order: i, updatedAt: ts })
     })
   }).data
 }

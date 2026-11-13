@@ -20,9 +20,9 @@ import {
   renameIdeaFolder,
   siblingFolders,
 } from './ideaFolderOps'
-import { buildIdeaTree, type IdeaFolderNode } from './ideaFolders'
+import { buildIdeaTree, folderDepth, type IdeaFolderNode } from './ideaFolders'
 import { listTrash, restoreTrashEntry } from './trash'
-import { DomainError, emptyData, type AppData, type ID, type Idea } from './types'
+import { DomainError, emptyData, type AppData, type ID, type Idea, type IdeaFolder } from './types'
 
 const names = (nodes: IdeaFolderNode[]) => nodes.map((n) => n.folder.name)
 const bodies = (list: Idea[]) => list.map((i) => i.body)
@@ -364,5 +364,103 @@ describe('null の folderId は書かない', () => {
       },
     }
     expect(siblingFolders(data, { titleId: f.star, parentId: null }).map((x) => x.id)).toContain('odd')
+  })
+})
+
+describe('1段目として見せているのに親へのつながりが残るフォルダ（同期で移動がぶつかった）', () => {
+  const rec = (id: ID, name: string, parentId: ID | null, order: number): IdeaFolder => ({
+    id,
+    titleId: null,
+    parentId,
+    name,
+    order,
+    createdAt: 1,
+    updatedAt: 1,
+  })
+  const withFolders = (...folders: IdeaFolder[]): AppData => ({
+    ...emptyData(),
+    ideaFolders: Object.fromEntries(folders.map((f) => [f.id, f])),
+  })
+  /** ホームの木（1段目の名前と、中のフォルダの名前） */
+  const shape = (data: AppData) => buildIdeaTree(data, null).folders.map((n) => [n.folder.name, names(n.folders)])
+  /**
+   * C→A→B: 端末1が A（中にフォルダなし）を B の中へ移し、同じ時に端末2（かコネクタ）が A の中に C を作った（まとめた後の形）。
+   * A は B の中の2段目、C は1段目に見える
+   */
+  const chain = () => withFolders(rec('b', 'B', null, 0), rec('a', 'A', 'b', 0), rec('c', 'C', 'a', 1))
+  /** A↔B: 2台が同じ時に A を B の中へ・B を A の中へ移した。どちらも1段目に見える */
+  const cycle = () => withFolders(rec('a', 'A', 'b', 0), rec('b', 'B', 'a', 1))
+
+  it('C→A→B: C の中にフォルダを作れる（C のつながりを同じ操作で消す）。新しいフォルダは C の中の2段目', () => {
+    const data = chain()
+    expect(shape(data)).toEqual([
+      ['B', ['A']],
+      ['C', []],
+    ])
+    expect(folderDepth(data, data.ideaFolders.c)).toBe(1)
+    const r = createIdeaFolder(data, null, 'c', 'X')
+    expect(r.data.ideaFolders.c).toMatchObject({ parentId: null, name: 'C', order: 1 })
+    expect(r.data.ideaFolders[r.result]).toMatchObject({ titleId: null, parentId: 'c', name: 'X' })
+    expect(folderDepth(r.data, r.data.ideaFolders[r.result])).toBe(2)
+    expect(shape(r.data)).toEqual([
+      ['B', ['A']],
+      ['C', ['X']],
+    ])
+    // 後で A を1段目にしても、C は A の中へ動かない
+    expect(shape(moveIdeaFolder(r.data, 'a', { titleId: null, parentId: null }, 2))).toEqual([
+      ['B', []],
+      ['C', ['X']],
+      ['A', []],
+    ])
+    // 新しいフォルダを作って移す・C の中へ移すも同じ
+    const c = card(data, null, '案')
+    const made = createIdeaFolderAndMove(c.data, null, 'c', 'Y', [c.id])
+    expect(made.data.ideaFolders.c.parentId).toBeNull()
+    expect(buildIdeaTree(made.data, null).folders[1].folders[0].ideas.map((i) => i.id)).toEqual([c.id])
+    const other = withFolders(...Object.values(data.ideaFolders), rec('d', 'D', null, 2))
+    const moved = moveIdeaFolder(other, 'd', { titleId: null, parentId: 'c' })
+    expect([moved.ideaFolders.c.parentId, moved.ideaFolders.d.parentId]).toEqual([null, 'c'])
+    expect(shape(moved)).toEqual([
+      ['B', ['A']],
+      ['C', ['D']],
+    ])
+    // 2段目に見えるフォルダ（A）の中へは今までどおり作れない
+    expect(() => createIdeaFolder(data, null, 'a', 'X')).toThrow('3段目のフォルダは作れません')
+  })
+
+  it('C→A→B: 「1段目にする」（今の場所・今の位置）でも、つながりを消して書く。後で A が1段目に戻っても C は動かない', () => {
+    const data = chain()
+    const top = moveIdeaFolder(data, 'c', { titleId: null, parentId: null }, 1)
+    expect(top.ideaFolders.c).toMatchObject({ parentId: null, order: 1 })
+    expect(top.ideaFolders.c.updatedAt).toBeGreaterThan(1)
+    expect(shape(top)).toEqual(shape(data))
+    expect(shape(moveIdeaFolder(top, 'a', { titleId: null, parentId: null }, 2))).toEqual([
+      ['B', []],
+      ['C', []],
+      ['A', []],
+    ])
+    // 記録も見せ方も同じ場所・同じ位置なら書かない
+    expect(moveIdeaFolder(top, 'c', { titleId: null, parentId: null }, 1).ideaFolders).toBe(top.ideaFolders)
+  })
+
+  it('A↔B の輪: どちらの中にもフォルダを作れ、ほかの1段目の中へ移せる（親にする方のつながりを消す）。1段目にもできる', () => {
+    const data = cycle()
+    expect(shape(data)).toEqual([
+      ['A', []],
+      ['B', []],
+    ])
+    // A の中に作る: A のつながりを消す。記録で A の中にある B は、A の中に見える
+    const r = createIdeaFolder(data, null, 'a', 'X')
+    expect(r.data.ideaFolders.a.parentId).toBeNull()
+    expect(shape(r.data)).toEqual([['A', ['X', 'B']]])
+    for (const f of Object.values(r.data.ideaFolders)) expect(folderDepth(r.data, f)).toBe(f.id === 'a' ? 1 : 2)
+    // A を B の中へ: B のつながりを消し、A は B の中の2段目
+    const into = moveIdeaFolder(data, 'a', { titleId: null, parentId: 'b' })
+    expect([into.ideaFolders.a.parentId, into.ideaFolders.b.parentId]).toEqual(['b', null])
+    expect(shape(into)).toEqual([['B', ['A']]])
+    // A を1段目にする（今の場所）: A のつながりを消す
+    const top = moveIdeaFolder(data, 'a', { titleId: null, parentId: null }, 0)
+    expect(top.ideaFolders.a.parentId).toBeNull()
+    expect(shape(top)).toEqual([['A', ['B']]])
   })
 })
