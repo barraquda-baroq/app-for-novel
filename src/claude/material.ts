@@ -9,6 +9,7 @@ import { formatCount } from '../domain/text'
 import type { AppData, Material, MaterialNote } from '../domain/types'
 import { materialNotesOf, materialSectionGroups } from './materialOrder'
 import { matchesId, refKey, shortId, type Resolved } from './refs'
+import { joinBlocks, type TextBlock } from './resume'
 import { pendingTrashCount, pendingTrashLine } from './trashTargets'
 
 /** 資料の指し方（d:… の短い id・id・資料名）から資料を探す */
@@ -86,17 +87,34 @@ export function materialNotesText(
   material: Material,
   sections?: readonly string[],
 ): string {
+  return materialNotesBlocks(data, material, sections).text
+}
+
+/**
+ * materialNotesText と同じ文と、その中の記録ごとの位置（コネクタで続きを読む時に、読んでいた記録を id で探し直す。resume.ts）。
+ * 頭（見出し・書誌・タグの行）は key '' の区切り
+ */
+export function materialNotesBlocks(
+  data: Pick<AppData, 'materialNotes'>,
+  material: Material,
+  sections?: readonly string[],
+): { text: string; blocks: TextBlock[] } {
   const list = filterBySections(materialNotesOf(data, material.id), sections)
   const head = [`=== 資料 ${materialRef(material)} ===`, materialBiblio(material), materialTagsLine(material)]
     .filter(Boolean)
     .join('\n')
-  if (!list.length) return `${head}\n（${sections?.length ? 'この項目の' : ''}記録はまだありません）`
-  const parts: string[] = [head]
-  for (const g of materialSectionGroups(list)) {
-    parts.push(`--- 項目「${g.section}」（${g.items.length}件）---`)
-    for (const n of g.items) parts.push(noteText(n))
-  }
-  return parts.join('\n')
+  if (!list.length)
+    return {
+      text: `${head}\n（${sections?.length ? 'この項目の' : ''}記録はまだありません）`,
+      blocks: [{ key: '', from: 0, start: 0, text: head }],
+    }
+  return joinBlocks(
+    head,
+    materialSectionGroups(list).map((g) => ({
+      title: `--- 項目「${g.section}」（${g.items.length}件）---`,
+      items: g.items.map((n) => ({ key: n.id, text: noteText(n) })),
+    })),
+  )
 }
 
 /**

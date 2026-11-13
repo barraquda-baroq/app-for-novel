@@ -5,6 +5,7 @@
 // - 数は 4,812字、日付は YYYY-MM-DD、切った所は [...]、一致した所は【】
 // - 本文は段落（改行）の切れ目でだけ分ける（ルビの記法は改行をまたがないので途中で切れない。サロゲートペアも切らない）
 // 続きは cursor（文字列）で読む。cursor には読む範囲・位置・その本文の指紋を入れ、本文が変わっていても続きから読んで知らせる。
+// 採用原稿の続きは、区切り（話・幕・稿）を id で探し直す（2.9。話の並び・数が変わっても黙って同じ話を出したり飛ばしたりしない。resume.ts）。
 import { strippedBody } from '../domain/ruby'
 import { activeVersion, actParts, adoptedMetrics, chaptersOf, isSplit, pieceFullLabel } from '../domain/structure'
 import { actProgress, titleProgress, type PieceProgress } from '../domain/progress'
@@ -14,6 +15,7 @@ import { missingActiveLabel, titleSummary } from '../domain/entityOps'
 import { paragraphAt, safeSlice, strippedMapOf } from './anchor'
 import { jstDate } from './dates'
 import { matchesId, readingOrder, resolvePiece, shortId, type ReadingItem } from './refs'
+import { findNear, prefixPrint, relocate } from './resume'
 
 export type ViewResult =
   | {
@@ -262,6 +264,10 @@ interface Unit {
   body: string
   /** 本文の指紋（cursor に入れて、本文が変わったかを見る） */
   hash: string
+  /** 区切りの id（話・特殊ブロックは話の id、幕は幕の id、指定の稿は稿の id。cursor に入れて、続きの時に探し直す） */
+  key: string
+  /** 幕の時、属する話の id（幕に分けた・つないだ時に、同じ話を探す） */
+  group?: string
   /** 読む順の番号（#12。指定の稿だけを読む時は 0） */
   index: number
   /** 残りの表示の「#15 第15話」 */
@@ -311,6 +317,7 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
       contHeader: `=== ${label} の ${v.name.trim() || '（名前のない稿）'}（続き）${ids} ===`,
       body: bodyOf(v, ruby),
       hash: textHash(v.body),
+      key: v.id,
       index: 0,
       name: label,
     })
@@ -342,6 +349,8 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
           groupHeader: groupCont,
           body: part.version ? bodyOf(part.version, ruby) : '',
           hash: part.version ? textHash(part.version.body) : '',
+          key: part.act.id,
+          group: piece.id,
           index: item.index,
           name: `#${item.index} ${item.label}`,
         })
@@ -352,6 +361,7 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
           contHeader: groupCont,
           body: '',
           hash: '',
+          key: piece.id,
           index: item.index,
           name: `#${item.index} ${item.label}`,
         })
@@ -366,6 +376,7 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
       contHeader: `=== #${item.index} ${item.fullLabel}（続き${v ? `・${v.name.trim() || '（名前のない稿）'}` : ''}）${ids} ===`,
       body: v ? bodyOf(v, ruby) : '',
       hash: v ? textHash(v.body) : '',
+      key: piece.id,
       index: item.index,
       name: `#${item.index} ${item.label}`,
     })
@@ -387,6 +398,8 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
           contHeader: `=== ${head}（続き）${ids} ===`,
           body: v ? bodyOf(v, ruby) : '',
           hash: v ? textHash(v.body) : '',
+          key: piece.id,
+          ...(piece.parentId ? { group: piece.parentId } : {}),
           index: item?.index ?? 0,
           name: head,
         })
@@ -503,6 +516,78 @@ function remaining(units: readonly Unit[], at: Pos): string {
   return `${n ? `残り${n}話・` : '残り'}約${formatCount(chars)}字`
 }
 
+/** 前回の続きの話の本文が変わっていた時の知らせ */
+const TEXT_CHANGED = '（前回の続きの話の本文が変わっていたため、その段落の始めから読み直しています）'
+
+/** 本文が変わった区切りの、位置 o を含む段落の始め */
+function paragraphStart(unit: Unit, o: number): number {
+  const nl = o > unit.body.length ? -1 : unit.body.lastIndexOf('\n', o - 1)
+  return nl >= 0 ? nl + 1 : 0
+}
+
+/**
+ * 2.9 の cursor（続きの区切りの id と、前に読んだ区切りの指紋つき）の、続きの位置と知らせる文。区切りを id で探し（幕に分けた・
+ * つないだ時は同じ話の最初の区切り）、前に読んだ区切りの集まりが変わっていれば知らせる（resume.ts）。指紋が読めなければ null
+ */
+function resumeRead(
+  units: readonly Unit[],
+  c: Record<string, unknown>,
+  u: number,
+  o: number,
+): { at: Pos; notes: string[] } | null {
+  const key = String(c.p)
+  let found = findNear(units, key, u)
+  // 話が幕に分かれた・幕をつないだ・幕の分け方が変わった: 同じ話の最初の区切りから
+  let replaced = false
+  if (found < 0) {
+    const g = typeof c.g === 'string' ? c.g : null
+    found = units.findIndex((x) => x.group === key || (g !== null && (x.key === g || x.group === g)))
+    replaced = found >= 0
+  }
+  const r = relocate(units, found, c.b, o === 0 || replaced)
+  if (!r) return null
+  const name = (i: number) => units[i]?.name ?? ''
+  if (r.kind === 'gone') {
+    const next = r.index < units.length ? `${name(r.index)}から続けます` : 'ここで終わりです'
+    return {
+      at: { u: r.index, o: 0 },
+      notes: [
+        r.same
+          ? `（話の並びが変わりました。前回の続きの話が見つからないため（削除した・範囲の外へ動かしたなど）、${next}）`
+          : `（話の並びが変わりました。前回の続きの話が見つからず、その前の話も増えた・減った・動いたため、${next}。読んでいない話・もう一度出る話があることがあります。novel_get_outline で確かめてください）`,
+      ],
+    }
+  }
+  let at: Pos = { u: r.index, o: 0 }
+  let textNote: string | null = null
+  if (replaced) {
+    if (o > 0)
+      textNote = '（前回の続きの話の本文が変わっていたため（幕に分けた・幕をつないだなど）、その話の始めから読み直しています）'
+  } else if (o > 0) {
+    // 途中まで読んだ区切り（r.index は found）: 本文が同じならその位置から、変わっていれば段落の始めから
+    const unit = units[found]
+    if (unit.hash === c.h) at = { u: found, o }
+    else {
+      at = { u: found, o: paragraphStart(unit, o) }
+      textNote = TEXT_CHANGED
+    }
+  }
+  const from = `前回の続きの ${name(at.u)}${at.o > 0 ? 'の途中' : ''}から続けます`
+  const notes: string[] = []
+  if (r.kind === 'added')
+    notes.push(`（話の並びが変わりました。前回の続きより前に ${name(r.item)} が入りました（まだ読んでいません）。${from}）`)
+  else if (r.kind === 'again')
+    notes.push(
+      `（話の並びが変わりました。前に読んだ ${name(r.item)} が前回の続きより後ろへ動いたため、この後にもう一度出ます。${from}）`,
+    )
+  else if (r.kind === 'changed')
+    notes.push(
+      `（話の並びが変わりました（前回の続きより前の話が増えた・減った・動いた）。${from}。この前に入った話は読んでいないことがあり、前に読んだ話がこの後にもう一度出ることがあります。novel_get_outline で確かめてください）`,
+    )
+  if (textNote) notes.push(textNote)
+  return { at, notes }
+}
+
 /** 範囲の採用原稿を、char_budget 字ずつ読む（続きは cursor） */
 export function readTextView(data: AppData, titleId: ID, opts: ReadTextOptions = {}): ViewResult {
   if (!data.titles[titleId]) return fail('タイトルが見つかりません')
@@ -515,41 +600,55 @@ export function readTextView(data: AppData, titleId: ID, opts: ReadTextOptions =
     versionId: opts.versionId,
     ruby: opts.ruby === 'strip' ? 'strip' : 'raw',
   }
-  let at: Pos = { u: 0, o: 0 }
-  let changed = false
   if (opts.cursor) {
+    const bad = fail('cursor が読めません（novel_read_text の続きの cursor をそのまま渡してください）')
     const c = decodeCursor(opts.cursor)
-    if (!c || c.k !== 'read' || c.t !== titleId || typeof c.u !== 'number' || typeof c.o !== 'number' || !c.sel)
-      return fail('cursor が読めません（novel_read_text の続きの cursor をそのまま渡してください）')
+    if (!c || c.k !== 'read' || c.t !== titleId || typeof c.u !== 'number' || typeof c.o !== 'number' || !c.sel) return bad
     sel = c.sel as ReadSelection
-    at = { u: c.u, o: c.o }
     const units = unitsOf(data, titleId, sel)
     if (!Array.isArray(units)) return units
+    if (typeof c.p === 'string') {
+      const r = resumeRead(units, c, c.u, c.o)
+      return r ? readFrom(units, r.at, budget, titleId, sel, r.notes) : bad
+    }
+    // 2.8 までの cursor（区切りの番号と位置だけ）: 番号で続ける
+    let at: Pos = { u: c.u, o: c.o }
     const unit = units[at.u]
     if (unit && at.o > 0 && unit.hash !== c.h) {
       // 前回から本文が変わった: その位置を含む段落の始めから読み直す
-      changed = true
-      const nl = at.o > unit.body.length ? -1 : unit.body.lastIndexOf('\n', at.o - 1)
-      at = { u: at.u, o: nl >= 0 ? nl + 1 : 0 }
+      at = { u: at.u, o: paragraphStart(unit, at.o) }
+      return readFrom(units, at, budget, titleId, sel, [TEXT_CHANGED])
     }
-    return readFrom(units, at, budget, titleId, sel, changed)
+    return readFrom(units, at, budget, titleId, sel, [])
   }
   const units = unitsOf(data, titleId, sel)
   if (!Array.isArray(units)) return units
   if (!units.length) return { ok: true, text: '（この範囲に話はありません）', nextCursor: null }
-  return readFrom(units, at, budget, titleId, sel, false)
+  return readFrom(units, { u: 0, o: 0 }, budget, titleId, sel, [])
 }
 
-function readFrom(units: Unit[], at: Pos, budget: number, titleId: ID, sel: ReadSelection, changed: boolean): ViewResult {
-  if (at.u >= units.length) return { ok: true, text: '（ここで終わりです）', nextCursor: null }
+/**
+ * at から1ページ分。notes（話の並び・本文が変わった知らせ）を先頭に出す。続きの cursor には、続きの区切りの id と、
+ * それより前の区切り（読んだもの）の指紋も入れる（resume.ts）
+ */
+function readFrom(units: Unit[], at: Pos, budget: number, titleId: ID, sel: ReadSelection, notes: string[]): ViewResult {
+  if (at.u >= units.length) return { ok: true, text: [...notes, '（ここで終わりです）'].join('\n'), nextCursor: null }
   const p = page(units, at, budget)
-  const lines: string[] = []
-  if (changed) lines.push('（前回の続きの話の本文が変わっていたため、その段落の始めから読み直しています）')
-  lines.push(p.text)
+  const lines = [...notes, p.text]
   let next: string | null = null
   if (p.next) {
     const unit = units[p.next.u]
-    next = encodeCursor({ k: 'read', t: titleId, sel, u: p.next.u, o: p.next.o, h: unit.hash })
+    next = encodeCursor({
+      k: 'read',
+      t: titleId,
+      sel,
+      u: p.next.u,
+      o: p.next.o,
+      h: unit.hash,
+      p: unit.key,
+      b: prefixPrint(units, p.next.u),
+      ...(unit.group ? { g: unit.group } : {}),
+    })
     lines.push(`続き: cursor="${next}" → ${unit.name}${p.next.o > 0 ? 'の途中' : ''}から（${remaining(units, p.next)}）`)
   }
   return { ok: true, text: lines.join('\n'), nextCursor: next }

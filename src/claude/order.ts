@@ -56,23 +56,29 @@ export function proofStoryRank(data: AppData, titleId: ID): ProofRank {
 }
 
 /**
+ * 推敲案の並びの鍵（小さいほど前）: チェック済み・フラグなし・作った時刻の新しさ・読む順（話 → 幕）・本文の位置・id。
+ * コネクタの一覧の続きの cursor に入れ、前の答えの最後の案が一覧から外れても、その次から続ける
+ */
+export type ProofSortKey = [done: number, unflagged: number, newer: number, story: number, offset: number, id: string]
+
+export function proofSortKey(s: ProofSuggestion, rank?: ProofRank): ProofSortKey {
+  const r = rank ? rank(s) : [0, 0]
+  return [s.done ? 1 : 0, s.flagged ? 0 : 1, -s.createdAt, r[0], r[1], s.id]
+}
+
+/** 推敲案の並びの鍵を比べる（負なら a が前） */
+export function compareProofSortKeys(a: Readonly<ProofSortKey>, b: Readonly<ProofSortKey>): number {
+  for (let i = 0; i < 5; i++) if (a[i] !== b[i]) return (a[i] as number) - (b[i] as number)
+  return a[5] < b[5] ? -1 : a[5] > b[5] ? 1 : 0
+}
+
+/**
  * 推敲案の並び（チェックしていない案 → チェックした案。それぞれフラグ → 新しい順）。同じ時に作った案（1回の追加・貼り付け）は
  * rank があれば読む順（話 → 幕 → 本文の位置）、無ければ id の順
  */
 export function sortProofSuggestions(list: readonly ProofSuggestion[], rank?: ProofRank): ProofSuggestion[] {
-  const ranks = rank ? new Map(list.map((s) => [s.id, rank(s)])) : null
-  return [...list].sort((a, b) => {
-    if (a.done !== b.done) return a.done ? 1 : -1
-    if (a.flagged !== b.flagged) return a.flagged ? -1 : 1
-    if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt
-    if (ranks) {
-      const ra = ranks.get(a.id)!
-      const rb = ranks.get(b.id)!
-      if (ra[0] !== rb[0]) return ra[0] - rb[0]
-      if (ra[1] !== rb[1]) return ra[1] - rb[1]
-    }
-    return byId(a, b)
-  })
+  const keys = new Map(list.map((s) => [s, proofSortKey(s, rank)]))
+  return [...list].sort((a, b) => compareProofSortKeys(keys.get(a)!, keys.get(b)!))
 }
 
 export function proofSuggestionsOf(data: AppData, titleId: ID): ProofSuggestion[] {

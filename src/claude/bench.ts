@@ -10,6 +10,7 @@ import { formatCount } from '../domain/text'
 import type { AppData, BenchAnalysis, BenchWork, ID } from '../domain/types'
 import { benchAnalysesOf, benchViewpointGroups } from './benchOrder'
 import { matchesId, refKey, shortId, type Resolved } from './refs'
+import { joinBlocks, type TextBlock } from './resume'
 import { pendingTrashCount, pendingTrashLine } from './trashTargets'
 
 const norm = (s: string) => s.normalize('NFC').trim()
@@ -88,17 +89,34 @@ export function analysisText(a: BenchAnalysis): string {
  * 頭は見出し・書誌の行・タグの行（タグは書誌の行に入れず、別の行にする。書誌の行は「著者・出版社・刊行年・ジャンル」のまま）
  */
 export function workAnalysesText(data: Pick<AppData, 'benchAnalyses'>, work: BenchWork, viewpoints?: readonly string[]): string {
+  return workAnalysesBlocks(data, work, viewpoints).text
+}
+
+/**
+ * workAnalysesText と同じ文と、その中の分析ごとの位置（コネクタで続きを読む時に、読んでいた分析を id で探し直す。resume.ts）。
+ * 頭（見出し・書誌・タグの行）は key '' の区切り
+ */
+export function workAnalysesBlocks(
+  data: Pick<AppData, 'benchAnalyses'>,
+  work: BenchWork,
+  viewpoints?: readonly string[],
+): { text: string; blocks: TextBlock[] } {
   const list = filterByViewpoints(benchAnalysesOf(data, work.id), viewpoints)
   const head = [`=== 相対比較の作品 ${benchWorkRef(work)} ===`, benchWorkBiblio(work), benchWorkTagsLine(data, work)]
     .filter(Boolean)
     .join('\n')
-  if (!list.length) return `${head}\n（${viewpoints?.length ? 'この観点の' : ''}分析はまだありません）`
-  const parts: string[] = [head]
-  for (const g of benchViewpointGroups(list)) {
-    parts.push(`--- 観点「${g.viewpoint}」（${g.items.length}件）---`)
-    for (const a of g.items) parts.push(analysisText(a))
-  }
-  return parts.join('\n')
+  if (!list.length)
+    return {
+      text: `${head}\n（${viewpoints?.length ? 'この観点の' : ''}分析はまだありません）`,
+      blocks: [{ key: '', from: 0, start: 0, text: head }],
+    }
+  return joinBlocks(
+    head,
+    benchViewpointGroups(list).map((g) => ({
+      title: `--- 観点「${g.viewpoint}」（${g.items.length}件）---`,
+      items: g.items.map((a) => ({ key: a.id, text: analysisText(a) })),
+    })),
+  )
 }
 
 /** 手動連携の作品批評に足す、相対比較する作品の分析（無ければ空） */

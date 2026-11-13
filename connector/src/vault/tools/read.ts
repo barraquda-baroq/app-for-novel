@@ -8,7 +8,7 @@ import {
   filterByViewpoints,
   resolveBenchWork,
   viewpointNames,
-  workAnalysesText,
+  workAnalysesBlocks,
 } from '../../../../src/claude/bench'
 import { proofCategoryLabel, isProofCategory } from '../../../../src/claude/categories'
 import { jstDate, shortDate } from '../../../../src/claude/dates'
@@ -18,7 +18,7 @@ import {
   filterBySections,
   materialBiblio,
   materialLine,
-  materialNotesText,
+  materialNotesBlocks,
   materialRef,
   materialTagsLine,
   noteText,
@@ -27,15 +27,20 @@ import {
 } from '../../../../src/claude/material'
 import { materialNotesOf } from '../../../../src/claude/materialOrder'
 import {
+  compareProofSortKeys,
   critiquePromptsOf,
   critiqueResultsOf,
   proofCoverage,
   proofRunsOf,
+  proofSortKey,
+  proofStoryRank,
   proofSuggestionsOf,
   revisionIdeasOf,
   strategyNotesOf,
+  type ProofSortKey,
 } from '../../../../src/claude/order'
 import { matchesId, pieceRefLabel, readingOrder, refKey, resolvePiece, shortId, type ReadingItem } from '../../../../src/claude/refs'
+import { blockAt, prefixPrint, relocate, type Keyed, type Relocation, type TextBlock } from '../../../../src/claude/resume'
 import { manuscriptLabel, manuscriptOf } from '../../../../src/claude/snapshot'
 import {
   cutPoint,
@@ -84,7 +89,7 @@ import {
   submissionTextStatus,
   textLimitRange,
 } from '../../../../src/domain/submissionTexts'
-import { bodyMetrics, formatCount } from '../../../../src/domain/text'
+import { bodyMetrics, formatCount, textHash } from '../../../../src/domain/text'
 import { TRASH_RETENTION_DAYS } from '../../../../src/domain/trash'
 import type {
   AppData,
@@ -705,6 +710,7 @@ function pagedItem(
   item: { which: string; id: ID; label: string; text: string },
   offset: number,
   extra: Record<string, unknown> = {},
+  more: { notes?: readonly string[]; mark?: (o: number) => Record<string, unknown> } = {},
 ): ToolResult {
   const budget = itemBudget(args.char_budget, isClaudeCode(ctx.client))
   return ok(
@@ -712,9 +718,114 @@ function pagedItem(
       offset,
       budget,
       contHeader: (from) => `=== ${item.label}の続き（${formatCount(from)}字目から）===`,
-      cursor: (o) => encodeCursor({ k, t: titleId, which: item.which, id: item.id, o, ...extra }),
+      cursor: (o) => encodeCursor({ k, t: titleId, which: item.which, id: item.id, o, ...extra, ...(more.mark?.(o) ?? {}) }),
+      notice: more.notes?.length ? more.notes.join('\n') : undefined,
     }),
   )
+}
+
+/** 分析・記録を全部読む時の言葉 */
+interface BlockWords {
+  /** 分析・記録 */
+  item: string
+  /** 見つからない時の例 */
+  gone: string
+  /** 1つだけ読む引数 */
+  one: string
+  tool: string
+  /** 区切りの表記（n:…「観点」。頭は作品・資料の見出し） */
+  ref: (key: string) => string
+}
+
+/** 位置 o の続きの cursor に足すもの: その位置の区切りの id・区切りの中の位置・区切りの文の指紋・それより前の区切りの指紋 */
+function blockMark(blocks: readonly TextBlock[], o: number): Record<string, unknown> {
+  const i = blockAt(blocks, o)
+  const b = blocks[i]
+  return { a: b.key, ao: Math.max(0, o - b.start), ah: textHash(b.text), b: prefixPrint(blocks, i) }
+}
+
+/**
+ * 2.9 の続きの cursor（blockMark つき）から、つないだ文のどこから読むかと、前回の答えの後に変わったことの知らせ。読んでいた区切りを
+ * id で探し（resume.ts）、その区切りの文が同じなら区切りの中の同じ位置から、変わっていれば区切りの始めから。指紋が読めなければ null
+ */
+function resumeBlocks(
+  blocks: readonly TextBlock[],
+  c: Record<string, unknown>,
+  words: BlockWords,
+): { offset: number; notes: string[] } | null {
+  const key = String(c.a)
+  const ao = typeof c.ao === 'number' && c.ao > 0 ? c.ao : 0
+  const found = blocks.findIndex((b) => b.key === key)
+  const r: Relocation | null = relocate(blocks, found, c.b, ao === 0)
+  if (!r) return null
+  const { item } = words
+  const ref = (i: number) => words.ref(blocks[i].key)
+  if (r.kind === 'gone') {
+    const next = r.index < blocks.length ? `次の ${ref(r.index)}から続けます` : 'ここで終わりです'
+    return {
+      offset: blocks[r.index]?.from ?? Number.POSITIVE_INFINITY,
+      notes: [
+        r.same
+          ? `（前回の続きの${item}が見つからないため（${words.gone}）、${next}）`
+          : `（前回の続きの${item}が見つからず、その前の${item}も増えた・減った・動いたため、${next}。読んでいない${item}・もう一度出る${item}があることがあります（cursor なしで読み直すとすべて出ます））`,
+      ],
+    }
+  }
+  const b = blocks[r.index]
+  let offset = b.from
+  let inside = false
+  const notes: string[] = []
+  let textNote: string | null = null
+  if (ao > 0) {
+    // 途中まで読んだ区切り（r.index は found）: 文が同じならその位置から、変わっていれば区切りの始めから
+    if (textHash(b.text) === c.ah) {
+      offset = b.start + Math.min(ao, b.text.length)
+      inside = true
+    } else textNote = `（前回の続きの${item}の本文が変わっていたため、その${item}の始めから読み直しています）`
+  }
+  const from = `前回の続きの ${ref(r.index)}${inside ? 'の途中' : ''}から続けます`
+  if (r.kind === 'added')
+    notes.push(`（${item}が増えました。前回の続きより前に ${ref(r.item)}が入りました（まだ読んでいません。${words.one} で読めます）。${from}）`)
+  else if (r.kind === 'again')
+    notes.push(`（${item}の並びが変わりました。前に読んだ ${ref(r.item)}が前回の続きより後ろへ動いたため、この後にもう一度出ます。${from}）`)
+  else if (r.kind === 'changed')
+    notes.push(
+      `（${item}が増えた・減った・動いたため、並びが変わりました。${from}。この前に入った${item}はこの続きに出ず、前に読んだ${item}がもう一度出ることがあります（cursor なしで読み直すとすべて出ます））`,
+    )
+  if (textNote) notes.push(textNote)
+  return { offset, notes }
+}
+
+/**
+ * 作品の分析・資料の記録を全部つないだ文を、pagedItem と同じ形で返す。2.9 から続きの cursor には、つないだ文の中の位置のほかに、
+ * その位置の分析・記録の id と中の位置・文の指紋・それより前の分析・記録の指紋を入れ、前回の答えの後にほかの接続やアプリが分析・記録を
+ * 足した・ゴミ箱へ移した・書き換えた（頭のタグの行が増えた）時も、読んでいた分析・記録を id で探し直して続ける（重ねず、抜かず、
+ * 変わったことは知らせる）。それより前の版の cursor（位置だけ）は、今までどおり位置から
+ */
+function pagedBlocks(
+  ctx: ReadContext,
+  args: Args,
+  k: 'bench' | 'material',
+  ownerId: ID,
+  item: { which: string; id: ID; label: string },
+  joined: { text: string; blocks: TextBlock[] },
+  cont: { o: number; raw: Record<string, unknown> } | null,
+  extra: Record<string, unknown>,
+  words: BlockWords,
+): ToolResult {
+  let offset = cont ? cont.o : 0
+  let notes: string[] = []
+  if (cont && typeof cont.raw.a === 'string') {
+    const r = resumeBlocks(joined.blocks, cont.raw, words)
+    if (!r) return fail(`cursor が読めません（${words.tool} の続きの cursor をそのまま渡してください）`)
+    if (r.offset >= joined.text.length) return ok([...r.notes, '（ここで終わりです）'].join('\n'))
+    offset = r.offset
+    notes = r.notes
+  }
+  return pagedItem(ctx, args, k, ownerId, { ...item, text: joined.text }, offset, extra, {
+    notes,
+    mark: (o) => blockMark(joined.blocks, o),
+  })
 }
 
 /** 続きの cursor（1つの項目の続き）を読む。無ければ null、違う形なら 'bad' */
@@ -1262,8 +1373,26 @@ export function getBenchAnalysis(ctx: ReadContext, args: Args): ToolResult {
       const text = `=== 相対比較の作品 ${benchWorkRef(work)} の分析 ===\n${analysisText(a)}`
       return pagedItem(ctx, args, 'bench', work.id, { which, id, label: `『${work.name}』の「${a.viewpoint}」`, text }, offset)
     }
-    const text = workAnalysesText(view, work, viewpoints)
-    return pagedItem(ctx, args, 'bench', work.id, { which, id: work.id, label: `『${work.name}』の分析`, text }, offset, vp)
+    return pagedBlocks(
+      ctx,
+      args,
+      'bench',
+      work.id,
+      { which, id: work.id, label: `『${work.name}』の分析` },
+      workAnalysesBlocks(view, work, viewpoints),
+      cont,
+      vp,
+      {
+        item: '分析',
+        gone: 'ゴミ箱へ移した・観点を変えたなど',
+        one: 'analysis_id',
+        tool: 'novel_get_bench_analysis',
+        ref: (key) => {
+          const a = view.benchAnalyses[key]
+          return a ? `${shortId('benchAnalysis', a.id)}「${a.viewpoint.trim() || '観点なし'}」` : '作品の見出し・書誌の行'
+        },
+      },
+    )
   }
   if (cont) return page(cont.which as 'work' | 'analysis', cont.id, cont.o)
   const aid = str(args.analysis_id)
@@ -1457,8 +1586,26 @@ export function getMaterial(ctx: ReadContext, args: Args): ToolResult {
       const text = `${head.join('\n')}\n${noteText(n)}`
       return pagedItem(ctx, args, 'material', material.id, { which, id, label: `『${name}』の「${n.section}」`, text }, offset)
     }
-    const text = materialNotesText(view, material, sections)
-    return pagedItem(ctx, args, 'material', material.id, { which, id: material.id, label: `『${name}』の記録`, text }, offset, sec)
+    return pagedBlocks(
+      ctx,
+      args,
+      'material',
+      material.id,
+      { which, id: material.id, label: `『${name}』の記録` },
+      materialNotesBlocks(view, material, sections),
+      cont,
+      sec,
+      {
+        item: '記録',
+        gone: 'ゴミ箱へ移した・項目を変えたなど',
+        one: 'note_id',
+        tool: 'novel_get_material',
+        ref: (key) => {
+          const n = view.materialNotes[key]
+          return n ? `${shortId('materialNote', n.id)}「${n.section.trim() || '項目なし'}」` : '資料の見出し・書誌の行'
+        },
+      },
+    )
   }
   if (cont) return page(cont.which as 'material' | 'note', cont.id, cont.o)
   const nid = str(args.note_id)
@@ -1489,6 +1636,44 @@ export function getMaterial(ctx: ReadContext, args: Args): ToolResult {
 // ---------- R9 推敲案 ----------
 
 const PROOF_PAGE = { concise: 100, detailed: 40 }
+
+/** cursor の推敲案の並びの鍵（読めなければ null） */
+function proofKeyArg(v: unknown): ProofSortKey | null {
+  if (!Array.isArray(v) || v.length !== 6 || typeof v[5] !== 'string') return null
+  return v.slice(0, 5).every((x) => typeof x === 'number' && Number.isFinite(x)) ? (v as ProofSortKey) : null
+}
+
+const idKeys = (list: readonly ProofSuggestion[]): Keyed[] => list.map((s) => ({ key: s.id }))
+
+/** 印の数（「数.和」の数） */
+const printCount = (b: unknown) => (typeof b === 'string' ? Number(b.split('.')[0]) : NaN)
+
+/**
+ * 前の答えの後に一覧が変わった時の知らせ（無ければ null）。続きは前の答えの最後の案の次から（並びの鍵で探す）なので、前の方の案が
+ * 減っても重ならず抜けない。cursor の b（続きより前の案の指紋）・c（その時の最も新しい作った時刻）・d（最も新しい更新の時刻）・
+ * o（話の並びの指紋）と、いまの続きより前の案 before を比べる
+ */
+function proofListNote(
+  filtered: readonly ProofSuggestion[],
+  start: number,
+  c: Record<string, unknown>,
+  orderPrint: string,
+): string | null {
+  const before = filtered.slice(0, start)
+  if (prefixPrint(idKeys(before), before.length) === c.b) return null
+  const created = typeof c.c === 'number' ? c.c : Number.POSITIVE_INFINITY
+  const updated = typeof c.d === 'number' ? c.d : Number.POSITIVE_INFINITY
+  const added = before.filter((s) => s.createdAt > created)
+  const old = before.filter((s) => s.createdAt <= created)
+  // 前の方に新しい案が入っただけ（新しい案は先頭の方に並ぶ）
+  if (added.length && prefixPrint(idKeys(old), old.length) === c.b)
+    return `（前の答えの後に推敲案が ${added.length}件増えました。新しい案は一覧の前の方に入るため、この続きには出ません（cursor なしで読み直すと出ます））`
+  // 前の答えの後に変わった案が無く、話の並びも同じで、続きより前の案が減っただけ: 前の答えに出た案が一覧から外れた（チェックした・
+  // ゴミ箱へ移した）だけなので、重なりも抜けも無い
+  const changed = filtered.some((s) => s.createdAt <= created && s.updatedAt > updated)
+  if (!added.length && !changed && c.o === orderPrint && before.length < printCount(c.b)) return null
+  return '（前の答えの後に、推敲案の追加・チェック・フラグなどで一覧が変わりました。続きは前の答えの最後の案の次からです。前の方に入った案はこの続きに出ず、前の答えに出た案がもう一度出ることがあります（すべて確かめる時は cursor なしで読み直してください））'
+}
 
 export function listProofreading(ctx: ReadContext, args: Args): ToolResult {
   const t = titleArg(ctx.view, args.title_id)
@@ -1540,16 +1725,25 @@ export function listProofreading(ctx: ReadContext, args: Args): ToolResult {
   let start = 0
   const cursorArg = str(args.cursor)
   const key = JSON.stringify([status, category ?? '', runId ?? '', args.from ?? '', args.to ?? '', detailed])
+  const rank = proofStoryRank(view, title.id)
+  const orderPrint = textHash(order.map((x) => [x.piece.id, ...(x.piece.actIds ?? [])].join('+')).join(','))
+  const lines: string[] = []
   if (cursorArg) {
     const c = decodeCursor(cursorArg)
-    if (!c || c.k !== 'proof' || c.t !== title.id || typeof c.s !== 'number')
+    const last = c ? proofKeyArg(c.r) : null
+    if (!c || c.k !== 'proof' || c.t !== title.id || (typeof c.s !== 'number' && !last))
       return fail('cursor が読めません（novel_list_proofreading の続きの cursor をそのまま渡してください）')
     if (c.f !== key) return fail('cursor が別の条件のものです（同じ status・category・範囲で渡してください）')
-    start = c.s
+    if (last) {
+      // 前の答えの最後の案の次から（その案がチェック・フラグで動いた・一覧から外れた時も、前の答えの時の並びの鍵の次から）
+      const at = filtered.findIndex((s) => compareProofSortKeys(proofSortKey(s, rank), last) > 0)
+      start = at < 0 ? filtered.length : at
+      const note = proofListNote(filtered, start, c, orderPrint)
+      if (note) lines.push(note)
+    } else start = c.s as number // 2.8 までの cursor（一覧の何件目から）
   }
   const open = all.filter((s) => !s.done).length
-  const lines: string[] = []
-  if (start === 0) {
+  if (!cursorArg) {
     lines.push(
       `=== 『${title.name}』の推敲案（${status === 'open' ? 'チェックしていない案' : status === 'done' ? 'チェックした案' : 'すべて'} ${filtered.length}件／全${all.length}件・未チェック ${open}件）[${shortId('title', title.id)}] ===`,
     )
@@ -1585,7 +1779,17 @@ export function listProofreading(ctx: ReadContext, args: Args): ToolResult {
   if (!filtered.length) lines.push('（この条件の推敲案はありません）')
   const nextStart = start + slice.length
   if (nextStart < filtered.length) {
-    const next = encodeCursor({ k: 'proof', t: title.id, s: nextStart, f: key })
+    // 最後に出した案の並びの鍵（id を含む）と、続きより前の案の指紋・最も新しい作った時刻と更新の時刻・話の並びの指紋（proofListNote）
+    const next = encodeCursor({
+      k: 'proof',
+      t: title.id,
+      f: key,
+      r: proofSortKey(filtered[nextStart - 1], rank),
+      b: prefixPrint(idKeys(filtered), nextStart),
+      c: all.reduce((m, s) => Math.max(m, s.createdAt), 0),
+      d: all.reduce((m, s) => Math.max(m, s.updatedAt), 0),
+      o: orderPrint,
+    })
     lines.push(`続き: cursor="${next}"（残り${filtered.length - nextStart}件）`)
   }
   return ok(lines.join('\n'))

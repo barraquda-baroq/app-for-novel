@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { addChapter, movePiece, setChaptersEnabled, updateChapter, updateVersion } from '../domain/storyOps'
-import { addPrologue, novel, splitEpisode } from '../test/claudeFixture'
+import { locatePiece } from '../domain/structure'
+import {
+  addChapter,
+  addEpisode,
+  addSpecial,
+  deletePiece,
+  movePiece,
+  movePieceStep,
+  setChaptersEnabled,
+  updateChapter,
+  updateVersion,
+} from '../domain/storyOps'
+import type { AppData, ID } from '../domain/types'
+import { addPrologue, novel, splitEpisode, type Novel } from '../test/claudeFixture'
 import { shortId } from './refs'
-import { cutPoint, decodeCursor, encodeCursor, outlineView, readTextPages, readTextView, searchTextView } from './view'
+import {
+  cutPoint,
+  decodeCursor,
+  encodeCursor,
+  outlineView,
+  readTextPages,
+  readTextView,
+  searchTextView,
+  type ReadTextOptions,
+} from './view'
 
 function sample() {
   const n = novel(
@@ -253,5 +274,166 @@ describe('検索（searchTextView）', () => {
       n2++
     } while (c2 && n2 < 10)
     expect(countLast).toMatch(/^「雨の音」 6件（採用原稿・#1〜#6・ルビを除いた本文）/)
+  })
+})
+
+/** 第ep話の本文: 段落ごとに「E1-1」…の印と、len 字の埋め草 */
+const marked = (ep: number, paras: number, len: number) =>
+  Array.from({ length: paras }, (_, k) => `E${ep}-${k + 1}。${'あ'.repeat(len)}`).join('\n')
+
+/** E1〜E{n} の印（段落 paras 個ずつ） */
+const marksOf = (eps: number[], paras: number) => eps.flatMap((e) => Array.from({ length: paras }, (_, k) => `E${e}-${k + 1}`))
+
+/**
+ * 続きの cursor をたどって最後まで読む。change(i, data) で、i ページ目の後に（次のページを読む前に）アプリやほかの接続が変えた
+ * データを返す。ページの文と、読んだ段落の印（続きの行を除く。読んだ順）
+ */
+function readAll(n: Novel, first: ReadTextOptions, change: (i: number, data: AppData) => AppData) {
+  let data = n.data
+  let cursor: string | null = null
+  const pages: string[] = []
+  for (let i = 0; i < 50; i++) {
+    const r: { text: string; nextCursor: string | null } = ok(
+      readTextView(data, n.titleId, cursor ? { cursor, charBudget: first.charBudget } : first),
+    )
+    pages.push(r.text)
+    cursor = r.nextCursor
+    if (!cursor) break
+    data = change(i, data)
+  }
+  expect(cursor).toBeNull()
+  const body = pages.map((p) => p.replace(/\n続き: cursor=.*$/, '')).join('\n')
+  return { pages, marks: body.match(/[EP]\d+-\d+/g) ?? [], data }
+}
+
+/** 特殊ブロック（見出し label・本文 body）を、話 before の前に足す */
+function specialBefore(data: AppData, titleId: ID, before: ID, label: string, body: string): AppData {
+  const r = addSpecial(data, titleId, locatePiece(data, before)!, label)
+  return updateVersion(r.data, r.data.pieces[r.result].versionIds[0], { body })
+}
+
+describe('採用原稿の続き（2.9: 前回の答えの後に話の並び・数が変わった時。区切りを id で探し直す）', () => {
+  // 1話が約1,450字なので、2,000字ずつ読むと1ページに1話
+  const three = () => novel([1, 2, 3].map((e) => marked(e, 5, 280)))
+
+  it('先頭に特殊ブロックが入った（前回は話の切れ目まで）: 同じ話をもう一度出さず、入った区切りはまだ読んでいないと言う', () => {
+    const n = three()
+    const { pages, marks } = readAll(n, { charBudget: 2_000 }, (i, data) => {
+      if (i !== 0) return data
+      const m = { ...n, data }
+      addPrologue(m, 'プロローグ', 'P1-1。序章')
+      return m.data
+    })
+    expect(marks).toEqual(marksOf([1, 2, 3], 5))
+    expect(pages[1].split('\n')[0]).toBe(
+      '（話の並びが変わりました。前回の続きより前に #1 プロローグ が入りました（まだ読んでいません）。前回の続きの #3 第2話から続けます）',
+    )
+    expect(pages[1].split('\n')[1]).toMatch(/^=== #3 第2話（/)
+  })
+
+  it('読んだ話が前回の続きより後ろへ動いた: 続きの話を飛ばさず、もう一度出ることを知らせる', () => {
+    const n = three()
+    const { pages, marks } = readAll(n, { charBudget: 2_000 }, (i, data) => (i === 0 ? movePieceStep(data, n.ids[0], 1) : data))
+    // 第2話（いまは第1話）を飛ばさない。動いた第1話は知らせてからもう一度
+    expect(marks).toEqual(marksOf([1, 2, 1, 3], 5))
+    expect(pages[1].split('\n')[0]).toBe(
+      '（話の並びが変わりました。前に読んだ #2 第2話 が前回の続きより後ろへ動いたため、この後にもう一度出ます。前回の続きの #1 第1話から続けます）',
+    )
+  })
+
+  it('話の途中まで読んだ後に、まだ読んでいない話が前へ動いた: その話の続きから読み、前へ動いた話を知らせる（本文が変わったとは言わない）', () => {
+    const n = novel([marked(1, 5, 900), marked(2, 3, 300), marked(3, 2, 300)])
+    const { pages, marks } = readAll(n, { charBudget: 2_000 }, (i, data) => (i === 0 ? movePieceStep(data, n.ids[1], -1) : data))
+    expect(marks).toEqual(marksOf([1, 3], 5).slice(0, 7))
+    expect(marks.filter((m) => m.startsWith('E1-'))).toEqual(marksOf([1], 5))
+    expect(pages[1]).not.toContain('本文が変わっていた')
+    expect(pages[1].split('\n')[0]).toBe(
+      '（話の並びが変わりました。前回の続きより前に #1 第1話 が入りました（まだ読んでいません）。前回の続きの #2 第2話の途中から続けます）',
+    )
+    expect(pages[1].split('\n')[1]).toMatch(/^=== #2 第2話（続き・第1稿）/)
+  })
+
+  it('読んだ特殊ブロックが削除された: 続きの話を飛ばさない（前の区切りが変わったことは知らせる）', () => {
+    const n = three()
+    const prologue = addPrologue(n, 'プロローグ', marked(0, 5, 280).replace(/E0-/g, 'P1-'))
+    const { pages, marks } = readAll(n, { charBudget: 2_000 }, (i, data) => (i === 0 ? deletePiece(data, prologue) : data))
+    expect(marks).toEqual([...marksOf([0], 5).map((m) => m.replace('E0-', 'P1-')), ...marksOf([1, 2, 3], 5)])
+    expect(pages[1].split('\n')[0]).toMatch(
+      /^（話の並びが変わりました（前回の続きより前の話が増えた・減った・動いた）。前回の続きの #1 第1話から続けます。/,
+    )
+  })
+
+  it('話を「第n話」で指して読んでいる間に並べ替えた: 番号が指す話が変わっても、黙って同じ話を出さない', () => {
+    const n = three()
+    const { pages, marks } = readAll(n, { pieces: ['第1話', '第2話', '第3話'], charBudget: 2_000 }, (i, data) =>
+      i === 0 ? movePieceStep(data, n.ids[0], 1) : data,
+    )
+    expect(marks).toEqual(marksOf([1, 2, 1, 3], 5))
+    expect(pages[1].split('\n')[0]).toContain('この後にもう一度出ます')
+  })
+
+  it('まだ読んでいない話が、読んだ話のすぐ後ろへ動いた・後ろに話が足された・まだ読んでいない話を幕に分けた: 黙ってすべて読む', () => {
+    const n = novel([1, 2, 3, 4].map((e) => marked(e, 5, 280)))
+    const { pages, marks } = readAll(n, { charBudget: 2_000 }, (i, data) => {
+      if (i === 0) return movePieceStep(movePieceStep(data, n.ids[3], -1), n.ids[3], -1)
+      if (i === 1) {
+        const m = { ...n, data }
+        splitEpisode(m, n.ids[1], [m.data.versions[m.data.pieces[n.ids[1]].versionIds[0]].body.indexOf('E2-3')])
+        return m.data
+      }
+      if (i === 2) {
+        const r = addEpisode(data, n.titleId)
+        return updateVersion(r.data, r.data.pieces[r.result].versionIds[0], { body: marked(5, 5, 280) })
+      }
+      return data
+    })
+    expect(marks).toEqual(marksOf([1, 4, 2, 3, 5], 5))
+    for (const p of pages) expect(p).not.toContain('話の並びが変わりました')
+  })
+
+  it('前回の続きの話が削除された: そう言って次の話から（最後なら、ここで終わり）', () => {
+    const n = novel([1, 2, 3].map((e) => marked(e, 5, 280)))
+    n.data = specialBefore(n.data, n.titleId, n.ids[1], '幕間', marked(9, 5, 280))
+    const between = Object.values(n.data.pieces).find((p) => p.kind === 'special')!.id
+    const { pages, marks } = readAll(n, { charBudget: 2_000 }, (i, data) => (i === 0 ? deletePiece(data, between) : data))
+    expect(marks).toEqual(marksOf([1, 2, 3], 5))
+    expect(pages[1].split('\n')[0]).toBe(
+      '（話の並びが変わりました。前回の続きの話が見つからないため（削除した・範囲の外へ動かしたなど）、#2 第2話から続けます）',
+    )
+    // 最後の話を読む前にその話が削除された
+    const last = readAll(n, { charBudget: 2_000, from: '#3' }, (i, data) => (i === 0 ? deletePiece(data, n.ids[2]) : data))
+    expect(last.pages.at(-1)).toBe(
+      '（話の並びが変わりました。前回の続きの話が見つからないため（削除した・範囲の外へ動かしたなど）、ここで終わりです）\n（ここで終わりです）',
+    )
+  })
+
+  it('途中まで読んだ話を幕に分けた: 本文が変わったと言って、その話の始め（第1幕）から読み直す', () => {
+    const n = novel([marked(1, 5, 900), marked(2, 2, 300)])
+    const { pages, marks } = readAll(n, { charBudget: 2_000 }, (i, data) => {
+      if (i !== 0) return data
+      const m = { ...n, data }
+      splitEpisode(m, n.ids[0], [m.data.versions[m.data.pieces[n.ids[0]].versionIds[0]].body.indexOf('E1-4')])
+      return m.data
+    })
+    expect(pages[1].split('\n')[0]).toBe(
+      '（前回の続きの話の本文が変わっていたため（幕に分けた・幕をつないだなど）、その話の始めから読み直しています）',
+    )
+    expect(pages[1]).toContain('--- 第1幕（')
+    // 読み直した分（第1幕の始めから）だけ重なり、抜けは無い
+    for (const m of marksOf([1], 5)) expect(marks).toContain(m)
+    expect(marks.slice(-2)).toEqual(marksOf([2], 2))
+  })
+
+  it('2.8 までの cursor（区切りの番号だけ）も、番号で続きを読む', () => {
+    const n = three()
+    const old = encodeCursor({ k: 'read', t: n.titleId, sel: { ruby: 'raw' }, u: 1, o: 0, h: '' })
+    const r = ok(readTextView(n.data, n.titleId, { cursor: old, charBudget: 2_000 }))
+    expect(r.text.split('\n')[0]).toMatch(/^=== #2 第2話（/)
+    const next = decodeCursor(r.nextCursor!)!
+    expect(next.p).toBe(n.ids[2])
+    expect(next.b).toEqual(expect.stringMatching(/^2\./))
+    // 指紋の読めない cursor は断る
+    const bad = encodeCursor({ ...next, b: 'xyz' })
+    expect(readTextView(n.data, n.titleId, { cursor: bad }).ok).toBe(false)
   })
 })
