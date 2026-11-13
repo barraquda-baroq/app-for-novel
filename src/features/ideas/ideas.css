@@ -590,6 +590,25 @@
   min-width: 0;
 }
 
+/* 指で操作する端末だけに出す説明（カードの長押し） */
+.idea-touch-only {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  /* 長押しで「選んで移す」を始めるので、文字を選んだり iOS の長押しのメニューを出したりしない（本文の所だけ。
+     文字は［編集］の画面で選んでコピーできる） */
+  .idea-card-main {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .idea-touch-only {
+    display: inline;
+  }
+}
+
 .idea-card-heading {
   margin: 0;
   font-size: 15px;
@@ -991,6 +1010,27 @@
 }
 
 .btn.idea-move-new-folder .icon {
+  flex: none;
+}
+
+/* 1枚の時の「ほかのカードも選んでまとめて移す」（説明のすぐ下） */
+.idea-move-more {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-top: -6px;
+}
+
+.btn.btn-ghost.idea-move-select-more {
+  gap: 4px;
+  padding-inline: 6px 8px;
+  color: var(--accent);
+  white-space: normal;
+  text-align: left;
+}
+
+.btn.idea-move-select-more .icon {
   flex: none;
 }
 

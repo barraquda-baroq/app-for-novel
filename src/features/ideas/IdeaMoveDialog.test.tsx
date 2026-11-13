@@ -1,5 +1,6 @@
 // カードの移動のダイアログ（2.9: 木の形）: 現在の場所の印・フォルダの中のカードの既定の移動先・フォルダの中の位置、
-// まとめて移す（題・まとめ・移動先を選ぶまで押せない）、「選んだ場所に新しいフォルダを作って移す」（2段目の中には作れない）。
+// まとめて移す（題・まとめ・移動先を選ぶまで押せない）、「選んだ場所に新しいフォルダを作って移す」（2段目の中には作れない）、
+// 1枚の時の「ほかのカードも選んでまとめて移す」（そのカードを選んだ状態で「選んで移す」を始める）。
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -16,6 +17,7 @@ import { FOLDER_COLLAPSED_KEY, resetFolderCollapseForTests, toggleFolder } from 
 import { IdeaMoveDialog } from './IdeaMoveDialog'
 import { COLLAPSED_KEY } from './storage'
 import { useReveal } from './reveal'
+import { startSelect, stopSelect, useSelection } from './selection'
 
 let n = 0
 
@@ -46,6 +48,7 @@ beforeEach(async () => {
   resetFolderCollapseForTests()
   useToasts.setState({ toasts: [] })
   useReveal.setState({ id: null, seq: 0, scroll: false })
+  stopSelect()
   HTMLElement.prototype.scrollIntoView = vi.fn()
   await initStore(createPersistence(`test-db-idea-move-${++n}`))
 })
@@ -53,6 +56,7 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup()
   resetStoreForTests()
+  stopSelect()
   localStorage.clear()
   resetFolderCollapseForTests()
   vi.useRealTimers()
@@ -156,6 +160,89 @@ describe('1枚のカードを移す', () => {
     expect(within(section).getByTestId('idea-section-toggle').getAttribute('aria-expanded')).toBe('true')
     expect(JSON.parse(localStorage.getItem(FOLDER_COLLAPSED_KEY) ?? '[]')).toEqual([])
     expect(useReveal.getState()).toMatchObject({ id: homeIdea, scroll: true })
+  })
+})
+
+describe('ほかのカードも選んでまとめて移す', () => {
+  function renderHome() {
+    return render(
+      <MemoryRouter>
+        <AppFrame>
+          <IdeaArea headingId="h" />
+        </AppFrame>
+      </MemoryRouter>,
+    )
+  }
+  const section = (key: string) => screen.getAllByTestId('idea-section').find((s) => s.dataset.section === key)!
+
+  it('カードの［移動］から押すと、閉じて、そのカードを選んだ状態で「選んで移す」が始まる（フォーカスはそのカードの□）', async () => {
+    const user = userEvent.setup()
+    const ids = seed()
+    renderHome()
+    await user.click(within(card('相談の案2')).getByTestId('idea-move'))
+    const more = within(dialog()).getByTestId('idea-move-select-more')
+    expect(more.textContent).toBe('ほかのカードも選んでまとめて移す')
+    // 長押しの説明は指で操作する端末だけ（CSS）
+    expect(within(dialog()).getByTestId('idea-move-more-note').className).toContain('idea-touch-only')
+    await user.click(more)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const t = section(ids.title)
+    expect(within(t).getByTestId('idea-select-count').textContent).toBe('1件を選択中')
+    const box = within(card('相談の案2')).getByTestId('idea-select') as HTMLInputElement
+    expect(box.checked).toBe(true)
+    await waitFor(() => expect(document.activeElement).toBe(box))
+    // 続けてほかのカードを選んで、まとめて移せる
+    await user.click(within(card('外の案')).getByTestId('idea-select'))
+    await user.click(within(t).getByTestId('idea-select-move'))
+    expect(within(dialog()).getByRole('heading').textContent).toBe('2件のアイデアを移動')
+    expect(within(dialog()).queryByTestId('idea-move-select-more')).toBeNull()
+    await user.click(option('雨の駅'))
+    await user.click(within(dialog()).getByTestId('idea-move-submit'))
+    const moved = [card('相談の案2'), card('外の案')].map((c) => getData().ideas[c.dataset.ideaId!])
+    expect(moved.map((i) => i.folderId)).toEqual([ids.sub, ids.sub])
+    expect(useSelection.getState().section).toBeNull()
+  })
+
+  it('ほかの仕切りで選んでいる時は、そのカードの仕切りに切り替わる', async () => {
+    const user = userEvent.setup()
+    const ids = seed()
+    let homeIdea = ''
+    act(() => {
+      homeIdea = actions.addIdea(null, '', 'ホームの案')
+    })
+    renderHome()
+    act(() => startSelect(ids.title, []))
+    expect(within(section(ids.title)).getByTestId('idea-select-bar')).toBeTruthy()
+    await user.click(within(card('ホームの案')).getByTestId('idea-move'))
+    await user.click(within(dialog()).getByTestId('idea-move-select-more'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(section(ids.title)).queryByTestId('idea-select-bar')).toBeNull()
+    expect(within(section('none')).getByTestId('idea-select-count').textContent).toBe('1件を選択中')
+    expect(useSelection.getState()).toMatchObject({ section: 'none', ids: new Set([homeIdea]) })
+  })
+
+  it('onSelectMore を渡さない1枚のダイアログ・まとめてのダイアログには出さない', () => {
+    seed()
+    const one = Object.keys(getData().ideas)[0]
+    const { unmount } = render(
+      <MemoryRouter>
+        <AppFrame>
+          <IdeaMoveDialog ideaIds={[one]} onClose={vi.fn()} />
+        </AppFrame>
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('idea-move-dialog')).toBeTruthy()
+    expect(screen.queryByTestId('idea-move-select-more')).toBeNull()
+    unmount()
+    render(
+      <MemoryRouter>
+        <AppFrame>
+          <IdeaMoveDialog ideaIds={Object.keys(getData().ideas)} bulk onClose={vi.fn()} onSelectMore={vi.fn()} />
+        </AppFrame>
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('idea-move-dialog')).toBeTruthy()
+    expect(screen.queryByTestId('idea-move-select-more')).toBeNull()
   })
 })
 

@@ -7,6 +7,10 @@
 // 編集している間に Claude の追記が足されていれば、保存する内容の後ろに残す（rebaseIdeaEdit）。
 // 2.9: 「選んで移す」で仕切りのカードを選んでいる間は、済みのチェックボックスの代わりに選ぶチェックボックスを出し、カードの中を押しても
 // 選べる（並べ替え・移動・編集・削除・「この案でタイトルを作る」は出さない）。選ばれているかは自分の分だけ読む（useIsSelected）。
+// 指で操作する端末では、カードの本文の所（.idea-card-main）を長押しすると、このカードを選んだ状態で「選んで移す」が始まる
+// （選んでいる最中ならこのカードを選ぶ・外す。pressSelect）。押したカードは指の下に残し（useKeepInPlace）、指を離した時のクリックは
+// どこに届いても取り消す（始めるとカードの高さが変わり、指の下が別のカードになるため）。マウスの右クリックはブラウザのメニューのまま。
+// ［移動］のダイアログの「ほかのカードも選んでまとめて移す」でも、このカードを選んだ状態で始まる（フォーカスはこのカードの□）。
 import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { isJstTimestamp } from '../../claude/dates'
@@ -21,6 +25,7 @@ import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatRelative } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { DownIcon, EditIcon, MoveIcon, TrashIcon, UpIcon } from '../../ui/icons'
+import { PRESS_IGNORE, useMenuTrigger, type MenuTriggerOptions } from '../../ui/longPress'
 import { ClaudeMadeBadge } from './ClaudeMadeBadge'
 import { IdeaEditorModal } from './IdeaEditorModal'
 import { IdeaMoveDialog } from './IdeaMoveDialog'
@@ -28,7 +33,7 @@ import { SparkIcon } from './ideaIcons'
 import { ideaEditText, ideaModalDraftKey, ideaShortLabel, rebaseIdeaEdit, splitLead, titleNameFromIdea } from './ideaLogic'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { REVEAL_FRESH_MS, REVEAL_MS, revealIdea, useReveal } from './reveal'
-import { toggleSelected, useIsSelected } from './selection'
+import { pressSelect, startSelect, toggleSelected, useIsSelected } from './selection'
 import { writeLocal } from './storage'
 
 export interface IdeaCardProps {
@@ -43,6 +48,9 @@ export interface IdeaCardProps {
   first: boolean
   last: boolean
 }
+
+/** カードの長押し: 指だけ（マウスの右クリックはブラウザのメニューのまま）・中のボタンからは始めない・離した時のクリックはどこでも取り消す */
+const PRESS: MenuTriggerOptions = { touchOnly: true, ignore: PRESS_IGNORE, swallowClick: true }
 
 /** 内容が折りたたみ表示（6行。済みは2行）からはみ出しているか */
 function useOverflow(text: string, expanded: boolean, checked: boolean) {
@@ -164,6 +172,22 @@ function IdeaCardView({ idea, section, sectionName, unassigned, first, last }: I
   // 選んで移す（2.9）: null = この仕切りで選んでいない
   const selected = useIsSelected(section, idea.id)
   const selecting = selected !== null
+  // 長押しで始める・選ぶ・外す。カードの高さ（ボタンの行）が変わっても、押したカードは指の下に残す（フォーカスは動かさない）
+  const press = useMenuTrigger(() => move(() => (pressSelect(section, idea.id), true), []), PRESS)
+  /** 移動のダイアログから始めた時に、このカードの選ぶ□へフォーカスする */
+  const focusSelect = useRef(false)
+  useEffect(() => {
+    if (!selecting || !focusSelect.current) return
+    focusSelect.current = false
+    // ダイアログを閉じて後ろの画面が操作できるようになった後（Modal の後始末の後）に移す
+    cardRef.current?.querySelector<HTMLElement>('[data-testid="idea-select"]')?.focus()
+  }, [selecting, cardRef])
+
+  /** 移動のダイアログの「ほかのカードも選んでまとめて移す」: このカードを選んだ状態で「選んで移す」を始める */
+  const selectMore = () => {
+    focusSelect.current = true
+    move(() => (startSelect(section, [idea.id]), true), [])
+  }
 
   const toggleChecked = (next: boolean) => {
     check.mark()
@@ -277,8 +301,8 @@ function IdeaCardView({ idea, section, sectionName, unassigned, first, last }: I
             />
           </label>
         )}
-        {/* 選んでいる間は、カードの中を押しても選べる（指で押しやすいように） */}
-        <div className="idea-card-main" onClick={selecting ? () => toggleSelected(idea.id) : undefined}>
+        {/* 選んでいる間は、カードの中を押しても選べる（指で押しやすいように）。指の長押しで選び始める */}
+        <div className="idea-card-main" {...press} onClick={selecting ? () => toggleSelected(idea.id) : undefined}>
           {heading ? (
             <h4 className="idea-card-heading" data-testid="idea-heading">
               {heading}
@@ -399,7 +423,7 @@ function IdeaCardView({ idea, section, sectionName, unassigned, first, last }: I
           onSave={saveEdit}
         />
       ) : null}
-      {moving ? <IdeaMoveDialog ideaIds={[idea.id]} onClose={() => setMoving(false)} /> : null}
+      {moving ? <IdeaMoveDialog ideaIds={[idea.id]} onClose={() => setMoving(false)} onSelectMore={selectMore} /> : null}
     </li>
   )
 }

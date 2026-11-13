@@ -1,7 +1,8 @@
 // アイデアのフォルダ（2.9）の E2E テスト: 作る・名前を変える・並べ替える・削除してゴミ箱から戻す、2段目（日付から始まる名前）、
 // フォルダを移す（ほかの1段目へ・1段目にする・1段目をほかの1段目の中へ）、カードをフォルダへ出し入れする、選んで移す、
 // 移した後にカードを見せるのは一度だけ、スマホの上の切り替えと選んで移すの帯の重なり、開け閉めを覚える、Claude が作ったフォルダの印、
-// 360px の幅。
+// 360px の幅。カードの長押しで選んで移すを始める（スマホ）・デスクトップの右クリックはブラウザのメニューのまま・
+// ［移動］の「ほかのカードも選んでまとめて移す」。
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { homeBandToggle, noHorizontalScroll, openApp, openHomeBands, seed, tapSize } from './helpers'
 import type { AppData, Idea, IdeaFolder } from '../src/domain/types'
@@ -68,6 +69,37 @@ async function openMenu(page: Page, f: Locator): Promise<Locator> {
   const menu = page.getByTestId('idea-folder-menu-popup')
   await expect(menu).toBeVisible()
   return menu
+}
+
+type TouchType = 'touchStart' | 'touchMove' | 'touchEnd'
+type Touch = (type: TouchType, x: number, y: number) => Promise<unknown>
+
+/** 指で触れる（CDP の Input.dispatchTouchEvent。Pixel 7 の指の操作） */
+async function touchScreen(page: Page): Promise<Touch> {
+  const cdp = await page.context().newCDPSession(page)
+  return (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] })
+}
+
+/** 指で長押しして（0.8秒）離す。at: 押す所（既定は真ん中）。押した所を返す */
+async function longPress(page: Page, touch: Touch, target: Locator, at?: { x: number; y: number }) {
+  const box = (await target.boundingBox())!
+  const p = at ?? { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await touch('touchStart', p.x, p.y)
+  await page.waitForTimeout(800)
+  await touch('touchEnd', p.x, p.y)
+  // 離した時のクリックが届くのを待つ
+  await page.waitForTimeout(300)
+  return p
+}
+
+/** 文字の選択と iOS の長押しメニューが出ないこと */
+async function expectNoCallout(target: Locator): Promise<void> {
+  const style = await target.evaluate((el) => {
+    const cs = getComputedStyle(el) as CSSStyleDeclaration & { webkitTouchCallout?: string; webkitUserSelect?: string }
+    return { userSelect: cs.userSelect || cs.webkitUserSelect, callout: cs.webkitTouchCallout ?? 'none' }
+  })
+  expect(style.userSelect).toBe('none')
+  expect(style.callout).toBe('none')
 }
 
 async function toast(page: Page, text: string): Promise<void> {
@@ -604,6 +636,231 @@ test.describe('アイデアのフォルダ', () => {
     await expect(head(folder(section(page, 'none'), '作者のフォルダ'), 'idea-folder-by')).toHaveCount(0)
   })
 
+  test('スマホ: カードの長押しで選んで移すを始める（押したカードは同じ位置に残り、離した時に下のカードは選ばない）。選んでいる間は選ぶ・外す。指が動いた・ボタンの長押しでは始めない。ほかの仕切りへ切り替わる', async ({
+    page,
+  }, info) => {
+    test.skip(info.project.name !== 'mobile', '長押しはスマホ（タッチ操作）のみ')
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の庭')
+      const cards: string[] = []
+      for (let i = 0; i < 12; i++) cards.push(actions.addIdea(t, '', `星の案${i + 1}`))
+      const home = actions.createIdeaFolder(null, null, '新作の相談')
+      const inFolder = [actions.addIdea(null, '', '相談の案1', home), actions.addIdea(null, '', '相談の案2', home)]
+      const loose: string[] = []
+      for (let i = 0; i < 3; i++) loose.push(actions.addIdea(null, '', `ホームの案${i + 1}`))
+      const long = actions.addIdea(null, '', Array.from({ length: 12 }, (_, i) => `長い案の${i + 1}行目`).join('\n'))
+      return { t, cards, inFolder, loose, long }
+    })
+    await openHomeBands(page, 'ideas')
+    const touch = await touchScreen(page)
+    const sec = section(page, ids.t)
+    const none = section(page, 'none')
+    const cardOf = (id: string) => page.locator(`[data-testid="idea-card"][data-idea-id="${id}"]`)
+    const count = (s: Locator) => s.getByTestId('idea-select-count')
+    await expectNoCallout(cardOf(ids.cards[0]).locator('.idea-card-main'))
+
+    // 画面の中ほどのカードを長押し: そのカードを選んだ状態で始まる。ほかのカードのボタンの行が消えて縮んでも、押したカードは指の下に残る
+    const c10 = cardOf(ids.cards[9])
+    await c10.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    const before = (await c10.boundingBox())!.y
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+    await longPress(page, touch, c10.getByTestId('idea-body'))
+    await expect(count(sec)).toHaveText('1件を選択中')
+    await expect(sec.locator('.idea-card.is-selected')).toHaveCount(1)
+    await expect(c10).toHaveClass(/is-selected/)
+    await expect(c10.getByTestId('idea-select')).toBeChecked()
+    await expect(sec.getByTestId('idea-select-start')).toHaveAttribute('aria-pressed', 'true')
+    expect(await page.evaluate(() => String(window.getSelection() ?? ''))).toBe('')
+    expect(Math.abs((await c10.boundingBox())!.y - before)).toBeLessThan(2)
+
+    // 選んでいる間の長押しは、そのカードを選ぶ・外す
+    const c11 = cardOf(ids.cards[10])
+    await longPress(page, touch, c11.getByTestId('idea-body'))
+    await expect(count(sec)).toHaveText('2件を選択中')
+    await longPress(page, touch, c10.getByTestId('idea-body'))
+    await expect(count(sec)).toHaveText('1件を選択中')
+    await expect(c10).not.toHaveClass(/is-selected/)
+    await expect(c11).toHaveClass(/is-selected/)
+
+    // 指が動いた（スクロールした）時は、長く触れていても選ばない
+    const b9 = (await cardOf(ids.cards[8]).getByTestId('idea-body').boundingBox())!
+    await touch('touchStart', b9.x + 20, b9.y + b9.height / 2)
+    await touch('touchMove', b9.x + 20, b9.y + b9.height / 2 + 30)
+    await page.waitForTimeout(800)
+    await touch('touchEnd', b9.x + 20, b9.y + b9.height / 2 + 30)
+    await page.waitForTimeout(300)
+    await expect(count(sec)).toHaveText('1件を選択中')
+    await expect(cardOf(ids.cards[8])).not.toHaveClass(/is-selected/)
+    // 押している間にページがスクロールした時も選ばない
+    await touch('touchStart', b9.x + 20, b9.y + b9.height / 2)
+    await page.evaluate(() => window.scrollBy(0, 40))
+    await page.waitForTimeout(800)
+    await touch('touchEnd', b9.x + 20, b9.y + b9.height / 2)
+    await page.waitForTimeout(300)
+    await expect(count(sec)).toHaveText('1件を選択中')
+
+    // ページの上の端（スクロールで合わせられない）: 押したカードが上へ動き、指を離した所はその下のカードになるが、下のカードは選ばない。
+    // 上に3枚あるカードが先頭から見えるよう、画面を縦に長くする
+    await sec.getByTestId('idea-select-cancel').click()
+    await expect(sec.getByTestId('idea-select-bar')).toHaveCount(0)
+    const viewport = page.viewportSize()!
+    await page.setViewportSize({ width: viewport.width, height: 1100 })
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+    const pick = await page.evaluate((key) => {
+      // 上の切り替えより下で、画面に収まっている、上に3枚以上カードがある仕切りのカード
+      const nav = document.querySelector('[data-testid="home-jump"]')?.getBoundingClientRect().bottom ?? 0
+      const cards = [
+        ...document.querySelectorAll<HTMLElement>(
+          `[data-testid="idea-section"][data-section="${key}"] [data-testid="idea-card"]`,
+        ),
+      ]
+      const i = cards.findIndex((c, i) => {
+        const r = c.getBoundingClientRect()
+        return i >= 3 && r.top > nav && r.bottom < window.innerHeight - 40
+      })
+      return i < 0 ? null : (cards[i].dataset.ideaId ?? null)
+    }, ids.t)
+    expect(pick).not.toBeNull()
+    const pressed = cardOf(pick!)
+    const pb = (await pressed.getByTestId('idea-body').boundingBox())!
+    const at = await longPress(page, touch, pressed.getByTestId('idea-body'), { x: pb.x + 20, y: pb.y + pb.height - 3 })
+    await expect(count(sec)).toHaveText('1件を選択中')
+    await expect(pressed).toHaveClass(/is-selected/)
+    // 指を離した所は、もう押したカードではなく下のカード（並びが動いた）。そのカードは選ばれていない
+    const under = await page.evaluate(
+      ({ x, y }) => document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-testid="idea-card"]')?.dataset.ideaId ?? null,
+      at,
+    )
+    expect(under).not.toBeNull()
+    expect(under).not.toBe(pick)
+    await expect(cardOf(under!)).not.toHaveClass(/is-selected/)
+    await expect(sec.locator('.idea-card.is-selected')).toHaveCount(1)
+    await page.setViewportSize(viewport)
+
+    // ほかの仕切り（フォルダの中のカード）を長押しすると、そちらに切り替わる
+    const f1 = cardOf(ids.inFolder[0])
+    await f1.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await longPress(page, touch, f1.getByTestId('idea-body'))
+    await expect(sec.getByTestId('idea-select-bar')).toHaveCount(0)
+    await expect(count(none)).toHaveText('1件を選択中')
+    await expect(f1.getByTestId('idea-select')).toBeChecked()
+
+    // 「続きを表示」の長押しは何もしない（ボタンとして押される）
+    await page.keyboard.press('Escape')
+    await expect(none.getByTestId('idea-select-bar')).toHaveCount(0)
+    const more = cardOf(ids.long).getByTestId('idea-more')
+    await more.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await expect(more).toHaveText('続きを表示')
+    await longPress(page, touch, more)
+    await expect(none.getByTestId('idea-select-bar')).toHaveCount(0)
+    expect(await page.evaluate(() => String(window.getSelection() ?? ''))).toBe('')
+  })
+
+  test('スマホ: 長押しで始めて、2枚を足して［移す…］でフォルダへまとめて移す', async ({ page }, info) => {
+    test.skip(info.project.name !== 'mobile', '長押しはスマホ（タッチ操作）のみ')
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の庭')
+      const top = actions.createIdeaFolder(t, null, '場面の相談')
+      const cards: string[] = []
+      for (let i = 0; i < 5; i++) cards.push(actions.addIdea(t, '', `星の案${i + 1}`))
+      return { t, top, cards }
+    })
+    await openHomeBands(page, 'ideas')
+    const touch = await touchScreen(page)
+    const sec = section(page, ids.t)
+    const cardOf = (id: string) => page.locator(`[data-testid="idea-card"][data-idea-id="${id}"]`)
+    await cardOf(ids.cards[1]).evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await longPress(page, touch, cardOf(ids.cards[1]).getByTestId('idea-body'))
+    await expect(sec.getByTestId('idea-select-count')).toHaveText('1件を選択中')
+    // 帯の説明（0件の時だけ）は出ない
+    await expect(sec.getByTestId('idea-select-hint')).toHaveCount(0)
+    // 続けて軽く押して2枚足す
+    await cardOf(ids.cards[2]).getByTestId('idea-body').tap()
+    await cardOf(ids.cards[4]).getByTestId('idea-body').tap()
+    await expect(sec.getByTestId('idea-select-count')).toHaveText('3件を選択中')
+    await sec.getByTestId('idea-select-move').click()
+    await expect(dialog(page).getByRole('heading', { name: '3件のアイデアを移動' })).toBeVisible()
+    await expect(page.getByTestId('idea-move-select-more')).toHaveCount(0)
+    await page.locator(`[data-testid="idea-move-option"][data-folder="${ids.top}"]`).click()
+    await page.getByTestId('idea-move-submit').click()
+    await expect(dialog(page)).toHaveCount(0)
+    await toast(page, '3件を「星の庭 › 場面の相談」へ移しました')
+    await expect(sec.getByTestId('idea-select-bar')).toHaveCount(0)
+    await expect
+      .poll(() => cardsDirectlyIn(folderById(page, ids.top)).evaluateAll((els) => els.map((e) => e.getAttribute('data-idea-id'))))
+      .toEqual([ids.cards[1], ids.cards[2], ids.cards[4]])
+  })
+
+  test('デスクトップ: カードの右クリックはブラウザのメニューのまま・マウスの押し続けでは始めない（文字は選べる）', async ({
+    page,
+  }, info) => {
+    test.skip(info.project.name !== 'desktop', 'マウスで確かめる')
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の庭')
+      return { t, a: actions.addIdea(t, '', '星の案1'), b: actions.addIdea(t, '', '星の案2') }
+    })
+    await openHomeBands(page, 'ideas')
+    await page.evaluate(() => {
+      const w = window as unknown as { __cmPrevented: boolean | null }
+      w.__cmPrevented = null
+      window.addEventListener('contextmenu', (e) => (w.__cmPrevented = e.defaultPrevented))
+    })
+    const body = page.locator(`[data-testid="idea-card"][data-idea-id="${ids.a}"]`).getByTestId('idea-body')
+    expect(await body.evaluate((el) => getComputedStyle(el.closest('.idea-card-main')!).userSelect)).not.toBe('none')
+    await body.click({ button: 'right' })
+    expect(await page.evaluate(() => (window as unknown as { __cmPrevented: boolean | null }).__cmPrevented)).toBe(false)
+    await expect(page.getByTestId('idea-select-bar')).toHaveCount(0)
+    const box = (await body.boundingBox())!
+    await page.mouse.move(box.x + 10, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.waitForTimeout(800)
+    await page.mouse.up()
+    await expect(page.getByTestId('idea-select-bar')).toHaveCount(0)
+    await expect(section(page, ids.t).getByTestId('idea-select-start')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('［移動］の「ほかのカードも選んでまとめて移す」: 閉じて、そのカードを選んだ状態で始まる（フォーカスはそのカードの□）', async ({
+    page,
+  }, info) => {
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の庭')
+      const top = actions.createIdeaFolder(t, null, '場面の相談')
+      const cards: string[] = []
+      for (let i = 0; i < 4; i++) cards.push(actions.addIdea(t, '', `星の案${i + 1}`))
+      return { t, top, cards }
+    })
+    await openHomeBands(page, 'ideas')
+    const sec = section(page, ids.t)
+    const cardOf = (id: string) => page.locator(`[data-testid="idea-card"][data-idea-id="${id}"]`)
+    await cardOf(ids.cards[0]).getByTestId('idea-move').click()
+    const more = page.getByTestId('idea-move-select-more')
+    await expect(more).toHaveText('ほかのカードも選んでまとめて移す')
+    // 長押しの説明は指で操作する端末だけ
+    if (info.project.name === 'mobile') await expect(page.getByTestId('idea-move-more-note')).toBeVisible()
+    else await expect(page.getByTestId('idea-move-more-note')).toBeHidden()
+    await more.click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect(sec.getByTestId('idea-select-count')).toHaveText('1件を選択中')
+    const box = cardOf(ids.cards[0]).getByTestId('idea-select')
+    await expect(box).toBeChecked()
+    await expect(box).toBeFocused()
+    await cardOf(ids.cards[2]).getByTestId('idea-select').check()
+    await expect(sec.getByTestId('idea-select-count')).toHaveText('2件を選択中')
+    await sec.getByTestId('idea-select-move').click()
+    await page.locator(`[data-testid="idea-move-option"][data-folder="${ids.top}"]`).click()
+    await page.getByTestId('idea-move-submit').click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect
+      .poll(() => cardsDirectlyIn(folderById(page, ids.top)).evaluateAll((els) => els.map((e) => e.getAttribute('data-idea-id'))))
+      .toEqual([ids.cards[0], ids.cards[2]])
+  })
+
   test('幅 360px: 横にはみ出さず、フォルダの見出し・選んで移すのボタンは押しやすい大きさ（明・暗のスクリーンショット）', async ({
     page,
   }, info) => {
@@ -636,6 +893,19 @@ test.describe('アイデアのフォルダ', () => {
     // 名前は折り返して収まる
     const box = (await head(top, 'idea-folder-name').boundingBox())!
     expect(box.x + box.width).toBeLessThanOrEqual(360)
+
+    // カードの移動のダイアログの「ほかのカードも選んでまとめて移す」と長押しの説明（指の端末だけ）。全体のスクリーンショットの後は
+    // Chromium の指の端末の真似（pointer: coarse）が外れるので、その前に見る
+    await section(page, ids.t).getByTestId('idea-move').first().click()
+    // シートが出てくる動きが終わってから測る
+    await dialog(page).evaluate((el) =>
+      Promise.all((el.closest('.modal-backdrop') ?? el).getAnimations({ subtree: true }).map((a) => a.finished)),
+    )
+    await tapSize(page.getByTestId('idea-move-select-more'), 'idea-move-select-more', false)
+    await expect(page.getByTestId('idea-move-more-note')).toBeVisible()
+    await noHorizontalScroll(page)
+    await page.keyboard.press('Escape')
+    await expect(dialog(page)).toHaveCount(0)
 
     const dir = 'e2e/artifacts/screens'
     for (const scheme of ['light', 'dark'] as const) {

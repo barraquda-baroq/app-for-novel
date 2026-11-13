@@ -5,6 +5,7 @@
 // - まとめて（「選んで移す」）: 移動先を選ぶまで移せない。位置は選ばず、移動先の末尾に今の並びのまま入る（済みは済みのまま）
 // どちらも「選んだ場所に新しいフォルダを作って移す」で、フォルダを作って1回の操作で移せる（2段目の中には作れない）。
 // 移した後は、移した先の仕切りとフォルダを開いて、移したカード（まとめての時は最初の1枚）を見せる。
+// 1枚の時は「ほかのカードも選んでまとめて移す」（onSelectMore）で、閉じてそのカードを選んだ状態で「選んで移す」を始められる。
 import { useContext, useId, useMemo, useState } from 'react'
 import { ideaSections, isIdeaChecked, type IdeaSection } from '../../domain/entityOps'
 import { folderPathNames } from '../../domain/ideaFolders'
@@ -39,6 +40,8 @@ export interface IdeaMoveDialogProps {
   bulk?: boolean
   /** 移した後（選ぶのをやめるなど） */
   onMoved?: () => void
+  /** 1枚の時:「ほかのカードも選んでまとめて移す」（閉じて、このカードを選んだ状態で「選んで移す」を始める）。渡した時だけ出す */
+  onSelectMore?: () => void
 }
 
 /** 移動先の場所の表記（仕切りの行は仕切りの名前、フォルダの行は「星の庭 › 場面の相談」） */
@@ -48,7 +51,7 @@ function targetLabel(data: AppData, sections: IdeaSection[], t: MoveTarget): str
   return t.folderId === null ? name : ideaPlaceName(name, folderPathNames(data, t.folderId))
 }
 
-export function IdeaMoveDialog({ ideaIds, onClose, bulk = ideaIds.length > 1, onMoved }: IdeaMoveDialogProps) {
+export function IdeaMoveDialog({ ideaIds, onClose, bulk = ideaIds.length > 1, onMoved, onSelectMore }: IdeaMoveDialogProps) {
   const data = useData()
   const formId = useId()
   const noteId = useId()
@@ -203,6 +206,26 @@ export function IdeaMoveDialog({ ideaIds, onClose, bulk = ideaIds.length > 1, on
               ? `「${label}」の移動先を選んでください。`
               : `「${label}」の移動先と、その中の位置を選んでください。`}
         </p>
+        {single && onSelectMore ? (
+          <div className="idea-move-more">
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost idea-move-select-more"
+              onClick={() => {
+                onClose()
+                onSelectMore()
+              }}
+              data-testid="idea-move-select-more"
+            >
+              <CheckIcon />
+              ほかのカードも選んでまとめて移す
+            </button>
+            {/* 指で操作する端末だけ（次からはダイアログを開かずに始められる） */}
+            <span className="idea-move-more-note small muted idea-touch-only" data-testid="idea-move-more-note">
+              カードの長押しでも選べます
+            </span>
+          </div>
+        ) : null}
         <fieldset className="idea-move-fieldset">
           <legend className="idea-move-legend">移動先</legend>
           <ul className="idea-move-list">

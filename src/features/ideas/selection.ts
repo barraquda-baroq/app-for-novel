@@ -1,6 +1,7 @@
 // アイデアのカードを選んでまとめて移す（2.9。「選んで移す」）時の、選んでいるカード。1つの仕切りの中だけで選ぶ
 // （ほかの仕切りで始めると、前の選択はやめる）。この画面の間だけ覚える（保存しない）。
 // カードの行は自分が選ばれているかだけを読むので（useIsSelected）、1つ選んでも変わった行だけが描き直される。
+// ［選んで移す］のほか、スマホではカードの長押し（pressSelect）、カードの［移動］のダイアログの「ほかのカードも選んでまとめて移す」でも始まる。
 import { create } from 'zustand'
 import type { ID } from '../../domain/types'
 
@@ -12,9 +13,18 @@ interface SelectionState {
 
 export const useSelection = create<SelectionState>(() => ({ section: null, ids: new Set() }))
 
-/** その仕切りで選び始める（ほかの仕切りの選択はやめる） */
-export function startSelect(section: string): void {
-  useSelection.setState({ section, ids: new Set() })
+/** その仕切りで選び始める（ほかの仕切りの選択はやめる）。ids: 初めから選んでおくカード（カードの長押し・移動のダイアログから始めた時） */
+export function startSelect(section: string, ids: readonly ID[] = []): void {
+  useSelection.setState({ section, ids: new Set(ids) })
+}
+
+/**
+ * カードの長押し（指）: この仕切りで選んでいれば、そのカードを選ぶ・外す。そうでなければ、そのカードを選んだ状態で始める
+ * （ほかの仕切りの選択はやめる）
+ */
+export function pressSelect(section: string, id: ID): void {
+  if (useSelection.getState().section === section) toggleSelected(id)
+  else startSelect(section, [id])
 }
 
 /** 選ぶのをやめる（Esc・やめる・移した後・画面を離れた時） */

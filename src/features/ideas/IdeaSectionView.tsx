@@ -5,7 +5,7 @@
 // 挟んでまとまる。件数は仕切りのすべてのカード（フォルダの中も）。
 // ［選んで移す］（カードが1枚以上ある時）: この仕切りのカードを選び、下の帯の［移す…］でまとめて移す（IdeaMoveDialog）。
 // Esc・［やめる］・移した後・画面を離れた時にやめる（［やめる］の後は［選んで移す］にフォーカス）。もう無いカード（この仕切りに見えないカード）は
-// 選択から除く。
+// 選択から除く。指で操作する端末では、カードの長押しでも始まる（IdeaCard。帯の説明に添える）。
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { isIdeaChecked, type IdeaSection } from '../../domain/entityOps'
@@ -193,7 +193,7 @@ export function IdeaSectionView({
                 className={`btn btn-sm btn-ghost idea-select-start${selecting ? ' is-active' : ''}`}
                 aria-pressed={selecting}
                 onClick={() => (selecting ? stopSelect() : startSelect(key))}
-                title="カードを選んで、まとめてほかのフォルダや仕切りへ移す"
+                title="カードを選んで、まとめてほかのフォルダや仕切りへ移す（スマホではカードの長押しでも始められます）"
                 data-testid="idea-select-start"
               >
                 <CheckIcon />
@@ -238,6 +238,7 @@ export function IdeaSectionView({
             {selectedCount === 0 ? (
               <p className="idea-select-hint" data-testid="idea-select-hint">
                 移すカードを選んでください（フォルダの見出しの□で中をまとめて選べます）
+                <span className="idea-touch-only">。次からは、カードの長押しでも始められます</span>
               </p>
             ) : null}
           </div>

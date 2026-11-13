@@ -1,20 +1,27 @@
 // 選んで移す（2.9）: 選んでいる間は済みのチェックボックスの代わりに選ぶチェックボックス、カードを押しても選べる、
 // フォルダの見出しの□（中のフォルダのカードも。閉じたままでも）、下の帯の数と［移す…］、もう無いカードは除く、Esc・やめる・移した後に終わる
 // （［やめる］の後は［選んで移す］にフォーカス）。移した後は移した先（既にあるフォルダ・新しく作ったフォルダ）を開いて最初の1枚を見せる。
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+// カードの長押し（指）: そのカードを選んだ状態で始める・選んでいる最中は選ぶ・外す・ほかの仕切りから切り替える。離した時のクリックは
+// どこに届いても取り消す。指が動いた・スクロールした・マウス・ボタンの所からは始めない。押したカードは同じ位置に残す。
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence } from '../../db/persistence'
+import { lightTap } from '../../platform/haptics'
+import '../../test/pointerEvent'
 import type { ID } from '../../domain/types'
 import { actions } from '../../store/actions'
 import { getData, initStore, resetStoreForTests } from '../../store/appStore'
 import { useToasts } from '../../store/uiStore'
 import { AppFrame } from '../../ui/Layout'
+import { LONG_PRESS_MS } from '../../ui/longPress'
 import { IdeaArea } from '../home/IdeaArea'
 import { resetFolderCollapseForTests } from './folderCollapse'
 import { useReveal } from './reveal'
 import { stopSelect, useSelection } from './selection'
+
+vi.mock('../../platform/haptics', () => ({ lightTap: vi.fn() }))
 
 let n = 0
 
@@ -102,9 +109,12 @@ describe('選んで移す', () => {
     expect(within(card('相談の案')).getByTestId('idea-check')).toBeTruthy()
     expect(within(section(home.dataset.section!)).queryByTestId('idea-select-bar')).toBeTruthy()
     expect(within(home).getByTestId('idea-select-count').textContent).toBe('0件を選択中')
-    expect(within(home).getByTestId('idea-select-hint').textContent).toBe(
-      '移すカードを選んでください（フォルダの見出しの□で中をまとめて選べます）',
+    const hint = within(home).getByTestId('idea-select-hint')
+    expect(hint.textContent).toBe(
+      '移すカードを選んでください（フォルダの見出しの□で中をまとめて選べます）。次からは、カードの長押しでも始められます',
     )
+    // 長押しの説明は指で操作する端末だけ（CSS の pointer: coarse）
+    expect(hint.querySelector('.idea-touch-only')?.textContent).toBe('。次からは、カードの長押しでも始められます')
     expect(within(home).getByTestId('idea-select-move')).toHaveProperty('disabled', true)
 
     await user.click(box)
@@ -276,5 +286,182 @@ describe('選んで移す', () => {
       </MemoryRouter>,
     )
     for (const s of screen.getAllByTestId('idea-section')) expect(within(s).queryByTestId('idea-select-start')).toBeNull()
+  })
+})
+
+describe('カードの長押し（指）', () => {
+  const touch = { pointerType: 'touch', isPrimary: true, button: 0 }
+  const body = (text: string) => within(card(text)).getByTestId('idea-body')
+  const bar = (key: string) => within(section(key)).queryByTestId('idea-select-bar')
+  const count = (key: string) => within(section(key)).queryByTestId('idea-select-count')?.textContent ?? null
+  const selectBox = (text: string) => within(card(text)).getByTestId('idea-select') as HTMLInputElement
+
+  beforeEach(() => vi.mocked(lightTap).mockClear())
+  afterEach(() => vi.useRealTimers())
+
+  /** 描いた後で時計を止める（データの用意は本物のタイマーで） */
+  const fakeTimers = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+
+  /** 指で長押しする（離さない） */
+  function longPress(el: HTMLElement) {
+    fireEvent.pointerDown(el, { ...touch, clientX: 20, clientY: 20 })
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
+  }
+  /** 指を離す。クリックは clickOn（並びが動いた時は指の下に来たほかのカード）に届く */
+  function lift(el: HTMLElement, clickOn: HTMLElement = el) {
+    fireEvent.pointerUp(el, touch)
+    fireEvent.click(clickOn)
+  }
+  /** ふつうに軽く押す */
+  function tap(el: HTMLElement) {
+    fireEvent.pointerDown(el, touch)
+    fireEvent.pointerUp(el, touch)
+    fireEvent.click(el)
+  }
+
+  it('本文の所を0.5秒押すと、そのカードを選んだ状態で始まり、軽く振動する。離した時のクリックでは選ぶ・外すにならない', () => {
+    seed()
+    fakeTimers()
+    fireEvent.pointerDown(body('Claude の案1'), { ...touch, clientX: 20, clientY: 20 })
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS - 1))
+    expect(bar('none')).toBeNull()
+    act(() => vi.advanceTimersByTime(1))
+    expect(count('none')).toBe('1件を選択中')
+    expect(card('Claude の案1').className).toContain('is-selected')
+    expect(selectBox('Claude の案1').checked).toBe(true)
+    expect(within(section('none')).getByTestId('idea-select-start').getAttribute('aria-pressed')).toBe('true')
+    expect(lightTap).toHaveBeenCalledTimes(1)
+    // 押したカードに届いたクリック
+    lift(body('Claude の案1'))
+    expect(count('none')).toBe('1件を選択中')
+    // 後でふつうに押すと選べる
+    tap(body('Claude の案2'))
+    expect(count('none')).toBe('2件を選択中')
+
+    // 選んでいる最中の長押しは、そのカードを選ぶ。離した時のクリックが、並びが動いて指の下に来たほかのカードに届いても選ばない
+    longPress(body('Claude の案3'))
+    expect(count('none')).toBe('3件を選択中')
+    lift(body('Claude の案3'), body('Claude の案4'))
+    expect(count('none')).toBe('3件を選択中')
+    expect(card('Claude の案4').className).not.toContain('is-selected')
+    // もう一度長押しすると外す
+    longPress(body('Claude の案3'))
+    lift(body('Claude の案3'))
+    expect(count('none')).toBe('2件を選択中')
+    expect(card('Claude の案3').className).not.toContain('is-selected')
+    expect(lightTap).toHaveBeenCalledTimes(3)
+  })
+
+  it('［選んで移す］で始めた後の長押しは、そのカードを選ぶ・外す', async () => {
+    const user = userEvent.setup()
+    seed()
+    await user.click(within(section('none')).getByTestId('idea-select-start'))
+    expect(count('none')).toBe('0件を選択中')
+    fakeTimers()
+    longPress(body('Claude の案5'))
+    lift(body('Claude の案5'))
+    expect(count('none')).toBe('1件を選択中')
+    expect(selectBox('Claude の案5').checked).toBe(true)
+    longPress(body('Claude の案5'))
+    lift(body('Claude の案5'))
+    expect(count('none')).toBe('0件を選択中')
+    expect(bar('none')).toBeTruthy()
+  })
+
+  it('ほかの仕切りで選んでいる時は、長押ししたカードの仕切りに切り替わる（前の選択はやめる）', async () => {
+    const user = userEvent.setup()
+    const ids = seed()
+    await user.click(within(section(ids.title)).getByTestId('idea-select-start'))
+    await user.click(within(card('相談の案')).getByTestId('idea-select'))
+    expect(count(ids.title)).toBe('1件を選択中')
+    fakeTimers()
+    longPress(body('Claude の案2'))
+    lift(body('Claude の案2'))
+    expect(bar(ids.title)).toBeNull()
+    expect(count('none')).toBe('1件を選択中')
+    expect(useSelection.getState()).toMatchObject({ section: 'none', ids: new Set([ids.cards[4]]) })
+  })
+
+  it('指が動いた・0.5秒より前に離した・ブラウザが止めた（pointercancel）・スクロールした時は始めない', () => {
+    seed()
+    fakeTimers()
+    const b = body('Claude の案1')
+    fireEvent.pointerDown(b, { ...touch, clientX: 20, clientY: 20 })
+    fireEvent.pointerMove(b, { ...touch, clientX: 20, clientY: 50 })
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS * 2))
+    fireEvent.pointerDown(b, touch)
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS - 100))
+    fireEvent.pointerUp(b, touch)
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS * 2))
+    fireEvent.pointerDown(b, touch)
+    fireEvent.pointerCancel(b, touch)
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS * 2))
+    fireEvent.pointerDown(b, touch)
+    fireEvent.scroll(window)
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS * 2))
+    expect(useSelection.getState().section).toBeNull()
+    expect(bar('none')).toBeNull()
+    expect(lightTap).not.toHaveBeenCalled()
+  })
+
+  it('マウスの押し続け・右クリックでは始めない（右クリックはブラウザのメニューのまま）', () => {
+    seed()
+    fakeTimers()
+    const b = body('Claude の案1')
+    fireEvent.pointerDown(b, { pointerType: 'mouse', isPrimary: true, button: 0 })
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS * 2))
+    expect(fireEvent.contextMenu(b, { clientX: 20, clientY: 20 })).toBe(true)
+    expect(useSelection.getState().section).toBeNull()
+  })
+
+  it('Android（長押しで contextmenu が先に届く）: ブラウザのメニューは出さずに始め、タイマーで二重に選ばない', () => {
+    seed()
+    fakeTimers()
+    const b = body('Claude の案1')
+    fireEvent.pointerDown(b, { ...touch, clientX: 20, clientY: 20 })
+    act(() => vi.advanceTimersByTime(400))
+    expect(fireEvent.contextMenu(b, { clientX: 20, clientY: 20 })).toBe(false)
+    expect(count('none')).toBe('1件を選択中')
+    expect(lightTap).toHaveBeenCalledTimes(1)
+    act(() => vi.advanceTimersByTime(600))
+    lift(b)
+    expect(count('none')).toBe('1件を選択中')
+    expect(selectBox('Claude の案1').checked).toBe(true)
+  })
+
+  it('済みのカード・フォルダの中のカードも長押しで選べる。済みの□・［移動］から始めた長押しは何もしない', () => {
+    const ids = seed()
+    act(() => actions.setIdeaChecked(ids.cards[3], true))
+    fakeTimers()
+    longPress(within(card('Claude の案2')).getByTestId('idea-check'))
+    longPress(within(card('Claude の案2')).getByTestId('idea-move'))
+    expect(useSelection.getState().section).toBeNull()
+    longPress(body('Claude の案1'))
+    lift(body('Claude の案1'))
+    expect(card('Claude の案1').dataset.checked).toBe('true')
+    expect(count('none')).toBe('1件を選択中')
+    expect(selectBox('Claude の案1').checked).toBe(true)
+    longPress(body('駅の案2'))
+    lift(body('駅の案2'))
+    expect(count(ids.title)).toBe('1件を選択中')
+    expect(selectBox('駅の案2').checked).toBe(true)
+  })
+
+  it('始めてカードの高さが変わっても、押したカードは画面の同じ位置に残る（その分スクロールする）', () => {
+    seed()
+    const li = card('Claude の案6')
+    const rect = (top: number) => ({ top, bottom: top + 80, left: 0, right: 300, width: 300, height: 80 }) as DOMRect
+    // 始める前は 300、ボタンの行が消えて上のカードが縮んだ後は 250
+    vi.spyOn(li, 'getBoundingClientRect').mockReturnValueOnce(rect(300)).mockReturnValue(rect(250))
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+    try {
+      fakeTimers()
+      longPress(body('Claude の案6'))
+      expect(count('none')).toBe('1件を選択中')
+      expect(scrollTo).toHaveBeenCalledTimes(1)
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: window.scrollY - 50 }))
+    } finally {
+      scrollTo.mockRestore()
+    }
   })
 })
