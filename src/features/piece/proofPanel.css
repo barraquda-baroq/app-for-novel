@@ -108,11 +108,11 @@
     top: auto;
     left: 0;
     right: 0;
-    /* iPhone のアプリではキーボードの上に出す（--kb-native） */
-    bottom: var(--kb-native, 0px);
+    /* キーボードの上に出す（--kb。src/platform/viewportKeyboard.ts） */
+    bottom: var(--kb, 0px);
     width: auto;
     max-height: 58dvh;
     border-radius: 14px 14px 0 0;
-    padding-bottom: var(--safe-bottom);
+    padding-bottom: var(--safe-bottom-kb);
   }
 }

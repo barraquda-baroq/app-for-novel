@@ -6,6 +6,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { onNativeKeyboard } from '../platform/keyboard'
+import { keyboardCover } from '../platform/viewportKeyboard'
 import { notifyError } from '../store/uiStore'
 import { keepFocus as keepFocusHandler } from './keys'
 import './menu.css'
@@ -108,7 +109,10 @@ export function PopupMenu({
     const w = el.offsetWidth
     const h = el.offsetHeight
     const vw = window.innerWidth
-    const vh = window.innerHeight
+    // 画面キーボードに隠れる下の所と、Safari が見えている範囲を下げた分の上の所には置かない（src/platform/viewportKeyboard.ts）
+    const kb = keyboardCover()
+    const minTop = EDGE + kb.top
+    const vh = window.innerHeight - kb.bottom
     let x: number
     let y: number
     if ('anchor' in placement) {
@@ -117,7 +121,7 @@ export function PopupMenu({
         // 下のボタンの並び（記号バー）の上端にも重ならないよう、少し離す
         x = r.left + r.width / 2 - w / 2
         y = r.top - h - ABOVE_GAP
-        if (y < EDGE) y = r.bottom + 4
+        if (y < minTop) y = r.bottom + 4
       } else {
         x = r.right - w
         y = r.bottom + 4
@@ -130,7 +134,7 @@ export function PopupMenu({
       if (y + h > vh - EDGE) y = y - h
     }
     el.style.left = `${Math.max(EDGE, Math.min(x, vw - w - EDGE))}px`
-    el.style.top = `${Math.max(EDGE, Math.min(y, vh - h - EDGE))}px`
+    el.style.top = `${Math.max(minTop, Math.min(y, vh - h - EDGE))}px`
     el.style.visibility = 'visible'
   }
   useLayoutEffect(() => place.current(), [placement])

@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { resetNativeKeyboardForTests, setNativeKeyboardHeight } from '../platform/keyboard'
 import { closeTopLayer } from '../platform/nativeInit'
 import { PopupMenu, type PopupMenuProps } from './PopupMenu'
 
@@ -72,6 +73,27 @@ describe('PopupMenu', () => {
     })
     fireEvent.click(link)
     expect(onLink).toHaveBeenCalledTimes(1)
+  })
+
+  it('長押しした所が画面キーボードに隠れる所なら、キーボードの上に置く', () => {
+    setWindowSize(400, 800)
+    fakeLayout({ top: 0, bottom: 0, left: 0, right: 0 })
+    setNativeKeyboardHeight(300)
+    try {
+      render(
+        <PopupMenu
+          label="操作"
+          items={[{ label: '開く', onSelect: () => {} }]}
+          placement={{ point: { x: 10, y: 700 } }}
+          onClose={() => {}}
+          testId="row-menu"
+        />,
+      )
+      // 下端はキーボードの上端（800 - 300）から 8px 離す
+      expect(screen.getByTestId('row-menu').style.top).toBe(`${800 - 300 - 60 - 8}px`)
+    } finally {
+      resetNativeKeyboardForTests()
+    }
   })
 
   it('画面の高さだけが変わった時（画面キーボードの開閉）は閉じず、幅が変わった時（回転）は閉じる', () => {

@@ -1,5 +1,7 @@
 // iPhone のアプリ（Capacitor）のキーボード: 画面は縮まず、キーボードの高さがアプリから届く（--kb-native。src/platform/keyboard.ts）。
 // 開発用フック __ns.setNativeKeyboard で届いたことにして、記号バー・ダイアログ・ほかの画面の下端がキーボードの上に来ることを確かめる。
+// iPhone の Safari・ホーム画面版（画面は縮まず、見えている範囲 visualViewport だけが縮む）は、偽の visualViewport で確かめる
+// （src/platform/viewportKeyboard.ts の --kb・--kb-top）。
 // Chromium（desktop・mobile）と、E2E_WEBKIT=1 の時は WebKit でも動かす（playwright.config.ts）。
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { openApp, openHomeBands, seed } from './helpers'
@@ -14,6 +16,45 @@ const bottomOf = async (l: Locator) => {
   const b = (await l.boundingBox())!
   return Math.round(b.y + b.height)
 }
+
+const topOf = async (l: Locator) => Math.round((await l.boundingBox())!.y)
+
+/** ホームのアイデアの帯の「どれにも属さない」の仕切りの［＋ フォルダ］で、フォルダの名前のダイアログを開く */
+async function openFolderPrompt(page: Page): Promise<void> {
+  await openApp(page)
+  await openHomeBands(page, 'ideas')
+  await page.locator('[data-testid="idea-section"][data-section="none"]').getByTestId('idea-folder-create').click()
+  await expect(page.getByTestId('prompt-input')).toBeFocused()
+}
+
+/** シート（題・入力欄・［作る］）がすべて top〜bottom の間（キーボードの上の見えている範囲）にある */
+async function expectSheetWithin(page: Page, top: number, bottom: number): Promise<void> {
+  const backdrop = page.locator('.modal-backdrop')
+  await expect.poll(() => bottomOf(backdrop)).toBe(bottom)
+  expect(await topOf(backdrop)).toBe(top)
+  const sheet = page.locator('.modal')
+  await expect.poll(() => bottomOf(sheet)).toBeLessThanOrEqual(bottom)
+  expect(await topOf(sheet)).toBeGreaterThanOrEqual(top)
+  for (const l of [
+    page.getByRole('heading', { name: 'フォルダを作る' }),
+    page.getByTestId('prompt-input'),
+    page.getByTestId('prompt-ok'),
+  ]) {
+    expect(await topOf(l)).toBeGreaterThanOrEqual(top)
+    expect(await bottomOf(l)).toBeLessThanOrEqual(bottom)
+  }
+}
+
+/** 名前を打って Enter で作る。ダイアログが閉じ、フォルダができる */
+async function typeAndCreate(page: Page, name: string): Promise<void> {
+  await expect(page.getByTestId('prompt-input')).toBeFocused()
+  await page.keyboard.type(name)
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.modal-backdrop')).toHaveCount(0)
+  await expect(page.locator('[data-testid="idea-folder-name"]', { hasText: name })).toBeVisible()
+}
+
+const kbVar = (page: Page) => page.evaluate(() => document.documentElement.style.getPropertyValue('--kb'))
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: W, height: H })
@@ -134,6 +175,17 @@ test('ダイアログ: 背景とダイアログの下端がキーボードの上
   await expect.poll(() => bottomOf(backdrop)).toBe(H)
 })
 
+test('フォルダの名前のダイアログ: 題・入力欄・［作る］がキーボードの上に来て、名前を付けて作れる', async ({ page }) => {
+  await openFolderPrompt(page)
+  await setKeyboard(page, KB)
+  await expectSheetWithin(page, 0, H - KB)
+  await setKeyboard(page, 0)
+  await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(H)
+  await setKeyboard(page, KB)
+  await typeAndCreate(page, '港町の相談')
+  await setKeyboard(page, 0)
+})
+
 test('ほかの画面: いちばん下の欄までキーボードの上にスクロールできる', async ({ page }) => {
   await openApp(page, '/settings')
   await expect(page.getByTestId('app-settings')).toBeVisible()
@@ -180,4 +232,113 @@ test('原稿画面: 検索窓と見つけた所がキーボードの上にある
     .toBe(true)
   await expect(input).toBeFocused()
   await setKeyboard(page, 0)
+})
+
+test.describe('ブラウザ（iPhone の Safari・ホーム画面版）: 見えている範囲だけが縮む', () => {
+  /** 見えている範囲を kb だけ縮め、top だけ下げたことにする（偽の visualViewport。resize と scroll を送る） */
+  const setVisible = (page: Page, kb: number, top = 0) =>
+    page.evaluate(([k, t]) => (window as unknown as { __vv: (kb: number, top: number) => void }).__vv(k, t), [kb, top] as const)
+
+  test.beforeEach(async ({ page }) => {
+    // WebKit は interactive-widget=resizes-content を使わず、レイアウトの表示領域（innerHeight）はそのまま、visualViewport だけが縮む。
+    // 初期化のスクリプトの時点では document.documentElement はまだ無いので、window だけを触る
+    await page.addInitScript(() => {
+      const st = { kb: 0, top: 0 }
+      const t = new EventTarget()
+      const fake = {
+        get height() {
+          return innerHeight - st.kb
+        },
+        get width() {
+          return innerWidth
+        },
+        get offsetTop() {
+          return st.top
+        },
+        offsetLeft: 0,
+        pageTop: 0,
+        pageLeft: 0,
+        scale: 1,
+        addEventListener: t.addEventListener.bind(t),
+        removeEventListener: t.removeEventListener.bind(t),
+        dispatchEvent: t.dispatchEvent.bind(t),
+      }
+      Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => fake })
+      ;(window as unknown as { __vv: (kb: number, top?: number) => void }).__vv = (kb, top = 0) => {
+        st.kb = kb
+        st.top = top
+        t.dispatchEvent(new Event('resize'))
+        t.dispatchEvent(new Event('scroll'))
+      }
+    })
+  })
+
+  test('フォルダの名前のダイアログ: 見えている範囲に収まり、Safari が範囲を下げても追う。名前を付けて作れる', async ({
+    page,
+  }) => {
+    await openFolderPrompt(page)
+    await setVisible(page, KB)
+    await expectSheetWithin(page, 0, H - KB)
+    // Safari が入力欄を見せるために見えている範囲を 120px 下げた（シートも一緒に下がり、上にはみ出さない）
+    await setVisible(page, KB, 120)
+    await expectSheetWithin(page, 120, H - KB + 120)
+    // ツールバーほどの差（100px 未満）はキーボードと見なさない
+    await setVisible(page, 60)
+    await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(H)
+    expect(await topOf(page.locator('.modal-backdrop'))).toBe(0)
+    await setVisible(page, KB)
+    await typeAndCreate(page, '港町の相談')
+    // ダイアログを閉じて入力欄も無くなったら測らない
+    await expect.poll(() => kbVar(page)).toBe('')
+    await setVisible(page, 0)
+  })
+
+  test('入力欄にフォーカスが無く、ダイアログも無い時は測らない。入力欄に入ると測る', async ({ page }) => {
+    await openApp(page)
+    await openHomeBands(page, 'ideas')
+    await setVisible(page, KB)
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    expect(await kbVar(page)).toBe('')
+    await page.getByTestId('quick-idea-input').focus()
+    await expect.poll(() => kbVar(page)).toBe(`${KB}px`)
+    // 通知の出る所もキーボードの上（下から 16px）
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector('.toasts')!.getBoundingClientRect().bottom))
+      .toBe(H - KB - 16)
+    await page.getByTestId('quick-idea-input').blur()
+    await expect.poll(() => kbVar(page)).toBe('')
+    await setVisible(page, 0)
+  })
+
+  test('アプリから届いた高さと測った高さが両方あっても、二重に上げない', async ({ page }) => {
+    await openFolderPrompt(page)
+    await setKeyboard(page, KB)
+    await setVisible(page, KB)
+    await expectSheetWithin(page, 0, H - KB)
+    await setVisible(page, 0)
+    await setKeyboard(page, 0)
+    await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(H)
+  })
+
+  test('入力欄の多いダイアログ（資料を追加）: フォーカスした欄がキーボードの上の見える所に出る', async ({ page }) => {
+    await openApp(page)
+    await openHomeBands(page, 'materials')
+    await page.getByTestId('new-material').click()
+    const memo = page.getByTestId('material-memo')
+    await memo.click()
+    await expect(memo).toBeFocused()
+    await setVisible(page, KB)
+    await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(H - KB)
+    const body = page.locator('.modal-body')
+    await expect
+      .poll(async () => {
+        const m = (await memo.boundingBox())!
+        const b = (await body.boundingBox())!
+        return m.y >= Math.max(0, b.y - 1) && m.y + m.height <= Math.min(H - KB, b.y + b.height) + 1
+      })
+      .toBe(true)
+    // 保存のボタン（シートの下端）もキーボードに隠れない
+    expect(await bottomOf(page.getByTestId('material-save'))).toBeLessThanOrEqual(H - KB)
+    await setVisible(page, 0)
+  })
 })

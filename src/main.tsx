@@ -8,6 +8,7 @@ import { afterNextPaint, notifyAppReady } from './launch/launchHook'
 import { setNativeKeyboardHeight } from './platform/keyboard'
 import { hideSplash, initNative } from './platform/nativeInit'
 import { isNative } from './platform/platform'
+import { startViewportKeyboard } from './platform/viewportKeyboard'
 import { actions } from './store/actions'
 import { flushNow, getData, initStore, replaceAllData } from './store/appStore'
 import { installLeaveHandlers, saveBeforeLeave } from './store/lifecycle'
@@ -22,6 +23,9 @@ installLeaveHandlers()
 
 // iPhone / Android のアプリ: 裏に回る・戻るボタン・キーボードの知らせを受け取る（ブラウザでは何もしない）
 initNative()
+
+// 画面キーボードに隠れる高さ（--kb・--kb-top）を、どの端末でも測る。ダイアログ・メニュー・通知をキーボードの上に収める
+startViewportKeyboard()
 
 // 新しい版の知らせ（サービスワーカー）は Web 版だけ。アプリは dist-native にサービスワーカーを入れず（vite.config.ts）、
 // 更新はアプリそのものを入れ直す

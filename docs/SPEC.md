@@ -252,4 +252,5 @@ src/launch/      起動アニメーションと最初の描画の前の外観（
 - 色は `src/styles.css` の CSS 変数だけを使う（`#fff` などを直接書かない）。外観はホワイト／ダーク／ディープダークの3種（`<html data-theme>`）で、どの外観でも白い面が出ず読めること。領域ごとの色（本編・設定項目・戦略・アイデア・タイトル）は要素に `data-area="story"` などを付けると、その中で `--area`・`--area-text`・`--area-soft` として使える。
 - 書体は UI が `--font-ui`（各端末の標準ゴシック）、原稿・題名・通し読みが `--editor-font`（設定で明朝に切り替え可）。
 - 文言は日本語。スマホ（幅 360px〜）でも操作できること（ボタンは 34px 以上、横スクロールしない）。
+- 画面の下に固定で出す重なり（ダイアログ・通知・シートなど）は、下端 `bottom: var(--kb, 0px)`・上端 `var(--kb-top, 0px)`・下の余白 `var(--safe-bottom-kb)` で、どの端末でもキーボードの上の見えている範囲に収める（`src/platform/viewportKeyboard.ts`。`--kb-native` を直接使わない）。ダイアログは `Modal`（`promptDialog` なども）を使えばそうなる。
 - テスト用に主要な要素には `data-testid` を付ける。

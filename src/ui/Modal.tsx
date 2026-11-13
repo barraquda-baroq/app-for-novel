@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { refreshKeyboard } from '../platform/viewportKeyboard'
 import { XIcon } from './icons'
 
 export interface ModalProps {
@@ -42,6 +43,8 @@ export function Modal({ title, onClose, children, footer, wide, initialFocus, cl
     const id = Symbol('modal')
     stack.push(id)
     if (stack.length === 1) setBackgroundLocked(true)
+    // キーボードの高さは、入力欄にフォーカスがある時かダイアログを開いている間だけ測る（src/platform/viewportKeyboard.ts）
+    refreshKeyboard()
     const isTop = () => stack[stack.length - 1] === id
 
     const prev = document.activeElement as HTMLElement | null
@@ -83,6 +86,7 @@ export function Modal({ title, onClose, children, footer, wide, initialFocus, cl
       if (i >= 0) stack.splice(i, 1)
       if (stack.length === 0) setBackgroundLocked(false)
       prev?.focus?.()
+      refreshKeyboard()
     }
   }, [initialFocus])
 

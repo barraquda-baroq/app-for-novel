@@ -94,6 +94,9 @@
   --safe-top: env(safe-area-inset-top, 0px);
   /* iPhone のアプリでキーボードを出している間（--kb-native。src/platform/keyboard.ts）は、下の安全領域はキーボードに隠れる */
   --safe-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--kb-native, 0px)));
+  /* キーボードの上に出す固定の重なり（ダイアログ・通知・推敲案のシート）の下の余白。--kb はどの端末でもキーボードに隠れる高さ
+     （src/platform/viewportKeyboard.ts）。--safe-bottom は --kb-native のままにして、ブラウザで流れのレイアウトを変えない */
+  --safe-bottom-kb: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--kb, 0px)));
   color-scheme: light;
 }
 
@@ -303,7 +306,8 @@ body,
 }
 
 /* iPhone のアプリは画面がキーボードの分だけ縮まない（--kb-native。ブラウザと Android のアプリでは 0）。
-   フォーカスした入力欄をキーボードの上まで動かせるよう、スクロールの止まる位置と、ページの下の余白を足す */
+   フォーカスした入力欄をキーボードの上まで動かせるよう、スクロールの止まる位置と、ページの下の余白を足す。
+   ここは --kb にしない（iPhone の Safari は自分でキーボードの高さの分だけページを動かせるので、足すと二重になる） */
 html {
   scroll-padding-bottom: var(--kb-native, 0px);
 }
@@ -959,8 +963,10 @@ h4 {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  /* iPhone のアプリではキーボードの上に収める */
-  bottom: var(--kb-native, 0px);
+  /* キーボードの上の見えている範囲に収める（--kb・--kb-top。src/platform/viewportKeyboard.ts）。
+     --kb-top は iPhone の Safari が入力欄を見せるために見えている範囲を下げた分 */
+  top: var(--kb-top, 0px);
+  bottom: var(--kb, 0px);
   z-index: 100;
   display: flex;
   align-items: center;
@@ -972,7 +978,7 @@ h4 {
 
 .modal {
   width: min(520px, 100%);
-  max-height: calc(100dvh - 32px - var(--kb-native, 0px));
+  max-height: calc(100dvh - 32px - var(--kb, 0px) - var(--kb-top, 0px));
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -1007,7 +1013,7 @@ h4 {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 16px calc(12px + var(--safe-bottom));
+  padding: 12px 16px calc(12px + var(--safe-bottom-kb));
   border-top: 1px solid var(--border);
   background: var(--surface-2);
   flex-wrap: wrap;
@@ -1101,7 +1107,7 @@ h4 {
 .toasts {
   position: fixed;
   left: 50%;
-  bottom: calc(16px + var(--safe-bottom) + var(--kb-native, 0px));
+  bottom: calc(16px + var(--safe-bottom-kb) + var(--kb, 0px));
   transform: translateX(-50%);
   z-index: 200;
   display: flex;
@@ -1368,7 +1374,7 @@ h4 {
 
   .modal {
     width: 100%;
-    max-height: calc(92dvh - var(--kb-native, 0px));
+    max-height: calc(92dvh - var(--kb, 0px) - var(--kb-top, 0px));
     border-radius: 16px 16px 0 0;
   }
 }
@@ -1411,9 +1417,9 @@ h4 {
   }
 }
 
-/* ダイアログ（スマホでは下からのシート）を開いている間は、通知を上に出してボタンを隠さない */
+/* ダイアログ（スマホでは下からのシート）を開いている間は、通知を上に出してボタンを隠さない（見えている範囲の上端に） */
 body:has(.modal-backdrop) .toasts {
-  top: calc(12px + var(--safe-top));
+  top: calc(12px + max(var(--safe-top), var(--kb-top, 0px)));
   bottom: auto;
 }
 

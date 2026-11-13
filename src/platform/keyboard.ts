@@ -2,9 +2,11 @@
 // キーボードの高さ（変換候補の行・ホームインジケーターの分も含む）を CSS 変数 --kb-native に入れる。
 // - 原稿画面・セパレート画面は、この分だけ高さを詰めて記号バー・「ここで区切る」をキーボードのすぐ上に出す
 //   （src/features/piece/keyboardInset.ts が visualViewport の値と大きい方を --kb-inset に入れる）
-// - ほかの画面は、ダイアログ・メニュー・通知をキーボードの上に収め、下に余白を足して入力欄をキーボードの上までスクロールできるようにする
-//   （styles.css。値が 0 の間は何も変わらない）
-// ブラウザと Android のアプリでは使わない（ずっと 0。Android は画面そのものがキーボードの上まで縮む）。
+// - ダイアログ・メニュー・通知・推敲案のシートは、この高さと visualViewport で測った高さの大きい方（--kb。src/platform/viewportKeyboard.ts）で
+//   キーボードの上に収める
+// - ほかの画面は、下に余白を足して入力欄をキーボードの上までスクロールできるようにする（styles.css の .app と scroll-padding。
+//   --kb-native を直接使うのはここだけ。値が 0 の間は何も変わらない）
+// ブラウザと Android のアプリでは届かない（ずっと 0。Android は画面そのものがキーボードの上まで縮む）。
 import { useEffect } from 'react'
 import { Keyboard } from '@capacitor/keyboard'
 import { isNativeIos } from './platform'
