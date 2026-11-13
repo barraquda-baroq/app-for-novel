@@ -28,6 +28,8 @@ export const SHORT_ID_LETTERS = {
   // 2.6: 資料とその記録
   material: 'd',
   materialNote: 'k',
+  // 2.9: アイデアのフォルダ（作者のフォルダの UUID も、Claude のフォルダの cf-… も f:…）
+  ideaFolder: 'f',
 } as const
 
 export type ShortIdKind = keyof typeof SHORT_ID_LETTERS

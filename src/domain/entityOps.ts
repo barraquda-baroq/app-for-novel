@@ -2,6 +2,7 @@
 import { actsOf, adoptedMetrics, adoptedText, episodeNumbers, flatten, isSplit, missingActs, pieceLabel } from './structure'
 import { bodyMetrics, textHash } from './text'
 import { isValidPageSetup, PAGE_CHARS_MAX, PAGE_CHARS_MIN, PAGE_LINES_MAX, PAGE_LINES_MIN, samePageSetup } from './pageSetup'
+import { isIdeaChecked, sortIdeas } from './ideaSort'
 
 export { textHash }
 import { orderOrigin, putInTrash, trashLabel, type TrashSpec } from './trash'
@@ -261,24 +262,9 @@ export interface IdeaSection {
   ideas: Idea[]
 }
 
-/** 済み（実装した・没にした）か。checked を持たない古いアイデアは済みでない */
-export function isIdeaChecked(idea: Pick<Idea, 'checked'>): boolean {
-  return idea.checked === true
-}
-
-/**
- * アイデアの並び（仕切りの中・コネクタの一覧で同じ）。済みでないものは order の順、
- * 済みのものはその後ろに、新しく済みにしたものから（斜線＋グレーで下へ沈む）
- */
-export function sortIdeas(list: readonly Idea[]): Idea[] {
-  return [...list].sort((a, b) => {
-    const ac = isIdeaChecked(a)
-    const bc = isIdeaChecked(b)
-    if (ac !== bc) return ac ? 1 : -1
-    if (ac) return (b.checkedAt ?? 0) - (a.checkedAt ?? 0) || byOrder(a, b)
-    return byOrder(a, b)
-  })
-}
+// 済みと並び（isIdeaChecked・sortIdeas）は ideaSort.ts にある（フォルダの見せ方・ゴミ箱からも使う）。前からの読み込みのために、
+// ここからも同じ名前で出す
+export { isIdeaChecked, sortIdeas }
 
 /** アイデア領域の仕切り。タイトルの数だけ仕切りがあり、最後に「どのタイトルにも属さない」 */
 export function ideaSections(data: AppData): IdeaSection[] {

@@ -26,7 +26,10 @@ export const IDEA_APPEND_ID = /^cu-[0-9a-z.]+$/
 /**
  * 数の上限（文章は文字の数）。perCall = 1回に足すアイデア、name = 名前、content = 1件の中身、appendText = 1回の追記、
  * body = 追記した後の1枚のカード、ref = 指す id、mark = 読んだ印、recordJson・appendJson = コネクタが書ける記録の大きさ
- * （JSON の字数。アクセスルールと同じ値）
+ * （JSON の字数。アクセスルールと同じ値）。
+ * 2.9 のフォルダ: folderName = フォルダの名前（domain/ideaFolders.ts の IDEA_FOLDER_NAME_MAX と同じ）、theme = 相談のテーマ
+ * （「2026/11/12　」の11字を足して40字）、folderRef = フォルダの指し方（名前か f:…）、folderJson = コネクタが書けるフォルダの
+ * 記録の大きさ（アクセスルールと同じ値）、foldersPerCall = 1回に作るフォルダ
  */
 export const IDEA_LIMITS = {
   perCall: 10,
@@ -38,6 +41,11 @@ export const IDEA_LIMITS = {
   mark: 20,
   recordJson: 50_000,
   appendJson: 50_000,
+  folderName: 40,
+  theme: 29,
+  folderRef: 80,
+  folderJson: 2_000,
+  foldersPerCall: 2,
 } as const
 
 /** 文字の数（サロゲートペアを1字に数える） */

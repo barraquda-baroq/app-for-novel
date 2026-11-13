@@ -160,6 +160,36 @@ export interface Idea {
   claudeHash?: string
   /** アプリが足した追記の依頼の id（足した順。同じ依頼を2回足さない。同期では並びとして合わせる） */
   appendIds?: string[]
+  /**
+   * 入っているフォルダ（2.9。1段目か2段目）。無い = フォルダの外。フォルダから出す時は項目を消す（null を書かない）。
+   * フォルダが無い・ゴミ箱にある・別の仕切りのものなら、フォルダの外に見せる（参照は消さない。src/domain/ideaFolders.ts）
+   */
+  folderId?: ID
+  createdAt: number
+  updatedAt: number
+}
+
+/**
+ * アイデアのフォルダ（2.9）。仕切り（タイトル／どのタイトルにも属さない）の中に2段まで。見せ方は src/domain/ideaFolders.ts の
+ * 決まりだけで決める（3段目・輪・別の仕切りの親は、見せる時は1段目）
+ */
+export interface IdeaFolder {
+  /** 作者: newId()（UUID）。Claude: cf-…（derivedId.ts の claudeFolderId） */
+  id: ID
+  /** 仕切り（null = どのタイトルにも属さない）。2段目も親と同じ値を持つ（Claude に見せるかは titleId で決まる） */
+  titleId: ID | null
+  /** null = 1段目。2段目は1段目のフォルダの id */
+  parentId: ID | null
+  /** 1行・40字まで（IDEA_FOLDER_NAME_MAX） */
+  name: string
+  /** 同じ仕切り・同じ親のフォルダの中の並び。新しく作ったフォルダは兄弟の最小 − 1（上に入る） */
+  order: number
+  /** claude = Claude がコネクタで作った（id も cf-…。isClaudeFolder で両方を見る） */
+  source?: 'claude'
+  /** Claude のフォルダの記録の形の版（IDEA_FOLDER_RECORD_VERSION = 1） */
+  v?: number
+  /** 作ったモデル（Claude のフォルダだけ。表示しない控え） */
+  model?: string
   createdAt: number
   updatedAt: number
 }

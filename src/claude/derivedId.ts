@@ -22,6 +22,7 @@ export type DerivedKind =
   | 'trashRequest'
   | 'claudeIdea'
   | 'ideaAppend'
+  | 'ideaFolder'
 
 /** 種類ごとの1文字 */
 export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
@@ -39,6 +40,7 @@ export const DERIVED_ID_LETTERS: Record<DerivedKind, string> = {
   trashRequest: 'z',
   claudeIdea: 'y',
   ideaAppend: 'u',
+  ideaFolder: 'f',
 }
 
 /** 比べる前に揃える（Unicode の正規化 NFC。合成済みの文字と組み合わせの文字を同じに扱う） */
@@ -172,4 +174,15 @@ export function claudeIdeaId(section: ID | null, day: string, name: string | nul
 export function ideaAppendId(ideaId: ID, readMark: string, text: string, generation = 1): ID {
   const parts = [ideaId, readMark.trim(), long(normalizeIdeaText(text))]
   return derivedId('ideaAppend', generation > 1 ? [...parts, generation] : parts)
+}
+
+/**
+ * Claude が作るアイデアのフォルダ（2.9。cf-…）。section はタイトルの id（null = どのタイトルにも属さないホーム）、parentId は
+ * 1段目のフォルダの id（null = 1段目）。同じ場所・親・名前なら同じ id（名前で探す時と同じく、字の幅・空白の違いは同じとみなす
+ * （refs.ts の refKey）。2つの接続が同時に同じフォルダを作っても1つ）。generation は作り直しの通し番号（1 = 初めて。2 以降は、
+ * 同じ名前のフォルダが名前を変えた・移した・削除の印やゴミ箱に残っている時。benchWorkId と同じ作り方）
+ */
+export function claudeFolderId(section: ID | null, parentId: ID | null, name: string, generation = 1): ID {
+  const parts = [section ?? 'home', parentId ?? 'top', refKey(name)]
+  return derivedId('ideaFolder', generation > 1 ? [...parts, generation] : parts)
 }
