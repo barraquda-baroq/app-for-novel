@@ -671,6 +671,15 @@ h4 {
   font-size: 16px; /* iOS のズームを防ぐ */
 }
 
+/* 指で操作する端末: iPhone の Safari・ホーム画面版は 16px 未満の入力欄に入ると画面を拡大し、拡大している間はキーボードの高さを測れず、
+   ダイアログ（下からのシート）がキーボードの裏に残る（src/platform/viewportKeyboard.ts）。ダイアログの入力欄は、各画面の小さめの指定
+   （14・15px）より強い指定で 16px にする */
+@media (pointer: coarse) {
+  .modal-backdrop .modal :is(.input, .select, .textarea) {
+    font-size: 16px;
+  }
+}
+
 .input:focus,
 .select:focus,
 .textarea:focus {

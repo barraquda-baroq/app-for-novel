@@ -981,16 +981,28 @@ test.describe('ホーム', () => {
       }
     }
     const atBottom = () => page.evaluate(() => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2)
+    /** スクロールが止まっている（なめらかなスクロール・ホイールの動きが終わった）か。150ms の間に位置が変わらない */
+    const settled = () =>
+      page.evaluate(
+        () =>
+          new Promise<boolean>((resolve) => {
+            const y = window.scrollY
+            setTimeout(() => resolve(window.scrollY === y), 150)
+          }),
+      )
     for (const { short, ...size } of [
       { width: 390, height: 960, short: 'ideas' as const },
       { width: 390, height: 844, short: 'bench' as const },
       { width: 360, height: 760, short: 'bench' as const },
     ]) {
       await page.setViewportSize(size)
-      // 自分でスクロールして（前に押した領域の固定が外れる）、一番上へ戻る
+      // 自分でスクロールして（前に押した領域の固定が外れる）、一番上へ戻る。ホイールの動きが止まってから戻す（動いている途中で戻すと、
+      // 残りの動きで 1px 下がり、位置から「アイデア」になることがある）
       await page.mouse.wheel(0, -120)
       await expect.poll(atBottom).toBe(false)
+      await expect.poll(settled).toBe(true)
       await page.evaluate(() => window.scrollTo(0, 0))
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
       await expect(page.getByTestId('home-jump-titles')).toHaveAttribute('aria-current', 'true')
 
       await jumps[short].click()
@@ -1015,6 +1027,7 @@ test.describe('ホーム', () => {
       }
       // 「資料」へのスクロール（なめらかに動く）が最後まで終わってから、次の大きさへ
       await expect.poll(atBottom).toBe(true)
+      await expect.poll(settled).toBe(true)
       await noHorizontalScroll(page)
     }
   })

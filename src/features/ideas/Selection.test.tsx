@@ -111,10 +111,10 @@ describe('選んで移す', () => {
     expect(within(home).getByTestId('idea-select-count').textContent).toBe('0件を選択中')
     const hint = within(home).getByTestId('idea-select-hint')
     expect(hint.textContent).toBe(
-      '移すカードを選んでください（フォルダの見出しの□で中をまとめて選べます）。次からは、カードの長押しでも始められます',
+      '移すカードを選んでください（フォルダの見出しの□で中をまとめて選べます）。カードの長押しでも選べます',
     )
     // 長押しの説明は指で操作する端末だけ（CSS の pointer: coarse）
-    expect(hint.querySelector('.idea-touch-only')?.textContent).toBe('。次からは、カードの長押しでも始められます')
+    expect(hint.querySelector('.idea-touch-only')?.textContent).toBe('。カードの長押しでも選べます')
     expect(within(home).getByTestId('idea-select-move')).toHaveProperty('disabled', true)
 
     await user.click(box)
@@ -445,6 +445,34 @@ describe('カードの長押し（指）', () => {
     lift(body('駅の案2'))
     expect(count(ids.title)).toBe('1件を選択中')
     expect(selectBox('駅の案2').checked).toBe(true)
+  })
+
+  it('カードの下の行（時刻・余白）の長押しでも始まる。選んでいる間は下の行を押しても選ぶ・外す。選ぶ□は1回だけ切り替わる', () => {
+    seed()
+    fakeTimers()
+    const actionsRow = (text: string) => card(text).querySelector<HTMLElement>('.idea-card-actions')!
+    const time = (text: string) => card(text).querySelector<HTMLElement>('.idea-card-time')!
+    longPress(time('Claude の案1'))
+    lift(time('Claude の案1'))
+    expect(count('none')).toBe('1件を選択中')
+    expect(selectBox('Claude の案1').checked).toBe(true)
+    // 下の行の余白（ボタンの無い所）を押すと選ぶ。もう一度で外す
+    tap(actionsRow('Claude の案2'))
+    expect(count('none')).toBe('2件を選択中')
+    tap(time('Claude の案2'))
+    expect(count('none')).toBe('1件を選択中')
+    // 選ぶ□（とその label）を押した時は、カードの押し方として二重に数えない
+    fireEvent.click(selectBox('Claude の案3'))
+    expect(count('none')).toBe('2件を選択中')
+    expect(selectBox('Claude の案3').checked).toBe(true)
+    fireEvent.click(selectBox('Claude の案3').closest('label')!)
+    expect(count('none')).toBe('1件を選択中')
+    expect(selectBox('Claude の案3').checked).toBe(false)
+    // 選んでいる間の下の行の長押しも、そのカードを選ぶ・外す
+    longPress(actionsRow('Claude の案4'))
+    lift(actionsRow('Claude の案4'))
+    expect(count('none')).toBe('2件を選択中')
+    expect(selectBox('Claude の案4').checked).toBe(true)
   })
 
   it('始めてカードの高さが変わっても、押したカードは画面の同じ位置に残る（その分スクロールする）', () => {

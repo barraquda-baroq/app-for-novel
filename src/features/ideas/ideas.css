@@ -446,7 +446,7 @@
   height: 36px;
 }
 
-.idea-card.is-selecting .idea-card-main {
+.idea-card.is-selecting {
   cursor: pointer;
 }
 
@@ -596,9 +596,9 @@
 }
 
 @media (pointer: coarse) {
-  /* 長押しで「選んで移す」を始めるので、文字を選んだり iOS の長押しのメニューを出したりしない（本文の所だけ。
-     文字は［編集］の画面で選んでコピーできる） */
-  .idea-card-main {
+  /* 長押しで「選んで移す」を始めるので、カードのどこでも（本文・下の行の時刻や印）文字を選んだり iOS の長押しのメニューを出したり
+     しない。文字は［編集］の画面で選んでコピーできる（ダイアログはカードの外に描くので、ここには入らない） */
+  .idea-card {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
@@ -1228,6 +1228,15 @@
   }
 
   .textarea.idea-capture-input {
+    font-size: 16px;
+  }
+}
+
+/* 指で操作する端末では、横向き・iPad（幅が 720px より広い）でも書きとめる欄を 16px 未満にしない（iPhone の Safari が拡大し、
+   拡大している間はキーボードの高さを測れず、通知がキーボードの裏に残る。src/platform/viewportKeyboard.ts） */
+@media (pointer: coarse) {
+  .textarea.idea-capture-input,
+  .select.idea-capture-select {
     font-size: 16px;
   }
 }

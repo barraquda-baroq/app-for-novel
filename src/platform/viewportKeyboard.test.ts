@@ -224,6 +224,51 @@ describe('startViewportKeyboard', () => {
     expect(inScroll).not.toHaveBeenCalled()
   })
 
+  it('横向きにした時（キーボードは低くなるが、見えている範囲はもっと低くなる）も、フォーカスしている欄を見せる', () => {
+    const { vv, set } = fakeViewport()
+    stop = startViewportKeyboard()
+    document.body.innerHTML = '<div class="modal-backdrop"><div class="modal"><input id="in"></div></div>'
+    const inside = document.getElementById('in') as HTMLInputElement
+    const inScroll = vi.fn()
+    inside.scrollIntoView = inScroll
+    inside.focus()
+    set(KB)
+    flush()
+    expect(inScroll).toHaveBeenCalledTimes(1)
+    // 390×844 から 844×390 へ。キーボードは 336 → 200 だが、見えている範囲は 508 → 190
+    Object.defineProperty(window, 'innerHeight', { value: 390, configurable: true })
+    vv.height = 390 - 200
+    vv.dispatchEvent(new Event('resize'))
+    flush()
+    expect(cssVar('--kb')).toBe('200px')
+    expect(inScroll).toHaveBeenCalledTimes(2)
+    // 横向きのままキーボードが閉じていく（見えている範囲が広がる）時は動かさない
+    vv.height = 390 - 150
+    vv.dispatchEvent(new Event('resize'))
+    flush()
+    expect(cssVar('--kb')).toBe('150px')
+    expect(inScroll).toHaveBeenCalledTimes(2)
+  })
+
+  it('キーボードの高さが同じでも、画面が低くなれば（画面を分けた）欄を見せる', () => {
+    const { vv, set } = fakeViewport()
+    stop = startViewportKeyboard()
+    document.body.innerHTML = '<div class="modal-backdrop"><div class="modal"><input id="in"></div></div>'
+    const inside = document.getElementById('in') as HTMLInputElement
+    const inScroll = vi.fn()
+    inside.scrollIntoView = inScroll
+    inside.focus()
+    set(KB)
+    flush()
+    inScroll.mockClear()
+    Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true })
+    vv.height = 700 - KB
+    window.dispatchEvent(new Event('resize'))
+    flush()
+    expect(cssVar('--kb')).toBe(`${KB}px`)
+    expect(inScroll).toHaveBeenCalledTimes(1)
+  })
+
   it('始める前は refreshKeyboard は何もしない。止めたら聞くのをやめて変数を消す', () => {
     const { set } = fakeViewport()
     refreshKeyboard()

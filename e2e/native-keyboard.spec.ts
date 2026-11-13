@@ -235,9 +235,15 @@ test('原稿画面: 検索窓と見つけた所がキーボードの上にある
 })
 
 test.describe('ブラウザ（iPhone の Safari・ホーム画面版）: 見えている範囲だけが縮む', () => {
-  /** 見えている範囲を kb だけ縮め、top だけ下げたことにする（偽の visualViewport。resize と scroll を送る） */
-  const setVisible = (page: Page, kb: number, top = 0) =>
-    page.evaluate(([k, t]) => (window as unknown as { __vv: (kb: number, top: number) => void }).__vv(k, t), [kb, top] as const)
+  /**
+   * 見えている範囲を kb だけ縮め、top だけ下げたことにする（偽の visualViewport。resize と scroll を送る）。
+   * quiet: 知らせずに値だけ変える（次の画面の大きさの変化と同時に変わったことにする）
+   */
+  const setVisible = (page: Page, kb: number, top = 0, quiet = false) =>
+    page.evaluate(
+      ([k, t, q]) => (window as unknown as { __vv: (kb: number, top: number, quiet: boolean) => void }).__vv(k, t, q),
+      [kb, top, quiet] as const,
+    )
 
   test.beforeEach(async ({ page }) => {
     // WebKit は interactive-widget=resizes-content を使わず、レイアウトの表示領域（innerHeight）はそのまま、visualViewport だけが縮む。
@@ -264,9 +270,10 @@ test.describe('ブラウザ（iPhone の Safari・ホーム画面版）: 見え�
         dispatchEvent: t.dispatchEvent.bind(t),
       }
       Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => fake })
-      ;(window as unknown as { __vv: (kb: number, top?: number) => void }).__vv = (kb, top = 0) => {
+      ;(window as unknown as { __vv: (kb: number, top?: number, quiet?: boolean) => void }).__vv = (kb, top = 0, quiet) => {
         st.kb = kb
         st.top = top
+        if (quiet) return
         t.dispatchEvent(new Event('resize'))
         t.dispatchEvent(new Event('scroll'))
       }
@@ -318,6 +325,89 @@ test.describe('ブラウザ（iPhone の Safari・ホーム画面版）: 見え�
     await setVisible(page, 0)
     await setKeyboard(page, 0)
     await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(H)
+  })
+
+  /** field のうち、.modal-body の中で、しかもキーボードの上（bottom より上）に見えている高さ */
+  const shownIn = async (page: Page, field: Locator, bottom: number) => {
+    const f = (await field.boundingBox())!
+    const b = (await page.locator('.modal-body').boundingBox())!
+    return Math.round(Math.min(f.y + f.height, b.y + b.height, bottom) - Math.max(f.y, b.y, 0))
+  }
+
+  test('横向きにした時（キーボードは低くなるが、見えている範囲はもっと低くなる）も、フォーカスしている欄が見える所に出る', async ({
+    page,
+  }) => {
+    // フォルダの名前のダイアログ（入力欄は1つ）
+    await openFolderPrompt(page)
+    await setVisible(page, KB)
+    await expectSheetWithin(page, 0, H - KB)
+    // 390×844 → 844×390。キーボードは 336 → 200 になり、見えている範囲は 508 → 190（端末では画面とキーボードが一緒に変わる）
+    const LKB = 200
+    await setVisible(page, LKB, 0, true)
+    await page.setViewportSize({ width: H, height: W })
+    await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(W - LKB)
+    const input = page.getByTestId('prompt-input')
+    await expect(input).toBeFocused()
+    const inputH = Math.round((await input.boundingBox())!.height)
+    await expect.poll(() => shownIn(page, input, W - LKB)).toBeGreaterThanOrEqual(inputH - 1)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0)
+
+    // 入力欄の多いダイアログ（資料を追加）のメモ欄。欄が見えている範囲より高い時は、欄の上から見える所に出る
+    await setVisible(page, 0)
+    await page.setViewportSize({ width: W, height: H })
+    await openHomeBands(page, 'materials')
+    await page.getByTestId('new-material').click()
+    const memo = page.getByTestId('material-memo')
+    await memo.click()
+    await expect(memo).toBeFocused()
+    await setVisible(page, KB)
+    await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(H - KB)
+    await setVisible(page, LKB, 0, true)
+    await page.setViewportSize({ width: H, height: W })
+    await expect.poll(() => bottomOf(page.locator('.modal-backdrop'))).toBe(W - LKB)
+    await expect(memo).toBeFocused()
+    const memoH = Math.round((await memo.boundingBox())!.height)
+    const bodyH = Math.round((await page.locator('.modal-body').boundingBox())!.height)
+    await expect.poll(() => shownIn(page, memo, W - LKB)).toBeGreaterThanOrEqual(Math.min(memoH, bodyH) - 1)
+    await setVisible(page, 0)
+  })
+
+  test('指で操作する端末: ダイアログと書きとめる欄の入力欄は 16px 未満にしない（Safari が拡大して測れなくならない）', async ({
+    page,
+  }, info) => {
+    test.skip(info.project.name !== 'mobile', '指で操作する端末（pointer: coarse）だけ')
+    /** 文字を打つ欄・選ぶ欄の字の大きさ（px） */
+    const sizes = (selector: string) =>
+      page.evaluate(
+        (sel) =>
+          [...document.querySelectorAll<HTMLElement>(sel)]
+            .filter((e) => !(e instanceof HTMLInputElement) || !['checkbox', 'radio', 'hidden'].includes(e.type))
+            .map((e) => parseFloat(getComputedStyle(e).fontSize)),
+        selector,
+      )
+    const fields = '.modal input, .modal textarea, .modal select'
+    // 書きとめる欄: 横向き（幅が 720px より広い）でも
+    await openApp(page)
+    await openHomeBands(page, 'ideas')
+    await page.setViewportSize({ width: H, height: W })
+    const capture = await sizes('.idea-capture-input, .idea-capture-select')
+    expect(capture).toHaveLength(2)
+    for (const px of capture) expect(px).toBeGreaterThanOrEqual(16)
+    await page.setViewportSize({ width: W, height: H })
+    // フォルダの名前のダイアログ
+    await page.locator('[data-testid="idea-section"][data-section="none"]').getByTestId('idea-folder-create').click()
+    await expect(page.getByTestId('prompt-input')).toBeFocused()
+    expect(await sizes(fields)).toEqual([16])
+    await page.keyboard.press('Escape')
+    // 設定タブの項目を足すダイアログ（テンプレートの欄は、画面では 15px）
+    const titleId = await seed(page, ({ actions }) => actions.createTitle('星の海'))
+    await openApp(page, `/t/${titleId}?tab=settings`)
+    await page.getByTestId('add-category').first().click()
+    await expect(page.getByTestId('category-template-input')).toBeVisible()
+    const dialog = await sizes(fields)
+    expect(dialog.length).toBeGreaterThanOrEqual(2)
+    for (const px of dialog) expect(px).toBeGreaterThanOrEqual(16)
   })
 
   test('入力欄の多いダイアログ（資料を追加）: フォーカスした欄がキーボードの上の見える所に出る', async ({ page }) => {

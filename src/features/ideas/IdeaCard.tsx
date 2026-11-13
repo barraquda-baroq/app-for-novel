@@ -5,13 +5,14 @@
 // 古い版で付けた見出しがあれば、編集して保存するまでは見出しとして出す。
 // 2.8: Claude がコネクタで作ったアイデア（isClaudeIdea）には「Claude が作成」の印を付ける（内容の表示は変えない。Markdown も変換しない）。
 // 編集している間に Claude の追記が足されていれば、保存する内容の後ろに残す（rebaseIdeaEdit）。
-// 2.9: 「選んで移す」で仕切りのカードを選んでいる間は、済みのチェックボックスの代わりに選ぶチェックボックスを出し、カードの中を押しても
+// 2.9: 「選んで移す」で仕切りのカードを選んでいる間は、済みのチェックボックスの代わりに選ぶチェックボックスを出し、カードのどこを押しても
 // 選べる（並べ替え・移動・編集・削除・「この案でタイトルを作る」は出さない）。選ばれているかは自分の分だけ読む（useIsSelected）。
-// 指で操作する端末では、カードの本文の所（.idea-card-main）を長押しすると、このカードを選んだ状態で「選んで移す」が始まる
-// （選んでいる最中ならこのカードを選ぶ・外す。pressSelect）。押したカードは指の下に残し（useKeepInPlace）、指を離した時のクリックは
-// どこに届いても取り消す（始めるとカードの高さが変わり、指の下が別のカードになるため）。マウスの右クリックはブラウザのメニューのまま。
+// 指で操作する端末では、カード（ボタン・チェックボックスなど以外のどこでも。下の行の時刻・印・余白も）を長押しすると、このカードを選んだ
+// 状態で「選んで移す」が始まる（選んでいる最中ならこのカードを選ぶ・外す。pressSelect）。押したカードは指の下に残し（useKeepInPlace）、
+// 指を離した時のクリックはどこに届いても取り消す（始めるとカードの高さが変わり、指の下が別のカードになるため）。マウスの右クリックは
+// ブラウザのメニューのまま。
 // ［移動］のダイアログの「ほかのカードも選んでまとめて移す」でも、このカードを選んだ状態で始まる（フォーカスはこのカードの□）。
-import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { isJstTimestamp } from '../../claude/dates'
 import { isClaudeIdea } from '../../claude/ideaAppend'
@@ -51,6 +52,17 @@ export interface IdeaCardProps {
 
 /** カードの長押し: 指だけ（マウスの右クリックはブラウザのメニューのまま）・中のボタンからは始めない・離した時のクリックはどこでも取り消す */
 const PRESS: MenuTriggerOptions = { touchOnly: true, ignore: PRESS_IGNORE, swallowClick: true }
+
+/**
+ * 選んでいる間にカードを押した時、選ぶ・外すにするクリックか。カードの中のボタン・チェックボックス（それ自体が動く）と、
+ * カードの外（React の portal で描いたダイアログ。React ではクリックがカードまで届く）からのものは除く
+ */
+function isCardClick(e: MouseEvent<HTMLElement>): boolean {
+  const t = e.target
+  if (!(t instanceof Element) || !e.currentTarget.contains(t)) return false
+  const hit = t.closest(PRESS_IGNORE)
+  return !(hit && e.currentTarget.contains(hit))
+}
 
 /** 内容が折りたたみ表示（6行。済みは2行）からはみ出しているか */
 function useOverflow(text: string, expanded: boolean, checked: boolean) {
@@ -266,6 +278,8 @@ function IdeaCardView({ idea, section, sectionName, unassigned, first, last }: I
   }
 
   return (
+    // 指の長押しで選び始める（カードのどこでも。ボタン・チェックボックスなどからは始めない）。選んでいる間は、押せば選ぶ・外す
+    // （指で押しやすいように。ボタン・チェックボックスはそれ自体が動く）
     <li
       ref={cardRef}
       className={`idea-card${checked ? ' is-checked' : ''}${revealed ? ' is-revealed' : ''}${selecting ? ' is-selecting' : ''}${selected ? ' is-selected' : ''}`}
@@ -274,6 +288,8 @@ function IdeaCardView({ idea, section, sectionName, unassigned, first, last }: I
       data-idea-id={idea.id}
       data-checked={checked}
       data-source={byClaude ? 'claude' : 'manual'}
+      {...press}
+      onClick={selecting ? (e) => isCardClick(e) && toggleSelected(idea.id) : undefined}
     >
       <div className="idea-card-top">
         {selecting ? (
@@ -301,8 +317,7 @@ function IdeaCardView({ idea, section, sectionName, unassigned, first, last }: I
             />
           </label>
         )}
-        {/* 選んでいる間は、カードの中を押しても選べる（指で押しやすいように）。指の長押しで選び始める */}
-        <div className="idea-card-main" {...press} onClick={selecting ? () => toggleSelected(idea.id) : undefined}>
+        <div className="idea-card-main">
           {heading ? (
             <h4 className="idea-card-heading" data-testid="idea-heading">
               {heading}

@@ -193,7 +193,7 @@ export function IdeaSectionView({
                 className={`btn btn-sm btn-ghost idea-select-start${selecting ? ' is-active' : ''}`}
                 aria-pressed={selecting}
                 onClick={() => (selecting ? stopSelect() : startSelect(key))}
-                title="カードを選んで、まとめてほかのフォルダや仕切りへ移す（スマホではカードの長押しでも始められます）"
+                title="カードを選んで、まとめてほかのフォルダや仕切りへ移す（スマホではカードの長押しでも選べます）"
                 data-testid="idea-select-start"
               >
                 <CheckIcon />
@@ -238,7 +238,7 @@ export function IdeaSectionView({
             {selectedCount === 0 ? (
               <p className="idea-select-hint" data-testid="idea-select-hint">
                 移すカードを選んでください（フォルダの見出しの□で中をまとめて選べます）
-                <span className="idea-touch-only">。次からは、カードの長押しでも始められます</span>
+                <span className="idea-touch-only">。カードの長押しでも選べます</span>
               </p>
             ) : null}
           </div>

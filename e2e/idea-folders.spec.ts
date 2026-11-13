@@ -92,11 +92,25 @@ async function longPress(page: Page, touch: Touch, target: Locator, at?: { x: nu
   return p
 }
 
-/** 文字の選択と iOS の長押しメニューが出ないこと */
+/**
+ * 文字の選択と iOS の長押しメニューが出ないこと。-webkit-touch-callout は WebKit だけのもので、Chromium では計算した値に出ないので、
+ * その時は ideas.css の文（開発サーバーが入れた <style>）で、指で操作する端末の .idea-card の規則にあり、target がカードの中かを確かめる
+ */
 async function expectNoCallout(target: Locator): Promise<void> {
   const style = await target.evaluate((el) => {
     const cs = getComputedStyle(el) as CSSStyleDeclaration & { webkitTouchCallout?: string; webkitUserSelect?: string }
-    return { userSelect: cs.userSelect || cs.webkitUserSelect, callout: cs.webkitTouchCallout ?? 'none' }
+    let callout = cs.webkitTouchCallout ?? 'unknown'
+    if (!CSS.supports('-webkit-touch-callout', 'none')) {
+      const css = document.querySelector('style[data-vite-dev-id$="/ideas.css"]')?.textContent ?? ''
+      const rule =
+        css
+          .split('@media (pointer: coarse)')
+          .slice(1)
+          .map((m) => /^\s*\{[^{]*?\.idea-card\s*\{([^}]*)\}/.exec(m)?.[1])
+          .find(Boolean) ?? ''
+      callout = el.closest('.idea-card') && /-webkit-touch-callout:\s*none;/.test(rule) ? 'none' : `not found (${rule.length})`
+    }
+    return { userSelect: cs.userSelect || cs.webkitUserSelect, callout }
   })
   expect(style.userSelect).toBe('none')
   expect(style.callout).toBe('none')
@@ -658,7 +672,10 @@ test.describe('アイデアのフォルダ', () => {
     const none = section(page, 'none')
     const cardOf = (id: string) => page.locator(`[data-testid="idea-card"][data-idea-id="${id}"]`)
     const count = (s: Locator) => s.getByTestId('idea-select-count')
-    await expectNoCallout(cardOf(ids.cards[0]).locator('.idea-card-main'))
+    // カードのどこでも（本文・下の行の時刻）文字の選択・長押しのメニューを出さない
+    await expectNoCallout(cardOf(ids.cards[0]))
+    await expectNoCallout(cardOf(ids.cards[0]).getByTestId('idea-body'))
+    await expectNoCallout(cardOf(ids.cards[0]).locator('.idea-card-time'))
 
     // 画面の中ほどのカードを長押し: そのカードを選んだ状態で始まる。ほかのカードのボタンの行が消えて縮んでも、押したカードは指の下に残る
     const c10 = cardOf(ids.cards[9])
@@ -693,11 +710,15 @@ test.describe('アイデアのフォルダ', () => {
     await page.waitForTimeout(300)
     await expect(count(sec)).toHaveText('1件を選択中')
     await expect(cardOf(ids.cards[8])).not.toHaveClass(/is-selected/)
-    // 押している間にページがスクロールした時も選ばない
+    // 押している間にページがスクロールした時も選ばない（押したままで確かめる。指を止めたまま離すと、選んでいる間の軽い押し方
+    // （その時に指の下にあるカードを選ぶ）になるので、指をずらしてから離す）
     await touch('touchStart', b9.x + 20, b9.y + b9.height / 2)
     await page.evaluate(() => window.scrollBy(0, 40))
     await page.waitForTimeout(800)
-    await touch('touchEnd', b9.x + 20, b9.y + b9.height / 2)
+    await expect(count(sec)).toHaveText('1件を選択中')
+    await expect(cardOf(ids.cards[8])).not.toHaveClass(/is-selected/)
+    await touch('touchMove', b9.x + 20, b9.y + b9.height / 2 + 30)
+    await touch('touchEnd', b9.x + 20, b9.y + b9.height / 2 + 30)
     await page.waitForTimeout(300)
     await expect(count(sec)).toHaveText('1件を選択中')
 
@@ -759,7 +780,7 @@ test.describe('アイデアのフォルダ', () => {
     expect(await page.evaluate(() => String(window.getSelection() ?? ''))).toBe('')
   })
 
-  test('スマホ: 長押しで始めて、2枚を足して［移す…］でフォルダへまとめて移す', async ({ page }, info) => {
+  test('スマホ: 下の行（時刻・余白）の長押しでも始まり、2枚を足して［移す…］でフォルダへまとめて移す', async ({ page }, info) => {
     test.skip(info.project.name !== 'mobile', '長押しはスマホ（タッチ操作）のみ')
     await openApp(page)
     const ids = await seed(page, ({ actions }) => {
@@ -774,14 +795,27 @@ test.describe('アイデアのフォルダ', () => {
     const sec = section(page, ids.t)
     const cardOf = (id: string) => page.locator(`[data-testid="idea-card"][data-idea-id="${id}"]`)
     await cardOf(ids.cards[1]).evaluate((el) => el.scrollIntoView({ block: 'center' }))
-    await longPress(page, touch, cardOf(ids.cards[1]).getByTestId('idea-body'))
+    // 本文でなく、下の行の時刻の長押しでも始まる
+    await longPress(page, touch, cardOf(ids.cards[1]).locator('.idea-card-time'))
     await expect(sec.getByTestId('idea-select-count')).toHaveText('1件を選択中')
     // 帯の説明（0件の時だけ）は出ない
     await expect(sec.getByTestId('idea-select-hint')).toHaveCount(0)
-    // 続けて軽く押して2枚足す
+    // 続けて軽く押して1枚足し、下の行の余白（ボタンの無い所）の長押しでもう1枚足す
     await cardOf(ids.cards[2]).getByTestId('idea-body').tap()
-    await cardOf(ids.cards[4]).getByTestId('idea-body').tap()
+    await expect(sec.getByTestId('idea-select-count')).toHaveText('2件を選択中')
+    const row = cardOf(ids.cards[4]).locator('.idea-card-actions')
+    await row.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    const rb = (await row.boundingBox())!
+    const blank = { x: rb.x + rb.width - 24, y: rb.y + rb.height / 2 }
+    expect(
+      await page.evaluate(({ x, y }) => {
+        const el = document.elementFromPoint(x, y)
+        return Boolean(el?.closest('.idea-card-actions')) && !el?.closest('button, a, input, label')
+      }, blank),
+    ).toBe(true)
+    await longPress(page, touch, row, blank)
     await expect(sec.getByTestId('idea-select-count')).toHaveText('3件を選択中')
+    await expect(cardOf(ids.cards[4])).toHaveClass(/is-selected/)
     await sec.getByTestId('idea-select-move').click()
     await expect(dialog(page).getByRole('heading', { name: '3件のアイデアを移動' })).toBeVisible()
     await expect(page.getByTestId('idea-move-select-more')).toHaveCount(0)

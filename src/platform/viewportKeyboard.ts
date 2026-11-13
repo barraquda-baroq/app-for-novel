@@ -72,18 +72,27 @@ function isActive(): boolean {
   return isKeyboardTarget(document.activeElement) || document.querySelector('.modal-backdrop') !== null
 }
 
-/** 今の値（アプリから届いた高さと測った高さの大きい方） */
-export function keyboardCover(): KeyboardCover {
-  const root = document.documentElement
+/** レイアウトの表示領域の高さ */
+function layoutViewportHeight(): number {
   // iOS ではキーボードを出しても innerHeight が変わらない版と見えている高さになる版があるので、大きい方（keyboardInset.ts と同じ）
-  const layoutHeight = Math.max(window.innerHeight, root.clientHeight)
+  return Math.max(window.innerHeight, document.documentElement.clientHeight)
+}
+
+function coverOf(layoutHeight: number): KeyboardCover {
   const measured = measureCover(layoutHeight, window.visualViewport, isActive())
   return { bottom: Math.max(nativeKeyboardHeight(), measured.bottom), top: measured.top }
+}
+
+/** 今の値（アプリから届いた高さと測った高さの大きい方） */
+export function keyboardCover(): KeyboardCover {
+  return coverOf(layoutViewportHeight())
 }
 
 let started = false
 let frame = 0
 let last: KeyboardCover = NONE
+/** 前に測った時の、キーボードの上の見えている範囲の高さ（レイアウトの高さ − 下 − 上） */
+let lastVisible = 0
 let revealFrame = 0
 
 function setVar(name: string, px: number): void {
@@ -101,16 +110,24 @@ function revealInDialog(): void {
   })
 }
 
-/** すぐに測って CSS 変数に入れる（アプリのキーボードは出始めた時にすぐ。次の描画を待たない） */
+/**
+ * すぐに測って CSS 変数に入れる（アプリのキーボードは出始めた時にすぐ。次の描画を待たない）。
+ * キーボードの上の見えている範囲が縮んだ時（キーボードが高くなった・横向きにした・画面を分けた。横向きにするとキーボードは低くなるが、
+ * 画面はそれ以上に低くなる）と、上端が動いた時に、ダイアログの中でフォーカスしている欄を見せる。広がった時（キーボードが閉じていく）は動かさない
+ */
 export function applyKeyboardNow(): void {
   cancelAnimationFrame(frame)
-  const next = keyboardCover()
-  if (next.bottom === last.bottom && next.top === last.top) return
-  const grew = next.bottom > last.bottom || next.top !== last.top
-  last = next
-  setVar('--kb', next.bottom)
-  setVar('--kb-top', next.top)
-  if (grew) revealInDialog()
+  const height = layoutViewportHeight()
+  const next = coverOf(height)
+  const visible = height - next.bottom - next.top
+  const reveal = visible < lastVisible || next.bottom > last.bottom || next.top !== last.top
+  lastVisible = visible
+  if (next.bottom !== last.bottom || next.top !== last.top) {
+    last = next
+    setVar('--kb', next.bottom)
+    setVar('--kb-top', next.top)
+  }
+  if (reveal) revealInDialog()
 }
 
 /**
@@ -153,6 +170,7 @@ export function resetViewportKeyboardForTests(): void {
   cancelAnimationFrame(revealFrame)
   started = false
   last = NONE
+  lastVisible = 0
   setVar('--kb', 0)
   setVar('--kb-top', 0)
 }
