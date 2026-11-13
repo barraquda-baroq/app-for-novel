@@ -9,7 +9,15 @@ import { emptyData, type AppData, type BenchAnalysis, type Idea, type MaterialNo
 import { trashRequestId } from './derivedId'
 import { withIdeaAppend } from './ideaAppend'
 import { shortId } from './refs'
-import { buildTrashRequests, trashCardLabel, trashEntryIdsOf, trashTargetProblem, type TrashContext } from './trashRequest'
+import {
+  buildTrashRequests,
+  FOLDER_NOT_CARD_HINT,
+  trashCardLabel,
+  trashEntryIdsOf,
+  trashTargetProblem,
+  TRASH_STATUS_HINTS,
+  type TrashContext,
+} from './trashRequest'
 import { isTrashRequest, liveTrashRequests, pendingTrashCount, pendingTrashTargets } from './trashTargets'
 import { claudeView } from './visibility'
 
@@ -135,6 +143,21 @@ describe('buildTrashRequests', () => {
       'invalid',
     ])
     expect(r.items[0].hint).toContain('作者がアプリで削除してください')
+  })
+
+  it('2.9: アイデアのフォルダ（f:…）は「ほかの種類」のまま、フォルダ用の説明を返す（依頼は作らない）', () => {
+    const s = shelf()
+    const r = buildTrashRequests(s.data, { cards: ['f:1a2b3c4d', 'F:5e6f7a8b', 'x:12345678'] }, ctx())
+    expect(r.ok).toBe(true)
+    expect(r.records).toEqual([])
+    expect(r.items.map((i) => [i.ref, i.status, i.hint])).toEqual([
+      ['f:1a2b3c4d', 'not_card', FOLDER_NOT_CARD_HINT],
+      ['F:5e6f7a8b', 'not_card', FOLDER_NOT_CARD_HINT],
+      ['x:12345678', 'not_card', TRASH_STATUS_HINTS.not_card],
+    ])
+    expect(FOLDER_NOT_CARD_HINT).toBe(
+      'フォルダはゴミ箱へ移せません（フォルダの削除・整理はアプリで作者がします。中のカードは i:… で指せます）',
+    )
   })
 
   it('ゴミ箱にあるカード・同じ呼び出しの中の重なり・依頼中のカード（書かない）', () => {

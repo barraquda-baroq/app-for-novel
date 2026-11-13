@@ -98,4 +98,17 @@ describe('Claude ができること（同意・設定の画面）', () => {
     expect(CLAUDE_ACCESS_HINTS.write).toContain('追記')
     expect(CLAUDE_ACCESS_HINTS.read).toContain('アイデアなどは足せません')
   })
+
+  it('2.9: アイデアをフォルダに入れる（無ければ作る・言わない時は先に聞く・ホームのフォルダは名前だけ）と、フォルダの整理はできないことを書く', () => {
+    const can = CLAUDE_CAN.join('\n')
+    for (const word of [
+      'フォルダ（2段まで）に入れる',
+      '言われたフォルダが無ければ作る',
+      '書き込む前にどのフォルダに入れるかを聞きます',
+      'Claude が作ったフォルダにも「Claude が作成」の印',
+      'どのタイトルにも属さないフォルダは名前だけが見えます',
+    ])
+      expect(can, word).toContain(word)
+    expect(CLAUDE_CANNOT.join('\n')).toContain('フォルダの名前の変更・削除・移動と、カードの移動（整理はアプリで作者がする）')
+  })
 })

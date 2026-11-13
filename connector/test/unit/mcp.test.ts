@@ -130,6 +130,22 @@ describe('ツールの決まり', () => {
     expect(String(cards.description)).toContain('アイデア i:…')
   })
 
+  it('アイデアのフォルダ（2.9）: サーバーの説明は id の行に f: を足すだけ（1,000字未満）。一覧・ゴミ箱へ移すツールの説明にフォルダ', () => {
+    expect(SERVER_INSTRUCTIONS).toContain('i: アイデア、f: そのフォルダ、x: 推敲案')
+    expect(SERVER_INSTRUCTIONS.length).toBe(970)
+    const notes = TOOL_DEFS.find((t) => t.name === 'novel_get_notes')!
+    for (const phrase of [
+      'アイデアのフォルダ（2段まで。【フォルダ】と f:…）ごとにまとめて出す',
+      'ホームのフォルダは名前だけが見え、中は Claude が作ったアイデアだけ',
+      'タイトルのフォルダはカードの数も出す',
+      'ids に f:… を渡すと、そのフォルダ（中のフォルダも）のアイデアを本文まで返す',
+      '「ホームのアイデア＞新作の相談＞2026/11/12　港町」',
+    ])
+      expect(notes.description, phrase).toContain(phrase)
+    const trash = TOOL_DEFS.find((t) => t.name === 'novel_move_cards_to_trash')!
+    expect(trash.description).toContain('アイデアのフォルダ（f:…）は移さない')
+  })
+
   it('アイデアのツールの入力の形（cf-worker）: 1〜10件・名前は40字まで・中身の長さは入力の形では断らない', async () => {
     const v = new CfWorkerJsonSchemaValidator()
     const add = fromJsonSchema(TOOL_SCHEMAS.novel_add_ideas as never, v)

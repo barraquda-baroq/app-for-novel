@@ -12,6 +12,8 @@
 // アイデアへの追記の依頼（2.8）は、まだアプリが足していなくても、見せるアイデアに当てた形で見せる（Claude からは送った直後から
 // 追記した後の中身が見える。アプリの処理と同じ確かめ方・同じ順。ideaAppend.ts の overlayIdeaAppends）。依頼の表には、当てた依頼
 // だけを入れる（見せないアイデア・当てられない依頼は出さない）。
+// アイデアのフォルダ（2.9）は、タイトルのフォルダはそのタイトルを見せていれば見せ、ホームのフォルダは作者が作ったものも含めて
+// すべて見せる（名前だけ。中の作者のカードは今までどおり見せない。数も出さないのはコネクタの一覧の側）。
 import { emptyData, type AppData, type ClaudeAccess, type Idea, type IdeaAppend, type TableName } from '../domain/types'
 import { canClaudeRead } from './access'
 import { isClaudeIdea, liveIdeaAppends, overlayIdeaAppends } from './ideaAppend'
@@ -46,7 +48,8 @@ const ALWAYS_SERVED: ReadonlySet<TableName> = new Set<TableName>([
 /**
  * コネクタに見せる内容。見せないタイトル（none）と、その配下のレコード（titleId で見る）を除き、
  * ゴミ箱・応募時の原稿の控え・作者が書いたどのタイトルにも属さないアイデアも除く。共通の批評プロンプト（titleId = null）と
- * Claude が作ったホームのアイデア、ベンチ作品・その分析、資料・その記録は見せる（ゴミ箱へ移す依頼の出ているカードは除く）。
+ * ホームのアイデアのフォルダ、Claude が作ったホームのアイデア、ベンチ作品・その分析、資料・その記録は見せる（ゴミ箱へ移す依頼の
+ * 出ているカードは除く）。
  * アイデアには、まだアプリが足していない追記の依頼を当てる。変わらない表は同じオブジェクトのまま返す（data は書き換えない）
  */
 export function claudeView(data: AppData): AppData {
@@ -72,8 +75,10 @@ export function claudeView(data: AppData): AppData {
     let all = true
     const keep = (r: { titleId?: unknown; id: string }) => {
       const t = r.titleId
-      // どのタイトルにも属さないものは、共通の批評プロンプトと、Claude が作ったホームのアイデアだけ見せる
-      if (t === null) return table === 'critiquePrompts' || (table === 'ideas' && isClaudeIdea(r as Idea))
+      // どのタイトルにも属さないものは、共通の批評プロンプトと、ホームのアイデアのフォルダ（2.9。作者のものも名前は見せる）と、
+      // Claude が作ったホームのアイデアだけ見せる
+      if (t === null)
+        return table === 'critiquePrompts' || table === 'ideaFolders' || (table === 'ideas' && isClaudeIdea(r as Idea))
       return typeof t === 'string' && visible.has(t)
     }
     for (const r of Object.values(rows))

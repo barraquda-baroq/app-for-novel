@@ -455,9 +455,9 @@ function sizeProblem(
 
 /**
  * ゴミ箱に入っている 2.3 の記録の id（表ごと）。アプリの貼り付けで previously_deleted を見分ける
- * （コネクタは Claude のアイデア（2.8。表 ideas）にも使う）
+ * （コネクタは Claude のアイデア（2.8。表 ideas）と、Claude のアイデアのフォルダ（2.9。表 ideaFolders）にも使う）
  */
-export function trashedIdsOf(data: AppData): (table: ClaudeTableName | 'ideas', id: ID) => boolean {
+export function trashedIdsOf(data: AppData): (table: ClaudeTableName | 'ideas' | 'ideaFolders', id: ID) => boolean {
   const set = new Set<string>()
   for (const r of Object.values(data.trashRecords)) {
     const rec = r.record as { id?: unknown } | undefined

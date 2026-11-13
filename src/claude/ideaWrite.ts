@@ -12,6 +12,7 @@ import { stableStringify } from '../sync/merge'
 import { canClaudeWrite } from './access'
 import { jstDate } from './dates'
 import { claudeIdeaId, ideaAppendId } from './derivedId'
+import { ideaPathLabel } from './ideaFolders'
 import {
   appendIdsOf,
   appendedBody,
@@ -353,9 +354,9 @@ export interface IdeaAppendBuild {
   records: { table: 'ideaAppends'; record: IdeaAppend }[]
 }
 
-/** 追記できる時の印の行・答えの表記（「「1行目」（場所）」） */
+/** 追記できる時の印の行・答えの表記（「「1行目」（場所）」。2.9: フォルダに入っていれば場所にフォルダも「＞」でつなぐ） */
 function ideaLabel(view: AppData, idea: Idea): string {
-  return `「${ideaHeadLine(idea, 40)}」（${ideaPlaceLabel(view.titles, idea)}）`
+  return `「${ideaHeadLine(idea, 40)}」（${ideaPathLabel(view, idea)}）`
 }
 
 export const IDEA_APPEND_HINTS = {

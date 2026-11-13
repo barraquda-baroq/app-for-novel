@@ -419,6 +419,21 @@ describe('novel_move_cards_to_trash: Claude が作ったアイデア（i:…）'
     ])
   })
 
+  it('2.9: アイデアのフォルダ（f:…）は「移せない種類」の行の形のまま、フォルダ用の説明（ほかの行の形は変えない）', async () => {
+    const fake = new FakeFirebase()
+    const s = ideaShelf()
+    const { core } = await pairedCore(fake, s.data)
+    const home = shortId('idea', s.home.id)
+    const r = await core.callTool('novel_move_cards_to_trash', { cards: ['f:1a2b3c4d', home] })
+    expect(r.isError).toBeUndefined()
+    expect(r.text.split('\n').slice(0, 3)).toEqual([
+      'カードをゴミ箱へ移す: 移す 1件・移さない 1件',
+      `- 移す ${home} ホームのアイデア「2026/10/28 14:32　第3章の動機」`,
+      '- 移さない f:1a2b3c4d（移せない種類）: フォルダはゴミ箱へ移せません（フォルダの削除・整理はアプリで作者がします。中のカードは i:… で指せます）',
+    ])
+    expect((r.structured as { skipped: { reason: string }[] }).skipped.map((x) => x.reason)).toEqual(['not_card'])
+  })
+
   it('作者が直したアイデアは断る。Claude の追記（アプリの同期待ちも）だけなら移せ、アプリは追記してから移す。処理の後は「もうゴミ箱にある」', async () => {
     const fake = new FakeFirebase()
     const s = ideaShelf()

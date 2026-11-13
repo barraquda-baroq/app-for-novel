@@ -5,7 +5,7 @@ import { applyIdeaAppends } from '../domain/claudeIdeas'
 import { createTitle } from '../domain/entityOps'
 import { hashJson } from '../domain/hash'
 import { repairData } from '../domain/repair'
-import { emptyData, type AppData, type ClaudeAccess, type Idea, type IdeaAppend } from '../domain/types'
+import { emptyData, type AppData, type ClaudeAccess, type Idea, type IdeaAppend, type IdeaFolder } from '../domain/types'
 import { trashRequestId } from './derivedId'
 import { ideaReadMark } from './ideaAppend'
 import { claudeView } from './visibility'
@@ -176,5 +176,71 @@ describe('claudeView: アイデア', () => {
     expect(() => claudeView(only)).not.toThrow()
     expect(claudeView(only).ideas).toBe(data.ideas)
     expect(claudeView(only).ideaAppends).toEqual({})
+  })
+})
+
+describe('claudeView: アイデアのフォルダ（2.9）', () => {
+  const folder = (id: string, titleId: string | null, over: Partial<IdeaFolder> = {}): IdeaFolder => ({
+    id,
+    titleId,
+    parentId: null,
+    name: `フォルダ${id}`,
+    order: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+  })
+
+  function withFolders(
+    folders: (ids: Record<'w' | 'r' | 'n', string>) => IdeaFolder[],
+    ideas: (ids: Record<'w' | 'r' | 'n', string>) => Idea[],
+  ) {
+    const { data, ids } = setup(ideas)
+    return { data: { ...data, ideaFolders: Object.fromEntries(folders(ids).map((f) => [f.id, f])) } as AppData, ids }
+  }
+
+  it('ホームのフォルダは作者のものも Claude のものも見せる（中の作者のカードは見せない）。タイトルのフォルダはタイトルを見せる時だけ', () => {
+    const { data } = withFolders(
+      (t) => [
+        folder('home-author', null),
+        folder('cf-home', null, { source: 'claude', v: 1 }),
+        folder('home-sub', null, { parentId: 'home-author' }),
+        folder('write-f', t.w),
+        folder('read-f', t.r),
+        folder('none-f', t.n),
+        folder('none-sub', t.n, { parentId: 'none-f' }),
+      ],
+      (t) => [
+        { ...author('author-in-folder', null), folderId: 'home-author' },
+        idea('cy-infolder', null, { folderId: 'cf-home' }),
+        { ...author('author-in-none', t.n), folderId: 'none-f' },
+      ],
+    )
+    const v = claudeView(data)
+    expect(Object.keys(v.ideaFolders).sort()).toEqual(['cf-home', 'home-author', 'home-sub', 'read-f', 'write-f'])
+    expect(Object.keys(v.ideas)).toEqual(['cy-infolder'])
+  })
+
+  it('タイトルが無いフォルダ（修復でホームに入る）はホームのフォルダとして見せる', () => {
+    const { data } = withFolders(
+      () => [folder('orphan-f', 'gone-title')],
+      () => [],
+    )
+    const raw = repairData(data).data
+    expect(raw.ideaFolders['orphan-f'].titleId).toBeNull()
+    expect(Object.keys(claudeView(raw).ideaFolders)).toEqual(['orphan-f'])
+  })
+
+  it('見せないものが無ければ、フォルダの表は同じオブジェクトのまま', () => {
+    const { data } = withFolders(
+      (t) => [folder('home-f', null), folder('write-f', t.w)],
+      () => [],
+    )
+    expect(claudeView(data).ideaFolders).toBe(data.ideaFolders)
+    const hidden = withFolders(
+      (t) => [folder('home-f', null), folder('none-f', t.n)],
+      () => [],
+    ).data
+    expect(claudeView(hidden).ideaFolders).not.toBe(hidden.ideaFolders)
   })
 })

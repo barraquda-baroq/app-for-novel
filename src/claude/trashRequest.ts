@@ -201,6 +201,10 @@ export const TRASH_STATUS_HINTS: Record<Exclude<TrashItemStatus, 'requested'>, s
 /** i:… で見つからない時（分析・記録の見つからない時の文は 2.7 のまま） */
 const IDEA_NOT_FOUND_HINT = '見つかりません（novel_get_notes の kind=ideas で id を確かめてください）'
 
+/** 2.9: アイデアのフォルダ（f:…）を渡された時（「移せない種類」の行の形のまま、フォルダ用の説明を出す） */
+export const FOLDER_NOT_CARD_HINT =
+  'フォルダはゴミ箱へ移せません（フォルダの削除・整理はアプリで作者がします。中のカードは i:… で指せます）'
+
 /** 3つの表から、指定に当たるカード（接頭の無い id は、どの表でも id そのものと同じものだけ） */
 function findCards(data: AppData, table: TrashRequestTable | null, ref: string): { table: TrashRequestTable; card: Card }[] {
   const out: { table: TrashRequestTable; card: Card }[] = []
@@ -242,8 +246,8 @@ function findTrashed(trash: AppData['trashRecords'], table: TrashRequestTable | 
   return [...out]
 }
 
-/** 短い id の文字から、表（n:・k:・i:）・作品か資料（w: と d:）・ほかの種類 */
-function refKind(ref: string): { table: TrashRequestTable | null; other?: 'shelf' | 'card' } {
+/** 短い id の文字から、表（n:・k:・i:）・作品か資料（w: と d:）・アイデアのフォルダ（f:。2.9）・ほかの種類 */
+function refKind(ref: string): { table: TrashRequestTable | null; other?: 'shelf' | 'folder' | 'card' } {
   const m = /^([a-zA-Z]):/.exec(ref)
   if (!m) return { table: null }
   const letter = m[1].toLowerCase()
@@ -251,6 +255,7 @@ function refKind(ref: string): { table: TrashRequestTable | null; other?: 'shelf
   if (letter === SHORT_ID_LETTERS.materialNote) return { table: 'materialNotes' }
   if (letter === SHORT_ID_LETTERS.idea) return { table: 'ideas' }
   if (letter === SHORT_ID_LETTERS.benchWork || letter === SHORT_ID_LETTERS.material) return { table: null, other: 'shelf' }
+  if (letter === SHORT_ID_LETTERS.ideaFolder) return { table: null, other: 'folder' }
   return { table: null, other: 'card' }
 }
 
@@ -279,7 +284,7 @@ export function buildTrashRequests(data: AppData, input: TrashInput, ctx: TrashC
     const kind = refKind(ref)
     if (kind.other) {
       const status = kind.other === 'shelf' ? 'shelf_item' : 'not_card'
-      items.push({ ref, status, hint: TRASH_STATUS_HINTS[status] })
+      items.push({ ref, status, hint: kind.other === 'folder' ? FOLDER_NOT_CARD_HINT : TRASH_STATUS_HINTS[status] })
       continue
     }
     // 依頼中のカード（見せる内容からは外れている）

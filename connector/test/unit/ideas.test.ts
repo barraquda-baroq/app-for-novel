@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest'
 import { applyClaudeRequests } from '../../../src/domain/claudeRequests'
 import { createTitle, sortIdeas } from '../../../src/domain/entityOps'
-import type { AppData, Idea } from '../../../src/domain/types'
+import { hashJson } from '../../../src/domain/hash'
+import type { AppData, Idea, IdeaFolder } from '../../../src/domain/types'
 import { claudeIdeaId, ideaAppendId } from '../../../src/claude/derivedId'
 import { appendedBody, ideaReadMark, isClaudeIdea } from '../../../src/claude/ideaAppend'
 import { shortId } from '../../../src/claude/refs'
@@ -508,5 +509,181 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     expect(processed.result.appends.map((o) => o.status)).toEqual(['appended'])
     expect(processed.result.trash.map((o) => o.status)).toEqual(['moved'])
     expect((Object.values(processed.data.trashRecords)[0].record as Idea).body).toBe('2026/10/29 12:00　動機\n案\n\n2026/10/29のセッションで以下の内容へ変更\n変更')
+  })
+})
+
+describe('アイデアのフォルダを読む（2.9）', () => {
+  const F_NEW = 'a1a1a1a1-0000-4000-8000-000000000011'
+  const F_DATED = 'cf-2b2b2b2b.1'
+  const F_SCENE = 'c3c3c3c3-0000-4000-8000-000000000013'
+  const F_TITLE = 'd4d4d4d4-0000-4000-8000-000000000014'
+  const F_HIDDEN = 'e5e5e5e5-0000-4000-8000-000000000015'
+  const C_IN = 'cy-c1c1c1c1.x'
+  const C_LOOSE = 'cy-c2c2c2c2.x'
+  const C_TITLE = 'cy-c3c3c3c3.x'
+  const BODY_IN = '2026/10/29 12:00　港町の主人公\n・灯台守の娘'
+
+  const folder = (id: string, titleId: string | null, name: string, order: number, over: Partial<IdeaFolder> = {}): IdeaFolder => ({
+    id,
+    titleId,
+    parentId: null,
+    name,
+    order,
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+  })
+  const claudeIdea = (id: string, titleId: string | null, body: string, order: number, over: Partial<Idea> = {}): Idea => ({
+    id,
+    titleId,
+    heading: '',
+    body,
+    checked: false,
+    checkedAt: null,
+    order,
+    source: 'claude',
+    v: 1,
+    claudeHash: hashJson(body),
+    createdAt: 1,
+    updatedAt: 1,
+    ...over,
+  })
+
+  /**
+   * ホーム: 作者の「新作の相談」（中に Claude の「2026/10/29　港町」と作者のカード）・作者の「場面の相談」（空）・フォルダの外の
+   * Claude のカード。『星の庭』: 作者の「第1章の相談」（作者のカードと済みの Claude のカード）。『隠す庭』: 作者のフォルダ
+   */
+  function withFolders() {
+    const s = setup()
+    const data: AppData = {
+      ...s.data,
+      ideaFolders: Object.fromEntries(
+        [
+          folder(F_NEW, null, '新作の相談', 0),
+          folder(F_DATED, null, '2026/10/29　港町', 0, { parentId: F_NEW, source: 'claude', v: 1 }),
+          folder(F_SCENE, null, '場面の相談', 1),
+          folder(F_TITLE, s.titleId, '第1章の相談', 0),
+          folder(F_HIDDEN, s.hiddenId, '隠す庭の相談', 0),
+        ].map((f) => [f.id, f]),
+      ),
+      ideas: {
+        ...s.data.ideas,
+        [s.authorHome[0].id]: { ...s.authorHome[0], folderId: F_NEW },
+        [s.authorTitle.id]: { ...s.authorTitle, folderId: F_TITLE },
+        [C_IN]: claudeIdea(C_IN, null, BODY_IN, -1, { folderId: F_DATED }),
+        [C_LOOSE]: claudeIdea(C_LOOSE, null, '2026/10/29 12:00　別の案', -2),
+        [C_TITLE]: claudeIdea(C_TITLE, s.titleId, '2026/10/29 12:00　灯台', -1, { folderId: F_TITLE, checked: true, checkedAt: 5 }),
+      },
+    }
+    return { ...s, data }
+  }
+
+  it('ホームの一覧: フォルダの木（作者のフォルダの名前も出す・数は出さない・作者のカードは出さない）。フォルダの外の見出し', async () => {
+    const s = withFolders()
+    const { core } = await pairedCore(new FakeFirebase(), s.data)
+    const list = await call(core, 'novel_get_notes', { kind: 'ideas' })
+    expect(list).toBe(
+      [
+        '=== ホームのアイデア（どのタイトルにも属さない・Claude が作ったものだけ。2件・フォルダ 3つ）===',
+        '【Claude】は Claude がこのコネクタで作ったアイデア（追記・ゴミ箱へ移すのは、そのチャットで作ったものだけ）。',
+        '【フォルダ】はアイデアのフォルダ（2段まで。中のフォルダとアイデアは字下げして続く。名前の前の【Claude】は Claude が作ったフォルダ。f:… は novel_add_ideas の folder・subfolder に渡せる。名前の変更・削除・移動はアプリで作者がする）。ホームのフォルダは名前だけ（作者が作ったものも出す。中は Claude が作ったアイデアだけ）。',
+        '【フォルダ】f:a1a1a1a1 新作の相談',
+        '  【フォルダ】f:2b2b2b2b 【Claude】2026/10/29　港町',
+        `    ${shortId('idea', C_IN)} 【Claude】2026/10/29 12:00 港町の主人公 ・灯台守の娘（30字）`,
+        '【フォルダ】f:c3c3c3c3 場面の相談',
+        '（フォルダの外）',
+        `${shortId('idea', C_LOOSE)} 【Claude】2026/10/29 12:00 別の案（20字）`,
+        '本文は ids に短い id を入れるか full=true で読めます（ids に f:… を渡すと、そのフォルダの中のアイデア）。',
+        '作者が書いたホームのアイデアは見えません（フォルダの名前は見えます）。',
+      ].join('\n'),
+    )
+    expect(list).not.toContain('ホームの作者の案')
+    expect(list).not.toContain('隠す庭')
+    // 本文の見出し: Claude のカードは場所にフォルダもつなぐ（フォルダの外のカードは 2.8 のまま）
+    const full = await call(core, 'novel_get_notes', { kind: 'ideas', ids: [shortId('idea', C_IN), shortId('idea', C_LOOSE)] })
+    expect(full).toBe(
+      [
+        `=== アイデア【Claude】（ホームのアイデア＞新作の相談＞2026/10/29　港町）[${shortId('idea', C_IN)}] 印: ${ideaReadMark(BODY_IN)} ===`,
+        BODY_IN,
+        `=== アイデア【Claude】（ホームのアイデア）[${shortId('idea', C_LOOSE)}] 印: ${ideaReadMark('2026/10/29 12:00　別の案')} ===`,
+        '2026/10/29 12:00　別の案',
+      ].join('\n'),
+    )
+    // f:… は、そのフォルダ（中のフォルダも）の見えるアイデア。空のフォルダ・見つからない f:…
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', ids: ['f:a1a1a1a1'] })).toBe(
+      `=== アイデア【Claude】（ホームのアイデア＞新作の相談＞2026/10/29　港町）[${shortId('idea', C_IN)}] 印: ${ideaReadMark(BODY_IN)} ===\n${BODY_IN}`,
+    )
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', ids: ['f:c3c3c3c3'] })).toBe(
+      'フォルダ f:c3c3c3c3「場面の相談」の中に、見えるアイデアはありません。',
+    )
+    const missing = await core.callTool('novel_get_notes', { kind: 'ideas', ids: ['f:e5e5e5e5'] })
+    expect(missing.isError).toBe(true)
+    expect(missing.text).toBe(
+      [
+        'フォルダが見つかりません: f:e5e5e5e5',
+        '候補:',
+        '- f:a1a1a1a1 新作の相談',
+        '- f:2b2b2b2b 新作の相談＞2026/10/29　港町',
+        '- f:c3c3c3c3 場面の相談',
+      ].join('\n'),
+    )
+  })
+
+  it('タイトルの一覧はフォルダにカードの数（中の済みも）を出す。作者のカードの本文の見出しに「フォルダ: …」。場所の違う f:… は場所を言う', async () => {
+    const s = withFolders()
+    const { core } = await pairedCore(new FakeFirebase(), s.data)
+    const t = shortId('title', s.titleId)
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', title_id: t })).toBe(
+      [
+        `=== 『星の庭』のアイデア（2件・うち済み 1件・フォルダ 1つ）[${t}] ===`,
+        '【済】は作者が済み（実装した・没にした）にしたアイデア。済みでないものの後ろに、新しく済みにしたものから並ぶ。',
+        '【Claude】は Claude がこのコネクタで作ったアイデア（追記・ゴミ箱へ移すのは、そのチャットで作ったものだけ）。',
+        '【フォルダ】はアイデアのフォルダ（2段まで。中のフォルダとアイデアは字下げして続く。名前の前の【Claude】は Claude が作ったフォルダ。f:… は novel_add_ideas の folder・subfolder に渡せる。名前の変更・削除・移動はアプリで作者がする）。フォルダの（n件）は中のアイデアの数（中のフォルダの分も）。',
+        '【フォルダ】f:d4d4d4d4 第1章の相談（2件）',
+        `  ${shortId('idea', s.authorTitle.id)} 星の庭の作者の案（8字）`,
+        `  ${shortId('idea', C_TITLE)} 【Claude】【済】2026/10/29 12:00 灯台（19字）`,
+        '本文は ids に短い id を入れるか full=true で読めます（ids に f:… を渡すと、そのフォルダの中のアイデア）。',
+      ].join('\n'),
+    )
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', title_id: t, ids: [shortId('idea', s.authorTitle.id)] })).toBe(
+      `=== アイデア [${shortId('idea', s.authorTitle.id)}] フォルダ: 第1章の相談 ===\n星の庭の作者の案`,
+    )
+    const elsewhere = await core.callTool('novel_get_notes', { kind: 'ideas', title_id: t, ids: ['f:a1a1a1a1'] })
+    expect(elsewhere.text).toBe('f:a1a1a1a1 はホームのアイデアのフォルダです（title_id を省いてください）')
+    // title_id を省くと、見せているタイトルのフォルダからも探す
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', ids: ['f:d4d4d4d4'] })).toContain(
+      `[${shortId('idea', s.authorTitle.id)}] フォルダ: 第1章の相談 ===`,
+    )
+  })
+
+  it('フォルダが無ければ 2.8 と1字も変わらない（タイトル）。フォルダに入っていても見えないフォルダの中なら「フォルダの外」に出る', async () => {
+    const s = setup()
+    const { core } = await pairedCore(new FakeFirebase(), {
+      ...s.data,
+      ideaFolders: { [F_HIDDEN]: folder(F_HIDDEN, s.hiddenId, '隠す庭の相談', 0) },
+      // 見せないタイトルのフォルダを指す（形の崩れた）カードは、フォルダの外に見える
+      ideas: { ...s.data.ideas, [s.authorTitle.id]: { ...s.authorTitle, folderId: F_HIDDEN } },
+    })
+    const t = shortId('title', s.titleId)
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', title_id: t })).toBe(
+      [
+        `=== 『星の庭』のアイデア（1件）[${t}] ===`,
+        `${shortId('idea', s.authorTitle.id)} 星の庭の作者の案（8字）`,
+        '本文は ids に短い id を入れるか full=true で読めます。',
+      ].join('\n'),
+    )
+    expect(await call(core, 'novel_get_notes', { kind: 'ideas', title_id: t, ids: [shortId('idea', s.authorTitle.id)] })).toBe(
+      `=== アイデア [${shortId('idea', s.authorTitle.id)}] ===\n星の庭の作者の案`,
+    )
+  })
+
+  it('追記の答えの場所にもフォルダをつなぐ（「…」（ホームのアイデア＞新作の相談＞2026/10/29　港町））', async () => {
+    const s = withFolders()
+    const { core } = await pairedCore(new FakeFirebase(), s.data)
+    const r = await core.callTool('novel_append_to_idea', { idea_id: shortId('idea', C_IN), read_mark: ideaReadMark(BODY_IN), content: '・舞台は冬' })
+    expect(r.isError).toBeUndefined()
+    expect(r.text.split('\n')[1]).toBe(
+      `- 追記 ${shortId('idea', C_IN)} 「2026/10/29 12:00　港町の主人公」（ホームのアイデア＞新作の相談＞2026/10/29　港町）`,
+    )
   })
 })

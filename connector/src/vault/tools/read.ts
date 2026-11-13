@@ -46,7 +46,8 @@ import {
   searchTextView,
   titleHeadline,
 } from '../../../../src/claude/view'
-import { ideaPlaceLabel, ideaReadMark, ideaSectionWritable, isClaudeIdea } from '../../../../src/claude/ideaAppend'
+import { ideaReadMark, ideaSectionWritable, isClaudeIdea } from '../../../../src/claude/ideaAppend'
+import { CLAUDE_PATH_SEP, folderCandidateLines, ideaPathLabel, isClaudeFolder } from '../../../../src/claude/ideaFolders'
 import { cardShortId, KIND_OF } from '../../../../src/claude/trashRequest'
 import { liveTrashRequests } from '../../../../src/claude/trashTargets'
 import { claudeAccessLabel, claudeAccessOf, isNewerRecord, NEWER_RECORD_LABEL } from '../../../../src/claude/visibility'
@@ -65,6 +66,16 @@ import {
 import { BENCH_LIMITS, benchWorkName, benchWorksOfTitle, sortedBenchWorks } from '../../../../src/domain/benchOps'
 import { MATERIAL_LIMITS, materialName, sortedMaterials } from '../../../../src/domain/materialOps'
 import { byOrder } from '../../../../src/domain/util'
+import {
+  buildIdeaTree,
+  effectiveFolderId,
+  folderPathLabel,
+  folderSubtree,
+  ideaFolderName,
+  sectionOf,
+  type IdeaFolderNode,
+  type IdeaTree,
+} from '../../../../src/domain/ideaFolders'
 import { actParts, adoptedMetrics, isSplit, pieceFullLabel, pieceLabel } from '../../../../src/domain/structure'
 import {
   SUBMISSION_TEXT,
@@ -80,6 +91,7 @@ import type {
   BenchWork,
   ID,
   Idea,
+  IdeaFolder,
   Material,
   Piece,
   ProofSuggestion,
@@ -301,7 +313,9 @@ function pendingAppendCount(view: AppData, ideaId: ID): number {
  * アイデアの一覧の1行と本文の形。アプリと同じ並び（済みでないもの → 済み）で渡す。済み（実装した・没にした）には【済】を付ける。
  * 見出しは古い版で付けたものだけ（今の版は内容だけ。1行目が見出しの代わり）。作者が書いたアイデアの形は 2.7 のまま。
  * Claude が作ったアイデア（2.8）には【Claude】を付け、本文の見出しに場所と、追記できる時は読んだ印（novel_append_to_idea の read_mark）
- * を出す（印は本文の見出しだけ。一覧の行には出さない）
+ * を出す（印は本文の見出しだけ。一覧の行には出さない）。
+ * 2.9: フォルダに入っているアイデアは、本文の見出しにフォルダも出す（Claude が作ったものは場所に「＞」でつなぎ、作者が書いたものは
+ * 見出しの後ろに「フォルダ: …」。フォルダの外のアイデアは 2.8 と1字も変えない）
  */
 function ideaItems(view: AppData, ideas: readonly Idea[]): NoteItem[] {
   return sortIdeas(ideas).map((i) => {
@@ -318,10 +332,14 @@ function ideaItems(view: AppData, ideas: readonly Idea[]): NoteItem[] {
         line: heading
           ? `${ref} ${done}${heading}${chars}${i.body.trim() ? `: ${head(i.body)}` : ''}`
           : `${ref} ${done}${head(i.body) || '（空のアイデア）'}${chars}`,
-        full: () => `=== アイデア${done}${heading ? `: ${heading}` : ''} [${ref}] ===\n${i.body}`,
+        full: () => {
+          const fid = effectiveFolderId(view, i)
+          const folder = fid ? ` フォルダ: ${folderPathLabel(view, fid, CLAUDE_PATH_SEP)}` : ''
+          return `=== アイデア${done}${heading ? `: ${heading}` : ''} [${ref}]${folder} ===\n${i.body}`
+        },
       }
     const k = pendingAppendCount(view, i.id)
-    const place = ideaPlaceLabel(view.titles, i)
+    const place = ideaPathLabel(view, i)
     const where = ideaSectionWritable(view.titles, i)
       ? `（${place}${k ? `・アプリの同期待ちの追記 ${k}件を含む` : ''}）[${ref}] 印: ${ideaReadMark(i.body)}`
       : `（${place}・「読むだけ」のタイトルなので追記できません）[${ref}]`
@@ -338,6 +356,79 @@ function ideaItems(view: AppData, ideas: readonly Idea[]): NoteItem[] {
 
 /** 仕切りのアイデア（タイトルの id。null = どのタイトルにも属さないホームのアイデアのうち、見せる内容にある Claude が作ったもの） */
 const ideasIn = (view: AppData, section: ID | null) => Object.values(view.ideas).filter((i) => i.titleId === section)
+
+/** 木の中のアイデアの見せる順（1段目ごとに、中のフォルダのアイデア → そのフォルダのアイデア。最後にフォルダの外） */
+function treeIdeas(tree: IdeaTree): Idea[] {
+  return [...tree.folders.flatMap((top) => [...top.folders.flatMap((sub) => sub.ideas), ...top.ideas]), ...tree.loose]
+}
+
+/** 木のフォルダの数（どちらの段も） */
+const treeFolderCount = (tree: IdeaTree) => tree.folders.reduce((n, top) => n + 1 + top.folders.length, 0)
+
+/**
+ * アイデアの一覧の木の行（2.9。フォルダがある時だけ）。フォルダは【フォルダ】f:… 名前（Claude が作ったものは【Claude】）、中の
+ * フォルダとアイデアは2字ずつ字下げする。どの入れ物でもフォルダ → 済みでないアイデア → 済みのアイデアの順。タイトルのフォルダには
+ * 中のアイデアの数（中のフォルダの分も）を出し、ホームのフォルダには出さない（作者が書いたアイデアの数が分かるため）
+ */
+function ideaTreeLines(tree: IdeaTree, items: ReadonlyMap<ID, NoteItem>, counts: boolean): string[] {
+  const lines: string[] = []
+  const pad = (depth: number) => '  '.repeat(depth)
+  const cards = (ideas: readonly Idea[], depth: number) => {
+    for (const i of ideas) {
+      const it = items.get(i.id)
+      if (it) lines.push(`${pad(depth)}${it.line}`)
+    }
+  }
+  const folder = (n: IdeaFolderNode, depth: number) => {
+    const badge = isClaudeFolder(n.folder) ? '【Claude】' : ''
+    const count = counts ? `（${formatCount(n.count)}件）` : ''
+    lines.push(`${pad(depth)}【フォルダ】${shortId('ideaFolder', n.folder.id)} ${badge}${ideaFolderName(n.folder)}${count}`)
+    for (const sub of n.folders) folder(sub, depth + 1)
+    cards(n.ideas, depth + 1)
+  }
+  for (const n of tree.folders) folder(n, 0)
+  if (tree.folders.length && tree.loose.length) lines.push('（フォルダの外）')
+  cards(tree.loose, 0)
+  return lines
+}
+
+/** f:… の形（アイデアのフォルダの短い id） */
+const FOLDER_REF = /^f:[0-9a-z]{4,}$/i
+
+/** フォルダの表記（「f:1a2b3c4d「新作の相談＞2026/11/12　港町」」） */
+const folderRefLabel = (view: AppData, f: IdeaFolder) =>
+  `${shortId('ideaFolder', f.id)}「${folderPathLabel(view, f.id, CLAUDE_PATH_SEP)}」`
+
+/**
+ * ids の f:… を、そのフォルダ（中のフォルダも）の見えるアイデア（見せる順）にする。title があればその仕切りのフォルダから、
+ * 無ければホームと見せているタイトルのフォルダから探す。見つからない・何個にも当たる時は断る
+ */
+function folderRefIdeas(view: AppData, title: Title | null, ref: string): { folder: IdeaFolder; ideas: Idea[] } | { error: ToolResult } {
+  const all = Object.values(view.ideaFolders ?? {}).filter((f) => f && typeof f === 'object' && matchesId('ideaFolder', ref, f.id))
+  const hits = title ? all.filter((f) => sectionOf(view.titles, f.titleId) === title.id) : all
+  if (hits.length > 1)
+    return {
+      error: fail(
+        `${ref} がいくつかのフォルダに当たります（id を長く指定してください）`,
+        hits.slice(0, 10).map((f) => folderRefLabel(view, f)),
+      ),
+    }
+  if (!hits.length) {
+    const other = all[0]
+    if (title && other) {
+      const t = sectionOf(view.titles, other.titleId)
+      return {
+        error: fail(
+          t
+            ? `${shortId('ideaFolder', other.id)} はタイトル『${view.titles[t].name}』のフォルダです（title_id に ${shortId('title', t)} を渡すか、title_id を省いてください）`
+            : `${shortId('ideaFolder', other.id)} はホームのアイデアのフォルダです（title_id を省いてください）`,
+        ),
+      }
+    }
+    return { error: fail(`フォルダが見つかりません: ${ref}`, folderCandidateLines(view, title?.id ?? null)) }
+  }
+  return { folder: hits[0], ideas: folderSubtree(view, hits[0].id).ideas }
+}
 
 function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos'): NoteItem[] {
   if (kind === 'memos')
@@ -400,31 +491,70 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
     full = c.full === true
   }
   // ホームのアイデアを ids で指す時は、見せているタイトルのアイデアからも探す
-  const items =
+  const oneSection = title !== null || !ids.length
+  let items =
     kind !== 'ideas'
       ? noteItems(ctx.view, title!, kind)
-      : ideaItems(ctx.view, title || !ids.length ? ideasIn(ctx.view, title?.id ?? null) : Object.values(ctx.view.ideas))
+      : ideaItems(ctx.view, oneSection ? ideasIn(ctx.view, title?.id ?? null) : Object.values(ctx.view.ideas))
+  // 2.9: 1つの仕切りのアイデアは、フォルダがあれば木の順（フォルダが無ければ 2.8 のまま）
+  const tree = kind === 'ideas' && oneSection ? buildIdeaTree(ctx.view, title?.id ?? null) : null
+  const folders = tree ? treeFolderCount(tree) : 0
+  if (tree && folders) {
+    const byId = new Map(items.map((it) => [it.id, it]))
+    items = treeIdeas(tree).flatMap((i) => byId.get(i.id) ?? [])
+  }
   if (!ids.length && !full) {
     const done = kind === 'ideas' ? items.filter((it) => isIdeaChecked(ctx.view.ideas[it.id] ?? {})).length : 0
+    const counted = `${items.length}件${done ? `・うち済み ${done}件` : ''}${folders ? `・フォルダ ${folders}つ` : ''}`
     const lines = [
       title
-        ? `=== 『${title.name}』の${kindLabel}（${items.length}件${done ? `・うち済み ${done}件` : ''}）[${shortId('title', title.id)}] ===`
-        : `=== ホームのアイデア（どのタイトルにも属さない・Claude が作ったものだけ。${items.length}件${done ? `・うち済み ${done}件` : ''}）===`,
+        ? `=== 『${title.name}』の${kindLabel}（${counted}）[${shortId('title', title.id)}] ===`
+        : `=== ホームのアイデア（どのタイトルにも属さない・Claude が作ったものだけ。${counted}）===`,
     ]
     if (done) lines.push('【済】は作者が済み（実装した・没にした）にしたアイデア。済みでないものの後ろに、新しく済みにしたものから並ぶ。')
     if (items.some((it) => it.claude))
       lines.push('【Claude】は Claude がこのコネクタで作ったアイデア（追記・ゴミ箱へ移すのは、そのチャットで作ったものだけ）。')
-    if (!items.length) lines.push('（ありません）')
-    for (const it of items) lines.push(it.line)
-    if (items.length) lines.push('本文は ids に短い id を入れるか full=true で読めます。')
-    if (!title) lines.push('作者が書いたホームのアイデアは見えません。')
+    if (tree && folders) {
+      lines.push(
+        `【フォルダ】はアイデアのフォルダ（2段まで。中のフォルダとアイデアは字下げして続く。名前の前の【Claude】は Claude が作ったフォルダ。f:… は novel_add_ideas の folder・subfolder に渡せる。名前の変更・削除・移動はアプリで作者がする）。${
+          title
+            ? 'フォルダの（n件）は中のアイデアの数（中のフォルダの分も）。'
+            : 'ホームのフォルダは名前だけ（作者が作ったものも出す。中は Claude が作ったアイデアだけ）。'
+        }`,
+      )
+      lines.push(...ideaTreeLines(tree, new Map(items.map((it) => [it.id, it])), title !== null))
+    } else {
+      if (!items.length) lines.push('（ありません）')
+      for (const it of items) lines.push(it.line)
+    }
+    if (items.length)
+      lines.push(
+        folders
+          ? '本文は ids に短い id を入れるか full=true で読めます（ids に f:… を渡すと、そのフォルダの中のアイデア）。'
+          : '本文は ids に短い id を入れるか full=true で読めます。',
+      )
+    if (!title) lines.push(folders ? '作者が書いたホームのアイデアは見えません（フォルダの名前は見えます）。' : '作者が書いたホームのアイデアは見えません。')
     return ok(lines.join('\n'))
   }
   let chosen = items
   if (ids.length) {
     const missing: string[] = []
+    /** f:… で指したのに、見えるアイデアが無かったフォルダ */
+    const empty: string[] = []
     chosen = []
     for (const ref of ids) {
+      // 2.9: f:… は、そのフォルダ（中のフォルダも）のアイデア
+      if (kind === 'ideas' && FOLDER_REF.test(ref.trim())) {
+        const r = folderRefIdeas(ctx.view, title, ref.trim())
+        if ('error' in r) return r.error
+        const before = chosen.length
+        for (const i of r.ideas) {
+          const hit = items.find((it) => it.id === i.id)
+          if (hit && !chosen.includes(hit)) chosen.push(hit)
+        }
+        if (chosen.length === before && !r.ideas.length) empty.push(folderRefLabel(ctx.view, r.folder))
+        continue
+      }
       const idKind = kind === 'settings' ? 'settingEntry' : kind === 'memos' ? 'memo' : 'idea'
       const hit =
         items.find((it) => matchesId(idKind, ref, it.id)) ?? items.find((it) => it.name.trim() === ref.trim())
@@ -432,6 +562,8 @@ export function getNotes(ctx: ReadContext, args: Args): ToolResult {
       else if (!hit) missing.push(ref)
     }
     if (!chosen.length) {
+      if (!missing.length && empty.length)
+        return ok(`フォルダ ${empty.join('・')}の中に、見えるアイデアはありません。`)
       if (kind === 'ideas') {
         const elsewhere = ideaElsewhere(ctx.view, title, missing)
         if (elsewhere) return fail(elsewhere)
