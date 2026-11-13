@@ -1,4 +1,4 @@
-// 2.9: Claude との接続（claude.ai のアカウントごと。10まで）の一覧。設定 → Claude 連携 と、連携の画面（#/claude/connect）で使う。
+// 2.9: Claude との接続（claude.ai で接続するごとに1つ。10まで）の一覧。設定 → Claude 連携 と、連携の画面（#/claude/connect）で使う。
 // 行ごとに名前・許可した日時・許可した端末と、［名前を変える］（設定だけ）・［この接続を解除］。
 // 解除・名前の変更・すべて解除の確かめと知らせもここにまとめる（どちらの画面でも同じ文）。
 import { connectionNameKey, CONNECTION_NAME_MAX, MAX_CONNECTIONS, type ConnectionInfo } from '../../claude/pairing'
@@ -90,12 +90,14 @@ const ALL_MESSAGE = (n: number) =>
 type ConnectorDocModule = typeof import('./connectorDoc')
 const loadDoc = (): Promise<ConnectorDocModule> => import('./connectorDoc')
 
-/**
- * ［連携をすべて解除］: 確かめてから記録を消す（すべての接続が、その場で読めず書き込めなくなる）。消したら true。
- * title を渡すと、その見出しで確かめる（最後の1つの接続を解除する時）
- */
-export async function removeAllConnections(n: number, title = 'Claude との連携をすべて解除しますか？'): Promise<boolean> {
-  const ok = await confirmDialog({ title, message: ALL_MESSAGE(n), danger: true, confirmLabel: '連携をすべて解除' })
+/** ［連携をすべて解除］: 確かめてから記録を消す（すべての接続が、その場で読めず書き込めなくなる）。消したら true */
+export async function removeAllConnections(n: number): Promise<boolean> {
+  const ok = await confirmDialog({
+    title: 'Claude との連携をすべて解除しますか？',
+    message: ALL_MESSAGE(n),
+    danger: true,
+    confirmLabel: '連携をすべて解除',
+  })
   if (!ok) return false
   try {
     const m = await loadDoc()
@@ -110,22 +112,41 @@ export async function removeAllConnections(n: number, title = 'Claude との連�
 
 /**
  * ［この接続を解除］: 確かめてから一覧から外す（その接続の Claude は、次に使った時から使えない。ほかの接続はそのまま）。
- * 最後の1つなら、すべて解除と同じ確かめで記録を消す。解除したら true
+ * 見ている一覧が1つなら、すべて解除と同じ確かめをする。外すのはいつもトランザクション（removeConnection）で、記録を消すのは
+ * サーバーの一覧でも最後の1つの時だけ（見ている一覧が古く、ほかの端末で足された接続があれば、その接続は残る）。
+ * 知らせはトランザクションの結果に合わせる。トランザクションを書いたら（もう無かった時も）true（呼ぶ側は一覧を読み直す）
  */
 export async function removeOneConnection(c: ConnectionInfo, connections: readonly ConnectionInfo[]): Promise<boolean> {
-  if (connections.length <= 1) return removeAllConnections(1, '最後の接続です。連携をすべて解除しますか？')
-  const ok = await confirmDialog({
-    title: `「${c.name}」の接続を解除しますか？`,
-    message:
-      'この接続の Claude は、次に使った時から（遅くとも1分ほどで）読めず、書き込めなくなります。ほかの接続はそのまま使えます。その claude.ai のアカウントでまた使う時は、claude.ai でコネクタを接続し直してください（新しい接続として足されます）。',
-    danger: true,
-    confirmLabel: 'この接続を解除',
-  })
+  const last = connections.length <= 1
+  const ok = await confirmDialog(
+    last
+      ? {
+          title: '最後の接続です。連携をすべて解除しますか？',
+          message: ALL_MESSAGE(1),
+          danger: true,
+          confirmLabel: '連携をすべて解除',
+        }
+      : {
+          title: `「${c.name}」の接続を解除しますか？`,
+          message:
+            'この接続の Claude は、次に使った時から（遅くとも1分ほどで）読めず、書き込めなくなります。ほかの接続はそのまま使えます。その claude.ai のアカウントでまた使う時は、claude.ai でコネクタを接続し直してください（新しい接続として足されます）。',
+          danger: true,
+          confirmLabel: 'この接続を解除',
+        },
+  )
   if (!ok) return false
   try {
     const m = await loadDoc()
     const r = await m.removeConnection(c.cid)
-    notify(r === 'deleted' ? 'Claude との連携をすべて解除しました' : `「${c.name}」の接続を解除しました`)
+    notify(
+      r === 'deleted'
+        ? 'Claude との連携をすべて解除しました'
+        : r === 'none'
+          ? 'その接続はもうありません（ほかの端末で解除されました）。'
+          : last
+            ? `「${c.name}」の接続を解除しました（ほかの端末で足された接続は、そのまま使えます）`
+            : `「${c.name}」の接続を解除しました`,
+    )
     return true
   } catch {
     notifyError('解除できませんでした。インターネットの接続を確かめてください。')

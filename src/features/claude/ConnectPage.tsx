@@ -7,10 +7,12 @@
 //    送ってからコネクタへ移る。接続の id は画面を開くごとに1つ作り、記録に失敗した後のやり直しでも同じものを使う（重ならない）。
 //    コネクタがこのアプリより古い版なら許可させない（2.8 までのコネクタは、許可するとほかの接続を切ってしまう）
 // 2.9 の「この接続」: 名前（既定は空いている一番小さい「接続n」）・新しい接続として足す／前の接続と入れ替える・いまの接続の一覧
-// （行ごとに解除。10ある時は入れ替えるか解除しないと許可できない）・15分以内に許可した接続があれば入れ替えを勧める
+// （行ごとに解除。10ある時は入れ替えるか解除しないと許可できない）・15分以内に許可した接続があれば入れ替えを勧める。
+// 入れ替える先は、作者が選んだ接続が無くなってもほかの接続に移さない（10ないなら足すに戻し、10なら選び直すまで許可させない）。
+// 10ある時の既定の入れ替える先は15分以内に許可した接続だけ（無ければ「選んでください」）
 // 手順は connectLogic.ts（prepareConnect・approvePairing）、URL・k・指紋の決まりはコネクタと同じ src/claude/pairing.ts。
 // iPhone / Android のアプリでは連携できない（コネクタは Web 版の画面からだけ受け付ける）ので、同じ印のままブラウザで開いてもらう。
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   defaultConnectionName,
@@ -419,7 +421,7 @@ function RetryButton({ onClick }: { onClick: () => void }) {
 
 /** 連携の画面で選んでいる内容（タイトルは変えたものだけ。変えていなければいまの設定を出す） */
 interface ApproveDraft {
-  /** 「書き込みを許可」（null = いまの設定。記録が無ければ許可） */
+  /** 「書き込みを許可」（null = 変えていない: いまの設定のまま。記録が無ければ許可） */
   writes: boolean | null
   access: Record<ID, ClaudeAccess>
   /** 足す接続の id（画面を開くごとに1つ。やり直しでも同じ） */
@@ -428,7 +430,10 @@ interface ApproveDraft {
   name: string | null
   /** 新しい接続として足す・前の接続と入れ替える（接続が10ある時は入れ替えるだけ） */
   mode: 'add' | 'replace'
-  /** 入れ替える接続（null = 15分以内に許可した接続、無ければ一番前の接続） */
+  /**
+   * 入れ替える接続（null = 選んでいない: 15分以内に許可した接続、無ければ一番前の接続。10ある時は15分以内に許可した接続だけ）。
+   * 選んだ接続が一覧から無くなっても、ほかの接続に移さない
+   */
   replaceCid: string | null
 }
 
@@ -441,7 +446,7 @@ interface ApproveFormProps {
   state: string
   error: string | null
   draft: ApproveDraft
-  onDraftChange: (draft: ApproveDraft) => void
+  onDraftChange: Dispatch<SetStateAction<ApproveDraft>>
   onSaving: () => void
   onDone: () => void
   onError: (error: string) => void
@@ -481,9 +486,15 @@ function ApproveForm({
     [...connections]
       .filter((c) => c.pairedAt !== null && openedAt - c.pairedAt < PAIRING_TTL_MS && c.pairedAt - openedAt < 2 * 60_000)
       .sort((a, b) => (b.pairedAt ?? 0) - (a.pairedAt ?? 0))[0] ?? null
-  const target = connections.find((c) => c.cid === draft.replaceCid) ?? recent ?? connections[0] ?? null
-  const mode: 'add' | 'replace' = n === 0 ? 'add' : full ? 'replace' : draft.mode
-  const writes = draft.writes ?? current?.writes ?? true
+  // 選んでいない時の入れ替える先: 15分以内に許可した接続、無ければ一番前の接続（10ある時は選ぶまで決めない）
+  const fallback = recent ?? (full ? null : (connections[0] ?? null))
+  const chosen = draft.replaceCid === null ? null : (connections.find((c) => c.cid === draft.replaceCid) ?? null)
+  // 選んだ入れ替える先が無くなった（一覧で解除した・ほかの端末で解除された）時は、ほかの接続に移さない
+  const target = draft.replaceCid === null ? fallback : chosen
+  const targetGone = draft.replaceCid !== null && chosen === null
+  const mode: 'add' | 'replace' = n === 0 ? 'add' : full ? 'replace' : targetGone ? 'add' : draft.mode
+  // 変えていなければいまの設定（記録が無ければ許可）。一覧を読めていない間は分からない（チェックの中間で出し、送らない）
+  const writes: boolean | null = draft.writes ?? (list.state === 'ok' ? (current?.writes ?? true) : null)
   const name = draft.name ?? (mode === 'replace' && target ? target.name : defaultConnectionName(connections.map((c) => c.name)))
   const nameProblem = connectionNameProblem(name, connections, mode === 'replace' ? (target?.cid ?? null) : null)
   const listBusy = list.state === 'loading' || removing
@@ -492,12 +503,21 @@ function ApproveForm({
   const removeFromList = async (c: ConnectionInfo) => {
     setRemoving(true)
     try {
-      if (await removeOneConnection(c, connections)) await onReloadList()
+      if (await removeOneConnection(c, connections)) {
+        // 選んでいた入れ替える先を解除した: 足すに戻す（名前は、作者が入れていなければ既定に戻る）
+        onDraftChange((d) => (d.replaceCid === c.cid ? { ...d, mode: 'add', replaceCid: null } : d))
+        await onReloadList()
+      }
     } finally {
       setRemoving(false)
     }
   }
   const busy = useRef(false)
+  // 「書き込みを許可」が分からない時（一覧を読めていない間）は、チェックの中間で出す
+  const writesRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (writesRef.current) writesRef.current.indeterminate = writes === null
+  }, [writes])
   const valueOf = (id: ID): ClaudeAccess => draft.access[id] ?? claudeAccessOf(data.titles[id])
   const shown = titles.filter((t) => valueOf(t.id) !== 'none').length
 
@@ -527,10 +547,12 @@ function ApproveForm({
           state,
           identity,
           ownerUid,
-          writes,
+          // 触っていなければ送らない（トランザクションで記録の値のまま。一覧を読めなかった時に、ほかの接続の設定を変えない）
+          writes: draft.writes,
           access: changes,
           cid: draft.cid,
           name,
+          defaultName: draft.name === null,
           replaceCid: mode === 'replace' ? (target?.cid ?? null) : null,
         },
       )
@@ -619,8 +641,12 @@ function ApproveForm({
                 id={`${formId}-replace`}
                 name={`${formId}-mode`}
                 checked={mode === 'replace'}
-                onChange={() => onDraftChange({ ...draft, mode: 'replace', replaceCid: target?.cid ?? null })}
-                aria-label={`「${target?.name ?? ''}」と入れ替える（前の接続は使えなくなります）`}
+                onChange={() => onDraftChange({ ...draft, mode: 'replace', replaceCid: (target ?? fallback)?.cid ?? null })}
+                aria-label={
+                  target
+                    ? `「${target.name}」と入れ替える（前の接続は使えなくなります）`
+                    : '選んだ接続と入れ替える（前の接続は使えなくなります）'
+                }
                 data-testid="connect-mode-replace"
               />
               <span className="cn-conn-option-body">
@@ -631,6 +657,11 @@ function ApproveForm({
                   aria-label="入れ替える接続"
                   data-testid="connect-replace-target"
                 >
+                  {target ? null : (
+                    <option value="" disabled>
+                      選んでください
+                    </option>
+                  )}
                   {connections.map((c) => (
                     <option key={c.cid} value={c.cid}>
                       {c.name}
@@ -648,7 +679,8 @@ function ApproveForm({
             まで）。入れ替える接続を選ぶか、下の一覧で1つ解除すると許可できます。
           </p>
         ) : null}
-        {recent && !(mode === 'replace' && target?.cid === recent.cid) ? (
+        {/* 10ある時に既定で選んである時は、なぜ選んであるかの説明として出す（作者が選んだ時は出さない） */}
+        {recent && !(mode === 'replace' && draft.replaceCid === recent.cid) ? (
           <p className="cn-notice is-info" data-testid="connect-recent">
             15分以内に許可した「{recent.name}」があります。claude.ai で接続できずにやり直している時は「{recent.name}
             と入れ替える」を選ぶと、使わない接続が一覧に残りません。
@@ -724,8 +756,9 @@ function ApproveForm({
 
       <label className="check cn-writes">
         <input
+          ref={writesRef}
           type="checkbox"
-          checked={writes}
+          checked={writes === true}
           onChange={(e) => onDraftChange({ ...draft, writes: e.target.checked })}
           data-testid="connect-writes"
         />
@@ -736,6 +769,11 @@ function ApproveForm({
             が足したアイデアに追記できます。頼んだ時だけ、Claude が足した相対比較の分析・資料の記録・アイデアをゴミ箱へ移せます（
             {TRASH_RETENTION_DAYS}日は戻せます）。本文は書き換えません。後から 設定 → Claude 連携 で止められます）
           </span>
+          {writes === null && list.state === 'error' ? (
+            <span className="tiny faint cn-writes-hint" data-testid="connect-writes-unknown">
+              （いまの設定を読めませんでした。変えなければ、いまの設定のままです）
+            </span>
+          ) : null}
         </span>
       </label>
 

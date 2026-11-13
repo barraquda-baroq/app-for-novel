@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi, UseBoundStore } from 'zustand'
+import { useToasts } from '../../store/uiStore'
 import { copyText } from '../../ui/browser'
 import { AppFrame } from '../../ui/Layout'
 import type { ConnectionInfo } from '../../claude/pairing'
@@ -23,7 +24,7 @@ const conn = vi.hoisted(() => ({
   watchConnector: vi.fn(),
   setConnectorWrites: vi.fn(async () => undefined),
   deleteConnector: vi.fn(async () => undefined),
-  removeConnection: vi.fn(async (_cid: string) => 'removed' as const),
+  removeConnection: vi.fn(async (_cid: string): Promise<'removed' | 'deleted' | 'none'> => 'removed'),
   renameConnection: vi.fn(async (_cid: string, _name: string) => undefined),
 }))
 const origin = vi.hoisted(() => ({ value: 'https://conn.example.workers.dev' }))
@@ -80,6 +81,8 @@ beforeEach(() => {
   conn.removeConnection.mockClear()
   conn.renameConnection.mockClear()
   sync.store.setState({ auth: 'signedOut', user: null })
+  // 前のテストの知らせを残さない
+  useToasts.setState({ toasts: [] })
 })
 
 afterEach(() => {
@@ -133,7 +136,7 @@ describe('設定 → Claude 連携', () => {
     expect(info.textContent).toContain('Mac')
     expect(within(info).getByTestId('claude-writes-state').textContent).toBe('許可')
     expect(within(info).getByTestId('claude-connection-count').textContent).toBe(
-      '接続 1 / 10（claude.ai のアカウントごと。同時に10まで）',
+      '接続 1 / 10（同時に10まで。同じアカウントで接続し直すと1つ増えます）',
     )
     const rows = within(info).getAllByTestId('claude-connection')
     expect(rows.map((r) => within(r).getByTestId('claude-connection-name').textContent)).toEqual(['接続1'])
@@ -207,7 +210,7 @@ describe('設定 → Claude 連携', () => {
     expect(await screen.findByText('接続の名前を「仕事用」にしました')).toBeTruthy()
   })
 
-  it('1つ解除する: 確かめてから、その接続だけを一覧から外す。最後の1つは「連携をすべて解除」と同じ', async () => {
+  it('1つ解除する: 確かめてから、その接続だけを一覧から外す。最後の1つは「連携をすべて解除」と同じ確かめ（外すのはトランザクション）', async () => {
     const user = userEvent.setup()
     const rows = await showList([entry('c0', '接続1', 10), entry('cabc', '接続2', 11)])
     await user.click(within(rows[1]).getByTestId('claude-connection-remove'))
@@ -221,16 +224,41 @@ describe('設定 → Claude 連携', () => {
     expect(conn.deleteConnector).not.toHaveBeenCalled()
     expect(await screen.findByText('「接続2」の接続を解除しました')).toBeTruthy()
 
-    // 最後の1つ
+    // 最後の1つ: トランザクションがサーバーの一覧でも最後の1つと確かめてから記録を消す（すべて解除を直に呼ばない）
     act(() => conn.emit?.({ state: 'paired', status: paired([entry('c0', '接続1', 10)]) }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    conn.removeConnection.mockResolvedValueOnce('deleted')
     await user.click(screen.getByTestId('claude-connection-remove'))
     dialog = await screen.findByRole('dialog')
     expect(dialog.textContent).toContain('最後の接続です。連携をすべて解除しますか？')
     expect(dialog.textContent).toContain('すべての接続（1件）')
     await user.click(within(dialog).getByRole('button', { name: '連携をすべて解除' }))
-    await waitFor(() => expect(conn.deleteConnector).toHaveBeenCalledTimes(1))
-    expect(conn.removeConnection).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(conn.removeConnection).toHaveBeenCalledTimes(2))
+    expect(conn.removeConnection).toHaveBeenLastCalledWith('c0')
+    expect(await screen.findByText('Claude との連携をすべて解除しました')).toBeTruthy()
+    expect(conn.deleteConnector).not.toHaveBeenCalled()
+  })
+
+  it('見ている一覧が1つでも、サーバーの一覧にほかの接続があれば（ほかの端末で足された）、その接続だけを外して知らせる', async () => {
+    const user = userEvent.setup()
+    await showList([entry('c0', '接続1', 10)])
+    conn.removeConnection.mockResolvedValueOnce('removed')
+    await user.click(screen.getByTestId('claude-connection-remove'))
+    let dialog = await screen.findByRole('dialog')
+    expect(dialog.textContent).toContain('最後の接続です。連携をすべて解除しますか？')
+    await user.click(within(dialog).getByRole('button', { name: '連携をすべて解除' }))
+    await waitFor(() => expect(conn.removeConnection).toHaveBeenCalledWith('c0'))
+    expect(await screen.findByText('「接続1」の接続を解除しました（ほかの端末で足された接続は、そのまま使えます）')).toBeTruthy()
+    expect(conn.deleteConnector).not.toHaveBeenCalled()
+
+    // もう無かった（ほかの端末で解除された）
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    conn.removeConnection.mockResolvedValueOnce('none')
+    await user.click(screen.getByTestId('claude-connection-remove'))
+    dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: '連携をすべて解除' }))
+    expect(await screen.findByText('その接続はもうありません（ほかの端末で解除されました）。')).toBeTruthy()
+    expect(conn.deleteConnector).not.toHaveBeenCalled()
   })
 
   it('連携をすべて解除: すべての接続の数を出して確かめる。やめれば何もしない', async () => {

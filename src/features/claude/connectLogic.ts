@@ -11,7 +11,9 @@
 // データ・通信は外から渡す（テストで差し替える）。
 import {
   callbackUrl,
+  connectionNameKey,
   connectionsOf,
+  defaultConnectionName,
   identityUrl,
   isPairingKey,
   normalizeOrigin,
@@ -271,6 +273,14 @@ export class ConnectionLimitError extends Error {
   }
 }
 
+/** 作者が入れた名前と同じ名前の接続が、記録にある（ほかの端末で足された・一覧を読めなかった） */
+export class DuplicateNameError extends Error {
+  constructor() {
+    super('同じ名前の接続があります')
+    this.name = 'DuplicateNameError'
+  }
+}
+
 /** 名前を変える接続が、もう一覧に無い（ほかの端末で解除した） */
 export class ConnectionGoneError extends Error {
   constructor() {
@@ -281,6 +291,9 @@ export class ConnectionGoneError extends Error {
 
 /** 接続が10ある時（連携はまだ記録していない） */
 export const CONNECTION_LIMIT_ERROR = `接続が${MAX_CONNECTIONS}あります（同時に${MAX_CONNECTIONS}まで）。入れ替える接続を選ぶか、一覧で1つ解除してから、もう一度［許可する］を押してください（連携はまだ記録していません）。`
+/** 作者が入れた名前と同じ名前の接続が記録にある時（連携はまだ記録していない） */
+export const DUPLICATE_NAME_ERROR =
+  '同じ名前の接続があります。名前を変えて、もう一度［許可する］を押してください（連携はまだ記録していません）。'
 /** 接続の名前が空・長すぎる時 */
 export const CONNECTION_NAME_ERROR = `接続の名前は1〜${CONNECTION_NAME_MAX}字にしてください。`
 
@@ -333,7 +346,10 @@ function editedDoc(cur: Raw, list: Record<string, Raw>): Raw {
 /**
  * 接続を足す（入れ替える）時に書く記録。serverTime はサーバー時刻の値（Firestore の serverTimestamp()）。
  * 別のコネクタの記録なら IdentityChangedError、入れ替えても10を超えるなら ConnectionLimitError（どちらも何も書かない）。
- * 同じ cid（記録に失敗した後のやり直し）は上書きする（重ならない）
+ * 同じ cid（記録に失敗した後のやり直し）は上書きする（重ならない）。
+ * 残るほかの接続に同じ名前（字の幅・空白の違いは同じ）があれば、既定の名前なら空いている番号の「接続n」にし、作者が入れた
+ * 名前なら DuplicateNameError（画面は一覧を読めなかった時・ほかの端末で足された時に、古い一覧で確かめているため）。
+ * 「書き込みを許可」は、作者が変えていなければ（a.writes が null）記録の値のまま（記録が無ければ許可）
  */
 export function addedConnectorDoc(cur: Raw | null, a: ConnectionApproval, serverTime: unknown): Raw {
   if (cur && cur.uid !== a.uid) throw new IdentityChangedError()
@@ -341,10 +357,17 @@ export function addedConnectorDoc(cur: Raw | null, a: ConnectionApproval, server
   if (a.replaceCid) delete list[a.replaceCid]
   delete list[a.cid]
   if (Object.keys(list).length >= MAX_CONNECTIONS) throw new ConnectionLimitError()
-  list[a.cid] = { name: a.name, pairing: a.pairing, pairedAt: serverTime, approvedOn: a.approvedOn }
+  // 名前は一覧に出す形（connectionsOf が整えた名前）で比べる（画面の確かめと同じ）
+  const names = (connectionsOf({ connections: list }) ?? []).map((c) => c.name)
+  let name = a.name
+  if (names.some((n) => connectionNameKey(n) === connectionNameKey(name))) {
+    if (!a.defaultName) throw new DuplicateNameError()
+    name = defaultConnectionName(names)
+  }
+  list[a.cid] = { name, pairing: a.pairing, pairedAt: serverTime, approvedOn: a.approvedOn }
   return {
     uid: a.uid,
-    writes: a.writes,
+    writes: a.writes ?? (cur ? cur.writes === true : true),
     v: CONNECTOR_DOC_VERSION,
     pairing: a.pairing,
     pairedAt: serverTime,
@@ -406,13 +429,16 @@ export interface PairingInput {
   identity: ConnectorIdentity
   /** 持ち主のアカウント（コネクタのアカウントと同じなら連携しない） */
   ownerUid: string
-  writes: boolean
+  /** 「書き込みを許可」（null = 作者が変えていない: 記録の値のまま。記録が無ければ許可） */
+  writes: boolean | null
   /** 変えたタイトルの「Claude に見せる」 */
   access: readonly { titleId: ID; access: ClaudeAccess }[]
   /** 足す接続の id（画面を開くごとに1つ作り、やり直しでは同じものを使う） */
   cid: string
   /** 接続の名前（1〜20字） */
   name: string
+  /** 作者が名前を入れていない（既定の名前。記録に同じ名前があれば、空いている番号にする） */
+  defaultName?: boolean
   /** 入れ替える接続（前の接続は使えなくなる） */
   replaceCid?: string | null
 }
@@ -457,6 +483,7 @@ export async function approvePairing(deps: PairingDeps, input: PairingInput): Pr
     writes: input.writes,
     cid: input.cid,
     name,
+    defaultName: input.defaultName === true,
     replaceCid: input.replaceCid ?? null,
   }
   try {
@@ -470,6 +497,7 @@ export async function approvePairing(deps: PairingDeps, input: PairingInput): Pr
     }
   } catch (e) {
     if (e instanceof ConnectionLimitError) return { ok: false, error: CONNECTION_LIMIT_ERROR }
+    if (e instanceof DuplicateNameError) return { ok: false, error: DUPLICATE_NAME_ERROR }
     const code = typeof e === 'object' && e && 'code' in e ? String((e as { code: unknown }).code) : ''
     return {
       ok: false,

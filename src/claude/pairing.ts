@@ -276,15 +276,21 @@ export function connectionsOf(
 
 /**
  * 連携の画面の［許可する］で config/connector に足す接続（pairedAt はサーバー時刻を書く側で足す）。
- * writes は「書き込みを許可」（すべての接続に効く1つ）。replaceCid を渡すと、その接続と入れ替える
+ * writes は「書き込みを許可」（すべての接続に効く1つ。null = 作者が変えていない: 記録の値のまま、記録が無ければ許可）。
+ * replaceCid を渡すと、その接続と入れ替える
  */
 export interface ConnectionApproval {
   /** コネクタの匿名のアカウント */
   uid: string
   pairing: string
   approvedOn: string
-  writes: boolean
+  writes: boolean | null
   cid: string
   name: string
+  /**
+   * 作者が名前を入れていない（既定の名前）。記録に同じ名前の接続があれば、空いている番号の「接続n」にする
+   * （無い・false = 作者が入れた名前。同じ名前があれば DuplicateNameError）
+   */
+  defaultName?: boolean
   replaceCid?: string | null
 }

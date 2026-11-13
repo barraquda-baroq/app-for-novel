@@ -174,6 +174,7 @@ describe('連携の画面', () => {
         writes: false,
         cid: expect.stringMatching(/^c[0-9a-z]{12}$/),
         name: '接続1',
+        defaultName: true,
         replaceCid: null,
       },
     ])
@@ -391,7 +392,9 @@ describe('連携の画面', () => {
       expect(screen.queryByTestId('connect-recent')).toBeNull()
     })
 
-    it('接続が10ある時: 足すことはできず入れ替えになる。一覧が開き、1つ解除すると足せる', async () => {
+    const tenEntries = () => Array.from({ length: 10 }, (_, i) => entry(`c${i + 1}`, `接続${i + 1}`, 1000 - i))
+
+    it('接続が10ある時: 足すことはできず入れ替えになる（15分以内の許可が無ければ、選ぶまで許可できない）。一覧が開き、1つ解除すると足せる', async () => {
       const user = userEvent.setup()
       const ten = Array.from({ length: 10 }, (_, i) => entry(`c${i + 1}`, `接続${i + 1}`, 1000 - i))
       doc.existing = status(ten)
@@ -403,7 +406,14 @@ describe('連携の画面', () => {
       expect((within(section).getByTestId('connect-mode-add') as HTMLInputElement).disabled).toBe(true)
       expect((within(section).getByTestId('connect-mode-replace') as HTMLInputElement).checked).toBe(true)
       expect(section.querySelector('details')?.open).toBe(true)
-      expect((screen.getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(false)
+      // 入れ替える先は決めていない（一番前の接続を勝手に選ばない）
+      const select = within(section).getByTestId('connect-replace-target') as HTMLSelectElement
+      expect(select.value).toBe('')
+      expect(select.selectedOptions[0].textContent).toBe('選んでください')
+      expect(within(section).getByTestId('connect-mode-replace').getAttribute('aria-label')).toBe(
+        '選んだ接続と入れ替える（前の接続は使えなくなります）',
+      )
+      expect((screen.getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(true)
       // 一覧で1つ解除する（読み直すまで［許可する］は待つ）
       let resolveRead: (s: ConnectorStatus) => void = () => undefined
       doc.removeConnection.mockImplementation(async () => 'removed')
@@ -424,6 +434,254 @@ describe('連携の画面', () => {
       await user.click(screen.getByTestId('connect-approve'))
       await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
       expect(doc.written).toEqual([expect.objectContaining({ name: '接続4', replaceCid: null })])
+    })
+
+    it('接続が10ある時: 入れ替える接続を選ぶと許可できる（名前はその接続の名前）', async () => {
+      const user = userEvent.setup()
+      doc.existing = status(tenEntries())
+      renderPage()
+      const select = (await screen.findByTestId('connect-replace-target')) as HTMLSelectElement
+      await user.selectOptions(select, 'c7')
+      expect(select.value).toBe('c7')
+      // 選んだ後は「選んでください」を出さない
+      expect([...select.options].map((o) => o.value)).not.toContain('')
+      expect((screen.getByTestId('connect-name') as HTMLInputElement).value).toBe('接続7')
+      expect(screen.getByTestId('connect-mode-replace').getAttribute('aria-label')).toBe(
+        '「接続7」と入れ替える（前の接続は使えなくなります）',
+      )
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続7', replaceCid: 'c7', defaultName: true })])
+    })
+
+    it('接続が10ある時: 15分以内に許可した接続があれば、それを入れ替える先にしておき、なぜかを知らせる', async () => {
+      const user = userEvent.setup()
+      doc.existing = status([...tenEntries().slice(0, 9), entry('c10', '接続10', 3)])
+      renderPage()
+      const select = (await screen.findByTestId('connect-replace-target')) as HTMLSelectElement
+      expect(select.value).toBe('c10')
+      expect((screen.getByTestId('connect-name') as HTMLInputElement).value).toBe('接続10')
+      expect(screen.getByTestId('connect-recent').textContent).toContain('15分以内に許可した「接続10」があります。')
+      expect((screen.getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(false)
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続10', replaceCid: 'c10' })])
+    })
+
+    it('接続が10ある時: 入れ替える接続を選んでから、その接続を一覧で解除すると、足すに戻る（ほかの接続と入れ替えない）', async () => {
+      const user = userEvent.setup()
+      doc.existing = status(tenEntries())
+      renderPage()
+      const section = await screen.findByTestId('connect-connection')
+      await user.selectOptions(within(section).getByTestId('connect-replace-target'), 'c4')
+      expect((within(section).getByTestId('connect-name') as HTMLInputElement).value).toBe('接続4')
+      doc.removeConnection.mockImplementation(async () => 'removed')
+      doc.existing = status(tenEntries().filter((c) => c.cid !== 'c4'))
+      const row = within(section)
+        .getAllByTestId('connect-connection-row')
+        .find((r) => r.getAttribute('data-cid') === 'c4')!
+      await user.click(within(row).getByTestId('connect-connection-remove'))
+      await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'この接続を解除' }))
+      await waitFor(() => expect(screen.getByTestId('connect-connection-count').textContent).toBe('9 / 10'))
+      expect(doc.removeConnection).toHaveBeenCalledWith('c4')
+      expect((screen.getByTestId('connect-mode-add') as HTMLInputElement).checked).toBe(true)
+      expect((screen.getByTestId('connect-mode-replace') as HTMLInputElement).checked).toBe(false)
+      expect((screen.getByTestId('connect-name') as HTMLInputElement).value).toBe('接続4')
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続4', replaceCid: null })])
+    })
+
+    it('10ない時: 入れ替える接続を選んでから、その接続を一覧で解除すると、足すに戻る（一番前の接続と入れ替えない）', async () => {
+      const user = userEvent.setup()
+      doc.existing = status([entry('c0', '接続1', 600), entry('cb', '仕事用', 300), entry('cc', '個人', 200)])
+      renderPage()
+      const section = await screen.findByTestId('connect-connection')
+      await user.click(within(section).getByTestId('connect-mode-replace'))
+      await user.selectOptions(within(section).getByTestId('connect-replace-target'), 'cb')
+      expect((within(section).getByTestId('connect-name') as HTMLInputElement).value).toBe('仕事用')
+      doc.removeConnection.mockImplementation(async () => 'removed')
+      doc.existing = status([entry('c0', '接続1', 600), entry('cc', '個人', 200)])
+      await user.click(within(section).getByText(/いまの接続/, { selector: 'summary' }))
+      const row = within(section)
+        .getAllByTestId('connect-connection-row')
+        .find((r) => r.getAttribute('data-cid') === 'cb')!
+      await user.click(within(row).getByTestId('connect-connection-remove'))
+      await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'この接続を解除' }))
+      await waitFor(() => expect(screen.getByTestId('connect-connection-count').textContent).toBe('2 / 10'))
+      expect((screen.getByTestId('connect-mode-add') as HTMLInputElement).checked).toBe(true)
+      expect((screen.getByTestId('connect-name') as HTMLInputElement).value).toBe('接続2')
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続2', replaceCid: null })])
+    })
+
+    it('記録に失敗して読み直した一覧に、選んだ入れ替える先が無ければ（10ない）、足すに戻る（一番前の接続と入れ替えない）', async () => {
+      const user = userEvent.setup()
+      doc.existing = status([entry('c0', '接続1', 600), entry('cb', '仕事用', 300), entry('cc', '個人', 200)])
+      renderPage()
+      await user.click(await screen.findByTestId('connect-mode-replace'))
+      await user.selectOptions(screen.getByTestId('connect-replace-target'), 'cb')
+      // ほかの端末で cb が解除された
+      doc.existing = status([entry('c0', '接続1', 600), entry('cc', '個人', 200)])
+      doc.addConnection.mockImplementationOnce(async () => {
+        throw Object.assign(new Error('x'), { code: 'unavailable' })
+      })
+      await user.click(screen.getByTestId('connect-approve'))
+      await screen.findByTestId('connect-error')
+      await waitFor(() => expect(screen.getByTestId('connect-connection-count').textContent).toBe('2 / 10'))
+      expect((screen.getByTestId('connect-mode-add') as HTMLInputElement).checked).toBe(true)
+      expect((screen.getByTestId('connect-name') as HTMLInputElement).value).toBe('接続2')
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続2', replaceCid: null })])
+    })
+
+    it('記録に失敗して読み直した一覧に、選んだ入れ替える先が無ければ（10のまま）、ほかの接続に移さず選び直すまで許可できない', async () => {
+      const user = userEvent.setup()
+      const { ConnectionLimitError } = await import('./connectLogic')
+      doc.existing = status(tenEntries())
+      renderPage()
+      await user.selectOptions(await screen.findByTestId('connect-replace-target'), 'c4')
+      // ほかの端末で c4 が解除され、別の接続（3分前）が足された
+      doc.existing = status([...tenEntries().filter((c) => c.cid !== 'c4'), entry('c11', '接続11', 3)])
+      doc.addConnection.mockImplementationOnce(async () => {
+        throw new ConnectionLimitError()
+      })
+      await user.click(screen.getByTestId('connect-approve'))
+      expect((await screen.findByTestId('connect-error')).textContent).toContain('接続が10あります（同時に10まで）')
+      await waitFor(() => expect(screen.queryByTestId('connect-connections-loading')).toBeNull())
+      expect(doc.readConnectorDoc).toHaveBeenCalledTimes(2)
+      const select = screen.getByTestId('connect-replace-target') as HTMLSelectElement
+      expect(select.value).toBe('')
+      expect((screen.getByTestId('connect-mode-replace') as HTMLInputElement).checked).toBe(true)
+      expect((screen.getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(true)
+      await user.selectOptions(select, 'c5')
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続5', replaceCid: 'c5' })])
+    })
+
+    it('画面で見ている一覧が1つでも、［この接続を解除］はその接続だけを外す（ほかの端末で足された接続は残る）', async () => {
+      const user = userEvent.setup()
+      doc.existing = status([entry('c0', '接続1', 600)])
+      renderPage()
+      const section = await screen.findByTestId('connect-connection')
+      // その間にほかの端末で「接続2」が足された（サーバーの一覧は2つ）
+      doc.removeConnection.mockImplementation(async () => 'removed')
+      doc.existing = status([entry('cx', '接続2', 3)])
+      await user.click(within(section).getByText(/いまの接続/, { selector: 'summary' }))
+      await user.click(within(section).getByTestId('connect-connection-remove'))
+      const dialog = await screen.findByRole('dialog')
+      expect(dialog.textContent).toContain('最後の接続です。連携をすべて解除しますか？')
+      await user.click(within(dialog).getByRole('button', { name: '連携をすべて解除' }))
+      await waitFor(() => expect(doc.removeConnection).toHaveBeenCalledWith('c0'))
+      expect(doc.deleteConnector).not.toHaveBeenCalled()
+      expect(
+        await screen.findByText('「接続1」の接続を解除しました（ほかの端末で足された接続は、そのまま使えます）'),
+      ).toBeTruthy()
+      await waitFor(() => expect(screen.getByTestId('connect-connection-count').textContent).toBe('1 / 10'))
+      expect(screen.getAllByTestId('connect-connection-name').map((e) => e.textContent)).toEqual(['接続2'])
+    })
+
+    it('いまの一覧を読めなかった時: 既定の名前「接続1」は、記録に「接続1」があればトランザクションで「接続2」になる', async () => {
+      const user = userEvent.setup()
+      const { addedConnectorDoc } = await import('./connectLogic')
+      // 2.8 の記録（c0「接続1」）がある
+      const v1 = { uid: 'anon-uid', pairing: 'h-old', pairedAt: 1, approvedOn: 'iPad', writes: true, v: 1 }
+      let saved: Record<string, unknown> | null = null
+      doc.addConnection.mockImplementation(async (a: ConnectionApproval) => {
+        doc.written.push(a)
+        saved = addedConnectorDoc(v1, a, 'SERVER')
+      })
+      doc.readConnectorDoc.mockImplementation(async () => Promise.reject(new Error('offline')))
+      renderPage()
+      await screen.findByTestId('connect-connections-error')
+      expect((screen.getByTestId('connect-name') as HTMLInputElement).value).toBe('接続1')
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続1', defaultName: true })])
+      const cid = (doc.written[0] as ConnectionApproval).cid
+      expect(saved!.connections).toEqual({
+        c0: expect.objectContaining({ name: '接続1', pairing: 'h-old' }),
+        [cid]: expect.objectContaining({ name: '接続2' }),
+      })
+    })
+
+    it('作者が入れた名前と同じ名前の接続が、ほかの端末で足されていたら、知らせて一覧を読み直す（何も書かない）', async () => {
+      const user = userEvent.setup()
+      const { addedConnectorDoc, DUPLICATE_NAME_ERROR } = await import('./connectLogic')
+      doc.existing = status([entry('c0', '接続1', 600)])
+      // サーバーの記録には、もう「仕事用」がある
+      const server = {
+        uid: 'anon-uid',
+        v: 2,
+        pairing: 'p-cx',
+        pairedAt: 2,
+        approvedOn: 'Mac',
+        writes: true,
+        pairingCid: 'cx',
+        connections: {
+          c0: { name: '接続1', pairing: 'p-c0', pairedAt: 1, approvedOn: 'Mac' },
+          cx: { name: '仕事用', pairing: 'p-cx', pairedAt: 2, approvedOn: 'Mac' },
+        },
+      }
+      doc.addConnection.mockImplementation(async (a: ConnectionApproval) => {
+        addedConnectorDoc(server, a, 'SERVER')
+        doc.written.push(a)
+      })
+      renderPage()
+      const name = (await screen.findByTestId('connect-name')) as HTMLInputElement
+      await user.clear(name)
+      await user.type(name, '仕事用')
+      expect(screen.queryByTestId('connect-name-problem')).toBeNull()
+      doc.existing = status([entry('c0', '接続1', 600), entry('cx', '仕事用', 3)])
+      await user.click(screen.getByTestId('connect-approve'))
+      expect((await screen.findByTestId('connect-error')).textContent).toBe(DUPLICATE_NAME_ERROR)
+      await waitFor(() => expect(screen.getByTestId('connect-name-problem').textContent).toBe('同じ名前の接続があります'))
+      expect(doc.readConnectorDoc).toHaveBeenCalledTimes(2)
+      expect((screen.getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(true)
+      expect(doc.written).toEqual([])
+      expect(leave.leaveTo).not.toHaveBeenCalled()
+    })
+
+    it('いまの一覧を読めなかった時: 「書き込みを許可」は分からないと出し、触らなければ送らない（記録の値のまま）', async () => {
+      const user = userEvent.setup()
+      const { addedConnectorDoc } = await import('./connectLogic')
+      // 記録では書き込みを止めている
+      const server = { uid: 'anon-uid', pairing: 'h-old', pairedAt: 1, approvedOn: 'iPad', writes: false, v: 1 }
+      const saved: Record<string, unknown>[] = []
+      doc.addConnection.mockImplementation(async (a: ConnectionApproval) => {
+        doc.written.push(a)
+        saved.push(addedConnectorDoc(server, a, 'SERVER'))
+      })
+      doc.readConnectorDoc.mockImplementation(async () => Promise.reject(new Error('offline')))
+      const first = renderPage()
+      await screen.findByTestId('connect-connections-error')
+      const box = screen.getByTestId('connect-writes') as HTMLInputElement
+      expect(box.checked).toBe(false)
+      expect(box.indeterminate).toBe(true)
+      expect(screen.getByTestId('connect-writes-unknown').textContent).toBe(
+        '（いまの設定を読めませんでした。変えなければ、いまの設定のままです）',
+      )
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect((doc.written[0] as ConnectionApproval).writes).toBeNull()
+      expect(saved[0].writes).toBe(false)
+      first.unmount()
+
+      // 触ればその値（すべての接続に効く）
+      renderPage()
+      await screen.findByTestId('connect-connections-error')
+      await user.click(screen.getByTestId('connect-writes'))
+      const box2 = screen.getByTestId('connect-writes') as HTMLInputElement
+      expect(box2.checked).toBe(true)
+      expect(box2.indeterminate).toBe(false)
+      expect(screen.queryByTestId('connect-writes-unknown')).toBeNull()
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(2))
+      expect((doc.written[1] as ConnectionApproval).writes).toBe(true)
+      expect(saved[1].writes).toBe(true)
     })
 
     it('書き込みの既定は、いまの「書き込みを許可」', async () => {

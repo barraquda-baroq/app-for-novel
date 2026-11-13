@@ -1,5 +1,5 @@
 // 設定 → Claude 連携: Claude 用のコネクタ（リモート MCP）の URL、連携の状態（config/connector）、
-// 2.9: 接続の一覧（claude.ai のアカウントごと。10まで。名前・許可した日時・許可した端末・［名前を変える］・［この接続を解除］）、
+// 2.9: 接続の一覧（claude.ai で接続するごとに1つ。10まで。名前・許可した日時・許可した端末・［名前を変える］・［この接続を解除］）、
 // すべての接続に効く「書き込みを許可」・［連携をすべて解除］、Claude ができること・できないこと。
 import { useEffect, useId, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -145,7 +145,7 @@ export function ClaudeSettings() {
             <div className="cl-pairing" data-testid="claude-pairing-info">
               <p className="cl-conn-count" data-testid="claude-connection-count">
                 {connectionCountLabel(connections.length)}
-                <span className="cl-conn-count-note">（claude.ai のアカウントごと。同時に10まで）</span>
+                <span className="cl-conn-count-note">（同時に10まで。同じアカウントで接続し直すと1つ増えます）</span>
               </p>
               <ConnectionList
                 connections={connections}

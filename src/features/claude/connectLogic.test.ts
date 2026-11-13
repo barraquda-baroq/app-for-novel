@@ -21,6 +21,8 @@ import {
   ConnectionLimitError,
   CONNECTION_LIMIT_ERROR,
   CONNECTION_NAME_ERROR,
+  DuplicateNameError,
+  DUPLICATE_NAME_ERROR,
   IdentityChangedError,
   NOT_SENT_ERROR,
   type ConnectionApproval,
@@ -28,6 +30,7 @@ import {
   type PairingDeps,
   type PrepareDeps,
 } from './connectLogic'
+import { defaultConnectionName } from '../../claude/pairing'
 import { PAIRING_FIXTURE as F } from '../../test/pairingFixture'
 
 const ORIGIN = 'https://novel-studio-connector.example.workers.dev'
@@ -187,6 +190,7 @@ describe('［許可する］', () => {
         writes: true,
         cid: 'cabc123def456',
         name: '接続2',
+        defaultName: false,
         replaceCid: null,
       },
     ])
@@ -372,24 +376,26 @@ describe('接続の一覧を書き換える（トランザクションの中身�
 
   it('ほかの接続は読んだ値のまま残す。入れ替える接続・同じ id（やり直し）は外してから足す', () => {
     const cur = v2(3)
-    const added = addedConnectorDoc(cur, approval(), SERVER)
+    const added = addedConnectorDoc(cur, approval({ name: '新しい Mac' }), SERVER)
     expect(Object.keys(added.connections as object)).toEqual(['c1', 'c2', 'c3', 'cnew'])
     expect((added.connections as Record<string, unknown>).c1).toEqual(cur.connections.c1)
     const replaced = addedConnectorDoc(cur, approval({ replaceCid: 'c2' }), SERVER)
     expect(Object.keys(replaced.connections as object)).toEqual(['c1', 'c3', 'cnew'])
-    const retried = addedConnectorDoc(added, approval({ pairing: 'h-retry' }), SERVER)
+    const retried = addedConnectorDoc(added, approval({ name: '新しい Mac', pairing: 'h-retry' }), SERVER)
     expect(Object.keys(retried.connections as object)).toEqual(['c1', 'c2', 'c3', 'cnew'])
     expect((retried.connections as Record<string, { pairing: string }>).cnew.pairing).toBe('h-retry')
   })
 
   it('10 あれば足さない（入れ替えなら足せる）。別のコネクタの記録なら身元が変わった', () => {
     expect(() => addedConnectorDoc(v2(10), approval(), SERVER)).toThrow(ConnectionLimitError)
-    expect(Object.keys(addedConnectorDoc(v2(10), approval({ replaceCid: 'c4' }), SERVER).connections as object)).toHaveLength(10)
+    expect(
+      Object.keys(addedConnectorDoc(v2(10), approval({ replaceCid: 'c4', name: '新しい Mac' }), SERVER).connections as object),
+    ).toHaveLength(10)
     // 入れ替える接続がもう無い（ほかの端末で解除した）: 10 のままなら足さない
     expect(() => addedConnectorDoc(v2(10), approval({ replaceCid: 'cgone' }), SERVER)).toThrow(ConnectionLimitError)
     // 形の違う項目は数えない（一覧に出ず、解除もできないため）
     const junk = v2(9, { connections: { ...v2(9).connections, 'BAD KEY': entry('x'), cjunk: 'x' } })
-    expect(Object.keys(addedConnectorDoc(junk, approval(), SERVER).connections as object)).toHaveLength(10)
+    expect(Object.keys(addedConnectorDoc(junk, approval({ name: '新しい Mac' }), SERVER).connections as object)).toHaveLength(10)
     expect(() => addedConnectorDoc({ ...v1, uid: 'other' }, approval(), SERVER)).toThrow(IdentityChangedError)
   })
 
@@ -425,6 +431,51 @@ describe('接続の一覧を書き換える（トランザクションの中身�
     expect(removedConnectorDoc(v2(1, { connections: { c1: entry('a'), cjunk: 1 } }), 'c1')).toEqual({ kind: 'delete' })
   })
 
+  it('同じ名前（字の幅・空白の違いは同じ）の接続が記録にあれば、既定の名前は空いている番号にし、作者が入れた名前は断る', () => {
+    // 一覧を読めなかった画面の既定「接続1」を、2.8 の記録（c0「接続1」）に足す: 「接続2」になる
+    const d = addedConnectorDoc(v1, approval({ name: defaultConnectionName([]), defaultName: true }), SERVER)
+    expect(d.connections).toEqual({
+      c0: { name: '接続1', pairing: 'h-old', pairedAt: v1.pairedAt, approvedOn: 'iPad' },
+      cnew: { name: '接続2', pairing: 'h-new', pairedAt: SERVER, approvedOn: 'Mac' },
+    })
+    // 同じ一覧から開いた2つの画面の既定「接続2」: 後から書く方は「接続3」
+    const first = addedConnectorDoc(v2(1), approval({ cid: 'cone', name: '接続2', defaultName: true }), SERVER)
+    const second = addedConnectorDoc(first, approval({ cid: 'ctwo', name: '接続2', defaultName: true }), SERVER)
+    const names = (doc: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(doc.connections as Record<string, { name: string }>).map(([cid, c]) => [cid, c.name]))
+    expect(names(second)).toEqual({ c1: '接続1', cone: '接続2', ctwo: '接続3' })
+    // 字の幅の違う「接続２」も同じ名前
+    expect(
+      names(addedConnectorDoc(v2(1, { connections: { c1: entry('接続２') } }), approval({ defaultName: true }), SERVER)),
+    ).toEqual({ c1: '接続２', cnew: '接続1' })
+    // 作者が入れた名前（defaultName が無い・false）は断る（何も書かない）
+    expect(() => addedConnectorDoc(v2(3), approval({ name: '接続２', defaultName: false }), SERVER)).toThrow(DuplicateNameError)
+    expect(() => addedConnectorDoc(v2(3), approval({ name: '接続3' }), SERVER)).toThrow(DuplicateNameError)
+    // 入れ替える接続・同じ id（やり直し）の名前とは重なってよい
+    expect(names(addedConnectorDoc(v2(3), approval({ replaceCid: 'c2' }), SERVER))).toEqual({
+      c1: '接続1',
+      c3: '接続3',
+      cnew: '接続2',
+    })
+    const retried = addedConnectorDoc(
+      v2(2, { connections: { ...v2(2).connections, cnew: entry('接続5') } }),
+      approval({ name: '接続5' }),
+      SERVER,
+    )
+    expect(names(retried)).toEqual({ c1: '接続1', c2: '接続2', cnew: '接続5' })
+  })
+
+  it('「書き込みを許可」は、作者が変えていなければ（null）記録の値のまま（記録が無ければ許可）。変えたらその値', () => {
+    const add = (cur: Record<string, unknown> | null, writes: boolean | null) =>
+      addedConnectorDoc(cur, approval({ name: '新しい Mac', writes }), SERVER).writes
+    expect(add(v2(2, { writes: false }), null)).toBe(false)
+    expect(add(v2(2, { writes: true }), null)).toBe(true)
+    expect(add(v1, null)).toBe(false)
+    expect(add(null, null)).toBe(true)
+    expect(add(v2(2, { writes: false }), true)).toBe(true)
+    expect(add(v2(2, { writes: true }), false)).toBe(false)
+  })
+
   it('記録の接続の map: v1 は c0、v2 は形の合うものだけ', () => {
     expect(connectionEntries(v1)).toEqual({ c0: { name: '接続1', pairing: 'h-old', pairedAt: v1.pairedAt, approvedOn: 'iPad' } })
     expect(connectionEntries({ ...v2(1), connections: 'x' })).toEqual({})
@@ -449,6 +500,26 @@ describe('［許可する］（2.9: 接続の一覧）', () => {
       if (over.name !== undefined && !r.ok) expect(r.error).toBe(CONNECTION_NAME_ERROR)
       expect(t.calls).toEqual([])
     }
+  })
+
+  it('「書き込みを許可」を変えていなければ null、既定の名前かどうかを渡す', async () => {
+    const t = deps()
+    await approvePairing(t.d, { state: 's', identity, ownerUid: 'o', writes: null, access: [], ...conn, defaultName: true })
+    expect(t.written[0]).toMatchObject({ writes: null, name: '接続2', defaultName: true })
+  })
+
+  it('作者が入れた名前と同じ名前の接続が記録にあれば（ほかの端末で足された）、知らせて移らない', async () => {
+    const t = deps({
+      addConnection: async () => {
+        throw new DuplicateNameError()
+      },
+    })
+    const r = await approvePairing(t.d, { state: 's', identity, ownerUid: 'o', writes: true, access: [], ...conn })
+    expect(r).toEqual({ ok: false, error: DUPLICATE_NAME_ERROR })
+    expect(DUPLICATE_NAME_ERROR).toBe(
+      '同じ名前の接続があります。名前を変えて、もう一度［許可する］を押してください（連携はまだ記録していません）。',
+    )
+    expect(t.calls).not.toContain('navigate')
   })
 
   it('入れ替える接続を渡す', async () => {

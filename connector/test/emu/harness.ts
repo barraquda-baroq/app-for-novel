@@ -264,10 +264,12 @@ export async function pair(
       state,
       identity: prep.identity,
       ownerUid: prep.ownerUid,
-      writes: opts.writes ?? current?.writes ?? true,
+      // 画面と同じく、触っていなければ送らない（トランザクションで記録の値のまま。記録が無ければ許可）
+      writes: opts.writes ?? null,
       access: [],
       cid,
       name: opts.name ?? defaultConnectionName((current?.connections ?? []).map((c) => c.name)),
+      defaultName: opts.name === undefined,
       replaceCid: opts.replaceCid ?? null,
     },
   )
