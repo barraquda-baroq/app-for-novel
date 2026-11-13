@@ -111,7 +111,9 @@ describe('ホームの棚「資料」', () => {
         .map((c) => c.textContent),
     ).toEqual(['要約2', '創作に役立つ知識', '年表'])
     expect(within(card).getByTestId('material-card-link').getAttribute('href')).toBe(`/materials/${materialId}`)
-    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('資料')
+    // 見出しは帯の開け閉めのボタン（2.9。中は名前と件数）。名前は `-name` の部分
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('資料1件')
+    expect(document.getElementById('h-name')?.textContent).toBe('資料')
     expect(screen.getByTestId('material-count').textContent).toBe('1')
 
     // 資料を追加（資料名は必須）

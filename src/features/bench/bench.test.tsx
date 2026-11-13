@@ -99,7 +99,9 @@ describe('ホームの棚「相対比較」', () => {
         .map((c) => c.textContent),
     ).toEqual(['文体2', '構成'])
     expect(within(card).getByTestId('bench-card-comparing').textContent).toBe('比べるタイトル: 『星の庭』')
-    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('相対比較')
+    // 見出しは帯の開け閉めのボタン（2.9。中は名前と件数）。名前は `-name` の部分
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('相対比較1件')
+    expect(document.getElementById('h-name')?.textContent).toBe('相対比較')
 
     // 作品を追加（作品名は必須）
     expect(screen.getByTestId('new-bench-work').textContent).toBe('作品を追加')

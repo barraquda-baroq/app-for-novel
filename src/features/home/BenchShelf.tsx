@@ -40,6 +40,8 @@ import {
 import { filterCountLabel, toggleTag, visibleStepTarget } from '../materials/materialLogic'
 import { TagFilterBar } from '../materials/TagFilterBar'
 import { BenchMoveDialog } from './BenchMoveDialog'
+import { bandBodyId, HomeBandHead } from './HomeBandHead'
+import { openBand, toggleBand } from './homeBands'
 
 /** カードに出す観点のチップの数（それより多ければ「ほか n」） */
 const CHIPS_SHOWN = 6
@@ -56,7 +58,16 @@ export function resetBenchShelfForTests(): void {
   openManuscripts.clear()
 }
 
-export function BenchShelf({ headingId }: { headingId: string }) {
+export function BenchShelf({
+  headingId,
+  open = true,
+  onToggle = () => toggleBand('bench'),
+}: {
+  headingId: string
+  /** 帯が開いているか（ホームが渡す。単独で描く時は開いている） */
+  open?: boolean
+  onToggle?: () => void
+}) {
   const data = useData()
   const navigate = useNavigate()
   const [edit, setEdit] = useState(false)
@@ -102,129 +113,145 @@ export function BenchShelf({ headingId }: { headingId: string }) {
     prevEntries.current = next
     return next
   }, [shown, groups])
-  const editing = edit && works.length > 0
+  // 帯を閉じたら「並べ替え・編集」も終える（次に開いた時は見るだけの棚）
+  if (!open && edit) setEdit(false)
+  const editing = open && edit && works.length > 0
+  const bodyId = bandBodyId(headingId)
 
   return (
     <>
-      <div className="home-pane-head">
-        <ShelfIcon className="icon home-pane-icon" />
-        <h2 id={headingId} tabIndex={-1}>
-          相対比較
-        </h2>
-        <span className="home-pane-count" data-testid="bench-count">
-          {works.length}
-        </span>
-        <span className="grow" />
-        {works.length > 0 ? (
-          <button
-            type="button"
-            className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
-            aria-pressed={editing}
-            onClick={() => setEdit((v) => !v)}
-            data-testid="bench-edit-toggle"
-          >
-            <EditIcon />
-            {editing ? '編集を終える' : '並べ替え・編集'}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-primary btn-sm home-new-title"
-          onClick={() => setAdding(true)}
-          data-testid="new-bench-work"
-        >
-          <PlusIcon />
-          作品を追加
-        </button>
-      </div>
+      <HomeBandHead
+        area="bench"
+        headingId={headingId}
+        bodyId={bodyId}
+        open={open}
+        onToggle={onToggle}
+        icon={ShelfIcon}
+        label="相対比較"
+        count={works.length}
+        countTestId="bench-count"
+        actions={
+          <>
+            {open && works.length > 0 ? (
+              <button
+                type="button"
+                className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
+                aria-pressed={editing}
+                onClick={() => setEdit((v) => !v)}
+                data-testid="bench-edit-toggle"
+              >
+                <EditIcon />
+                {editing ? '編集を終える' : '並べ替え・編集'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-primary btn-sm home-new-title"
+              onClick={() => {
+                // 閉じた帯からでも追加できる（追加した後に戻ってきた時は、帯が開いている）
+                openBand('bench')
+                setAdding(true)
+              }}
+              data-testid="new-bench-work"
+            >
+              <PlusIcon />
+              作品を追加
+            </button>
+          </>
+        }
+      />
 
-      {works.length === 0 ? (
-        <div className="empty home-empty home-bench-empty" data-testid="bench-empty">
-          <p>
-            比べるために読む既存の作品を置く棚です。PDF は claude.ai のプロジェクトに置いたまま、Claude
-            に多角的に分析してもらった内容だけをここに残し、各タイトルの作品批評で比べられます。
-          </p>
-          <button type="button" className="btn" onClick={() => setAdding(true)}>
-            <PlusIcon />
-            作品を追加
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="home-mat-filter" data-testid="bench-filter">
-            <TagFilterBar
-              chips={chips}
-              selected={selected}
-              onToggle={toggle}
-              onClear={clear}
-              onManage={() => setManaging(true)}
-              testIdPrefix="bench"
-              groupLabel="タグで絞る（選んだタグをすべて持つ作品だけ）"
-              hint="作品の画面の「ジャンル」でタグを付けると、ここでタグで絞れます（「14 検索用タグ」のジャンルは自動で付きます）。"
-              countUnit="作品"
-            />
-            {/* 件数は読み上げにも伝える（読み上げの領域は、絞り込む前から置いておく） */}
-            <p className={`home-mat-filter-status${filtering ? '' : ' is-idle'}`}>
-              <span role="status" data-testid="bench-filter-count">
-                {filtering ? filterCountLabel(shown.length, works.length, '作品') : ''}
-              </span>
-              {filtering ? (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={clear} data-testid="bench-filter-clear">
-                  <XIcon />
-                  絞り込みを解除
-                </button>
-              ) : null}
-            </p>
-          </div>
-          {shown.length === 0 ? (
-            <div className="empty home-mat-nomatch" data-testid="bench-no-match">
-              <p>当てはまる作品がありません。</p>
-              <button type="button" className="btn btn-sm" onClick={clear}>
-                <XIcon />
-                絞り込みを解除
+      {open ? (
+        <div id={bodyId} className="home-band-body">
+          {works.length === 0 ? (
+            <div className="empty home-empty home-bench-empty" data-testid="bench-empty">
+              <p>
+                比べるために読む既存の作品を置く棚です。PDF は claude.ai のプロジェクトに置いたまま、Claude
+                に多角的に分析してもらった内容だけをここに残し、各タイトルの作品批評で比べられます。
+              </p>
+              <button type="button" className="btn" onClick={() => setAdding(true)}>
+                <PlusIcon />
+                作品を追加
               </button>
             </div>
           ) : (
-            <ul className="home-bench-list" aria-labelledby={headingId} data-testid="bench-list">
-              {editing
-                ? shown.map((w, i) => (
-                    <BenchCard
-                      key={w.id}
-                      work={w}
-                      analyses={groups.get(w.id) ?? NO_ANALYSES}
-                      comparing={comparing.get(w.id)?.label ?? ''}
-                      comparingCount={comparing.get(w.id)?.count ?? 0}
-                      edit
-                      first={i === 0}
-                      last={i === shown.length - 1}
-                      upTo={filtering ? (visibleStepTarget(works, shown, w.id, -1) ?? -1) : -1}
-                      downTo={filtering ? (visibleStepTarget(works, shown, w.id, 1) ?? -1) : -1}
-                      canMove={works.length > 1}
-                    />
-                  ))
-                : entries.map((e) =>
-                    e.kind === 'manuscript' ? (
-                      <ManuscriptCard key={`m:${e.key}`} manuscriptKey={e.key} base={e.base} runs={e.runs} />
-                    ) : (
-                      <BenchCard
-                        key={e.work.id}
-                        work={e.work}
-                        analyses={groups.get(e.work.id) ?? NO_ANALYSES}
-                        comparing={comparing.get(e.work.id)?.label ?? ''}
-                        comparingCount={comparing.get(e.work.id)?.count ?? 0}
-                        edit={false}
-                        first={false}
-                        last={false}
-                        upTo={-1}
-                        downTo={-1}
-                        canMove={false}
-                      />
-                    ),
-                  )}
-            </ul>
+            <>
+              <div className="home-mat-filter" data-testid="bench-filter">
+                <TagFilterBar
+                  chips={chips}
+                  selected={selected}
+                  onToggle={toggle}
+                  onClear={clear}
+                  onManage={() => setManaging(true)}
+                  testIdPrefix="bench"
+                  groupLabel="タグで絞る（選んだタグをすべて持つ作品だけ）"
+                  hint="作品の画面の「ジャンル」でタグを付けると、ここでタグで絞れます（「14 検索用タグ」のジャンルは自動で付きます）。"
+                  countUnit="作品"
+                />
+                {/* 件数は読み上げにも伝える（読み上げの領域は、絞り込む前から置いておく） */}
+                <p className={`home-mat-filter-status${filtering ? '' : ' is-idle'}`}>
+                  <span role="status" data-testid="bench-filter-count">
+                    {filtering ? filterCountLabel(shown.length, works.length, '作品') : ''}
+                  </span>
+                  {filtering ? (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={clear} data-testid="bench-filter-clear">
+                      <XIcon />
+                      絞り込みを解除
+                    </button>
+                  ) : null}
+                </p>
+              </div>
+              {shown.length === 0 ? (
+                <div className="empty home-mat-nomatch" data-testid="bench-no-match">
+                  <p>当てはまる作品がありません。</p>
+                  <button type="button" className="btn btn-sm" onClick={clear}>
+                    <XIcon />
+                    絞り込みを解除
+                  </button>
+                </div>
+              ) : (
+                <ul className="home-bench-list" aria-labelledby={`${headingId}-name`} data-testid="bench-list">
+                  {editing
+                    ? shown.map((w, i) => (
+                        <BenchCard
+                          key={w.id}
+                          work={w}
+                          analyses={groups.get(w.id) ?? NO_ANALYSES}
+                          comparing={comparing.get(w.id)?.label ?? ''}
+                          comparingCount={comparing.get(w.id)?.count ?? 0}
+                          edit
+                          first={i === 0}
+                          last={i === shown.length - 1}
+                          upTo={filtering ? (visibleStepTarget(works, shown, w.id, -1) ?? -1) : -1}
+                          downTo={filtering ? (visibleStepTarget(works, shown, w.id, 1) ?? -1) : -1}
+                          canMove={works.length > 1}
+                        />
+                      ))
+                    : entries.map((e) =>
+                        e.kind === 'manuscript' ? (
+                          <ManuscriptCard key={`m:${e.key}`} manuscriptKey={e.key} base={e.base} runs={e.runs} />
+                        ) : (
+                          <BenchCard
+                            key={e.work.id}
+                            work={e.work}
+                            analyses={groups.get(e.work.id) ?? NO_ANALYSES}
+                            comparing={comparing.get(e.work.id)?.label ?? ''}
+                            comparingCount={comparing.get(e.work.id)?.count ?? 0}
+                            edit={false}
+                            first={false}
+                            last={false}
+                            upTo={-1}
+                            downTo={-1}
+                            canMove={false}
+                          />
+                        ),
+                      )}
+                </ul>
+              )}
+            </>
           )}
-        </>
-      )}
+        </div>
+      ) : null}
       {adding ? (
         <BenchWorkDialog work={null} onClose={() => setAdding(false)} onAdded={(id) => navigate(paths.bench(id))} />
       ) : null}

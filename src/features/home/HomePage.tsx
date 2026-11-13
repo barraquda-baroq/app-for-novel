@@ -2,13 +2,17 @@
 // 創作のために読む資料の棚「資料」（2.6。内部名は materials）。
 // 広い画面（721px〜）では左右に並べ（左にタイトルとその下の相対比較・資料、右にアイデア）、スマホでは上下に積む
 // （タイトル → アイデア → 相対比較 → 資料）。スマホでは上部の切り替えで、どの先頭へも1タップで移れる（どれかを隠すことはしない）。
+// 2.9: 4つの領域は帯で、起動した時・読み込み直した時は4つとも閉じている（homeBands.ts。見出しに件数を出し、押すと開け閉め）。
+// 切り替えとリンク（?view=）は、その帯を開いてから移る。
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { useData } from '../../store/appStore'
 import { TrashLink } from '../trash/TrashLink'
 import { useDocumentTitle, useMediaQuery } from '../../ui/hooks'
 import { AppHeader } from '../../ui/Layout'
 import { BackupReminder } from './BackupReminder'
+import { openBand, toggleBand, useOpenBands } from './homeBands'
 import { parseHomeView, type HomeView } from './homeLogic'
 import { BenchShelf } from './BenchShelf'
 import { IdeaArea } from './IdeaArea'
@@ -35,7 +39,13 @@ export function HomePage() {
   const [params, setParams] = useSearchParams()
   // ?view=ideas&focus=<titleId>（タイトルのアイデアタブの「すべてのアイデアを見る」から）は一度だけ使う
   const [focus, setFocus] = useState<string | null>(() => params.get('focus'))
-  const [linkedView, setLinkedView] = useState<HomeView | null>(() => parseHomeView(params.get('view')))
+  const [linkedView, setLinkedView] = useState<HomeView | null>(() => {
+    const view = parseHomeView(params.get('view'))
+    // リンクで指した帯は、中身を描く前に開いておく（アイデア欄が ?focus= の仕切りを見つけられるように）
+    if (view) openBand(view)
+    return view
+  })
+  const bands = useOpenBands()
   const [current, setCurrent] = useState<HomeView>('titles')
   const baseId = useId()
   const headingIds: Record<HomeView, string> = {
@@ -46,6 +56,8 @@ export function HomePage() {
   }
   const titleHeadingId = headingIds.titles
   const ideaHeadingId = headingIds.ideas
+  /** 帯の見出しのボタン（切り替え・リンクで移った時のフォーカスの先） */
+  const toggleOf = (area: HomeView) => document.getElementById(`${headingIds[area]}-toggle`)
   const paneIds: Record<HomeView, string> = {
     titles: `${baseId}-pane-titles`,
     ideas: `${baseId}-pane-ideas`,
@@ -71,34 +83,41 @@ export function HomePage() {
   // リンクの指定を反映したら URL からは消す（再読み込みや「戻る」で同じ場所へ飛ばし直さないように）
   useEffect(() => {
     if (!params.has('view') && !params.has('focus')) return
+    const view = parseHomeView(params.get('view'))
+    if (view) openBand(view)
     setFocus(params.get('focus'))
-    setLinkedView(parseHomeView(params.get('view')))
+    setLinkedView(view)
     setParams(new URLSearchParams(), { replace: true })
   }, [params, setParams])
 
-  // ?view=ideas だけの時は、アイデア領域の先頭を見せる（仕切りの指定があればアイデア領域がその仕切りを見せる）
+  // ?view=ideas だけの時は、アイデアの帯（初めの描画の前に開いてある）の見出しのボタンにフォーカスし、上下に積んでいる時は
+  // その先頭を見せる（仕切りの指定 ?focus= があれば、アイデア領域がその仕切りを見せる）
   useEffect(() => {
-    if (linkedView !== 'ideas' || focus || twoColumns) return
+    if (linkedView !== 'ideas' || focus) return
+    const raf = requestAnimationFrame(() => toggleOf('ideas')?.focus({ preventScroll: true }))
+    if (twoColumns) return () => cancelAnimationFrame(raf)
     pinned.current = 'ideas'
     setCurrent('ideas')
-    const raf = requestAnimationFrame(() => ideasPane.current?.scrollIntoView({ block: 'start' }))
-    return () => cancelAnimationFrame(raf)
-  }, [linkedView, focus, twoColumns])
+    const scroll = requestAnimationFrame(() => ideasPane.current?.scrollIntoView({ block: 'start' }))
+    return () => {
+      cancelAnimationFrame(raf)
+      cancelAnimationFrame(scroll)
+    }
+  }, [linkedView, focus, twoColumns]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ?view=bench（相対比較の作品の画面のパンくずから）・?view=materials（資料の画面のパンくずから）: 棚の先頭を見せ、
-  // 見出しにフォーカスを移す（どの幅でも）。上下に積んでいる時は、その棚を表示中にする（相対比較の下に資料の棚があるので、
-  // 位置から決めると、短い相対比較の棚へ移った時に「資料」になってしまう）
+  // ?view=titles・?view=bench（相対比較の作品の画面のパンくずから）・?view=materials（資料の画面のパンくずから）: 帯を開いて
+  // （初めの描画の前に開いてある）先頭を見せ、見出しのボタンにフォーカスを移す（どの幅でも）。上下に積んでいる時は、その帯を
+  // 表示中にする（相対比較の下に資料の棚があるので、位置から決めると、短い相対比較の棚へ移った時に「資料」になってしまう）
   useEffect(() => {
-    if (linkedView !== 'bench' && linkedView !== 'materials') return
+    if (linkedView !== 'titles' && linkedView !== 'bench' && linkedView !== 'materials') return
     const view = linkedView
-    const pane = view === 'bench' ? benchPane : materialsPane
     if (!twoColumns) {
       pinned.current = view
       setCurrent(view)
     }
     const raf = requestAnimationFrame(() => {
-      pane.current?.scrollIntoView({ block: 'start' })
-      document.getElementById(headingIds[view])?.focus({ preventScroll: true })
+      document.getElementById(paneIds[view])?.scrollIntoView({ block: 'start' })
+      toggleOf(view)?.focus({ preventScroll: true })
     })
     return () => cancelAnimationFrame(raf)
   }, [linkedView]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -155,17 +174,20 @@ export function HomePage() {
       window.removeEventListener('pointerdown', release)
       window.removeEventListener('keydown', release)
     }
-  }, [twoColumns])
+    // 帯を開け閉めすると領域の位置が変わるので、その時にも決め直す
+  }, [twoColumns, bands])
 
   const jumpTo = (area: HomeView) => {
+    // 閉じている帯は開いてから移る（開いている帯は閉じない）。開いた中身を描き終えてから位置を決める
+    flushSync(() => openBand(area))
     const pane = document.getElementById(paneIds[area])
     if (!pane) return
     pinned.current = area
     setCurrent(area)
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     pane.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
-    // 読み上げ・キーボードでも移った先から続けられるように、領域の見出しへフォーカスを移す
-    document.getElementById(headingIds[area])?.focus({ preventScroll: true })
+    // 読み上げ・キーボードでも移った先から続けられるように、帯の見出しのボタンへフォーカスを移す
+    toggleOf(area)?.focus({ preventScroll: true })
   }
 
   return (
@@ -193,47 +215,56 @@ export function HomePage() {
           </nav>
         ) : null}
 
-        <BackupReminder onDone={() => document.getElementById(titleHeadingId)?.focus({ preventScroll: true })} />
+        <BackupReminder onDone={() => toggleOf('titles')?.focus({ preventScroll: true })} />
 
         <div className="home-grid">
           <section
             id={paneIds.titles}
             className="home-pane home-titles"
-            aria-labelledby={titleHeadingId}
+            aria-labelledby={`${titleHeadingId}-name`}
             data-area="titles"
             data-testid="title-group"
           >
-            <TitleGroup headingId={titleHeadingId} />
+            <TitleGroup headingId={titleHeadingId} open={bands.has('titles')} onToggle={() => toggleBand('titles')} />
           </section>
           <section
             ref={ideasPane}
             id={paneIds.ideas}
             className="home-pane home-ideas"
-            aria-labelledby={ideaHeadingId}
+            aria-labelledby={`${ideaHeadingId}-name`}
             data-area="ideas"
             data-testid="idea-area"
           >
-            <IdeaArea headingId={ideaHeadingId} focusSection={focus} />
+            <IdeaArea
+              headingId={ideaHeadingId}
+              focusSection={focus}
+              open={bands.has('ideas')}
+              onToggle={() => toggleBand('ideas')}
+            />
           </section>
           <section
             ref={benchPane}
             id={paneIds.bench}
             className="home-pane home-bench"
-            aria-labelledby={headingIds.bench}
+            aria-labelledby={`${headingIds.bench}-name`}
             data-area="bench"
             data-testid="bench-shelf"
           >
-            <BenchShelf headingId={headingIds.bench} />
+            <BenchShelf headingId={headingIds.bench} open={bands.has('bench')} onToggle={() => toggleBand('bench')} />
           </section>
           <section
             ref={materialsPane}
             id={paneIds.materials}
             className="home-pane home-materials"
-            aria-labelledby={headingIds.materials}
+            aria-labelledby={`${headingIds.materials}-name`}
             data-area="materials"
             data-testid="material-shelf"
           >
-            <MaterialShelf headingId={headingIds.materials} />
+            <MaterialShelf
+              headingId={headingIds.materials}
+              open={bands.has('materials')}
+              onToggle={() => toggleBand('materials')}
+            />
           </section>
         </div>
       </main>

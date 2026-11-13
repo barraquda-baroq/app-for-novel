@@ -11,6 +11,7 @@ import { AppFrame } from '../../ui/Layout'
 import { HomePage } from './HomePage'
 import { resetBenchShelfForTests } from './BenchShelf'
 import { resetMaterialShelfForTests } from './MaterialShelf'
+import { openBand, resetHomeBandsForTests } from './homeBands'
 
 let n = 0
 
@@ -20,6 +21,8 @@ beforeAll(() => {
 
 beforeEach(async () => {
   await initStore(createPersistence(`test-db-home-claude-time-${++n}`))
+  // ホームの帯は起動した時は閉じている（2.9）。アイデアの帯を開いておく
+  openBand('ideas')
 })
 
 afterEach(() => {
@@ -27,6 +30,7 @@ afterEach(() => {
   resetStoreForTests()
   resetMaterialShelfForTests()
   resetBenchShelfForTests()
+  resetHomeBandsForTests()
 })
 
 const BODY = '2026/11/12 14:32\n中身'

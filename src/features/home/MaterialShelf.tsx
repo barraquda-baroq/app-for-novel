@@ -50,6 +50,8 @@ import {
 import { ManageTagsDialog } from '../materials/MaterialTagDialogs'
 import { TagFilterBar } from '../materials/TagFilterBar'
 import { MaterialMoveDialog } from './MaterialMoveDialog'
+import { bandBodyId, HomeBandHead } from './HomeBandHead'
+import { openBand, toggleBand } from './homeBands'
 
 /** カードに出す項目のチップの数（それより多ければ「ほか n」） */
 const CHIPS_SHOWN = 6
@@ -65,7 +67,16 @@ export function resetMaterialShelfForTests(): void {
   rememberedFilter = NO_FILTER
 }
 
-export function MaterialShelf({ headingId }: { headingId: string }) {
+export function MaterialShelf({
+  headingId,
+  open = true,
+  onToggle = () => toggleBand('materials'),
+}: {
+  headingId: string
+  /** 帯が開いているか（ホームが渡す。単独で描く時は開いている） */
+  open?: boolean
+  onToggle?: () => void
+}) {
   const data = useData()
   const navigate = useNavigate()
   const searchId = useId()
@@ -99,7 +110,10 @@ export function MaterialShelf({ headingId }: { headingId: string }) {
   const effective = useMemo(() => ({ query, tags: selected }), [query, selected])
   const filtering = isFiltering(effective)
   const shown = useMemo(() => filterMaterials(materials, effective), [materials, effective])
-  const editing = edit && materials.length > 0
+  // 帯を閉じたら「並べ替え・編集」も終える（次に開いた時は見るだけの棚）
+  if (!open && edit) setEdit(false)
+  const editing = open && edit && materials.length > 0
+  const bodyId = bandBodyId(headingId)
   const clear = () => setFilter(NO_FILTER)
   const toggle = (key: string) =>
     setFilter((f) => ({
@@ -112,131 +126,144 @@ export function MaterialShelf({ headingId }: { headingId: string }) {
 
   return (
     <>
-      <div className="home-pane-head">
-        <OpenBookIcon className="icon home-pane-icon" />
-        <h2 id={headingId} tabIndex={-1}>
-          資料
-        </h2>
-        <span className="home-pane-count" data-testid="material-count">
-          {materials.length}
-        </span>
-        <span className="grow" />
-        {materials.length > 0 ? (
-          <button
-            type="button"
-            className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
-            aria-pressed={editing}
-            onClick={() => setEdit((v) => !v)}
-            data-testid="material-edit-toggle"
-          >
-            <EditIcon />
-            {editing ? '編集を終える' : '並べ替え・編集'}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-primary btn-sm home-new-title"
-          onClick={() => setAdding(true)}
-          data-testid="new-material"
-        >
-          <PlusIcon />
-          資料を追加
-        </button>
-      </div>
+      <HomeBandHead
+        area="materials"
+        headingId={headingId}
+        bodyId={bodyId}
+        open={open}
+        onToggle={onToggle}
+        icon={OpenBookIcon}
+        label="資料"
+        count={materials.length}
+        countTestId="material-count"
+        actions={
+          <>
+            {open && materials.length > 0 ? (
+              <button
+                type="button"
+                className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
+                aria-pressed={editing}
+                onClick={() => setEdit((v) => !v)}
+                data-testid="material-edit-toggle"
+              >
+                <EditIcon />
+                {editing ? '編集を終える' : '並べ替え・編集'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-primary btn-sm home-new-title"
+              onClick={() => {
+                // 閉じた帯からでも追加できる（追加した後に戻ってきた時は、帯が開いている）
+                openBand('materials')
+                setAdding(true)
+              }}
+              data-testid="new-material"
+            >
+              <PlusIcon />
+              資料を追加
+            </button>
+          </>
+        }
+      />
 
-      {materials.length === 0 ? (
-        <div className="empty home-empty home-mat-empty" data-testid="material-empty">
-          <p>
-            創作のために読む資料（主に書籍）を置く棚です。PDF は claude.ai のプロジェクトに置いたまま、Claude
-            に読んでもらった要約・創作に役立つ知識・描写に使える部分・サンプルシーンだけをここに残し、どのタイトルでも使えます。
-          </p>
-          <button type="button" className="btn" onClick={() => setAdding(true)}>
-            <PlusIcon />
-            資料を追加
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="home-mat-filter" role="search" data-testid="material-filter">
-            <label className="home-mat-search" htmlFor={searchId}>
-              <SearchIcon className="icon home-mat-search-icon" />
-              <span className="visually-hidden">資料を探す</span>
-              <input
-                id={searchId}
-                className="input"
-                type="search"
-                enterKeyHint="search"
-                value={filter.query}
-                onChange={(e) => setFilter((f) => ({ ...f, query: e.target.value }))}
-                placeholder="資料名・著者・タグ・メモで探す"
-                autoComplete="off"
-                data-testid="material-search"
-              />
-            </label>
-            <TagFilterBar
-              chips={chips}
-              selected={selected}
-              onToggle={toggle}
-              onClear={() => setFilter((f) => ({ ...f, tags: [] }))}
-              onManage={() => setManaging(true)}
-              testIdPrefix="material"
-              groupLabel="タグで絞る（選んだタグをすべて持つ資料だけ）"
-              hint="資料の画面の「タグを付ける」でタグ（ミリタリ・現代など）を付けると、ここでタグで絞れます。"
-            />
-            {/* 件数は読み上げにも伝える（読み上げの領域は、絞り込む前から置いておく） */}
-            <p className={`home-mat-filter-status${filtering ? '' : ' is-idle'}`}>
-              <span role="status" data-testid="material-filter-count">
-                {filtering ? filterCountLabel(shown.length, materials.length) : ''}
-              </span>
-              {filtering ? (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={clear} data-testid="material-filter-clear">
-                  <XIcon />
-                  絞り込みを解除
-                </button>
-              ) : null}
-            </p>
-          </div>
-          {shown.length === 0 ? (
-            <div className="empty home-mat-nomatch" data-testid="material-no-match">
-              <p>当てはまる資料がありません。</p>
-              <button type="button" className="btn btn-sm" onClick={clear}>
-                <XIcon />
-                絞り込みを解除
+      {open ? (
+        <div id={bodyId} className="home-band-body">
+          {materials.length === 0 ? (
+            <div className="empty home-empty home-mat-empty" data-testid="material-empty">
+              <p>
+                創作のために読む資料（主に書籍）を置く棚です。PDF は claude.ai のプロジェクトに置いたまま、Claude
+                に読んでもらった要約・創作に役立つ知識・描写に使える部分・サンプルシーンだけをここに残し、どのタイトルでも使えます。
+              </p>
+              <button type="button" className="btn" onClick={() => setAdding(true)}>
+                <PlusIcon />
+                資料を追加
               </button>
             </div>
           ) : (
-            <ul className="home-mat-list" aria-labelledby={headingId} data-testid="material-list">
-              {shown.map((m, i) =>
-                editing ? (
-                  <MaterialCard
-                    key={m.id}
-                    material={m}
-                    notes={groups.get(m.id) ?? NO_NOTES}
-                    edit
-                    first={i === 0}
-                    last={i === shown.length - 1}
-                    upTo={filtering ? (visibleStepTarget(materials, shown, m.id, -1) ?? -1) : -1}
-                    downTo={filtering ? (visibleStepTarget(materials, shown, m.id, 1) ?? -1) : -1}
-                    canMove={materials.length > 1}
+            <>
+              <div className="home-mat-filter" role="search" data-testid="material-filter">
+                <label className="home-mat-search" htmlFor={searchId}>
+                  <SearchIcon className="icon home-mat-search-icon" />
+                  <span className="visually-hidden">資料を探す</span>
+                  <input
+                    id={searchId}
+                    className="input"
+                    type="search"
+                    enterKeyHint="search"
+                    value={filter.query}
+                    onChange={(e) => setFilter((f) => ({ ...f, query: e.target.value }))}
+                    placeholder="資料名・著者・タグ・メモで探す"
+                    autoComplete="off"
+                    data-testid="material-search"
                   />
-                ) : (
-                  <MaterialCard
-                    key={m.id}
-                    material={m}
-                    notes={groups.get(m.id) ?? NO_NOTES}
-                    edit={false}
-                    first={false}
-                    last={false}
-                    upTo={-1}
-                    downTo={-1}
-                    canMove={false}
-                  />
-                ),
+                </label>
+                <TagFilterBar
+                  chips={chips}
+                  selected={selected}
+                  onToggle={toggle}
+                  onClear={() => setFilter((f) => ({ ...f, tags: [] }))}
+                  onManage={() => setManaging(true)}
+                  testIdPrefix="material"
+                  groupLabel="タグで絞る（選んだタグをすべて持つ資料だけ）"
+                  hint="資料の画面の「タグを付ける」でタグ（ミリタリ・現代など）を付けると、ここでタグで絞れます。"
+                />
+                {/* 件数は読み上げにも伝える（読み上げの領域は、絞り込む前から置いておく） */}
+                <p className={`home-mat-filter-status${filtering ? '' : ' is-idle'}`}>
+                  <span role="status" data-testid="material-filter-count">
+                    {filtering ? filterCountLabel(shown.length, materials.length) : ''}
+                  </span>
+                  {filtering ? (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={clear} data-testid="material-filter-clear">
+                      <XIcon />
+                      絞り込みを解除
+                    </button>
+                  ) : null}
+                </p>
+              </div>
+              {shown.length === 0 ? (
+                <div className="empty home-mat-nomatch" data-testid="material-no-match">
+                  <p>当てはまる資料がありません。</p>
+                  <button type="button" className="btn btn-sm" onClick={clear}>
+                    <XIcon />
+                    絞り込みを解除
+                  </button>
+                </div>
+              ) : (
+                <ul className="home-mat-list" aria-labelledby={`${headingId}-name`} data-testid="material-list">
+                  {shown.map((m, i) =>
+                    editing ? (
+                      <MaterialCard
+                        key={m.id}
+                        material={m}
+                        notes={groups.get(m.id) ?? NO_NOTES}
+                        edit
+                        first={i === 0}
+                        last={i === shown.length - 1}
+                        upTo={filtering ? (visibleStepTarget(materials, shown, m.id, -1) ?? -1) : -1}
+                        downTo={filtering ? (visibleStepTarget(materials, shown, m.id, 1) ?? -1) : -1}
+                        canMove={materials.length > 1}
+                      />
+                    ) : (
+                      <MaterialCard
+                        key={m.id}
+                        material={m}
+                        notes={groups.get(m.id) ?? NO_NOTES}
+                        edit={false}
+                        first={false}
+                        last={false}
+                        upTo={-1}
+                        downTo={-1}
+                        canMove={false}
+                      />
+                    ),
+                  )}
+                </ul>
               )}
-            </ul>
+            </>
           )}
-        </>
-      )}
+        </div>
+      ) : null}
       {adding ? (
         <MaterialDialog material={null} onClose={() => setAdding(false)} onAdded={(id) => navigate(paths.material(id))} />
       ) : null}

@@ -1,4 +1,5 @@
 // ホームのタイトル群。カードを押すとタイトルに入る。「並べ替え・編集」で名前の変更・並べ替え・削除ができる。
+// 2.9: ホームの帯の1つ（見出しで開け閉め。閉じている間は一覧を描かず、「新しいタイトル」だけを出す）。
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { sortedTitles } from '../../domain/entityOps'
@@ -11,6 +12,8 @@ import { confirmDialog, promptDialog } from '../../ui/dialogs'
 import { BookIcon, BulbIcon, ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { charsLabel, deleteTitleMessage, episodesLabel, missingLabel, titleCardInfo, type TitleCardInfo } from './homeLogic'
+import { bandBodyId, HomeBandHead } from './HomeBandHead'
+import { openBand, toggleBand } from './homeBands'
 import { TitleMoveDialog } from './TitleMoveDialog'
 
 export async function createTitleFlow(navigate: (to: string) => void): Promise<void> {
@@ -26,7 +29,16 @@ export async function createTitleFlow(navigate: (to: string) => void): Promise<v
   navigate(paths.title(id))
 }
 
-export function TitleGroup({ headingId }: { headingId: string }) {
+export function TitleGroup({
+  headingId,
+  open = true,
+  onToggle = () => toggleBand('titles'),
+}: {
+  headingId: string
+  /** 帯が開いているか（ホームが渡す。単独で描く時は開いている） */
+  open?: boolean
+  onToggle?: () => void
+}) {
   const data = useData()
   const navigate = useNavigate()
   const [edit, setEdit] = useState(false)
@@ -35,57 +47,73 @@ export function TitleGroup({ headingId }: { headingId: string }) {
     () => titles.map((t) => titleCardInfo(data, t.id)).filter((i): i is TitleCardInfo => i !== null),
     [data, titles],
   )
-  const editing = edit && infos.length > 0
+  // 帯を閉じたら「並べ替え・編集」も終える（次に開いた時は見るだけの一覧）
+  if (!open && edit) setEdit(false)
+  const editing = open && edit && infos.length > 0
+  const bodyId = bandBodyId(headingId)
 
   return (
     <>
-      <div className="home-pane-head">
-        <BookIcon className="icon home-pane-icon" />
-        <h2 id={headingId} tabIndex={-1}>
-          タイトル
-        </h2>
-        <span className="home-pane-count" data-testid="title-count">
-          {infos.length}
-        </span>
-        <span className="grow" />
-        {infos.length > 0 ? (
-          <button
-            type="button"
-            className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
-            aria-pressed={editing}
-            onClick={() => setEdit((v) => !v)}
-            data-testid="titles-edit-toggle"
-          >
-            <EditIcon />
-            {editing ? '編集を終える' : '並べ替え・編集'}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-primary btn-sm home-new-title"
-          onClick={() => void createTitleFlow(navigate)}
-          data-testid="new-title"
-        >
-          <PlusIcon />
-          新しいタイトル
-        </button>
-      </div>
+      <HomeBandHead
+        area="titles"
+        headingId={headingId}
+        bodyId={bodyId}
+        open={open}
+        onToggle={onToggle}
+        icon={BookIcon}
+        label="タイトル"
+        count={infos.length}
+        countTestId="title-count"
+        actions={
+          <>
+            {open && infos.length > 0 ? (
+              <button
+                type="button"
+                className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
+                aria-pressed={editing}
+                onClick={() => setEdit((v) => !v)}
+                data-testid="titles-edit-toggle"
+              >
+                <EditIcon />
+                {editing ? '編集を終える' : '並べ替え・編集'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-primary btn-sm home-new-title"
+              onClick={() => {
+                // 閉じた帯からでも作れる（作ったタイトルから戻ってきた時は、帯が開いている）
+                openBand('titles')
+                void createTitleFlow(navigate)
+              }}
+              data-testid="new-title"
+            >
+              <PlusIcon />
+              新しいタイトル
+            </button>
+          </>
+        }
+      />
 
-      {infos.length === 0 ? (
-        <div className="empty home-empty" data-testid="titles-empty">
-          <p>まだタイトルがありません。「＋新しいタイトル」から始めましょう。</p>
-          <button type="button" className="btn btn-primary" onClick={() => void createTitleFlow(navigate)}>
-            <PlusIcon />
-            新しいタイトル
-          </button>
+      {open ? (
+        <div id={bodyId} className="home-band-body">
+          {infos.length === 0 ? (
+            <div className="empty home-empty" data-testid="titles-empty">
+              <p>まだタイトルがありません。「＋新しいタイトル」から始めましょう。</p>
+              <button type="button" className="btn btn-primary" onClick={() => void createTitleFlow(navigate)}>
+                <PlusIcon />
+                新しいタイトル
+              </button>
+            </div>
+          ) : (
+            <ul className="home-title-list" aria-labelledby={`${headingId}-name`}>
+              {infos.map((info, i) => (
+                <TitleCard key={info.id} info={info} edit={editing} first={i === 0} last={i === infos.length - 1} />
+              ))}
+            </ul>
+          )}
         </div>
-      ) : (
-        <ul className="home-title-list" aria-labelledby={headingId}>
-          {infos.map((info, i) => (
-            <TitleCard key={info.id} info={info} edit={editing} first={i === 0} last={i === infos.length - 1} />
-          ))}
-        </ul>
-      )}
+      ) : null}
     </>
   )
 }
