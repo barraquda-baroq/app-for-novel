@@ -3,6 +3,7 @@
 import { isJstTimestamp } from '../claude/dates'
 import { deepEqual } from './equal'
 import { isAutoTagMark } from './benchTags'
+import { isTopFolder } from './ideaFolders'
 import { displayTags } from './tags'
 import { textHash } from './text'
 import { TRASH_KIND_LABELS, isContentTable, isTrashKind } from './trash'
@@ -17,6 +18,7 @@ import {
   type CritiqueScope,
   type ID,
   type Idea,
+  type IdeaFolder,
   type Material,
   type MaterialNote,
   type Memo,
@@ -147,6 +149,8 @@ export function repairData(input: AppData): RepairResult {
     versions: { ...input.versions },
     memos: { ...input.memos },
     ideas: { ...input.ideas },
+    // 2.9 の表（古いバックアップ・古い形のデータには無い）
+    ideaFolders: { ...(input.ideaFolders ?? {}) },
     settingCategories: { ...input.settingCategories },
     settingEntries: { ...input.settingEntries },
     submissions: { ...input.submissions },
@@ -433,6 +437,43 @@ export function repairData(input: AppData): RepairResult {
     }
   }
 
+  // 2.9: アイデアのフォルダ（表示のための修復。直したものは、作者が触った時にだけ書き戻される）。
+  // 項目を補い、存在しないタイトルを指すものは「どのタイトルにも属さない」へ（カードと同じ）。タイトルの無くなった1段目のフォルダは、
+  // ホームの1段目のフォルダの後ろへ（もとの順のまま）。親・カードの参照（文字列）は消さない（見せ方は ideaFolders.ts の決まりで決め、
+  // 親やフォルダが後から届いた・ゴミ箱から戻った時に、そのフォルダに戻るように）
+  const orphanFolders = new Set<ID>()
+  for (const f of Object.values(d.ideaFolders).sort((a, b) => num(a.order) - num(b.order))) {
+    const orphan = f.titleId !== null && (typeof f.titleId !== 'string' || !d.titles[f.titleId])
+    if (orphan) orphanFolders.add(f.id)
+    const next: IdeaFolder = {
+      ...f,
+      titleId: orphan ? null : f.titleId,
+      parentId: typeof f.parentId === 'string' ? f.parentId : null,
+      name: str(f.name),
+      order: num(f.order),
+      createdAt: stamp(f.createdAt),
+      updatedAt: stamp(f.updatedAt),
+    }
+    if (!same(next, f)) {
+      d.ideaFolders[f.id] = next
+      if (!orphan) fix('アイデアのフォルダの項目を補いました')
+    }
+  }
+  if (orphanFolders.size) {
+    const homeTop = (f: IdeaFolder) => f.titleId === null && isTopFolder(d, f)
+    let homeTopOrder = Object.values(d.ideaFolders)
+      .filter((f) => !orphanFolders.has(f.id) && homeTop(f))
+      .reduce((m, f) => Math.max(m, f.order), -1)
+    for (const f of Object.values(d.ideaFolders).sort((a, b) => a.order - b.order)) {
+      if (!orphanFolders.has(f.id)) continue
+      if (homeTop(f)) {
+        homeTopOrder += 1
+        d.ideaFolders[f.id] = { ...f, order: homeTopOrder }
+      }
+      fix('タイトルのないフォルダを「どのタイトルにも属さない」へ移しました')
+    }
+  }
+
   // アイデア: 存在しないタイトルを指すものは「どのタイトルにも属さない」へ
   let unassignedOrder = Object.values(d.ideas)
     .filter((i) => i.titleId === null)
@@ -456,9 +497,19 @@ export function repairData(input: AppData): RepairResult {
       next.checked = idea.checked === true
       next.checkedAt = next.checked ? numOrNull(idea.checkedAt) : null
     }
+    // 2.9: 入っているフォルダ。文字列でない値（null など）だけ項目ごと除く（フォルダの外）。文字列は、フォルダが無くても消さない
+    // （見せる時にフォルダの外に出す。ideaFolders.ts の effectiveFolderId）。項目は足さない
+    const badFolder = idea.folderId !== undefined && typeof idea.folderId !== 'string'
+    if (badFolder) delete next.folderId
     if (!same(next, idea)) {
       d.ideas[idea.id] = next
-      fix(orphan ? 'タイトルのないアイデアを「どのタイトルにも属さない」へ移しました' : 'アイデアの項目を補いました')
+      fix(
+        orphan
+          ? 'タイトルのないアイデアを「どのタイトルにも属さない」へ移しました'
+          : badFolder
+            ? 'アイデアのフォルダの参照を直しました'
+            : 'アイデアの項目を補いました',
+      )
     }
   }
 

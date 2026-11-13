@@ -3,6 +3,7 @@
 // 戻す時はその場所へ並べ直す（直前にあった要素がまだあればその直後、なければ控えた位置）。
 // すべて純粋関数で、新しい AppData を返す。戻せない時は DomainError を投げる。
 import { ideaLabelLine } from '../claude/ideaAppend'
+import { ideaFolderName } from './ideaFolders'
 import { actsOf, isSplit, locatePiece } from './structure'
 import { Tx, transact } from './tx'
 import {
@@ -17,6 +18,7 @@ import {
   type CritiqueResult,
   type ID,
   type Idea,
+  type IdeaFolder,
   type Material,
   type MaterialNote,
   type Memo,
@@ -75,6 +77,7 @@ export const TRASH_KINDS: readonly TrashKind[] = [
   'version',
   'memo',
   'idea',
+  'ideaFolder',
   'settingCategory',
   'settingEntry',
   'submission',
@@ -101,6 +104,7 @@ export const TRASH_KIND_TABLE: Record<TrashKind, ContentTableName> = {
   version: 'versions',
   memo: 'memos',
   idea: 'ideas',
+  ideaFolder: 'ideaFolders',
   settingCategory: 'settingCategories',
   settingEntry: 'settingEntries',
   submission: 'submissions',
@@ -122,6 +126,7 @@ export const TRASH_KIND_LABELS: Record<TrashKind, string> = {
   version: '推敲バージョン',
   memo: 'メモ',
   idea: 'アイデア',
+  ideaFolder: 'アイデアのフォルダ',
   settingCategory: '設定項目',
   settingEntry: '設定エントリ',
   submission: '応募計画',
@@ -162,6 +167,8 @@ export const trashLabel = {
     const chars = Array.from(line)
     return (chars.length > 24 ? `${chars.slice(0, 24).join('')}…` : line) || '（空のアイデア）'
   },
+  /** アイデアのフォルダ（2.9。名前が空なら「無題のフォルダ」） */
+  ideaFolder: (f: Pick<IdeaFolder, 'name'>) => ideaFolderName(f),
   category: (c: Pick<SettingCategory, 'name'>) => c.name.trim() || '無題の設定項目',
   entry: (e: Pick<SettingEntry, 'name'>) => e.name.trim() || '（名前未設定）',
   submission: (s: Pick<Submission, 'contestName'>) => s.contestName.trim() || '（コンテスト名未設定）',
@@ -415,6 +422,8 @@ function requireParents(tx: Tx, kind: TrashKind, record: ContentRecord, origin?:
   switch (kind) {
     case 'title':
     case 'idea':
+    // 2.9: アイデアのフォルダも、タイトルが無ければ どのタイトルにも属さない へ戻す（カードと同じ）
+    case 'ideaFolder':
       return
     case 'chapter':
     case 'memo':
@@ -529,7 +538,12 @@ function rewriteRefs(table: ContentTableName, record: ContentRecord, ids: Map<ID
     }
     case 'ideas': {
       const r = record as Idea
-      return { ...r, id: m(r.id), titleId: mn(r.titleId) }
+      // 2.9: 入っているフォルダも付け替える（無い = フォルダの外のまま）
+      return { ...r, id: m(r.id), titleId: mn(r.titleId), ...(typeof r.folderId === 'string' ? { folderId: m(r.folderId) } : {}) }
+    }
+    case 'ideaFolders': {
+      const r = record as IdeaFolder
+      return { ...r, id: m(r.id), titleId: mn(r.titleId), parentId: mn(r.parentId ?? null) }
     }
     case 'settingCategories': {
       const r = record as SettingCategory
@@ -682,6 +696,7 @@ type OrderedTable =
   | 'titles'
   | 'memos'
   | 'ideas'
+  | 'ideaFolders'
   | 'settingCategories'
   | 'settingEntries'
   | 'submissions'

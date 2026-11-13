@@ -556,6 +556,8 @@ const JOURNAL_DROP_ORDER: TableName[] = [
   'submissions',
   'settingCategories',
   'settingEntries',
+  // 2.9: アイデアのフォルダ（控えられなくても、カードはフォルダの外に見えるだけ）をカードより先に
+  'ideaFolders',
   'ideas',
   'memos',
   'titles',

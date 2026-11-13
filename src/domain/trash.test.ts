@@ -49,6 +49,10 @@ import {
   listTrash,
   purgeExpiredTrash,
   restoreTrashEntry,
+  TRASH_KIND_LABELS,
+  TRASH_KIND_TABLE,
+  TRASH_KINDS,
+  isTrashKind,
   trashDaysLeft,
   trashLabel,
   trashNotice,
@@ -784,5 +788,17 @@ describe('ゴミ箱の名前: アイデア', () => {
     expect(trashLabel.idea({ heading: ' 見出し ', body: '2026/11/12 14:32\n中身' })).toBe('見出し')
     expect(trashLabel.idea({ heading: '', body: '2026/11/12 14:32' })).toBe('2026/11/12 14:32')
     expect(trashLabel.idea({ heading: '', body: ' ' })).toBe('（空のアイデア）')
+  })
+})
+
+describe('ゴミ箱の種類: アイデアのフォルダ（2.9）', () => {
+  it('種類・本体の表・名前（名前が空なら「無題のフォルダ」）', () => {
+    expect(TRASH_KINDS).toContain('ideaFolder')
+    expect(isTrashKind('ideaFolder')).toBe(true)
+    expect(TRASH_KIND_TABLE.ideaFolder).toBe('ideaFolders')
+    expect(TRASH_KIND_LABELS.ideaFolder).toBe('アイデアのフォルダ')
+    expect(trashLabel.ideaFolder({ name: ' 場面の相談 ' })).toBe('場面の相談')
+    expect(trashLabel.ideaFolder({ name: '2026/11/12\u3000港町' })).toBe('2026/11/12\u3000港町')
+    expect(trashLabel.ideaFolder({ name: '' })).toBe('無題のフォルダ')
   })
 })

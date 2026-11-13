@@ -383,6 +383,18 @@ describe('第2回の見直しで直したこと', () => {
     expect(tableSendRank('ideaAppends')).toBeLessThan(tableSendRank('futureTable'))
   })
 
+  it('アイデアのフォルダは、削除でも中のカードの後、追記の依頼・ゴミ箱へ移す依頼の前に送る（2.9）', () => {
+    for (const deleted of [false, true]) {
+      const rank = tableSendRank('ideaFolders', deleted)
+      expect(rank).toBeGreaterThan(tableSendRank('ideas', deleted))
+      expect(rank).toBeLessThan(tableSendRank('ideaAppends', deleted))
+      expect(rank).toBeLessThan(tableSendRank('trashRequests', deleted))
+      // タイトルより前（タイトルの子と同じ）
+      expect(rank).toBeLessThan(tableSendRank('titles', deleted))
+      expect(rank).toBeGreaterThan(tableSendRank('trashRecords', deleted))
+    }
+  })
+
   it('復元を始めた後にほかの端末が書いたものは、「必ず上書き」の送信待ちがあっても 3者マージする', async () => {
     const { data, versionId, memoId } = sample()
     const p = fresh()
@@ -722,7 +734,7 @@ describe('大きな作品の反映・送信待ちの読む量', () => {
   })
 })
 
-describe('端末内の DB の版（2.7・2.8）', () => {
+describe('端末内の DB の版（2.7・2.8・2.9）', () => {
   // 2.6 の形（v6）の表
   const v6Tables = [
     'titles',
@@ -750,9 +762,12 @@ describe('端末内の DB の版（2.7・2.8）', () => {
   ]
   // 2.7 の形（v7）の表（persistence.ts で固定した一覧と同じ）
   const v7Tables = [...v6Tables, 'trashRequests']
+  // 2.8 の形（v8）の表（persistence.ts で固定した一覧と同じ）
+  const v8Tables = [...v7Tables, 'ideaAppends']
 
-  it('v7 の表に、2.8 のアイデアへの追記の依頼の表を足したものが今の表のすべて', () => {
-    expect(new Set([...v7Tables, 'ideaAppends'])).toEqual(new Set(TABLE_NAMES))
+  it('v8 の表に、2.9 のアイデアのフォルダの表を足したものが今の表のすべて', () => {
+    expect(new Set([...v8Tables, 'ideaFolders'])).toEqual(new Set(TABLE_NAMES))
+    expect(v8Tables).not.toContain('ideaFolders')
   })
 
   it('v6（2.6）の DB を今の版に上げても、中身と送信待ちが残り、ゴミ箱へ移す依頼の表ができる', async () => {
@@ -797,13 +812,14 @@ describe('端末内の DB の版（2.7・2.8）', () => {
     expect((await p.load()).trashRequests[req.id]).toEqual(req)
     const db = new Dexie(name)
     await db.open()
-    expect(db.verno).toBe(8)
+    expect(db.verno).toBe(9)
     expect(db.tables.map((t) => t.name)).toContain('trashRequests')
     expect(db.tables.map((t) => t.name)).toContain('ideaAppends')
+    expect(db.tables.map((t) => t.name)).toContain('ideaFolders')
     db.close()
   })
 
-  it('v7（2.7）の DB を v8 に上げても、中身と送信待ちが残り、アイデアへの追記の依頼の表ができる', async () => {
+  it('v7（2.7）の DB を今の版に上げても、中身と送信待ちが残り、アイデアへの追記の依頼の表ができる', async () => {
     const name = `persistence-upgrade-${++n}`
     // 2.7 の形（v7）をそのまま作る（ゴミ箱へ移す依頼も1件）
     const old = new Dexie(name)
@@ -865,8 +881,83 @@ describe('端末内の DB の版（2.7・2.8）', () => {
     expect((await p.load()).ideaAppends).toEqual({})
     const db = new Dexie(name)
     await db.open()
-    expect(db.verno).toBe(8)
+    expect(db.verno).toBe(9)
     expect(db.tables.map((t) => t.name)).toContain('ideaAppends')
+    expect(db.tables.map((t) => t.name)).toContain('ideaFolders')
+    db.close()
+  })
+
+  it('v8（2.8）の DB を v9 に上げても、中身と送信待ちが残り、アイデアのフォルダの表ができる', async () => {
+    const name = `persistence-upgrade-${++n}`
+    // 2.8 の形（v8）をそのまま作る（追記の依頼も1件、フォルダの項目を知らないアイデアも1件）
+    const old = new Dexie(name)
+    old.version(8).stores({ ...Object.fromEntries(v8Tables.map((t) => [t, 'id'])), _outbox: 'k', _meta: 'key' })
+    const { data, titleId } = sample()
+    const idea = {
+      id: 'idea-1',
+      titleId,
+      heading: '',
+      body: '雨の駅',
+      checked: false,
+      checkedAt: null,
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const append = {
+      id: 'cu-test',
+      ideaId: 'cy-idea',
+      text: '足す内容',
+      readMark: 'abcd1234',
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const tables = { ...data, ideas: { [idea.id]: idea }, ideaAppends: { [append.id]: append } } as unknown as Record<
+      string,
+      Record<string, AnyRecord>
+    >
+    for (const t of v8Tables) {
+      const rows = Object.values(tables[t])
+      if (rows.length) await old.table(t).bulkPut(rows)
+    }
+    await old.table('_meta').put({ key: 'uid', value: 'user-1' })
+    await old.table('_outbox').put({ k: `ideas/${idea.id}`, t: 'ideas', id: idea.id, base: null, at: 1 })
+    old.close()
+
+    const p = createPersistence(name)
+    const loaded = await p.load()
+    expect(loaded.ideas[idea.id]).toEqual(idea)
+    expect(loaded.ideaAppends[append.id]).toEqual(append)
+    expect(Object.keys(loaded.titles)).toEqual(Object.keys(data.titles))
+    expect(loaded.ideaFolders).toEqual({})
+    expect(await p.getMeta('uid')).toBe('user-1')
+    expect(await p.outboxCount()).toBe(1)
+    // 新しい表に書ける（クラウドから届いたフォルダを置き、削除の印も当てられる）
+    const folder = {
+      id: 'folder-1',
+      titleId,
+      parentId: null,
+      name: '場面の相談',
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    await p.applyRemote(
+      [{ table: 'ideaFolders', id: folder.id, record: folder as unknown as AnyRecord }],
+      hooks(() => loaded),
+    )
+    expect((await p.load()).ideaFolders[folder.id]).toEqual(folder)
+    await p.applyRemote(
+      [{ table: 'ideaFolders', id: folder.id, record: null }],
+      hooks(() => loaded),
+    )
+    expect((await p.load()).ideaFolders).toEqual({})
+    const db = new Dexie(name)
+    await db.open()
+    expect(db.verno).toBe(9)
+    expect(db.tables.map((t) => t.name)).toContain('ideaFolders')
     db.close()
   })
 })

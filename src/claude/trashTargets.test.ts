@@ -180,12 +180,12 @@ describe('修復とバックアップ', () => {
     expect(kept.fixes).toEqual([])
   })
 
-  it('バックアップに依頼は書き出さず、読み込まない（ゴミ箱の件の印は残る）。版は 4 のまま', () => {
+  it('バックアップに依頼は書き出さず、読み込まない（ゴミ箱の件の印は残る）。依頼の表では版を上げない（5 は 2.9 のフォルダの表）', () => {
     const s = shelf()
     const moved = transact(s.data, (tx) => trashBenchAnalysis(tx, s.data.benchAnalyses.a1, { by: 'claude' }))
     const data: AppData = { ...moved.data, trashRequests: { 'cz-a2': request('benchAnalyses', 'a2', s.workId) } }
     const file = toBackup(data)
-    expect(file.schemaVersion).toBe(4)
+    expect(file.schemaVersion).toBe(5)
     expect('trashRequests' in file.data).toBe(false)
     const back = parseBackup(JSON.stringify(file))
     expect(back.trashRequests).toEqual({})

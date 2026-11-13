@@ -431,17 +431,18 @@ describe('修復・バックアップ・同期の設定', () => {
     expect(repairData(d0).data).toBe(d0)
   })
 
-  it('バックアップ: 版 4 で相対比較の作品も戻る。版 3（2.5）・版 2（2.4 まで）・版 1 のバックアップも読める（無い表は空）', () => {
+  it('バックアップ: 版 5 で相対比較の作品も戻る。版 4（2.6〜2.8）・版 3（2.5）・版 2（2.4 まで）・版 1 のバックアップも読める（無い表は空）', () => {
     const { data: d0, ids, titleA } = shelf()
     let data = addBenchAnalysis(d0, ids[0], { viewpoint: '構成', body: '分析' }).data
     data = addTitleBenchWork(data, titleA, ids[0])
     const file = toBackup(data)
-    expect(file.schemaVersion).toBe(4)
+    expect(file.schemaVersion).toBe(5)
     const back = parseBackup(JSON.stringify(file))
     expect(back.benchWorks).toEqual(data.benchWorks)
     expect(back.benchAnalyses).toEqual(data.benchAnalyses)
     expect(back.titles[titleA].benchWorkIds).toEqual([ids[0]])
-    // 版 3（2.5）のバックアップの相対比較の作品も戻る
+    // 版 4（2.6〜2.8）・版 3（2.5）のバックアップの相対比較の作品も戻る
+    expect(parseBackup(JSON.stringify({ ...file, schemaVersion: 4 })).benchWorks).toEqual(data.benchWorks)
     expect(parseBackup(JSON.stringify({ ...file, schemaVersion: 3 })).benchWorks).toEqual(data.benchWorks)
     for (const v of [1, 2]) {
       const old = parseBackup(
@@ -450,7 +451,7 @@ describe('修復・バックアップ・同期の設定', () => {
       expect(old.benchWorks).toEqual({})
       expect(old.benchAnalyses).toEqual({})
     }
-    expect(() => parseBackup(JSON.stringify({ ...file, schemaVersion: 5 }))).toThrow()
+    expect(() => parseBackup(JSON.stringify({ ...file, schemaVersion: 6 }))).toThrow()
   })
 
   it('同期: メモ・分析の本文は長い文章（両方で変えればつなぐ）、比べる作品は並びとして合わせる', () => {

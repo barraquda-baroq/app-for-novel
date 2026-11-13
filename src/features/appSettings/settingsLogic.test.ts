@@ -76,6 +76,18 @@ describe('件数', () => {
     expect(counts.map((c) => c.table)).not.toContain('ideaAppends')
     expect(counts.find((c) => c.table === 'ideas')?.count).toBe(2)
   })
+  it('アイデアのフォルダ（2.9）は、1件以上ある時だけアイデアの後に件数を出す', () => {
+    expect(TABLE_LABELS.ideaFolders).toBe('アイデアのフォルダ')
+    const t = createTitle(emptyData(), '星の海')
+    const data = addIdea(t.data, t.result, '', '案').data
+    expect(dataCounts(data).map((c) => c.table)).not.toContain('ideaFolders')
+    data.ideaFolders = {
+      f1: { id: 'f1', titleId: t.result, parentId: null, name: '場面の相談', order: 0, createdAt: 1, updatedAt: 1 },
+    }
+    const tables = dataCounts(data).map((c) => c.table)
+    expect(tables.indexOf('ideaFolders')).toBe(tables.indexOf('ideas') + 1)
+    expect(countsSummary(dataCounts(data))).toContain('アイデア 1件、アイデアのフォルダ 1件、')
+  })
   it('相対比較の作品とその分析は、1件以上ある時だけ件数に出す', () => {
     const data = createTitle(emptyData(), '星の海').data
     expect(dataCounts(data).map((c) => c.table)).not.toContain('benchWorks')

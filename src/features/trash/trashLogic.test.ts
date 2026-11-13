@@ -3,7 +3,7 @@ import { createTitle } from '../../domain/entityOps'
 import { addEpisode, addSpecial, deletePiece } from '../../domain/storyOps'
 import { DAY_MS, listTrash } from '../../domain/trash'
 import { emptyData, type TrashEntry } from '../../domain/types'
-import { dayLabel, daysLeftLabel, restoredMessage, trashDays, trashKindLabel, trashPlace } from './trashLogic'
+import { dayLabel, daysLeftLabel, restoredMessage, trashDays, trashDetail, trashKindLabel, trashPlace } from './trashLogic'
 
 const at = (y: number, m: number, d: number, h = 12, min = 0) => new Date(y, m - 1, d, h, min).getTime()
 
@@ -72,6 +72,67 @@ describe('ゴミ箱の一覧の表記', () => {
     expect(trashPlace(entry({ kind: 'proofSuggestion', parentLabel: '第12話　題　第2幕' }))).toBe('作品A › 第12話　題　第2幕')
     expect(trashKindLabel({ kind: 'critiqueResult', recordIds: [], id: 'e' }, {})).toBe('批評の結果')
     expect(trashKindLabel({ kind: 'revisionIdea', recordIds: [], id: 'e' }, {})).toBe('改稿案')
+  })
+
+  it('2.9: アイデアとアイデアのフォルダは、仕切りに入っていたフォルダを続ける（ホームでもタイトルでも）', () => {
+    const home = { titleName: '', origin: { titleId: null, index: 0 } }
+    const title = { titleName: '星の庭', origin: { titleId: 't', index: 0 } }
+    // フォルダ（1段目）・2段目のフォルダ（親の名前）
+    expect(trashPlace(entry({ kind: 'ideaFolder', ...home }))).toBe('どのタイトルにも属さない')
+    expect(trashPlace(entry({ kind: 'ideaFolder', ...title }))).toBe('星の庭')
+    expect(trashPlace(entry({ kind: 'ideaFolder', ...home, parentLabel: '新作の相談' }))).toBe(
+      'どのタイトルにも属さない › 新作の相談',
+    )
+    expect(trashPlace(entry({ kind: 'ideaFolder', ...title, parentLabel: '場面の相談' }))).toBe('星の庭 › 場面の相談')
+    // フォルダの中のカード（親の表記はフォルダの場所）。ホームのカードも親の表記を出す
+    expect(trashPlace(entry({ kind: 'idea', ...home, parentLabel: '新作の相談 › 2026/11/12　港町' }))).toBe(
+      'どのタイトルにも属さない › 新作の相談 › 2026/11/12　港町',
+    )
+    expect(trashPlace(entry({ kind: 'idea', ...title, parentLabel: '場面の相談 › 雨の駅' }))).toBe('星の庭 › 場面の相談 › 雨の駅')
+    expect(trashPlace(entry({ kind: 'idea', ...title }))).toBe('星の庭')
+    expect(trashPlace(entry({ kind: 'idea', ...title, titleName: '' }))).toBe('無題のタイトル')
+    expect(trashKindLabel({ kind: 'ideaFolder', recordIds: [], id: 'e' }, {})).toBe('アイデアのフォルダ')
+  })
+
+  it('2.9: アイデアのフォルダの件の中身の数（削除したフォルダ自身は数えない。ほかの種類の件は空）', () => {
+    const rec = (id: string, table: 'ideaFolders' | 'ideas', entryId = 'e') => ({
+      id,
+      entryId,
+      table,
+      record: { id: `${id}-rec` } as never,
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    const records = {
+      r0: rec('r0', 'ideaFolders'),
+      r1: rec('r1', 'ideaFolders'),
+      r2: rec('r2', 'ideaFolders'),
+      c1: rec('c1', 'ideas'),
+      c2: rec('c2', 'ideas'),
+      c3: rec('c3', 'ideas'),
+      other: rec('other', 'ideas', 'x'),
+    }
+    expect(trashDetail({ kind: 'ideaFolder', id: 'e', recordIds: ['r0', 'r1', 'r2', 'c1', 'c2', 'c3', 'other'] }, records)).toBe(
+      'フォルダ2つ・カード3件',
+    )
+    expect(trashDetail({ kind: 'ideaFolder', id: 'e', recordIds: ['r0', 'c1'] }, records)).toBe('カード1件')
+    expect(trashDetail({ kind: 'ideaFolder', id: 'e', recordIds: ['r0', 'r1'] }, records)).toBe('フォルダ1つ')
+    expect(trashDetail({ kind: 'ideaFolder', id: 'e', recordIds: ['r0'] }, records)).toBe('')
+    expect(trashDetail({ kind: 'ideaFolder', id: 'e', recordIds: ['r0', 'missing'] }, records)).toBe('')
+    expect(trashDetail({ kind: 'idea', id: 'e', recordIds: ['c1'] }, records)).toBe('')
+    const now = at(2026, 11, 13, 12)
+    const days = trashDays(
+      [
+        entry({ id: 'e', kind: 'ideaFolder', recordIds: ['r0', 'r1', 'c1'], deletedAt: now - 1 }),
+        entry({ id: 'm', deletedAt: now - 2 }),
+      ],
+      records,
+      now,
+    )
+    expect(days[0].rows.map((r) => [r.id, r.detail])).toEqual([
+      ['e', 'フォルダ1つ・カード1件'],
+      ['m', ''],
+    ])
   })
 
   it('残り日数と、戻した後のお知らせ', () => {

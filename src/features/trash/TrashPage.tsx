@@ -175,6 +175,11 @@ function TrashRowView({
             {row.place}
           </p>
         ) : null}
+        {row.detail ? (
+          <p className="trash-row-detail" data-testid="trash-detail">
+            {row.detail}
+          </p>
+        ) : null}
         <p className="trash-row-meta">
           <time
             dateTime={Number.isFinite(at) ? new Date(at).toISOString() : undefined}

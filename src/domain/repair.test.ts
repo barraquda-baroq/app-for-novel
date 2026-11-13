@@ -4,7 +4,7 @@ import { repairData } from './repair'
 import { CONTENT_TABLES, isContentTable } from './trash'
 import { addChapter, addEpisode, setChaptersEnabled } from './storyOps'
 import { flatten } from './structure'
-import { emptyData, type AppData, type Submission } from './types'
+import { emptyData, type AppData, type IdeaFolder, type Submission } from './types'
 
 function sample() {
   const t = createTitle(emptyData(), '作品')
@@ -345,5 +345,163 @@ describe('2.8: アイデアへの追記の依頼と、Claude が作ったアイ�
     const moved = repairData(orphan)
     expect(moved.data.ideas[good.id]).toEqual({ ...claudeIdea(null), order: 0 })
     expect(moved.fixes).toEqual(['タイトルのないアイデアを「どのタイトルにも属さない」へ移しました'])
+  })
+})
+
+describe('2.9: アイデアのフォルダ', () => {
+  const folder = (id: string, titleId: string | null, parentId: string | null, over: Record<string, unknown> = {}) =>
+    ({
+      id,
+      titleId,
+      parentId,
+      name: id,
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      ...over,
+    }) as unknown as IdeaFolder
+  const card = (id: string, titleId: string | null, over: Record<string, unknown> = {}) =>
+    ({
+      id,
+      titleId,
+      heading: '',
+      body: id,
+      checked: false,
+      checkedAt: null,
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      ...over,
+    }) as unknown as AppData['ideas'][string]
+
+  it('正しいフォルダとカードの入っているフォルダは直したことにせず、同じデータのまま（Claude のフォルダの項目も残す）', () => {
+    const { data, titleId } = sample()
+    const top = folder('A', titleId, null)
+    const sub = folder('cf-b', titleId, 'A', { source: 'claude', v: 1, model: 'claude-test' })
+    const input: AppData = {
+      ...data,
+      ideaFolders: { A: top, 'cf-b': sub },
+      ideas: { x: card('x', titleId, { folderId: 'cf-b' }), y: card('y', null) },
+    }
+    const r = repairData(input)
+    expect(r.fixes).toEqual([])
+    expect(r.data).toBe(input)
+  })
+
+  it('フォルダの項目を補う（名前は文字列・並びは数・時刻は範囲の中・親が無い・文字列でなければ null。空の名前は残す）', () => {
+    const { data, titleId } = sample()
+    const input = {
+      ...data,
+      ideaFolders: {
+        a: folder('a', titleId, null, { name: 3, order: 'x', createdAt: 1e16, updatedAt: -1 }),
+        b: { id: 'b', titleId, name: '', order: 1, createdAt: 1, updatedAt: 1 },
+        c: folder('c', titleId, null, { parentId: 7 }),
+        bad: null,
+      },
+    } as unknown as AppData
+    const r = repairData(input)
+    expect(r.data.ideaFolders.a).toEqual({ ...folder('a', titleId, null), name: '', order: 0, createdAt: 0, updatedAt: 0 })
+    expect(r.data.ideaFolders.b).toEqual({ id: 'b', titleId, parentId: null, name: '', order: 1, createdAt: 1, updatedAt: 1 })
+    expect(r.data.ideaFolders.c.parentId).toBeNull()
+    expect(r.data.ideaFolders.bad).toBeUndefined()
+    expect(r.fixes.filter((f) => f === 'アイデアのフォルダの項目を補いました')).toHaveLength(3)
+    // もう一度通しても何も直さない
+    const again = repairData(r.data)
+    expect(again.fixes).toEqual([])
+    expect(again.data).toBe(r.data)
+  })
+
+  it('タイトルの無いフォルダは「どのタイトルにも属さない」へ。1段目はホームの1段目の後ろに、もとの順で。中のつながりはそのまま', () => {
+    const { data } = sample()
+    const input: AppData = {
+      ...data,
+      ideaFolders: {
+        h1: folder('h1', null, null, { order: 4 }),
+        h2: folder('h2', null, 'h1', { order: 9 }),
+        o2: folder('o2', 'gone', null, { order: 3 }),
+        o1: folder('o1', 'gone', null, { order: 1 }),
+        osub: folder('osub', 'gone', 'o1', { order: 5 }),
+      },
+      ideas: {
+        x: card('x', 'gone', { folderId: 'osub', order: 2 }),
+      },
+    }
+    const r = repairData(input)
+    const f = r.data.ideaFolders
+    expect(Object.values(f).every((x) => x.titleId === null)).toBe(true)
+    // ホームの1段目（h1: 4）の後ろに、もとの順（o1 → o2）
+    expect(f.o1.order).toBe(5)
+    expect(f.o2.order).toBe(6)
+    // 2段目は並びもそのまま。ホームの2段目（h2）は1段目の数に入れない
+    expect(f.osub).toEqual({ ...folder('osub', null, 'o1', { order: 5 }) })
+    expect(f.h1).toBe(input.ideaFolders.h1)
+    // カードもホームへ移り、入っているフォルダは残る
+    expect(r.data.ideas.x.titleId).toBeNull()
+    expect(r.data.ideas.x.folderId).toBe('osub')
+    expect(r.fixes.filter((m) => m === 'タイトルのないフォルダを「どのタイトルにも属さない」へ移しました')).toHaveLength(3)
+    expect(repairData(r.data).fixes).toEqual([])
+  })
+
+  it('カードの入っているフォルダ: 文字列でない値（null など）だけ項目ごと除く。無いフォルダ・別の仕切りのフォルダを指す文字列は消さない。項目は足さない', () => {
+    const { data, titleId } = sample()
+    const input = {
+      ...data,
+      ideaFolders: { A: folder('A', titleId, null) },
+      ideas: {
+        n: card('n', titleId, { folderId: null }),
+        num: card('num', titleId, { folderId: 3 }),
+        dangling: card('dangling', titleId, { folderId: 'missing' }),
+        other: card('other', null, { folderId: 'A' }),
+        none: card('none', titleId),
+      },
+    } as unknown as AppData
+    const r = repairData(input)
+    expect('folderId' in r.data.ideas.n).toBe(false)
+    expect('folderId' in r.data.ideas.num).toBe(false)
+    expect(r.data.ideas.dangling).toBe(input.ideas.dangling)
+    expect(r.data.ideas.other).toBe(input.ideas.other)
+    expect(r.data.ideas.none).toBe(input.ideas.none)
+    expect('folderId' in r.data.ideas.none).toBe(false)
+    expect(r.fixes).toEqual(['アイデアのフォルダの参照を直しました', 'アイデアのフォルダの参照を直しました'])
+    expect(repairData(r.data).fixes).toEqual([])
+  })
+
+  it('フォルダの表が無い古いデータ（2.8 まで）は空の表にする。フォルダのゴミ箱の件と中身は残す', () => {
+    const { data, titleId } = sample()
+    const { ideaFolders: _drop, ...old } = data
+    void _drop
+    const entry = {
+      id: 'e1',
+      kind: 'ideaFolder',
+      label: '場面の相談',
+      titleName: '作品',
+      origin: { titleId, index: 0, prevId: null },
+      recordIds: ['r1', 'r2'],
+      reason: 'deleted',
+      deletedAt: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const r1 = { id: 'r1', entryId: 'e1', table: 'ideaFolders', record: folder('A', titleId, null), createdAt: 1, updatedAt: 1 }
+    const r2 = {
+      id: 'r2',
+      entryId: 'e1',
+      table: 'ideas',
+      record: card('x', titleId, { folderId: 'A' }),
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const input = {
+      ...old,
+      trashEntries: { e1: entry },
+      trashRecords: { r1, r2 },
+      memos: { ...old.memos, bad: null },
+    } as unknown as AppData
+    const r = repairData(input)
+    expect(r.data.ideaFolders).toEqual({})
+    expect(r.data.trashEntries.e1).toEqual(entry)
+    expect(Object.keys(r.data.trashRecords).sort()).toEqual(['r1', 'r2'])
+    expect(r.fixes).toEqual(['形式の壊れたレコードを取り除きました'])
+    expect(isContentTable('ideaFolders')).toBe(true)
   })
 })

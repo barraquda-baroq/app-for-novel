@@ -37,10 +37,16 @@ export function trashKindLabel(entry: Pick<TrashEntry, 'kind' | 'recordIds' | 'i
   return TRASH_KIND_LABELS[entry.kind] ?? 'その他'
 }
 
-/** どこにあったか（「作品A › 第2章」など）。タイトル自体は空文字 */
+/**
+ * どこにあったか（「作品A › 第2章」など）。タイトル自体は空文字。アイデアとアイデアのフォルダ（2.9）は、仕切り（タイトル名か
+ * 「どのタイトルにも属さない」）に、入っていたフォルダ（親の表記）を続ける（「どのタイトルにも属さない › 新作の相談」）
+ */
 export function trashPlace(entry: Pick<TrashEntry, 'kind' | 'titleName' | 'parentLabel' | 'origin'>): string {
   if (entry.kind === 'title') return ''
-  if (entry.kind === 'idea' && !entry.origin?.titleId) return 'どのタイトルにも属さない'
+  if (entry.kind === 'idea' || entry.kind === 'ideaFolder') {
+    const base = entry.origin?.titleId ? entry.titleName.trim() || '無題のタイトル' : 'どのタイトルにも属さない'
+    return entry.parentLabel ? `${base} › ${entry.parentLabel}` : base
+  }
   // 共通の批評プロンプト（どのタイトルでも使う）はタイトルに属さない
   if (entry.kind === 'critiquePrompt' && !entry.origin?.titleId) return '共通の批評プロンプト'
   // 相対比較の作品（ホームの棚）はタイトルに属さない。分析は「相対比較 › 作品名」
@@ -51,6 +57,23 @@ export function trashPlace(entry: Pick<TrashEntry, 'kind' | 'titleName' | 'paren
   if (entry.kind === 'materialNote') return entry.parentLabel ? `資料 › ${entry.parentLabel}` : '資料'
   const title = entry.titleName.trim() || '無題のタイトル'
   return entry.parentLabel ? `${title} › ${entry.parentLabel}` : title
+}
+
+/**
+ * 中身の数（2.9: アイデアのフォルダの件だけ。「フォルダ2つ・カード12件」。中のフォルダ・カードが無ければ空）。
+ * 削除したフォルダ自身（中身の先頭）は数えない
+ */
+export function trashDetail(entry: Pick<TrashEntry, 'kind' | 'recordIds' | 'id'>, records: AppData['trashRecords']): string {
+  if (entry.kind !== 'ideaFolder') return ''
+  let folders = 0
+  let cards = 0
+  entry.recordIds.forEach((rid, i) => {
+    const r = records[rid]
+    if (!r || r.entryId !== entry.id) return
+    if (r.table === 'ideaFolders' && i > 0) folders += 1
+    else if (r.table === 'ideas') cards += 1
+  })
+  return [folders ? `フォルダ${folders}つ` : '', cards ? `カード${cards}件` : ''].filter(Boolean).join('・')
 }
 
 /** 「あと30日で完全に削除」 */
@@ -64,6 +87,8 @@ export interface TrashRow {
   kind: string
   label: string
   place: string
+  /** 中身の数（アイデアのフォルダの件だけ。trashDetail） */
+  detail: string
   time: string
   daysLeft: number
   conflict: boolean
@@ -93,6 +118,7 @@ export function trashDays(entries: TrashEntry[], records: AppData['trashRecords'
       kind: trashKindLabel(entry, records),
       label: entry.label.trim() || '（名前なし）',
       place: trashPlace(entry),
+      detail: trashDetail(entry, records),
       time: timeLabel(entry.deletedAt),
       daysLeft: trashDaysLeft(entry, nowTs),
       conflict: entry.reason === 'conflict',

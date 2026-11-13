@@ -188,6 +188,9 @@ const SEND_ORDER: TableName[] = [
   'settingEntries',
   'memos',
   'ideas',
+  // 2.9: アイデアのフォルダは、中のカードの後に送る（カードの削除がフォルダの削除より先に届くように。同期では連鎖させない）。
+  // 追記の依頼・ゴミ箱へ移す依頼より前
+  'ideaFolders',
   'submissions',
   // 2.3: タイトルの子（タイトルより先に送る）
   'proofSuggestions',
@@ -339,8 +342,16 @@ class NovelDB extends Dexie {
       _outbox: 'k',
       _meta: 'key',
     })
-    // v8（2.8）: アイデアへの追記の依頼の表を追加
+    // v8（2.8）: アイデアへの追記の依頼の表を追加（v6 と同じく、表の一覧は固定する。TABLE_NAMES のままだと、v8 の形に
+    // 新しい表が入ってしまい、v8 から上げる時にその表が作られない）
+    const v8Tables = [...v7Tables, 'ideaAppends']
     this.version(8).stores({
+      ...Object.fromEntries(v8Tables.map((t) => [t, 'id'])),
+      _outbox: 'k',
+      _meta: 'key',
+    })
+    // v9（2.9）: アイデアのフォルダの表を追加
+    this.version(9).stores({
       ...Object.fromEntries(TABLE_NAMES.map((t) => [t, 'id'])),
       _outbox: 'k',
       _meta: 'key',

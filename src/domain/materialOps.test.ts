@@ -458,14 +458,15 @@ describe('修復・バックアップ・同期の設定', () => {
     expect(repairData(d0).data).toBe(d0)
   })
 
-  it('バックアップ: 版 4 で資料も戻る。版 3（2.5）・版 2・版 1 のバックアップも読める（無い表は空）', () => {
+  it('バックアップ: 版 5 で資料も戻る。版 4（2.6〜2.8）の資料も戻り、版 3（2.5）・版 2・版 1 のバックアップも読める（無い表は空）', () => {
     const { data: d0, ids } = shelf()
     const data = addMaterialNote(d0, ids[0], { section: '要約', body: '要約' }).data
     const file = toBackup(data)
-    expect(file.schemaVersion).toBe(4)
+    expect(file.schemaVersion).toBe(5)
     const back = parseBackup(JSON.stringify(file))
     expect(back.materials).toEqual(data.materials)
     expect(back.materialNotes).toEqual(data.materialNotes)
+    expect(parseBackup(JSON.stringify({ ...file, schemaVersion: 4 })).materialNotes).toEqual(data.materialNotes)
     for (const v of [1, 2, 3]) {
       const old = parseBackup(
         JSON.stringify({ app: 'novel-studio', schemaVersion: v, exportedAt: '', data: { titles: d0.titles } }),
@@ -474,7 +475,7 @@ describe('修復・バックアップ・同期の設定', () => {
       expect(old.materialNotes).toEqual({})
       expect(Object.keys(old.titles)).toHaveLength(1)
     }
-    expect(() => parseBackup(JSON.stringify({ ...file, schemaVersion: 5 }))).toThrow()
+    expect(() => parseBackup(JSON.stringify({ ...file, schemaVersion: 6 }))).toThrow()
     expect(() =>
       parseBackup(JSON.stringify({ ...file, data: { ...file.data, materials: [] as unknown as AppData['materials'] } })),
     ).toThrow('バックアップの materials が壊れています')

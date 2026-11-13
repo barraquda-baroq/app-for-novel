@@ -650,6 +650,7 @@ export type TrashKind =
   | 'version'
   | 'memo'
   | 'idea'
+  | 'ideaFolder'
   | 'settingCategory'
   | 'settingEntry'
   | 'submission'
@@ -665,7 +666,7 @@ export type TrashKind =
 
 /** 削除した時点の場所。戻す時はここへ戻す（無くなっていれば近い所へ） */
 export interface TrashOrigin {
-  /** 属していたタイトル（タイトル自体と、どのタイトルにも属さないアイデアは null） */
+  /** 属していたタイトル（タイトル自体と、どのタイトルにも属さないアイデア・アイデアのフォルダは null） */
   titleId: ID | null
   /** 章・話: 入っていた章（タイトル直下なら null） */
   chapterId?: ID | null
@@ -804,6 +805,8 @@ export interface AppData {
   versions: Record<ID, Version>
   memos: Record<ID, Memo>
   ideas: Record<ID, Idea>
+  // アイデアのフォルダ（2.9。仕切りの中に2段まで。作者が作り、Claude はカードと一緒にだけ作る）
+  ideaFolders: Record<ID, IdeaFolder>
   settingCategories: Record<ID, SettingCategory>
   settingEntries: Record<ID, SettingEntry>
   submissions: Record<ID, Submission>
@@ -841,6 +844,7 @@ export const TABLE_NAMES: TableName[] = [
   'versions',
   'memos',
   'ideas',
+  'ideaFolders',
   'settingCategories',
   'settingEntries',
   'submissions',
@@ -893,6 +897,7 @@ export function emptyData(): AppData {
     versions: {},
     memos: {},
     ideas: {},
+    ideaFolders: {},
     settingCategories: {},
     settingEntries: {},
     submissions: {},

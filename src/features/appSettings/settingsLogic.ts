@@ -18,6 +18,7 @@ export const TABLE_LABELS: Record<TableName, string> = {
   versions: '推敲バージョン',
   memos: 'メモ',
   ideas: 'アイデア',
+  ideaFolders: 'アイデアのフォルダ',
   settingCategories: '設定項目',
   settingEntries: '設定のエントリ',
   submissions: '応募計画',
@@ -51,6 +52,7 @@ const DISPLAY_ORDER: TableName[] = [
   'versions',
   'chapters',
   'ideas',
+  'ideaFolders',
   'memos',
   'settingCategories',
   'settingEntries',
@@ -66,8 +68,12 @@ const DISPLAY_ORDER: TableName[] = [
   'materialNotes',
 ]
 
-/** 2.3（Claude 連携）と 2.5（相対比較）・2.6（資料）の表は、1件以上ある時だけ出す（使っていない人の一覧・確認文を長くしない） */
+/**
+ * 2.3（Claude 連携）と 2.5（相対比較）・2.6（資料）・2.9（アイデアのフォルダ）の表は、1件以上ある時だけ出す
+ * （使っていない人の一覧・確認文を長くしない）
+ */
 const SHOWN_IF_ANY = new Set<TableName>([
+  'ideaFolders',
   'revisionIdeas',
   'proofSuggestions',
   'strategyNotes',
