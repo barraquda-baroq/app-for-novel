@@ -5,8 +5,9 @@ import { describe, expect, it } from 'vitest'
 import { applyClaudeRequests } from '../../../src/domain/claudeRequests'
 import { createTitle, sortIdeas } from '../../../src/domain/entityOps'
 import { hashJson } from '../../../src/domain/hash'
+import { buildIdeaTree } from '../../../src/domain/ideaFolders'
 import type { AppData, Idea, IdeaFolder } from '../../../src/domain/types'
-import { claudeIdeaId, ideaAppendId } from '../../../src/claude/derivedId'
+import { claudeFolderId, claudeIdeaId, ideaAppendId } from '../../../src/claude/derivedId'
 import { appendedBody, ideaReadMark, isClaudeIdea } from '../../../src/claude/ideaAppend'
 import { shortId } from '../../../src/claude/refs'
 import { novel } from '../../../src/test/claudeFixture'
@@ -15,7 +16,7 @@ import { ideaAddResult } from '../../src/vault/tools/ideas'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { cloudData, connectorDocs, pushChanges } from '../support/cloud'
 import { FakeFirebase } from '../support/fakeFirebase'
-import { call, pairedCore } from '../support/harness'
+import { call, OWNER, pairedCore } from '../support/harness'
 
 /** 作者が書いたアイデア */
 function authorIdea(id: string, titleId: string | null, body: string, order: number): Idea {
@@ -59,6 +60,7 @@ describe('novel_add_ideas', () => {
     const s = setup()
     const { core } = await pairedCore(fake, s.data)
     const r = await core.callTool('novel_add_ideas', {
+      placement: 'outside',
       items: [{ name: '第3章の動機', content: '【動機】\n・兄を探す' }, { content: '新作の案\n・港町' }],
       model: 'claude-x',
     })
@@ -105,7 +107,7 @@ describe('novel_add_ideas', () => {
     const fake = new FakeFirebase()
     const s = setup()
     const { core } = await pairedCore(fake, s.data)
-    const input = { title_id: shortId('title', s.titleId), items: [{ name: '終盤', content: '・灯台で再会する' }] }
+    const input = { title_id: shortId('title', s.titleId), placement: 'outside', items: [{ name: '終盤', content: '・灯台で再会する' }] }
     const r = await core.callTool('novel_add_ideas', input)
     const id = claudeIdeaId(s.titleId, DAY, '終盤', '・灯台で再会する')
     expect(r.text).toBe(
@@ -129,14 +131,14 @@ describe('novel_add_ideas', () => {
       skipped: [{ index: 0, reason: 'duplicate', id: shortId('idea', id), hint: '同じ内容のアイデアがもうあります（追加しません）' }],
     })
     expect(commits(fake)).toBe(before)
-    const ro = await core.callTool('novel_add_ideas', { title_id: '読む庭', items: [{ content: '案' }] })
+    const ro = await core.callTool('novel_add_ideas', { placement: 'outside', title_id: '読む庭', items: [{ content: '案' }] })
     expect(ro.isError).toBe(true)
     expect(ro.text).toContain('タイトル『読む庭』は「Claude に見せる」が「読むだけ」なので書き込めません')
-    const hidden = await core.callTool('novel_add_ideas', { title_id: '隠す庭', items: [{ content: '案' }] })
+    const hidden = await core.callTool('novel_add_ideas', { placement: 'outside', title_id: '隠す庭', items: [{ content: '案' }] })
     expect(hidden.isError).toBe(true)
     expect(hidden.text).toContain("タイトル '隠す庭' が見つかりません")
     // Markdown の記号だけのアイデアは足さずに、その行を返す（失敗として）
-    const md = await core.callTool('novel_add_ideas', { items: [{ content: '## 動機\n- 兄' }] })
+    const md = await core.callTool('novel_add_ideas', { placement: 'outside', items: [{ content: '## 動機\n- 兄' }] })
     expect(md.isError).toBe(true)
     expect(md.text).toContain('アイデアを足す: 形が違う 1件\n- 形が違う アイデア（1件目）: Markdown の記号があります（2行目「## 動機」・3行目「- 兄」）')
     expect(commits(fake)).toBe(before)
@@ -145,7 +147,7 @@ describe('novel_add_ideas', () => {
   it('1回の呼び出しに同じアイデアが2件あれば「追加 1件・重複 1件」（カードは1枚。重複の行にもその i:…）', async () => {
     const fake = new FakeFirebase()
     const { core } = await pairedCore(fake, setup().data)
-    const r = await core.callTool('novel_add_ideas', { items: [{ content: '同じ案' }, { content: '同じ案' }] })
+    const r = await core.callTool('novel_add_ideas', { placement: 'outside', items: [{ content: '同じ案' }, { content: '同じ案' }] })
     const id = claudeIdeaId(null, DAY, '', '同じ案')
     expect(r.isError).toBeUndefined()
     expect(r.text.split('\n').slice(0, 3)).toEqual([
@@ -171,6 +173,9 @@ describe('novel_add_ideas', () => {
         place: 'ホームのアイデア',
         titleName: '',
         records: [],
+        folders: [],
+        folderPath: '',
+        notes: [],
         items: [
           { index: 0, status: 'duplicate', id, label, hint, existing: true },
           { index: 1, status: 'duplicate', id, label, hint, existing: true },
@@ -189,10 +194,10 @@ describe('novel_add_ideas', () => {
   it('数分後に同じ内容を送り直すと「重複」。もうあるカードの1行目（作った時刻）と i:… を出す', async () => {
     const fake = new FakeFirebase()
     const { core, clock } = await pairedCore(fake, setup().data)
-    await call(core, 'novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', items: [{ name: '動機', content: '案' }] })
     const id = claudeIdeaId(null, DAY, '動機', '案')
     clock.now += 3 * 60_000
-    const again = await core.callTool('novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    const again = await core.callTool('novel_add_ideas', { placement: 'outside', items: [{ name: '動機', content: '案' }] })
     expect(again.isError).toBeUndefined()
     expect(again.text).toBe(
       `アイデアを足す: 重複 1件\n- 重複 ${shortId('idea', id)} 「2026/10/29 12:00　動機」: 同じ内容のアイデアがもうあります（追加しません）`,
@@ -207,9 +212,10 @@ describe('novel_add_ideas', () => {
   it('名前の無いアイデアは、答えの表記に中身の最初の行を付けて見分ける（もうある重複1件と新しい2件）', async () => {
     const fake = new FakeFirebase()
     const { core, clock } = await pairedCore(fake, setup().data)
-    await call(core, 'novel_add_ideas', { items: [{ content: '港町の案\n・灯台' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', items: [{ content: '港町の案\n・灯台' }] })
     clock.now += 60_000
     const r = await core.callTool('novel_add_ideas', {
+      placement: 'outside',
       items: [{ content: '港町の案\n・灯台' }, { content: '山の町の案\n・峠' }, { content: '【動機】\n・兄を探す' }],
     })
     const port = claudeIdeaId(null, DAY, '', '港町の案\n・灯台')
@@ -235,7 +241,7 @@ describe('novel_add_ideas', () => {
     const off = new FakeFirebase()
     const a = await pairedCore(off, setup().data, { writes: false })
     for (const [tool, args] of [
-      ['novel_add_ideas', { items: [{ content: '案' }] }],
+      ['novel_add_ideas', { placement: 'outside', items: [{ content: '案' }] }],
       ['novel_append_to_idea', { idea_id: 'i:12345678', read_mark: 'x', content: '案' }],
     ] as const) {
       const r = await a.core.callTool(tool, args)
@@ -243,7 +249,7 @@ describe('novel_add_ideas', () => {
     }
     const old = new FakeFirebase()
     const b = await pairedCore(old, setup().data, { model: CONNECTOR_MODEL - 1 })
-    const r = await b.core.callTool('novel_add_ideas', { items: [{ content: '案' }] })
+    const r = await b.core.callTool('novel_add_ideas', { placement: 'outside', items: [{ content: '案' }] })
     expect([r.isError, r.text]).toEqual([true, modelMismatchMessage(CONNECTOR_MODEL - 1, CONNECTOR_MODEL)])
     expect(connectorDocs(off, 'ideas')).toHaveLength(0)
     expect(connectorDocs(old, 'ideas')).toHaveLength(0)
@@ -255,7 +261,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     const fake = new FakeFirebase()
     const s = setup()
     const { core, clock } = await pairedCore(fake, s.data)
-    await call(core, 'novel_add_ideas', { items: [{ name: '第3章の動機', content: '【動機】\n・兄を探す' }, { content: '港町の案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', items: [{ name: '第3章の動機', content: '【動機】\n・兄を探す' }, { content: '港町の案' }] })
     const id = claudeIdeaId(null, DAY, '第3章の動機', '【動機】\n・兄を探す')
     const other = claudeIdeaId(null, DAY, '', '港町の案')
     const ref = shortId('idea', id)
@@ -354,7 +360,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     const fake = new FakeFirebase()
     const s = setup()
     const { core } = await pairedCore(fake, s.data)
-    await call(core, 'novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', items: [{ name: '動機', content: '案' }] })
     const id = claudeIdeaId(null, DAY, '動機', '案')
     const ref = shortId('idea', id)
     const mark = ideaReadMark('2026/10/29 12:00　動機\n案')
@@ -396,7 +402,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     const fake = new FakeFirebase()
     const s = setup()
     const { core, clock } = await pairedCore(fake, s.data)
-    await call(core, 'novel_add_ideas', { title_id: s.titleId, items: [{ content: '星の案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', title_id: s.titleId, items: [{ content: '星の案' }] })
     const id = claudeIdeaId(s.titleId, DAY, '', '星の案')
     const mark = ideaReadMark(cloudData(fake).ideas[id].body)
     const input = { idea_id: shortId('idea', id), read_mark: mark, content: '追記' }
@@ -420,8 +426,8 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     const fake = new FakeFirebase()
     const s = setup()
     const { core } = await pairedCore(fake, s.data)
-    await call(core, 'novel_add_ideas', { items: [{ content: 'ホームの案' }] })
-    await call(core, 'novel_add_ideas', { title_id: s.titleId, items: [{ content: '星の案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', items: [{ content: 'ホームの案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', title_id: s.titleId, items: [{ content: '星の案' }] })
     const home = shortId('idea', claudeIdeaId(null, DAY, '', 'ホームの案'))
     const inTitle = shortId('idea', claudeIdeaId(s.titleId, DAY, '', '星の案'))
     const authored = await core.callTool('novel_append_to_idea', { idea_id: shortId('idea', s.authorTitle.id), read_mark: 'x', content: '追記' })
@@ -479,7 +485,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     const fake = new FakeFirebase()
     const s = setup()
     const { core, clock } = await pairedCore(fake, s.data)
-    await call(core, 'novel_add_ideas', { title_id: s.titleId, items: [{ content: '星の案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', title_id: s.titleId, items: [{ content: '星の案' }] })
     const id = claudeIdeaId(s.titleId, DAY, '', '星の案')
     // 作者がタイトルを「読むだけ」にした
     const before = cloudData(fake)
@@ -498,7 +504,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     const fake = new FakeFirebase()
     const s = setup()
     const { core, clock } = await pairedCore(fake, s.data)
-    await call(core, 'novel_add_ideas', { items: [{ name: '動機', content: '案' }] })
+    await call(core, 'novel_add_ideas', { placement: 'outside', items: [{ name: '動機', content: '案' }] })
     const id = claudeIdeaId(null, DAY, '動機', '案')
     const ref = shortId('idea', id)
     await call(core, 'novel_append_to_idea', { idea_id: ref, read_mark: ideaReadMark('2026/10/29 12:00　動機\n案'), content: '変更' })
@@ -685,5 +691,214 @@ describe('アイデアのフォルダを読む（2.9）', () => {
     expect(r.text.split('\n')[1]).toBe(
       `- 追記 ${shortId('idea', C_IN)} 「2026/10/29 12:00　港町の主人公」（ホームのアイデア＞新作の相談＞2026/10/29　港町）`,
     )
+  })
+})
+
+describe('novel_add_ideas: フォルダ（2.9）', () => {
+  const DATED = '2026/10/29　港町'
+  const writesToday = async (core: Awaited<ReturnType<typeof pairedCore>>['core']) =>
+    Number(/・書き込み (\d+) \//.exec(await call(core, 'novel_status'))![1])
+
+  it('フォルダを言わない呼び出しは、何も書かずに「どのフォルダに入れますか」と候補を返す', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    const before = commits(fake)
+    const r = await core.callTool('novel_add_ideas', { items: [{ content: '案' }] })
+    expect(r.isError).toBe(true)
+    expect(r.text).toBe(
+      [
+        'フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（ホームのアイデアのフォルダは下のとおり）。作者がフォルダを言えば folder に（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。',
+        '候補:',
+        '- （ホームのアイデアにはまだフォルダがありません。作者が名前を言えば、その名前で作ります）',
+      ].join('\n'),
+    )
+    expect(commits(fake)).toBe(before)
+    expect(connectorDocs(fake, 'ideas')).toHaveLength(0)
+  })
+
+  it('folder だけ: 1段目と2段目「日付　theme」を作り、カードと1回で書く（書き込みの数にフォルダも入る）。続けて f:… で足す', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    const writes = await writesToday(core)
+    const before = commits(fake)
+    const r = await core.callTool('novel_add_ideas', {
+      folder: '新作の相談',
+      theme: '港町',
+      items: [{ name: '港町の主人公', content: '・灯台守の娘' }, { content: '・港の市場' }],
+      model: 'claude-x',
+    })
+    const top = claudeFolderId(null, null, '新作の相談')
+    const sub = claudeFolderId(null, top, DATED)
+    const a = claudeIdeaId(null, DAY, '港町の主人公', '・灯台守の娘')
+    const b = claudeIdeaId(null, DAY, '', '・港の市場')
+    const closing = `アプリのホームのアイデア欄の「どのタイトルにも属さない」のフォルダ「新作の相談」＞「${DATED}」に、各端末が同期すると出ます。同じ相談で続けて足す時は folder に ${shortId('ideaFolder', sub)} を渡してください。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。`
+    const placeLine = `入れた場所: ホームのアイデア＞新作の相談＞${DATED}（そのフォルダの済みでないアイデアの先頭。カードと、Claude が作ったフォルダに「Claude が作成」の印が付きます）`
+    expect(r.isError).toBeUndefined()
+    expect(r.text).toBe(
+      [
+        'アイデアを足す: 追加 2件',
+        `- 追加 ${shortId('idea', a)} 「2026/10/29 12:00　港町の主人公」`,
+        `- 追加 ${shortId('idea', b)} 「2026/10/29 12:00　・港の市場」`,
+        `フォルダ: 新作の相談 [${shortId('ideaFolder', top)}]（新しく作成）＞${DATED} [${shortId('ideaFolder', sub)}]（新しく作成）`,
+        placeLine,
+        closing,
+      ].join('\n'),
+    )
+    expect(r.structured).toEqual({
+      created: [
+        { id: shortId('idea', a), label: `「2026/10/29 12:00　港町の主人公」（ホームのアイデア＞新作の相談＞${DATED}）` },
+        { id: shortId('idea', b), label: `「2026/10/29 12:00　・港の市場」（ホームのアイデア＞新作の相談＞${DATED}）` },
+      ],
+      skipped: [],
+    })
+    // フォルダ2つとカード2枚を1回の書き込みで（フォルダが先）。書き込みの数は4
+    expect(commits(fake) - before).toBe(1)
+    expect(await writesToday(core)).toBe(writes + 4)
+    const cloud = cloudData(fake)
+    expect(cloud.ideaFolders[top]).toEqual({
+      id: top,
+      titleId: null,
+      parentId: null,
+      name: '新作の相談',
+      order: 0,
+      source: 'claude',
+      v: 1,
+      model: 'claude-x',
+      createdAt: Date.UTC(2026, 9, 29, 3, 0, 0),
+      updatedAt: Date.UTC(2026, 9, 29, 3, 0, 0),
+    })
+    expect(cloud.ideaFolders[sub]).toMatchObject({ parentId: top, name: DATED, order: 0, source: 'claude' })
+    expect([cloud.ideas[a].folderId, cloud.ideas[a].order, cloud.ideas[b].folderId, cloud.ideas[b].order]).toEqual([sub, -2, sub, -1])
+    // アプリの木: 新作の相談 ＞ 港町 ＞ 2枚（作者のホームのカードはフォルダの外のまま）
+    const tree = buildIdeaTree(cloud, null)
+    expect(tree.folders.map((f) => [f.folder.id, f.folders.map((x) => [x.folder.id, x.ideas.map((i) => i.id)])])).toEqual([
+      [top, [[sub, [a, b]]]],
+    ])
+    expect(tree.loose.map((i) => i.id)).toEqual(s.authorHome.map((i) => i.id))
+    // 一覧にも【Claude】の付いたフォルダが出る
+    const list = await call(core, 'novel_get_notes', { kind: 'ideas' })
+    expect(list).toContain(`【フォルダ】${shortId('ideaFolder', top)} 【Claude】新作の相談`)
+    expect(list).toContain(`  【フォルダ】${shortId('ideaFolder', sub)} 【Claude】${DATED}`)
+    // 続けて f:…（2段目）に足す: もとからあるフォルダ。そのフォルダの先頭に入る
+    const next = await core.callTool('novel_add_ideas', { folder: shortId('ideaFolder', sub), items: [{ content: '・三つ目' }] })
+    const c = claudeIdeaId(null, DAY, '', '・三つ目')
+    expect(next.text).toBe(
+      [
+        'アイデアを足す: 追加 1件',
+        `- 追加 ${shortId('idea', c)} 「2026/10/29 12:00　・三つ目」`,
+        `フォルダ: 新作の相談 [${shortId('ideaFolder', top)}]（もとからあるフォルダ）＞${DATED} [${shortId('ideaFolder', sub)}]（もとからあるフォルダ）`,
+        placeLine,
+        closing,
+      ].join('\n'),
+    )
+    expect(cloudData(fake).ideas[c]).toMatchObject({ folderId: sub, order: -3 })
+    expect(connectorDocs(fake, 'ideaFolders')).toHaveLength(2)
+  })
+
+  it('任せる・1件はフォルダの外（その行を足す）。タイトルの2段とも: 結びはタイトルの仕切りのフォルダ', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core } = await pairedCore(fake, s.data)
+    const one = await core.callTool('novel_add_ideas', { placement: 'auto', items: [{ content: '・一枚' }] })
+    const id = claudeIdeaId(null, DAY, '', '・一枚')
+    expect(one.text).toBe(
+      [
+        'アイデアを足す: 追加 1件',
+        `- 追加 ${shortId('idea', id)} 「2026/10/29 12:00　・一枚」`,
+        'フォルダ: 入れていません（任せる: 1件なのでフォルダの外）',
+        '入れた場所: ホームのアイデア（どのタイトルにも属さないアイデア。済みでないアイデアの先頭。カードに「Claude が作成」の印が付きます）',
+        HOME_CLOSING,
+      ].join('\n'),
+    )
+    expect('folderId' in cloudData(fake).ideas[id]).toBe(false)
+    const t = shortId('title', s.titleId)
+    const scene = await core.callTool('novel_add_ideas', {
+      title_id: t,
+      folder: '場面の相談',
+      subfolder: '雨の駅',
+      items: [{ content: '・駅' }],
+    })
+    const top = claudeFolderId(s.titleId, null, '場面の相談')
+    const sub = claudeFolderId(s.titleId, top, '雨の駅')
+    expect(scene.text.split('\n').slice(2)).toEqual([
+      `フォルダ: 場面の相談 [${shortId('ideaFolder', top)}]（新しく作成）＞雨の駅 [${shortId('ideaFolder', sub)}]（新しく作成）`,
+      '入れた場所: タイトル『星の庭』のアイデア＞場面の相談＞雨の駅（そのフォルダの済みでないアイデアの先頭。カードと、Claude が作ったフォルダに「Claude が作成」の印が付きます）',
+      `アプリのタイトル『星の庭』の「アイデア」と、ホームのアイデア欄のその仕切りの、フォルダ「場面の相談」＞「雨の駅」に、各端末が同期すると出ます。同じ相談で続けて足す時は folder に ${shortId('ideaFolder', sub)} を渡してください。追記は novel_append_to_idea で（先に novel_get_notes で今の中身を読む）。本文（稿）は書き換えていません。`,
+    ])
+    expect(cloudData(fake).ideaFolders[sub]).toMatchObject({ titleId: s.titleId, parentId: top })
+  })
+
+  it('足すカードが無ければフォルダを作らない（重複は場所を言う）。ゴミ箱に同じ名前のフォルダがあれば補足', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const trashed = {
+      id: 'te-old',
+      kind: 'ideaFolder' as const,
+      label: '場面の相談',
+      titleName: '',
+      origin: { titleId: null, index: 0 },
+      recordIds: ['tr-old'],
+      reason: 'deleted' as const,
+      deletedAt: Date.UTC(2026, 9, 28),
+      createdAt: Date.UTC(2026, 9, 28),
+      updatedAt: Date.UTC(2026, 9, 28),
+    }
+    const record = {
+      id: 'tr-old',
+      entryId: 'te-old',
+      table: 'ideaFolders' as const,
+      record: { id: 'old-folder', titleId: null, parentId: null, name: '場面の相談', order: 0, createdAt: 1, updatedAt: 1 },
+      createdAt: Date.UTC(2026, 9, 28),
+      updatedAt: Date.UTC(2026, 9, 28),
+    }
+    const { core } = await pairedCore(fake, {
+      ...s.data,
+      trashEntries: { [trashed.id]: trashed },
+      trashRecords: { [record.id]: record },
+    })
+    await call(core, 'novel_add_ideas', { folder: '新作の相談', theme: '港町', items: [{ content: '・案' }] })
+    const before = commits(fake)
+    const dup = await core.callTool('novel_add_ideas', { folder: '場面の相談', theme: '港町', items: [{ content: '・案' }] })
+    const id = claudeIdeaId(null, DAY, '', '・案')
+    expect(dup.text).toBe(
+      [
+        'アイデアを足す: 重複 1件',
+        `- 重複 ${shortId('idea', id)} 「2026/10/29 12:00　・案」: 同じ内容のアイデアがもうあります（追加しません）（場所: ホームのアイデア＞新作の相談＞${DATED}）`,
+        'フォルダは作りませんでした（足すカードが無いため）。',
+      ].join('\n'),
+    )
+    expect(commits(fake)).toBe(before)
+    expect(connectorDocs(fake, 'ideaFolders')).toHaveLength(2)
+    // 新しく作る時は、ゴミ箱の同じ名前のフォルダを補足に書く
+    const made = await core.callTool('novel_add_ideas', { folder: '場面の相談', theme: '港町', items: [{ content: '・別の案' }] })
+    expect(made.text).toContain(
+      '\n補足: ゴミ箱にも同じ名前のフォルダ「場面の相談」があります（新しく作りました。前のフォルダは作者がアプリのゴミ箱から戻せます）\n入れた場所: ',
+    )
+  })
+
+  it('ほかの接続が同じ1段目を同じ時に作った（409）: 読み直して、そのフォルダを使う（もとからあるフォルダ）', async () => {
+    const fake = new FakeFirebase()
+    const s = setup()
+    const { core, clock } = await pairedCore(fake, s.data)
+    const top = claudeFolderId(null, null, '新作の相談')
+    const sub = claudeFolderId(null, top, DATED)
+    // 書く直前に、ほかの接続が同じ id の1段目を作った
+    fake.beforeCommit = () =>
+      fake.putRecord(
+        OWNER,
+        'ideaFolders',
+        { id: top, titleId: null, parentId: null, name: '新作の相談', order: 0, source: 'claude', v: 1, createdAt: clock.now, updatedAt: clock.now } as never,
+        { device: 'claude-connector' },
+      )
+    const r = await core.callTool('novel_add_ideas', { folder: '新作の相談', theme: '港町', items: [{ content: '・案' }] })
+    expect(r.isError).toBeUndefined()
+    expect(r.text).toContain(
+      `\nフォルダ: 新作の相談 [${shortId('ideaFolder', top)}]（もとからあるフォルダ）＞${DATED} [${shortId('ideaFolder', sub)}]（新しく作成）\n`,
+    )
+    const cloud = cloudData(fake)
+    expect(Object.keys(cloud.ideaFolders).sort()).toEqual([top, sub].sort())
+    expect(cloud.ideas[claudeIdeaId(null, DAY, '', '・案')].folderId).toBe(sub)
   })
 })

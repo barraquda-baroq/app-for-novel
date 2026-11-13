@@ -5,12 +5,15 @@
 import {
   buildIdeaTree,
   effectiveFolderId,
+  effectiveParentId,
   folderPathLabel,
   ideaFolderName,
   normalizeFolderName,
+  sectionOf,
   type IdeaFolderData,
 } from '../domain/ideaFolders'
 import type { ID, Idea, IdeaFolder, Title } from '../domain/types'
+import { byOrder } from '../domain/util'
 import { jstSlashDate } from './dates'
 import { ideaPlaceLabel } from './ideaAppend'
 import { shortId } from './refs'
@@ -65,4 +68,25 @@ export function folderCandidateLines(view: IdeaFolderData, section: ID | null): 
       lines.push(`${shortId('ideaFolder', sub.folder.id)} ${name}${CLAUDE_PATH_SEP}${ideaFolderName(sub.folder)}`)
   }
   return lines.slice(0, FOLDER_CANDIDATES_MAX)
+}
+
+type FolderView = Pick<IdeaFolderData, 'titles' | 'ideaFolders'>
+
+/** 仕切りの中の、見せ方で同じ親（null = 1段目）のフォルダ（order の順） */
+export function folderChildren(data: FolderView, section: ID | null, parentId: ID | null): IdeaFolder[] {
+  return Object.values(data.ideaFolders)
+    .filter(
+      (f) =>
+        f && typeof f === 'object' && sectionOf(data.titles, f.titleId) === section && effectiveParentId(data, f) === parentId,
+    )
+    .sort(byOrder)
+}
+
+/** 仕切りの中の2段目のフォルダ（見せ方で。order の順） */
+export function sectionSubfolders(data: FolderView, section: ID | null): IdeaFolder[] {
+  return Object.values(data.ideaFolders)
+    .filter(
+      (f) => f && typeof f === 'object' && sectionOf(data.titles, f.titleId) === section && effectiveParentId(data, f) !== null,
+    )
+    .sort(byOrder)
 }

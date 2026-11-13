@@ -390,6 +390,36 @@ export const SCHEMAS = {
       .describe(
         'アイデアを入れるタイトル（t:… かタイトル名。「読む＋書き込む」のタイトルだけ）。作者がタイトルを言わない時（新作の相談など）は省く（どのタイトルにも属さないホームのアイデアに入れる）',
       ),
+    folder: z
+      .string()
+      .min(1)
+      .max(IDEA_LIMITS.folderRef)
+      .optional()
+      .describe(
+        'カードを入れるフォルダ（名前か f:…）。作者がフォルダを言った時だけ渡す（言わなかった時は、書き込む前に作者に「どのフォルダに入れますか」と聞く）。1段目のフォルダを名前で探し（字の幅・空白の違いは同じと見なす）、無ければ1段目のフォルダとして作る。subfolder を省くと、その中に2段目のフォルダ「日付　theme」を作って（同じ名前があればそこに）まとめて入れる。2段目のフォルダの f:…、または1段目に無く2段目に1つだけある名前なら、そのフォルダにじかに入れる。名前は40字まで',
+      ),
+    subfolder: z
+      .string()
+      .min(1)
+      .max(IDEA_LIMITS.folderRef)
+      .optional()
+      .describe(
+        'folder の中の2段目のフォルダ（名前か f:…）。作者が2段とも言った時（「場面の相談の『雨の駅』に」）に渡す。無ければ作る。folder と一緒に渡す',
+      ),
+    theme: z
+      .string()
+      .min(1)
+      .max(IDEA_LIMITS.theme)
+      .optional()
+      .describe(
+        '相談のテーマ（短く。29字まで。例: 港町の新作）。コネクタがフォルダの名前を付ける時（folder だけの時・placement="auto" で2件以上の時）に必ず渡す。名前は「2026/11/12　港町の新作」になる（日付はコネクタが付ける）',
+      ),
+    placement: z
+      .enum(['auto', 'outside'])
+      .optional()
+      .describe(
+        '作者がフォルダを言わなかった時だけ。先に「どのフォルダに入れますか」と候補の名前を出して聞いてから渡す。"auto" = 作者が「任せる」と言った（1件ならフォルダの外、2件以上なら新しい1段目のフォルダ「日付　theme」にまとめる）。"outside" = 作者がフォルダに入れないと言った。folder と一緒には渡さない',
+      ),
     items: z
       .array(
         z.object({
@@ -409,7 +439,7 @@ export const SCHEMAS = {
       )
       .min(1)
       .max(IDEA_LIMITS.perCall)
-      .describe('足すアイデア（1件が1枚のカード。1回10件まで。この順に、済みでないアイデアの先頭に並ぶ）'),
+      .describe('足すアイデア（1件が1枚のカード。1回10件まで。この順に、入れた場所（フォルダ）の済みでないアイデアの先頭に並ぶ）'),
     model: model.optional(),
   }),
   novel_append_to_idea: z.object({

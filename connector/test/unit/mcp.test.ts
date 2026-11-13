@@ -144,6 +144,21 @@ describe('ツールの決まり', () => {
       expect(notes.description, phrase).toContain(phrase)
     const trash = TOOL_DEFS.find((t) => t.name === 'novel_move_cards_to_trash')!
     expect(trash.description).toContain('アイデアのフォルダ（f:…）は移さない')
+    // アイデアを足す: フォルダを先に聞く・任せる・空のフォルダは作らない・整理はできない（2.8 の言葉は上のテストのまま）
+    const add = TOOL_DEFS.find((t) => t.name === 'novel_add_ideas')!
+    for (const phrase of [
+      'どのフォルダに入れますか',
+      'placement="auto"',
+      'placement="outside"',
+      'folder も placement も無い時は足さずに断る',
+      '空のフォルダは作らない',
+      'フォルダの名前の変更・削除・移動と、カードの移動はできない',
+      '「2026/11/12　{theme}」',
+      '前の答えに出たフォルダの f:… を folder に渡す',
+      'カードと、Claude が作ったフォルダには「Claude が作成」の印が付く',
+      '（フォルダが違っても）足さない',
+    ])
+      expect(add.description, phrase).toContain(phrase)
   })
 
   it('アイデアのツールの入力の形（cf-worker）: 1〜10件・名前は40字まで・中身の長さは入力の形では断らない', async () => {
@@ -158,6 +173,14 @@ describe('ツールの決まり', () => {
     expect(await addOk({ items: [] })).toBe(false)
     expect(await addOk({ items: Array.from({ length: 11 }, () => ({ content: 'x' })) })).toBe(false)
     expect(await addOk({ items: [{ name: 'あ'.repeat(41), content: 'x' }] })).toBe(false)
+    // 2.9: フォルダ（80字まで）・テーマ（29字まで）・placement（auto か outside）
+    expect(await addOk({ folder: '新作の相談', subfolder: '雨の駅', theme: 'あ'.repeat(29), items: [{ content: 'x' }] })).toBe(true)
+    expect(await addOk({ placement: 'auto', theme: '港町', items: [{ content: 'x' }] })).toBe(true)
+    expect(await addOk({ placement: 'outside', items: [{ content: 'x' }] })).toBe(true)
+    expect(await addOk({ placement: 'inside', items: [{ content: 'x' }] })).toBe(false)
+    expect(await addOk({ theme: 'あ'.repeat(30), items: [{ content: 'x' }] })).toBe(false)
+    expect(await addOk({ folder: 'あ'.repeat(81), items: [{ content: 'x' }] })).toBe(false)
+    expect(await addOk({ folder: '', items: [{ content: 'x' }] })).toBe(false)
     expect(await addOk({ items: [{ name: 'x' }] })).toBe(false)
     expect(await addOk({ title_id: '', items: [{ content: 'x' }] })).toBe(false)
     const append = fromJsonSchema(TOOL_SCHEMAS.novel_append_to_idea as never, v)

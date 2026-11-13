@@ -773,12 +773,15 @@ export class VaultCore {
       for (let attempt = 0; ; attempt++) {
         const { raw, view } = this.views()
         const trashed = trashedIdsOf(raw)
-        // ゴミ箱へ移す依頼の出ているアイデア（見せる内容からは外れている）と同じ内容は、作り直さずに「以前に削除」にする
+        // ゴミ箱へ移す依頼の出ているアイデア（見せる内容からは外れている）と同じ内容は、作り直さずに「以前に削除」にする。
+        // 2.9: フォルダは削除の印・ゴミ箱の中身の id を飛ばして、作り直しの番号に進める（作るフォルダもこの書き込みの数に入る）
         const pending = pendingTrashTargets(raw)
         const ctx = {
           now: this.#now(),
-          wasDeleted: (table: 'ideas' | 'ideaAppends', id: string) =>
-            this.mirror.wasDeleted(table, id) || (table === 'ideas' && (trashed(table, id) || pending.has(`${table}:${id}`))),
+          wasDeleted: (table: 'ideas' | 'ideaAppends' | 'ideaFolders', id: string) =>
+            this.mirror.wasDeleted(table, id) ||
+            (table === 'ideas' && (trashed(table, id) || pending.has(`${table}:${id}`))) ||
+            (table === 'ideaFolders' && trashed(table, id)),
         }
         const add = tool === IDEA_ADD_TOOL ? buildAddIdeas(raw, view, args as AddIdeasInput, ctx) : null
         if (add && !add.ok) return ideaAddError(add)

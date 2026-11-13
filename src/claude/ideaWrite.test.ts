@@ -3,10 +3,10 @@
 import { describe, expect, it } from 'vitest'
 import { createTitle } from '../domain/entityOps'
 import { hashJson } from '../domain/hash'
-import type { AppData, ClaudeAccess, ID, Idea, IdeaAppend, TrashRecord, TrashRequest } from '../domain/types'
+import type { AppData, ClaudeAccess, ID, Idea, IdeaAppend, IdeaFolder, TrashRecord, TrashRequest } from '../domain/types'
 import { novel } from '../test/claudeFixture'
 import { jstDate } from './dates'
-import { claudeIdeaId, ideaAppendId, trashRequestId } from './derivedId'
+import { claudeFolderId, claudeIdeaId, ideaAppendId, trashRequestId } from './derivedId'
 import { appendedBody, claudeIdeaBody, ideaReadMark, isClaudeIdea } from './ideaAppend'
 import { buildAddIdeas, buildIdeaAppend, ideaMarkdownLines, isIdeaTool, markdownHint, type IdeaWriteContext } from './ideaWrite'
 import { shortId } from './refs'
@@ -55,7 +55,12 @@ function setup(ideas: Idea[] = []) {
 
 const ctx = (over: Partial<IdeaWriteContext> = {}): IdeaWriteContext => ({ now: AT, wasDeleted: () => false, ...over })
 
-const add = (data: AppData, input: Record<string, unknown>, c = ctx()) => buildAddIdeas(data, claudeView(data), input, c)
+/** 2.8 の呼び出し（フォルダに入れない: placement="outside"。カードだけを作る） */
+const add = (data: AppData, input: Record<string, unknown>, c = ctx()) => {
+  const built = buildAddIdeas(data, claudeView(data), { placement: 'outside', ...input }, c)
+  expect(built.records.every((r) => r.table === 'ideas')).toBe(true)
+  return { ...built, records: built.records as { table: 'ideas'; record: Idea }[] }
+}
 
 describe('ideaMarkdownLines', () => {
   it('行の頭の見出し・箇条書き・引用・コード・表・区切り線と、太字・リンクを見つける（行の番号つき）', () => {
@@ -170,11 +175,13 @@ describe('buildAddIdeas', () => {
       authorIdea('h1', null, '作者のホーム', -7),
       authorIdea('x1', s0.hiddenId, '隠す', -100),
     ])
-    // createTitle の id は毎回新しいので、同じデータの中のタイトルを使う
+    // createTitle の id は毎回新しいので、同じデータの中のタイトルを使う（見せないタイトルも。無いタイトルの id のままだと、
+    // 2.9 の仕切りの決まり（sectionOf）ではホームのアイデアとして数える）
     const titleId = Object.values(s.data.titles).find((t) => t.name === '星の庭')!.id
+    const remap = (id: string | null) => (id === s0.titleId ? titleId : id === s0.hiddenId ? s.hiddenId : id)
     const data: AppData = {
       ...s.data,
-      ideas: Object.fromEntries(Object.values(s.data.ideas).map((i) => [i.id, i.titleId === s0.titleId ? { ...i, titleId } : i])),
+      ideas: Object.fromEntries(Object.values(s.data.ideas).map((i) => [i.id, { ...i, titleId: remap(i.titleId) }])),
     }
     const r = add(data, { title_id: titleId, items: [{ content: '一' }, { content: '二' }, { content: '三' }] })
     expect(r.records.map((x) => x.record.order)).toEqual([0, 1, 2])
@@ -307,6 +314,366 @@ describe('buildAddIdeas', () => {
       hint: '以前に削除されたアイデアです（追加しません。作者はアプリのゴミ箱から戻せます）',
     })
     expect(deleted.records).toHaveLength(0)
+  })
+})
+
+// ---------- アイデアを足す: フォルダ（2.9） ----------
+
+function folder(id: ID, titleId: ID | null, name: string, order = 0, over: Partial<IdeaFolder> = {}): IdeaFolder {
+  return { id, titleId, parentId: null, name, order, createdAt: 1, updatedAt: 1, ...over }
+}
+
+/** フォルダを指定せずに呼ぶ（2.9 の呼び出し） */
+const addTo = (data: AppData, input: Record<string, unknown>, c = ctx()) => buildAddIdeas(data, claudeView(data), input, c)
+
+const withFolders = (data: AppData, folders: IdeaFolder[], ideas: Idea[] = []): AppData => ({
+  ...data,
+  ideaFolders: Object.fromEntries(folders.map((f) => [f.id, f])),
+  ideas: { ...data.ideas, ...Object.fromEntries(ideas.map((i) => [i.id, i])) },
+})
+
+const folderRecords = (b: ReturnType<typeof addTo>) =>
+  b.records.filter((r) => r.table === 'ideaFolders').map((r) => r.record as IdeaFolder)
+const cardRecords = (b: ReturnType<typeof addTo>) => b.records.filter((r) => r.table === 'ideas').map((r) => r.record as Idea)
+
+const DATED = '2026/11/12\u3000港町'
+
+describe('buildAddIdeas: フォルダ（2.9）', () => {
+  it('folder も placement も無ければ、何も書かずに断り、候補のフォルダ（無ければ「まだありません」）を返す', () => {
+    const s = setup()
+    const none = addTo(s.data, { items: [{ content: '案' }] })
+    expect(none.ok).toBe(false)
+    expect(none.records).toEqual([])
+    expect(none.error).toBe(
+      'フォルダが決まっていないので、何も足していません。書き込む前に作者に「どのフォルダに入れますか」と聞き、候補のフォルダの名前も出してください（ホームのアイデアのフォルダは下のとおり）。作者がフォルダを言えば folder に（2段とも言えば subfolder にも）、「任せる」なら placement="auto"、フォルダに入れないなら placement="outside" を渡して、もう一度呼んでください。',
+    )
+    expect(none.candidates).toEqual(['（ホームのアイデアにはまだフォルダがありません。作者が名前を言えば、その名前で作ります）'])
+    const data = withFolders(s.data, [
+      folder('f-top', null, '新作の相談', 0),
+      folder('f-sub', null, DATED, 0, { parentId: 'f-top' }),
+      folder('f-scene', null, '場面の相談', 1),
+      folder('f-title', s.titleId, '第1章', 0),
+    ])
+    expect(addTo(data, { items: [{ content: '案' }] }).candidates).toEqual([
+      'f:ftop 新作の相談',
+      `f:fsub 新作の相談＞${DATED}`,
+      'f:fscene 場面の相談',
+    ])
+    const inTitle = addTo(data, { title_id: '星の庭', items: [{ content: '案' }] })
+    expect(inTitle.error).toContain('（タイトル『星の庭』のアイデアのフォルダは下のとおり）')
+    expect(inTitle.candidates).toEqual(['f:ftitle 第1章'])
+    // 「読むだけ」のタイトルは、フォルダより先に断る
+    expect(addTo(data, { title_id: shortId('title', s.readId), items: [{ content: '案' }] }).error).toContain(
+      '「読むだけ」なので書き込めません',
+    )
+  })
+
+  it('folder と placement は一緒に渡せない。subfolder だけ・形の違う placement・空の folder も断る', () => {
+    const s = setup()
+    const items = [{ content: '案' }]
+    expect(addTo(s.data, { folder: '新作の相談', placement: 'auto', items }).error).toBe(
+      'folder と placement は一緒に渡せません（作者がフォルダを言った時は folder だけ、言わなかった時は placement だけ）',
+    )
+    expect(addTo(s.data, { subfolder: '雨の駅', placement: 'outside', items }).error).toBe(
+      'subfolder は folder（1段目のフォルダ）と一緒に渡してください',
+    )
+    expect(addTo(s.data, { placement: 'inside', items }).error).toBe(
+      'placement は "auto"（任せる）か "outside"（フォルダに入れない）にしてください',
+    )
+    expect(addTo(s.data, { folder: '  ', items }).ok).toBe(false)
+    expect(addTo(s.data, { folder: 'あ'.repeat(41), theme: '港町', items }).error).toBe(
+      'フォルダの名前は1行・40字までにしてください',
+    )
+    expect(addTo(s.data, { folder: '新作の相談', theme: 'あ'.repeat(30), items }).error).toBe(
+      'theme（相談のテーマ）は1行・29字までにしてください（フォルダの名前「日付　テーマ」が40字までのため）',
+    )
+  })
+
+  it('placement="outside" はフォルダの外（2.8 と同じ記録・答えの場所）。フォルダがあっても外のカードの並びで先頭に', () => {
+    const s = setup()
+    const plain = addTo(s.data, { placement: 'outside', items: [{ name: '動機', content: '案' }] })
+    expect(plain.ok).toBe(true)
+    expect(plain.records).toEqual(add(s.data, { items: [{ name: '動機', content: '案' }] }).records)
+    expect([plain.place, plain.folders, plain.folderPath, plain.notes, plain.auto1]).toEqual([
+      'ホームのアイデア',
+      [],
+      '',
+      [],
+      undefined,
+    ])
+    expect('folderId' in cardRecords(plain)[0]).toBe(false)
+    // フォルダの中のカードは、外の並びに数えない
+    const data = withFolders(
+      s.data,
+      [folder('f-top', null, '新作の相談')],
+      [authorIdea('in', null, '中', -50, { folderId: 'f-top' }), authorIdea('out', null, '外', 4)],
+    )
+    expect(cardRecords(addTo(data, { placement: 'outside', items: [{ content: '一' }] }))[0].order).toBe(3)
+  })
+
+  it('placement="auto": 1件はフォルダの外（auto1）、2件以上は新しい1段目「日付　theme」（theme が無ければ断る）', () => {
+    const s = setup()
+    const one = addTo(s.data, { placement: 'auto', items: [{ content: '一' }] })
+    expect([one.ok, one.auto1, one.folders, 'folderId' in cardRecords(one)[0]]).toEqual([true, true, [], false])
+    expect(addTo(s.data, { placement: 'auto', items: [{ content: '一' }, { content: '二' }] }).error).toBe(
+      'placement="auto" で2件以上の時は、新しいフォルダ「2026/11/12　テーマ」にまとめるので、theme（相談のテーマ。短く）も渡してください',
+    )
+    const two = addTo(s.data, {
+      placement: 'auto',
+      theme: ' 港町 ',
+      items: [{ content: '一' }, { content: '二' }],
+      model: 'claude-x',
+    })
+    const id = claudeFolderId(null, null, DATED)
+    expect(folderRecords(two)).toEqual([
+      {
+        id,
+        titleId: null,
+        parentId: null,
+        name: DATED,
+        order: 0,
+        source: 'claude',
+        v: 1,
+        model: 'claude-x',
+        createdAt: AT,
+        updatedAt: AT,
+      },
+    ])
+    expect(cardRecords(two).map((c) => [c.folderId, c.order])).toEqual([
+      [id, -2],
+      [id, -1],
+    ])
+    expect(two.records.map((r) => r.table)).toEqual(['ideaFolders', 'ideas', 'ideas'])
+    expect([two.place, two.folderPath, two.targetFolderId, two.auto1]).toEqual([
+      `ホームのアイデア＞${DATED}`,
+      DATED,
+      id,
+      undefined,
+    ])
+    expect(two.folders).toEqual([{ id, name: DATED, depth: 1, created: true, isNew: true }])
+    // 1件が形の違うものでも、数は渡した items の数で決める（2件なのでフォルダに入れる）
+    const mixed = addTo(s.data, { placement: 'auto', theme: '港町', items: [{ content: '一' }, { content: '' }] })
+    expect(mixed.items.map((i) => i.status)).toEqual(['created', 'invalid'])
+    expect(folderRecords(mixed)).toHaveLength(1)
+  })
+
+  it('folder だけ: 1段目（無ければ作る）の中に2段目「日付　theme」を作り、カードはそこへ（1件でも）。theme が無ければ断る', () => {
+    const s = setup()
+    expect(addTo(s.data, { folder: '新作の相談', items: [{ content: '一' }] }).error).toBe(
+      'folder だけの時は、その中に「2026/11/12　テーマ」の2段目のフォルダを作るので、theme（相談のテーマ。短く）も渡してください（作者が2段目の名前を言った時は subfolder に渡す）',
+    )
+    const r = addTo(s.data, { folder: '  新作の相談 ', theme: '港町', items: [{ content: '一' }] })
+    const top = claudeFolderId(null, null, '新作の相談')
+    const sub = claudeFolderId(null, top, DATED)
+    expect(folderRecords(r).map((f) => [f.id, f.parentId, f.name, f.order])).toEqual([
+      [top, null, '新作の相談', 0],
+      [sub, top, DATED, 0],
+    ])
+    expect(cardRecords(r)[0].folderId).toBe(sub)
+    expect([r.place, r.folderPath]).toEqual([`ホームのアイデア＞新作の相談＞${DATED}`, `新作の相談＞${DATED}`])
+    expect(r.folders.map((f) => [f.name, f.depth, f.created])).toEqual([
+      ['新作の相談', 1, true],
+      [DATED, 2, true],
+    ])
+    // 1段目はあり（字の幅・空白の違いは同じ）、2段目は兄弟の上に入る（最小 − 1）
+    const data = withFolders(s.data, [
+      folder('f-top', null, '新作の　相談', 3),
+      folder('f-old', null, '2026/11/01　灯台', 5, { parentId: 'f-top' }),
+    ])
+    const again = addTo(data, { folder: '新作の　相談', theme: '港町', items: [{ content: '一' }] })
+    const newSub = claudeFolderId(null, 'f-top', DATED)
+    expect(folderRecords(again).map((f) => [f.id, f.parentId, f.order])).toEqual([[newSub, 'f-top', 4]])
+    expect(again.folders.map((f) => [f.id, f.created, f.isNew])).toEqual([
+      ['f-top', false, false],
+      [newSub, true, true],
+    ])
+    // 同じ日・同じテーマの2段目はもうある（全角の英数字・空白の違いも同じ）: 作らずにそこへ
+    const dated = withFolders(data, [
+      ...Object.values(data.ideaFolders),
+      folder('f-dated', null, '２０２６/１１/１２　港町', 0, { parentId: 'f-top' }),
+    ])
+    const reuse = addTo(dated, { folder: 'f:ftop', theme: '港町', items: [{ content: '一' }] })
+    expect(folderRecords(reuse)).toEqual([])
+    expect(cardRecords(reuse)[0].folderId).toBe('f-dated')
+  })
+
+  it('folder と subfolder: どちらも名前で探し、無ければ作る。2段目の f:… は1段目の中のものだけ', () => {
+    const s = setup()
+    const data = withFolders(s.data, [
+      folder('f-scene', s.titleId, '場面の相談', 0),
+      folder('f-rain', s.titleId, '雨の駅', 0, { parentId: 'f-scene' }),
+      folder('f-other', s.titleId, '別の相談', 1),
+      folder('f-otherSub', s.titleId, '夜', 0, { parentId: 'f-other' }),
+    ])
+    const t = shortId('title', s.titleId)
+    const existing = addTo(data, { title_id: t, folder: '場面の相談', subfolder: '雨の駅', items: [{ content: '一' }] })
+    expect(folderRecords(existing)).toEqual([])
+    expect(cardRecords(existing)[0]).toMatchObject({ titleId: s.titleId, folderId: 'f-rain' })
+    expect(existing.place).toBe('タイトル『星の庭』のアイデア＞場面の相談＞雨の駅')
+    const made = addTo(data, { title_id: t, folder: '場面の相談', subfolder: '雪の駅', items: [{ content: '一' }] })
+    expect(folderRecords(made).map((f) => [f.titleId, f.parentId, f.name, f.order])).toEqual([
+      [s.titleId, 'f-scene', '雪の駅', -1],
+    ])
+    expect(addTo(data, { title_id: t, folder: '場面の相談', subfolder: 'f:fothersub', items: [{ content: '一' }] }).error).toBe(
+      'f:fothersu は「場面の相談」の中のフォルダではありません',
+    )
+    // 2段目の f:… を folder に渡すと、そのフォルダにじかに入れる（subfolder は断る）
+    const direct = addTo(data, { title_id: t, folder: 'f:frain', items: [{ content: '一' }] })
+    expect([cardRecords(direct)[0].folderId, direct.folderPath]).toEqual(['f-rain', '場面の相談＞雨の駅'])
+    expect(addTo(data, { title_id: t, folder: 'f:frain', subfolder: '朝', items: [{ content: '一' }] }).error).toBe(
+      'f:frain は2段目のフォルダなので、中にフォルダは作れません（3段目は作れません。subfolder を省くと、そのフォルダにじかに入れます）',
+    )
+    // 1段目に無く、2段目に1つだけある名前も、そこにじかに入れる
+    const byName = addTo(data, { title_id: t, folder: '雨の駅', items: [{ content: '一' }] })
+    expect(cardRecords(byName)[0].folderId).toBe('f-rain')
+  })
+
+  it('同じ名前が2つ以上・ほかの場所の f:…・見つからない f:… は断る', () => {
+    const s = setup()
+    const data = withFolders(s.data, [
+      folder('f-a1', null, '新作の相談', 0),
+      folder('f-a2', null, '新作の相談', 1),
+      folder('f-bbbb', null, '場面', 2),
+      folder('f-s1', null, '雨の駅', 0, { parentId: 'f-bbbb' }),
+      folder('f-c', null, '別', 3),
+      folder('f-s2', null, '雨の駅', 0, { parentId: 'f-c' }),
+      folder('f-tttt', s.titleId, '第1章', 0),
+    ])
+    const dup = addTo(data, { folder: '新作の相談', theme: '港町', items: [{ content: '一' }] })
+    expect(dup.error).toBe('「新作の相談」という名前のフォルダが2つ以上あり、決まりません。f:… で指してください')
+    expect(dup.candidates).toEqual(['f:fa1 新作の相談', 'f:fa2 新作の相談'])
+    expect(addTo(data, { folder: '雨の駅', items: [{ content: '一' }] }).error).toBe(
+      '「雨の駅」という名前のフォルダが2つ以上あり、決まりません。f:… で指してください',
+    )
+    expect(addTo(data, { folder: 'f:ftttt', theme: '港町', items: [{ content: '一' }] }).error).toBe(
+      `f:ftttt はタイトル『星の庭』のフォルダです（そこに入れる時は title_id に ${shortId('title', s.titleId)} を渡してください）`,
+    )
+    expect(addTo(data, { title_id: '星の庭', folder: 'f:fbbbb', theme: '港町', items: [{ content: '一' }] }).error).toBe(
+      'f:fbbbb はホームのアイデアのフォルダです（title_id を省いてください）',
+    )
+    const missing = addTo(data, { folder: 'f:zzzz', theme: '港町', items: [{ content: '一' }] })
+    expect([missing.error, missing.candidates?.[0]]).toEqual(['フォルダが見つかりません: f:zzzz', 'f:fa1 新作の相談'])
+  })
+
+  it('重複だけならフォルダを作らない（空のフォルダは作らない）。重複はフォルダが違っても重複で、見えていれば場所を言う', () => {
+    const s = setup()
+    const inFolder = claudeIdea(null, '', '案', AT, { folderId: 'f-top', order: -1 })
+    const data = withFolders(s.data, [folder('f-top', null, '新作の相談')], [inFolder])
+    const r = addTo(data, { folder: '場面の相談', theme: '港町', items: [{ content: '案' }] })
+    expect(r.ok).toBe(true)
+    expect(r.records).toEqual([])
+    expect(r.folders.map((f) => [f.name, f.created, f.isNew])).toEqual([
+      ['場面の相談', false, true],
+      [DATED, false, true],
+    ])
+    expect(r.items[0]).toEqual({
+      index: 0,
+      status: 'duplicate',
+      id: inFolder.id,
+      label: '「2026/11/12 14:32　案」',
+      hint: '同じ内容のアイデアがもうあります（追加しません）（場所: ホームのアイデア＞新作の相談）',
+      existing: true,
+    })
+    expect(r.notes).toEqual([])
+  })
+
+  it('カードは入れ物の済みでないカードの先頭（作者のカードも raw で数える）。フォルダは外から順にカードより先で、2つまで', () => {
+    const s = setup()
+    const data = withFolders(
+      s.data,
+      [folder('f-top', null, '新作の相談', 2), folder('f-x', null, '別', -4)],
+      [
+        authorIdea('a1', null, '中の作者の案', 7, { folderId: 'f-top' }),
+        authorIdea('a2', null, '済み', -90, { folderId: 'f-top', checked: true, checkedAt: 3 }),
+        authorIdea('a3', null, '外', -30),
+      ],
+    )
+    const r = addTo(data, { folder: '新作の相談', subfolder: '雨の駅', items: [{ content: '一' }, { content: '二' }] })
+    expect(r.records.map((x) => x.table)).toEqual(['ideaFolders', 'ideas', 'ideas'])
+    expect(cardRecords(r).map((c) => c.order)).toEqual([-2, -1])
+    const direct = addTo(data, { folder: '新作の相談', subfolder: 'f:zzzz', items: [{ content: '一' }] })
+    expect(direct.ok).toBe(false)
+    // 1段目にじかに（任せる・2件以上で、もうある「日付　theme」のフォルダ）
+    const dated = withFolders(
+      data,
+      [...Object.values(data.ideaFolders), folder('f-d', null, DATED, 9)],
+      [...Object.values(data.ideas), authorIdea('a4', null, 'd の中', 5, { folderId: 'f-d' })],
+    )
+    const auto = addTo(dated, { placement: 'auto', theme: '港町', items: [{ content: '一' }, { content: '二' }] })
+    expect([folderRecords(auto), cardRecords(auto).map((c) => [c.folderId, c.order])]).toEqual([
+      [],
+      [
+        ['f-d', 3],
+        ['f-d', 4],
+      ],
+    ])
+    // 新しい1段目は兄弟の最小 − 1
+    const fresh = addTo(data, { placement: 'auto', theme: '灯台', items: [{ content: '一' }, { content: '二' }] })
+    expect(folderRecords(fresh)[0].order).toBe(-5)
+  })
+
+  it('作り直しの番号: 同じ id の名前を変えた・移したフォルダ、削除の印・ゴミ箱の id、同じ呼び出しで使った id を飛ばす。100 を超えたら断る', () => {
+    const s = setup()
+    const g1 = claudeFolderId(null, null, '新作の相談')
+    const g2 = claudeFolderId(null, null, '新作の相談', 2)
+    const g3 = claudeFolderId(null, null, '新作の相談', 3)
+    // g1 は名前を変えたフォルダ（raw にある）、g2 は削除の印
+    const data = withFolders(s.data, [folder(g1, null, '名前を変えた', 0, { source: 'claude', v: 1 })])
+    const r = addTo(
+      data,
+      { folder: '新作の相談', theme: '港町', items: [{ content: '一' }] },
+      ctx({ wasDeleted: (t, id) => t === 'ideaFolders' && id === g2 }),
+    )
+    expect(folderRecords(r)[0].id).toBe(g3)
+    expect(folderRecords(r)[1].id).toBe(claudeFolderId(null, g3, DATED))
+    const exhausted = addTo(
+      s.data,
+      { folder: '新作の相談', theme: '港町', items: [{ content: '一' }] },
+      ctx({ wasDeleted: (t) => t === 'ideaFolders' }),
+    )
+    expect(exhausted.error).toBe(
+      'このフォルダはもう作れません（同じ名前のフォルダの削除と作り直しが多すぎます）。別の名前にしてください',
+    )
+  })
+
+  it('補足: ゴミ箱に同じ場所・同じ名前のフォルダ（N1）・見えているほかの場所に同じ名前のフォルダ（N2）。作る時だけ', () => {
+    const s = setup()
+    const entry = (id: string, label: string, titleId: ID | null, parentLabel?: string) => ({
+      id,
+      kind: 'ideaFolder' as const,
+      label,
+      titleName: '',
+      ...(parentLabel ? { parentLabel } : {}),
+      origin: { titleId, index: 0 },
+      recordIds: [],
+      reason: 'deleted' as const,
+      deletedAt: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    const data: AppData = {
+      ...withFolders(s.data, [folder('f-tttt', s.titleId, '新作の相談'), folder('f-hidden', s.hiddenId, '新作の相談')]),
+      trashEntries: {
+        e1: entry('e1', ' 新作の相談 ', null),
+        e2: entry('e2', DATED, null, '別の親'),
+        e3: entry('e3', '新作の相談', s.titleId),
+      },
+    }
+    const r = addTo(data, { folder: '新作の相談', theme: '港町', items: [{ content: '一' }] })
+    expect(r.notes).toEqual([
+      'ゴミ箱にも同じ名前のフォルダ「新作の相談」があります（新しく作りました。前のフォルダは作者がアプリのゴミ箱から戻せます）',
+      'タイトル『星の庭』にも同じ名前のフォルダ「新作の相談」[f:ftttt] があります（違う場所だった時は、作者がアプリで移せます）',
+    ])
+    // 2段目は親の名前も同じ時だけ
+    const sub = {
+      ...data,
+      trashEntries: { ...data.trashEntries, e4: entry('e4', DATED, null, '新作の相談') },
+    }
+    expect(addTo(sub, { folder: '新作の相談', theme: '港町', items: [{ content: '一' }] }).notes).toContain(
+      `ゴミ箱にも同じ名前のフォルダ「${DATED}」があります（新しく作りました。前のフォルダは作者がアプリのゴミ箱から戻せます）`,
+    )
+    // カードを足さなければ補足も出さない
+    expect(addTo(data, { folder: '新作の相談', theme: '港町', items: [{ content: '' }] }).notes).toEqual([])
   })
 })
 

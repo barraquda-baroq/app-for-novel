@@ -2176,9 +2176,14 @@ describe('Claude のアイデアと追記の依頼の同期（2.8。エミュレ
     await settle(a, b)
     const add = async (titleRef: string | undefined, name: string, content: string) => {
       const raw = await a.load()
-      const built = buildAddIdeas(raw, claudeView(raw), { title_id: titleRef, items: [{ name, content }] }, ctx())
+      const built = buildAddIdeas(
+        raw,
+        claudeView(raw),
+        { title_id: titleRef, placement: 'outside', items: [{ name, content }] },
+        ctx(),
+      )
       expect(built.items.map((i) => i.status)).toEqual(['created'])
-      const rec = built.records[0].record
+      const rec = built.records[0].record as Idea
       await connectorPut(a, 'ideas', rec)
       await waitFor(async () => (await a.load()).ideas[rec.id], 'a にアイデアが届く')
       return rec

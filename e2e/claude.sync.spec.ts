@@ -295,11 +295,11 @@ test('Claude のアイデア（2.8）: コネクタが作ったアイデアが�
     const built = buildAddIdeas(
       data,
       claudeView(data),
-      { title_id, items: [{ name, content }] },
+      { title_id, placement: 'outside', items: [{ name, content }] },
       { now: madeAt, wasDeleted: () => false },
     )
     expect(built.items.map((i) => i.status)).toEqual(['created'])
-    return built.records[0].record
+    return built.records[0].record as Idea
   }
   const home = add(undefined, '第3章の動機', '【動機】\n・兄を探す')
   const inTitle = add(titleId, '', '【場面】\n・灰の降る庭で再会する')

@@ -100,6 +100,19 @@ describe('ツールの JSON Schema', () => {
     expect([append.content.maxLength, append.idea_id.maxLength, append.read_mark.maxLength]).toEqual([undefined, 80, 20])
   })
 
+  it('アイデアを足す（2.9）: folder・subfolder（80字まで）・theme（29字まで）・placement（auto か outside）。並びは title_id の次', () => {
+    type Prop = { maxLength?: number; description?: string; properties?: Record<string, Prop> }
+    const add = (jsonSchema(SCHEMAS.novel_add_ideas) as Prop).properties!
+    expect(Object.keys(add)).toEqual(['title_id', 'folder', 'subfolder', 'theme', 'placement', 'items', 'model'])
+    expect([add.folder.maxLength, add.subfolder.maxLength, add.theme.maxLength]).toEqual([80, 80, 29])
+    expect((add.placement as { enum?: unknown }).enum).toEqual(['auto', 'outside'])
+    expect(String(add.folder.description)).toContain('「どのフォルダに入れますか」と聞く')
+    expect(String(add.placement.description)).toContain('folder と一緒には渡さない')
+    expect(String(add.items.description)).toContain('入れた場所（フォルダ）の済みでないアイデアの先頭に並ぶ')
+    const required = (jsonSchema(SCHEMAS.novel_add_ideas) as { required?: string[] }).required
+    expect(required).toEqual(['items'])
+  })
+
   it('すべてのツールに入力の形がある', () => {
     for (const def of TOOL_DEFS) expect(SCHEMAS[def.name], def.name).toBeTruthy()
     expect(Object.keys(SCHEMAS).sort()).toEqual(TOOL_DEFS.map((d) => d.name).sort())

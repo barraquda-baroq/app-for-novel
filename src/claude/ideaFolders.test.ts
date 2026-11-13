@@ -9,8 +9,10 @@ import {
   IDEA_FOLDER_RECORD_VERSION,
   datedFolderName,
   folderCandidateLines,
+  folderChildren,
   ideaPathLabel,
   isClaudeFolder,
+  sectionSubfolders,
 } from './ideaFolders'
 
 function folder(id: ID, titleId: ID | null, parentId: ID | null, name: string, order = 0): IdeaFolder {
@@ -111,5 +113,26 @@ describe('候補のフォルダの行', () => {
     const lines = folderCandidateLines({ titles, ideaFolders, ideas: {} }, null)
     expect(lines).toHaveLength(FOLDER_CANDIDATES_MAX)
     expect(lines.slice(0, 2)).toEqual(['f:top00 相談0', 'f:top00s 相談0＞中'])
+  })
+})
+
+describe('同じ親のフォルダ・仕切りの2段目（見せ方で）', () => {
+  it('folderChildren は仕切り＋見せ方の親で選び order の順。3段目・ほかの仕切りの親を指すものは1段目に数える', () => {
+    const ideaFolders: Record<ID, IdeaFolder> = {
+      a: folder('a', null, null, 'A', 2),
+      b: folder('b', null, null, 'B', 1),
+      a1: folder('a1', null, 'a', 'A1', 5),
+      a2: folder('a2', null, 'a', 'A2', -1),
+      deep: folder('deep', null, 'a1', '3段目', 0),
+      cross: folder('cross', null, 't1f', '別の仕切りの親', 9),
+      t1f: folder('t1f', 't1', null, 'タイトル', 0),
+      orphan: folder('orphan', 'gone', null, '無いタイトル', 3),
+    }
+    const data = { titles, ideaFolders }
+    expect(folderChildren(data, null, null).map((f) => f.id)).toEqual(['deep', 'b', 'a', 'orphan', 'cross'])
+    expect(folderChildren(data, null, 'a').map((f) => f.id)).toEqual(['a2', 'a1'])
+    expect(folderChildren(data, 't1', null).map((f) => f.id)).toEqual(['t1f'])
+    expect(sectionSubfolders(data, null).map((f) => f.id)).toEqual(['a2', 'a1'])
+    expect(sectionSubfolders(data, 't1')).toEqual([])
   })
 })

@@ -55,6 +55,8 @@ export class FakeFirebase {
   anonymousDisabled: boolean
   /** 次の commit を、この状態で失敗させる（テスト用） */
   failNextCommit: { status: number; code: string } | null = null
+  /** 次の commit を受ける直前に1回だけ呼ぶ（テスト用。ほかの接続が同じ時に書いた、をまねる） */
+  beforeCommit: (() => void) | null = null
   /** Firebase の1日の無料枠を使い切った（Firestore の呼び出しはすべて 429 RESOURCE_EXHAUSTED） */
   exhausted = false
   #clockUs = Date.UTC(2026, 9, 29, 0, 0, 0) * 1000
@@ -333,6 +335,11 @@ export class FakeFirebase {
       return jsonRes(list.length ? list.map((d) => ({ document: d, readTime: this.sameTime() })) : [{ readTime: this.sameTime() }])
     }
     if (path.endsWith(':commit')) {
+      if (this.beforeCommit) {
+        const hook = this.beforeCommit
+        this.beforeCommit = null
+        hook()
+      }
       if (this.failNextCommit) {
         const f = this.failNextCommit
         this.failNextCommit = null
