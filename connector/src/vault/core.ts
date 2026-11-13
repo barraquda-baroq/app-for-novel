@@ -29,6 +29,8 @@ import {
 } from '../../../src/claude/ideaWrite'
 import { liveTrashRequests, pendingTrashTargets } from '../../../src/claude/trashTargets'
 import { jstDate } from '../../../src/claude/dates'
+import { noteServed, type ReadMemoAccess, type ReadMemoEntry } from '../../../src/claude/readMemo'
+import type { ServedPart } from '../../../src/claude/view'
 import { claudeView, canClaudeRead } from '../../../src/claude/visibility'
 import { repairData } from '../../../src/domain/repair'
 import type { AppData } from '../../../src/domain/types'
@@ -123,6 +125,12 @@ export const FRESH_MS = 15_000
 export const RECHECK_MS = 60_000
 /** 許可の接続が一覧に無い時、断る前に読み直す（この時間より前に読んだ一覧では断らない。古い写しで許可を取り消さない） */
 export const CONNECTION_FRESH_MS = 5_000
+/** 読んだ話・幕の控え（readmemo）を使う期間。これより前に読んだ話は、控えが無いのと同じ（書く時の指紋） */
+export const READ_MEMO_MAX_AGE_MS = 24 * 3_600_000
+/** 読んだ話・幕の控えの行の数の上限（すべての接続で。超えれば古いものから消す） */
+export const READ_MEMO_MAX_ROWS = 5_000
+/** 読んだ話・幕の控えの古い行を片付ける間隔 */
+const READ_MEMO_PRUNE_MS = 3_600_000
 
 /** config/connector から読んだ、すべての接続に効く「書き込みを許可」と接続の一覧 */
 export interface ConnectorState {
@@ -179,6 +187,8 @@ export class VaultCore {
   /** config/connector を読み始めた数（#readConnector と verifyPairing。読み始めた順の番号に使う） */
   #connSeq = 0
   #modelCheck: { model: number | null; at: number } | null = null
+  /** 読んだ話・幕の控えの古い行を最後に片付けた時刻（Durable Object を作り直した後は、最初に控えた時に片付ける） */
+  #memoPrunedAt = 0
 
   constructor(deps: VaultDeps) {
     this.#d = deps
@@ -629,7 +639,14 @@ export class VaultCore {
       if (isWriteTool(name)) return await this.#write(name, args, opts.grant)
       const { note } = await this.#fresh(false)
       const { view, hidden } = this.views()
-      const ctx: R.ReadContext = { view, now: this.#now(), client: opts.client, workBudget: this.#d.config.workBudgetChars }
+      const reader = readerOf(opts.grant)
+      const ctx: R.ReadContext = {
+        view,
+        now: this.#now(),
+        client: opts.client,
+        workBudget: this.#d.config.workBudgetChars,
+        ...(reader ? { onServed: (parts: readonly ServedPart[]) => this.#noteServed(reader, view, parts) } : {}),
+      }
       const result = this.#read(name, ctx, args, hidden)
       return note && !result.isError ? { ...result, text: `${note}\n${result.text}` } : result
     } catch (e) {
@@ -639,6 +656,42 @@ export class VaultCore {
       }
       logError('tool_failed', e, { tool: name })
       return { text: MESSAGES.unavailable, isError: true }
+    }
+  }
+
+  // ---------- 読んだ話・幕の控え（2.9。推敲案の確かめた範囲） ----------
+
+  /**
+   * 接続（reader）の控え（readmemo）。Durable Object は使われない間にメモリから外れる（読んでから推敲案を足すまでに数分かかる）
+   * ので、SQLite に置く。READ_MEMO_MAX_AGE_MS より前に控えた話は無いのと同じ
+   */
+  #readMemo(reader: string): ReadMemoAccess {
+    return {
+      get: (pieceId) => {
+        const row = this.store.getReadMemo(reader, pieceId, this.#now() - READ_MEMO_MAX_AGE_MS)
+        return row ? memoEntry(row.hash, row.ver, row.parts) : undefined
+      },
+      set: (pieceId, entry) =>
+        this.store.putReadMemo(reader, pieceId, {
+          hash: entry.hash,
+          ver: entry.versionId,
+          parts: JSON.stringify(entry.parts),
+          at: this.#now(),
+        }),
+    }
+  }
+
+  /** novel_read_text が出した話・幕を控える（控えられなくても読む答えはそのまま返す。推敲案は書く時の指紋になるだけ） */
+  #noteServed(reader: string, view: AppData, parts: readonly ServedPart[]): void {
+    try {
+      this.store.transaction(() => noteServed(view, parts, this.#readMemo(reader)))
+      const now = this.#now()
+      if (now - this.#memoPrunedAt >= READ_MEMO_PRUNE_MS) {
+        this.#memoPrunedAt = now
+        this.store.pruneReadMemo(now - READ_MEMO_MAX_AGE_MS, READ_MEMO_MAX_ROWS)
+      }
+    } catch (e) {
+      logError('read_memo_failed', e)
     }
   }
 
@@ -858,9 +911,13 @@ export class VaultCore {
         const trashed = trashedIdsOf(raw)
         // ゴミ箱へ移す依頼の出ているカード（見せる内容からは外れている）と同じ内容は、作り直さずに「以前に削除」にする
         const pending = pendingTrashTargets(raw)
+        // 推敲案の covered: この接続が読んだ後に変わった話は、読んだ時の指紋を残す（ほかの接続が読んだ話は見ない）
+        const reader = tool === 'novel_add_proofreading' ? readerOf(grant) : null
+        const memo = reader ? this.#readMemo(reader) : null
         const built = buildToolCall(view, { tool, input: args } as never, {
           source: 'claude',
           now: this.#now(),
+          ...(memo ? { readAs: (pieceId: string) => memo.get(pieceId) } : {}),
           wasDeleted: (table, id) => this.mirror.wasDeleted(table, id) || trashed(table, id) || pending.has(`${table}:${id}`),
           // ゴミ箱の中（作品名を変えてから削除した作品も、ゴミ箱にある間は作り直さない）
           inTrash: trashed,
@@ -1126,6 +1183,28 @@ export class VaultCore {
 function partlyWritten(e: unknown, written: number): unknown {
   if (!written || !(e instanceof ConnectorError)) return e
   return new ConnectorError(e.code, `${e.message}（${written}件は書けました。同じ呼び出しをもう一度送ると、残りだけ作ります）`)
+}
+
+/**
+ * 読んだ話・幕の控えの持ち主（接続と連携の代。許可の無い呼び出しは控えない）。接続の id は使い回さないが、2.8 までの許可の c0 は
+ * ［連携をすべて解除］の後にほかのアカウントが使うことがあるので、代も入れる
+ */
+function readerOf(grant: GrantProps | undefined): string | null {
+  if (!grant) return null
+  return `${grant.cid ?? LEGACY_CONNECTION_ID}@${grant.gen ?? ''}`
+}
+
+/** 控えの行を読む（区切りの指紋が読めなければ、区切りの控えは無いものとする） */
+function memoEntry(hash: string, ver: string | null, parts: string): ReadMemoEntry {
+  let map: Record<string, string> = {}
+  try {
+    const v = JSON.parse(parts) as unknown
+    if (v && typeof v === 'object' && !Array.isArray(v))
+      map = Object.fromEntries(Object.entries(v).filter((e): e is [string, string] => typeof e[1] === 'string'))
+  } catch {
+    map = {}
+  }
+  return { hash, versionId: ver, parts: map }
 }
 
 /** Firestore の REST の時刻（{ timestamp }）を ms にする（読めなければ null） */

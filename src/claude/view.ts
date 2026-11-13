@@ -23,8 +23,18 @@ export type ViewResult =
       text: string
       /** 続きがあれば次の呼び出しに渡す cursor（無ければ null） */
       nextCursor: string | null
+      /** 採用原稿（readTextView）: このページに出した採用原稿の区切り（コネクタが読んだ本文の控えに使う。readMemo.ts） */
+      served?: ServedPart[]
     }
   | { ok: false; error: string; candidates?: string[] }
+
+/** ページに出した採用原稿の1区切り */
+export interface ServedPart {
+  /** その採用原稿の話・幕（幕に分けた話は幕。幕に分けていない話・特殊ブロックはその話） */
+  pieceId: ID
+  /** 区切りの始めから出した（false = 前のページの続きから） */
+  start: boolean
+}
 
 const fail = (error: string, candidates?: string[]): ViewResult => ({ ok: false, error, ...(candidates ? { candidates } : {}) })
 
@@ -268,6 +278,8 @@ interface Unit {
   key: string
   /** 幕の時、属する話の id（幕に分けた・つないだ時に、同じ話を探す） */
   group?: string
+  /** この区切りが採用原稿の時、その話・幕の id（採用していない稿を指定して読む時は無い） */
+  piece?: ID
   /** 読む順の番号（#12。指定の稿だけを読む時は 0） */
   index: number
   /** 残りの表示の「#15 第15話」 */
@@ -318,6 +330,8 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
       body: bodyOf(v, ruby),
       hash: textHash(v.body),
       key: v.id,
+      // 採用中の稿（幕に分けた話の、分ける前の稿は除く）は、その話・幕の採用原稿を読んだことになる
+      ...(piece && !isSplit(piece) && piece.activeVersionId === v.id ? { piece: piece.id } : {}),
       index: 0,
       name: label,
     })
@@ -351,6 +365,7 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
           hash: part.version ? textHash(part.version.body) : '',
           key: part.act.id,
           group: piece.id,
+          piece: part.act.id,
           index: item.index,
           name: `#${item.index} ${item.label}`,
         })
@@ -362,6 +377,7 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
           body: '',
           hash: '',
           key: piece.id,
+          piece: piece.id,
           index: item.index,
           name: `#${item.index} ${item.label}`,
         })
@@ -377,6 +393,7 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
       body: v ? bodyOf(v, ruby) : '',
       hash: v ? textHash(v.body) : '',
       key: piece.id,
+      piece: piece.id,
       index: item.index,
       name: `#${item.index} ${item.label}`,
     })
@@ -400,6 +417,7 @@ function unitsOf(data: AppData, titleId: ID, sel: ReadSelection): Unit[] | ViewR
           hash: v ? textHash(v.body) : '',
           key: piece.id,
           ...(piece.parentId ? { group: piece.parentId } : {}),
+          piece: piece.id,
           index: item?.index ?? 0,
           name: head,
         })
@@ -632,9 +650,16 @@ export function readTextView(data: AppData, titleId: ID, opts: ReadTextOptions =
  * それより前の区切り（読んだもの）の指紋も入れる（resume.ts）
  */
 function readFrom(units: Unit[], at: Pos, budget: number, titleId: ID, sel: ReadSelection, notes: string[]): ViewResult {
-  if (at.u >= units.length) return { ok: true, text: [...notes, '（ここで終わりです）'].join('\n'), nextCursor: null }
+  if (at.u >= units.length) return { ok: true, text: [...notes, '（ここで終わりです）'].join('\n'), nextCursor: null, served: [] }
   const p = page(units, at, budget)
   const lines = [...notes, p.text]
+  // 出した区切り: at.u から、続きの区切り（途中まで出した時はそれも）の前まで
+  const last = p.next ? (p.next.o > 0 ? p.next.u : p.next.u - 1) : units.length - 1
+  const served: ServedPart[] = []
+  for (let i = at.u; i <= last; i++) {
+    const piece = units[i].piece
+    if (piece) served.push({ pieceId: piece, start: i > at.u || at.o === 0 })
+  }
   let next: string | null = null
   if (p.next) {
     const unit = units[p.next.u]
@@ -651,7 +676,7 @@ function readFrom(units: Unit[], at: Pos, budget: number, titleId: ID, sel: Read
     })
     lines.push(`続き: cursor="${next}" → ${unit.name}${p.next.o > 0 ? 'の途中' : ''}から（${remaining(units, p.next)}）`)
   }
-  return { ok: true, text: lines.join('\n'), nextCursor: next }
+  return { ok: true, text: lines.join('\n'), nextCursor: next, served }
 }
 
 /**

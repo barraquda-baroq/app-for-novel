@@ -183,7 +183,7 @@
 
 - **データ**（`src/domain/types.ts`）: 6つの表を足す（Dexie v4。どれもタイトルの配下の1レコード = 1文書で、並びはタイトルの側に持たず `order` か日時で並べる）。共通の項目は `v`（記録の形の版。いまは 1。これより新しい版は「新しいコネクタの記録」）・`source`（`claude` = コネクタ、`paste` = 手動連携の貼り付け、`manual` = アプリで手で書いた）・`titleId`・`createdAt`・`updatedAt`。
   - `proofSuggestions`（推敲案）: 見つけた話・幕 `pieceId`（幕なら属する話 `parentId`）、その時の採用稿 `versionId`、表記の控え `pieceLabel`、場所 `anchor`（記法込みの本文の中の位置 `offset`・長さ `length`・段落 `paragraph`・前後20字 `before`/`after`・本文の指紋 `bodyHash`）、種類 `category`（11種類。知らない値は other にして名前を残す）と表示名 `categoryLabel`（Claude の `category_label`、無ければ決まった名前。1件ずつはこの名前で出し、種類の絞り込みは決まった名前でまとめる）、`excerpt`・`suggestion`・`reason`、フラグ `flagged`、チェック `done`/`doneAt`、実行 `runId`・1回の追加 `batchId`。
-  - `proofBatches`（推敲案の1回の追加）: `runId`・`runLabel`・`runDate`・`categories`・確かめた話 `covered`（話・採用稿・採用原稿の指紋・表記）・`itemIds`。「未確認 #41〜#300、本文が変わった話 #12」を出すのに使う。
+  - `proofBatches`（推敲案の1回の追加）: `runId`・`runLabel`・`runDate`・`categories`・確かめた話 `covered`（話・採用稿・採用原稿の指紋・表記。2.9 からコネクタは、その接続が読んだ後に変わった話は読んだ時の指紋と採用稿。§17）・`itemIds`。「未確認 #41〜#300、本文が変わった話 #12」を出すのに使う。
   - `revisionIdeas`（改稿案）: `heading`・`body`（長さの制限なし）・チェック `checked`/`checkedAt`（実装済み・ボツ。斜線＋グレーで下へ沈む）・関係する話 `pieceIds`・`order`。
   - `strategyNotes`（戦略メモ）: `runDate`・`heading`・`body`（Markdown）・コンテストの候補 `contests`（`k0`… の印・名前・主催・URL・締切・規定・相性 `fit`・方針 `plan`・作った応募計画 `submissionId`）・［全体戦略に追記］した日時 `appliedAt`。
   - `critiquePrompts`（批評プロンプト）: `titleId`（null = 共通。どのタイトルでも使う）・`name`・`body`・`order`。
@@ -199,7 +199,7 @@
 - **推敲案の場所**（`src/claude/anchor.ts`）: 話（幕に分けた話は各幕）の採用原稿で、記法込みのままと、ルビ・傍点の記法と読みを除いて探し（記法の無い抜き出しが、記法を除いた本文で多く見つかればそちらで決める: 検索の結果から写した「蒼は言った」が、ルビの付いた初出「｜蒼《あお》は言った」にも当たる）、元の本文の位置（記法の途中で切らない）に戻す。何か所もあって直前の文字（`context_before`。記法込みで合わなければ記法を除いて比べる）で絞れなければ ambiguous。本文が変わったら、記法込み・記法を除いた所をあわせて、控えた前後の文字が最も合う所を探し直す（幕をつないだ・解除した後は属していた話で探す）。見つからなければ「本文が変わりました（直した可能性）」。
 - **手動連携**（`src/claude/prompts.ts`・`paste.ts`）: ワードサーチ（推敲案）・作品批評・戦略の依頼文と本文を 50,000 字以内のパートに分けてコピーする。Claude には最後に ` ```novel-studio-v1 ` のコードブロックで、コネクタの書き込みツールの呼び出しと同じ形の JSON（`{"tool": "novel_add_proofreading", "input": {…}}` かその配列）を返してもらい、貼り付けるとコネクタと同じ作り方（`src/claude/records.ts`）で1件ごとに結果（追加・重複・以前に削除・見つからない・場所が決まらない・形が違う）を出してから追加する。作品批評はコードブロックが無ければ Markdown をそのまま結果にする。
 - **Claude 用のコネクタとアクセスルール**（`firestore.rules`。詳しくは docs/CONNECTOR.md）: コネクタ（Cloudflare Worker）は自分の匿名の Firebase アカウントを持ち、持ち主がアプリの連携の画面で許可すると `config/connector`（`uid`・連携の確かめの指紋 `pairing`・`pairedAt`（サーバー時刻）・`approvedOn`・`writes`・`v`。2.9 からは `v: 2` で、接続の一覧 `connections`（`{ [cid]: { name, pairing, pairedAt, approvedOn } }`。claude.ai で接続するごとに1つ。10まで）と最後に許可した接続 `pairingCid` も持ち、上の `pairing`・`pairedAt`・`approvedOn` は最後に許可した接続のもの。§17）に記録される。ルールで、そのアカウント（匿名のものだけ。持ち主自身・Google のアカウントは不可）は持ち主の `users/{uid}/records` と `meta/app` を読め、6つの表（2.5 からは相対比較の2つの表も。§11。2.6 の資料・2.7 のゴミ箱へ移す依頼・2.8 のアイデアと追記の依頼は §13・§15・§16）にだけ、決まった項目（`table`・`id`・`json`・`chunks: 0`・`deleted: false`・`hash`・`updated`（サーバー時刻）・`device: 'claude-connector'`）で、文書の名前が `{表名}:{id}`、JSON が 200,000 字以内の記録を**新しく作る**ことだけができる（`writes` が true の間だけ）。書き換え・削除・原稿の表・分割文書・復元の印は不可。`config/connector` は持ち主だけが書け（2.9 のルールが通すのは、作る時と新しい許可 = 形 v2 で、最後の許可の時刻とその接続の指紋・時刻がそろい、時刻はサーバー時刻（`validConnector`・`newApproval`）、書き換えは (i)「書き込みを許可」だけ（2.8 の記録・2.8 のアプリからも）、(ii) 同じ身元の新しい許可（足す・入れ替える）、(iii) 一覧の編集（名前を変える・1つ解除する・2.8 の記録を一覧の形にする。身元・最後の許可の指紋・時刻・接続は変えない）。2.8 の形（v: 1）の許可は書けない）、消す（［連携をすべて解除］）とその場でコネクタは何も読めなくなる（Firebase に繋がらない・無料枠を使い切った間は、記録を読み直せるまで、前に取り込んだ内容で答えることがある。書き込みはできない。§17）。匿名のアカウントは `config/owner`（持ち主）になれない。持ち主の読み書きの決まり・読み取りの数は今までどおり（`||` の左で決まる）。タイトルごとの「Claude に見せる」はルールでは分けられない（タイトルの id は文書の JSON の中）ので、コネクタのコードで守る（ゴミ箱・応募時の原稿の控え・作者が書いたどのタイトルにも属さないアイデアは見せない。Claude が作ったホームのアイデアは見せる。§16）。確かめは `src/claude/rules.emu.test.ts`（`npm run test:sync`）。
-- **Claude 用のコネクタ**（`connector/`。準備と使い方は docs/CONNECTOR.md）: Cloudflare Workers の無料プランに置く Worker。OAuth（`@cloudflare/workers-oauth-provider`。claude.ai の公開の識別子（CIMD）と claude.ai の戻り先だけを受け付け、同意は毎回聞く）・MCP のサーバー（`/mcp`。読むツール 14・足すツール 9・ゴミ箱へ移すツール 1。2.5 で3つ、2.6 で3つ、2.7 で1つ、2.8 で2つ足した。§11・§13・§15・§16）・Vault（SQLite の Durable Object。コネクタの匿名のアカウント、端末と同じ `updated` の差分で取り込む持ち主の記録の写し、1日の読み取り・書き込みの上限。写しの取り込みは同時に1つ、書き込みはすべての接続で1つずつ順に。§17 の「同時の呼び出し」）。アプリの純粋な部品（`src/domain`・`src/claude`・`src/sync/codec.ts`・`merge.ts`）をそのまままとめて使うので、字数・話の表記・id・推敲案の場所・Claude に見せる範囲がアプリと同じ（dexie・firebase・react・zustand が入らないことをテストで確かめる）。書き込みは「無い時だけ作る」（`exists: false`・内容から作った id・`device: 'claude-connector'`）。データの形の版（`users/{uid}/meta/app` の `model`）がコネクタの版（`CONNECTOR_MODEL`。`DATA_MODEL` と同じ値であることをテストで確かめる）と違えば書き込まない（読むのは続ける）。
+- **Claude 用のコネクタ**（`connector/`。準備と使い方は docs/CONNECTOR.md）: Cloudflare Workers の無料プランに置く Worker。OAuth（`@cloudflare/workers-oauth-provider`。claude.ai の公開の識別子（CIMD）と claude.ai の戻り先だけを受け付け、同意は毎回聞く）・MCP のサーバー（`/mcp`。読むツール 14・足すツール 9・ゴミ箱へ移すツール 1。2.5 で3つ、2.6 で3つ、2.7 で1つ、2.8 で2つ足した。§11・§13・§15・§16）・Vault（SQLite の Durable Object。コネクタの匿名のアカウント、端末と同じ `updated` の差分で取り込む持ち主の記録の写し、1日の読み取り・書き込みの上限、2.9 から接続ごとに読んだ話の採用原稿の指紋（推敲案の確かめた範囲に使う。§17）。写しの取り込みは同時に1つ、書き込みはすべての接続で1つずつ順に。§17 の「同時の呼び出し」）。アプリの純粋な部品（`src/domain`・`src/claude`・`src/sync/codec.ts`・`merge.ts`）をそのまままとめて使うので、字数・話の表記・id・推敲案の場所・Claude に見せる範囲がアプリと同じ（dexie・firebase・react・zustand が入らないことをテストで確かめる）。書き込みは「無い時だけ作る」（`exists: false`・内容から作った id・`device: 'claude-connector'`）。データの形の版（`users/{uid}/meta/app` の `model`）がコネクタの版（`CONNECTOR_MODEL`。`DATA_MODEL` と同じ値であることをテストで確かめる）と違えば書き込まない（読むのは続ける）。
 - **連携の決まり**（`src/claude/pairing.ts`。アプリとコネクタが同じファイルを使う）:
   1. claude.ai で「接続」→ コネクタの同意の画面（`GET /authorize`）→［Novel Studio で確認する］（`POST /authorize`）→ 302 で `${アプリ}/#/claude/connect?s=<state>`（`connectPageUrl`。state は OAuth のライブラリの印。同意を始めたブラウザに cookie を付ける）。
   2. アプリ: `GET ${CONNECTOR_ORIGIN}/connect/identity`（Cookie なし）→ `{ uid, version, model }`。CORS はアプリの origin（`APP_ORIGIN`）だけ（開発中は `http://localhost:*` も）、ほかの origin は 403（ブラウザは答えを読めない）。うまくいかない時は 503 の `{ error, message }`（「匿名ログインが無効です」など）を画面に出す。
@@ -1262,11 +1262,37 @@
       前回の続きの n:…「08 人物」の途中から続けます）」「（分析が増えた・減った・動いたため、並びが変わりました。…（cursor なしで読み直すとすべて
       出ます））」「（前回の続きの分析が見つからないため（ゴミ箱へ移した・観点を変えたなど）、次の n:…「09 …」から続けます）」（記録は「記録」・
       `note_id`・「項目を変えた」）。最初の答えと続きの見出しの行の形は変えない（V30）。1つの分析・記録（`analysis_id`・`note_id`）の続きは今までどおり。
+  - 推敲案の確かめた範囲は読んだ時の本文で（`src/claude/readMemo.ts`・`view.ts` の `served`・`records.ts` の `buildProofreading`・
+    `connector/src/vault/core.ts`・`store.ts` の `readmemo`）: 2.8 までは `covered` の話に書く時の採用原稿の指紋を残したので、Claude が読んだ後・足す前に
+    作者がアプリで直した話も確認済みになり、直した所は推敲されないまま「本文が変わった話」にも出なかった（1つの接続でも起きる。ほかの接続の書き込みの
+    前の取り込みで、直した本文が先に写しに入ることもある）。
+    - `novel_read_text` が採用原稿を出すと、コネクタは接続（cid と連携の代）ごとに、出した話・幕（幕はその話にも）の採用原稿の指紋（`adoptedBodyHash`。
+      `proofCoverage` と同じ値）と採用稿を控える。長い話を何ページかに分けて読んだ時・幕を1つずつ読んだ時は、前に読んだ区切り（幕・幕に分けていない話）が
+      その後に変わっていれば、その前の指紋のまま（まだ読んでいない幕だけが変わった時は、いまの指紋）。変わった区切りをその始めから読み直すと、いまの
+      指紋で控え直す（話の始めから読み直す時は、いまの話に無い区切り（消えた幕・幕に分ける前の話・つなぐ前の幕）の控えは忘れる）。採用中の稿を
+      `version_id` で読んだ時はその話・幕を読んだことにし、採用していない稿の時は控えない。
+    - `novel_add_proofreading` は、この接続の控えがいまの指紋と違う `covered` の話に、控えの指紋と採用稿を残し（記録の形は同じ）、「補足: #3 第3話 は
+      読んだ後に本文が変わっています（変わった所は推敲できていないため、確認の範囲では「本文が変わった話」になります。novel_read_text で読み直して
+      推敲してください）」を足す。アプリと `novel_list_proofreading` の確認の範囲（`proofCoverage`）は、ほかの実行で確かめ直すまで「本文が変わった話 #3」
+      （作者が直した所を元に戻せば確認済み）。読んだ後に変わって引用が見つからない案は「…の採用原稿に見つかりません。読んだ後に本文が変わっています
+      （novel_read_text で読み直して、いまの本文から引用してください）」（引用の仕方のせいにしない）。
+    - 控えの無い話（その接続が読んでいない・ほかの接続だけが読んだ・24時間より前に読んだ・控えを置く前の版で読んだ）と手動連携の貼り付けは、今までどおり
+      書く時の指紋。ほかの接続の控えは使わない（A が読んでも B の確かめた範囲は変わらない）。
+    - `novel_search_text` は読んだことにしない（一致の前後の25〜80字しか出さないので話の推敲の確認にならず、直した後に検索した時に控えを書き換えると、
+      直した所を読まないまま確認済みに戻ってしまうため）。
+    - 控えは Vault の SQLite（`readmemo`。指紋だけで本文は持たない）に置く: Durable Object はしばらく呼ばれないと作り直され、読んでから推敲案を足すまで
+      には数分かかることが多いため（メモリだけだと、そのたびに今までどおりに戻る）。24時間（`READ_MEMO_MAX_AGE_MS`）より前の控えは使わず、1時間ごとに
+      古い行を消し、すべての接続で 5,000 行（`READ_MEMO_MAX_ROWS`）を超えれば古いものから消す。書くのは読むページごとに出した話・幕の数の行。
+      写しの取り込み直しでは消さない。控えを書けなくても、読む答えはそのまま返す。
+    - 残ること: 同じ接続の別のチャットで読み直すと、そちらの読みで控え直す（チャットは見分けられない）。読み直した後に、同じ実行・同じ `covered`・同じ
+      案で送り直すと、実行の記録は内容から作った id で重複になり書き直されない（新しい案・違う `covered`・別の実行の呼び出しなら確認済みになる）。
   - 確かめ: `src/claude/rules.emu.test.ts`・`connectLogic.test.ts`・`ConnectPage.test.tsx`・`ClaudeSettings.test.tsx`・`connector/test/unit/vault.test.ts`・
     `connector/test/unit/concurrency.test.ts`・`writes.test.ts`・`timeouts.test.ts`（2つ・3つの接続の Promise.all と、Firestore の答えを送った時に作って
     届けるのを止めておける fetch（`connector/test/support/gate.ts`）で、上の同時の呼び出しを確かめる）・`shared.test.ts`（上限の断り・接続ごとの
     `novel_status`・同じ本・同じ【原稿】の回・比べた作品の決まらない批評を、2つの接続で）・`paging.test.ts`（続きの cursor: 2つの接続で、間に話の
-    並べ替え・推敲案の追加とチェック・分析の追加とゴミ箱・「14 検索用タグ」・記録の書き換えがあっても重ならず抜けない）・`src/claude/view.test.ts`・
+    並べ替え・推敲案の追加とチェック・分析の追加とゴミ箱・「14 検索用タグ」・記録の書き換えがあっても重ならず抜けない）・`readmemo.test.ts`（推敲案の
+    確かめた範囲: 2つの接続で、読んだ後にアプリで直した話・直していない話・ほかの接続だけが読んだ話・作り直した Vault・24時間後・検索・長い話・幕）・
+    `src/claude/readMemo.test.ts`・`src/claude/view.test.ts`・
     `resume.test.ts`（区切りの探し直し）・`src/claude/bench.test.ts`・`material.test.ts`（著者の比べ方・
     【原稿】の補足・分けた部の伝え方・比べた作品の決まらない時のコネクタと貼り付け）・
     `connector/test/worker/oauth.test.ts`（同じ戻り先で2回接続しても両方のトークンが使え、1つ外すとその更新だけ断られる）・`connector/test/emu`・

@@ -55,6 +55,7 @@ import {
 } from './derivedId'
 import { authorKey, matchesId, readingOrder, refKey, resolvePiece, resolveTitle, shortId, type ReadingItem } from './refs'
 import { materialRef, resolveMaterial } from './material'
+import { changedSinceRead, type ReadMemoEntry } from './readMemo'
 import { manuscriptOf } from './snapshot'
 import { canClaudeWrite, CLAUDE_RECORD_VERSION } from './visibility'
 
@@ -361,6 +362,12 @@ export interface BuildContext {
   trashedBenchWorkNamed?: (name: string) => boolean
   /** ゴミ箱に同じ資料名の資料があるか（trashedMaterialNamesOf。相対比較の作品と同じ見分け方） */
   trashedMaterialNamed?: (name: string) => boolean
+  /**
+   * コネクタ（2.9）: この接続が novel_read_text で読んだ時の、その話・幕の控え（readMemo.ts。無ければ undefined）。
+   * 推敲案の covered の話が読んだ後に変わっていれば、読んだ時の指紋を残す（アプリで「本文が変わった話」に出る）。
+   * 渡さなければ（貼り付け）、今までどおり書く時の指紋
+   */
+  readAs?: (pieceId: ID) => ReadMemoEntry | undefined
 }
 
 // ---------- 小さな道具 ----------
@@ -642,7 +649,9 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
         label: proofLabel(where, null, item.excerpt),
         hint: none
           ? `${where}には採用原稿がありません`
-          : `抜き出した箇所が${where}の採用原稿に見つかりません。採用原稿から原文どおり（ルビの記法も含めて）引用してください`,
+          : ctx.readAs && changedSinceRead(data, piece, ctx.readAs)
+            ? `抜き出した箇所が${where}の採用原稿に見つかりません。読んだ後に本文が変わっています（novel_read_text で読み直して、いまの本文から引用してください）`
+            : `抜き出した箇所が${where}の採用原稿に見つかりません。採用原稿から原文どおり（ルビの記法も含めて）引用してください`,
       })
       return
     }
@@ -711,9 +720,10 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
     items.push({ index, status: 'created', id, table: 'proofSuggestions', label })
   })
 
-  // 確かめ終えた話
+  // 確かめ終えた話。コネクタでは、この接続が読んだ後に採用原稿が変わった話は読んだ時の指紋を残す（変わった所は確かめていない）
   const coveredOut: ProofCovered[] = []
   const coveredSeen = new Set<ID>()
+  const changedAfterRead: string[] = []
   for (const ref of covered) {
     if (!isStr(ref)) {
       notes.push('covered の中に文字列でないものがあったため飛ばしました')
@@ -728,13 +738,21 @@ export function buildProofreading(data: AppData, input: ProofreadingInput, ctx: 
     if (coveredSeen.has(piece.id)) continue
     coveredSeen.add(piece.id)
     const text = adoptedText(data, piece)
+    const bodyHash = text ? hashJson(text.body) : ''
+    const read = ctx.readAs?.(piece.id)
+    const changed = read !== undefined && read.hash !== bodyHash
+    if (changed) changedAfterRead.push(pieceLabelOf(data, piece, order))
     coveredOut.push({
       pieceId: piece.id,
-      versionId: isSplit(piece) ? null : (piece.activeVersionId ?? null),
-      bodyHash: text ? hashJson(text.body) : '',
+      versionId: changed ? read.versionId : isSplit(piece) ? null : (piece.activeVersionId ?? null),
+      bodyHash: changed ? read.hash : bodyHash,
       label: pieceFullLabel(data, piece),
     })
   }
+  if (changedAfterRead.length)
+    notes.push(
+      `${changedAfterRead.join('・')} は読んだ後に本文が変わっています（変わった所は推敲できていないため、確認の範囲では「本文が変わった話」になります。novel_read_text で読み直して推敲してください）`,
+    )
 
   const records: NewRecord[] = []
   if (created.length || coveredOut.length) {

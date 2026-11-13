@@ -50,6 +50,7 @@ import {
   readTextView,
   searchTextView,
   titleHeadline,
+  type ServedPart,
 } from '../../../../src/claude/view'
 import { ideaReadMark, ideaSectionWritable, isClaudeIdea } from '../../../../src/claude/ideaAppend'
 import { CLAUDE_PATH_SEP, folderCandidateLines, ideaPathLabel, isClaudeFolder } from '../../../../src/claude/ideaFolders'
@@ -131,6 +132,11 @@ export interface ReadContext {
   client?: string
   /** 1回に調べる本文の文字数の上限（検索） */
   workBudget: number
+  /**
+   * novel_read_text が採用原稿を出した時に呼ぶ（出した話・幕。コネクタがこの接続の読んだ本文の控えにする。readMemo.ts）。
+   * 検索（novel_search_text）は呼ばない（一致の前後しか出さないので、話を読んだことにはしない）
+   */
+  onServed?: (parts: readonly ServedPart[]) => void
 }
 
 type Args = Record<string, unknown>
@@ -190,7 +196,9 @@ export function readText(ctx: ReadContext, args: Args): ToolResult {
     charBudget: budget,
     ruby: args.ruby === 'strip' ? 'strip' : 'raw',
   })
-  return r.ok ? ok(r.text) : fail(r.error, r.candidates)
+  if (!r.ok) return fail(r.error, r.candidates)
+  if (r.served?.length) ctx.onServed?.(r.served)
+  return ok(r.text)
 }
 
 // ---------- R4 稿の一覧 ----------

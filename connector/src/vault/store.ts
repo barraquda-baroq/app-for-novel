@@ -4,6 +4,8 @@
 // - meta: 受け取った位置（cursor）・身元・連携の状態・数の記録など（JSON）
 // - lite: 取り込んだ時に分かったこと（稿は本文を除いた記録と文字数・指紋、ゴミ箱の中身・応募時の原稿の控えは本文を除いた形）。
 //   rec の ok = 1（指紋を確かめた）の行は、Durable Object を作り直した時に本文を読まず、これから写しを作る（CPU 時間を減らす）
+// - readmemo: 接続ごとに、Claude が novel_read_text で読んだ話・幕の採用原稿の指紋（2.9。src/claude/readMemo.ts。本文は持たない）。
+//   写しではないので、取り込み直しでは消さない
 // 取り込んだ記録（原稿）は暗号化しない（Durable Object の保存領域はもともと暗号化されている。DECISIONS 1）。
 
 export type SqlValue = string | number | null
@@ -55,7 +57,21 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS chunk_parent ON chunk(parent)`,
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS lite (name TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS readmemo (reader TEXT NOT NULL, piece TEXT NOT NULL, hash TEXT NOT NULL, ver TEXT,
+    parts TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (reader, piece)) WITHOUT ROWID`,
 ]
+
+/** 読んだ話・幕の控えの1行（readmemo） */
+export interface ReadMemoRow {
+  /** 読んだ時の採用原稿の指紋 */
+  hash: string
+  /** 読んだ時の採用稿（幕に分けた話は null） */
+  ver: string | null
+  /** 読んだ区切りごとの指紋（JSON） */
+  parts: string
+  /** 控えた時刻（ms） */
+  at: number
+}
 
 /** 本文を読まずに写しを作る表（稿・応募時の原稿の控え・ゴミ箱の中身。どれもツールでは本文を一覧に出さない） */
 export const LITE_TABLES = ['versions', 'snapshotTexts', 'trashRecords'] as const
@@ -230,6 +246,45 @@ export class MirrorStore {
   /** 分割文書を片付ける（from 番目から後ろ） */
   deleteChunks(parent: string, from = 0): void {
     this.sql.run('DELETE FROM chunk WHERE parent = ? AND idx >= ?', parent, from)
+  }
+
+  /** 接続（reader）が読んだ話・幕の控え（since より前に控えたものは無いのと同じ） */
+  getReadMemo(reader: string, piece: string, since: number): ReadMemoRow | null {
+    const rows = this.sql.all<ReadMemoRow>(
+      'SELECT hash, ver, parts, at FROM readmemo WHERE reader = ? AND piece = ? AND at >= ?',
+      reader,
+      piece,
+      since,
+    )
+    return rows.length ? { ...rows[0], at: Number(rows[0].at) } : null
+  }
+
+  putReadMemo(reader: string, piece: string, row: ReadMemoRow): void {
+    this.sql.run(
+      `INSERT INTO readmemo (reader, piece, hash, ver, parts, at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(reader, piece) DO UPDATE SET hash = excluded.hash, ver = excluded.ver, parts = excluded.parts, at = excluded.at`,
+      reader,
+      piece,
+      row.hash,
+      row.ver,
+      row.parts,
+      row.at,
+    )
+  }
+
+  /** before より前に控えた行を消し、max 行を超えていれば古いものから消す */
+  pruneReadMemo(before: number, max: number): void {
+    this.sql.run('DELETE FROM readmemo WHERE at < ?', before)
+    const n = this.readMemoCount()
+    if (n > max)
+      this.sql.run(
+        'DELETE FROM readmemo WHERE (reader, piece) IN (SELECT reader, piece FROM readmemo ORDER BY at ASC LIMIT ?)',
+        n - max,
+      )
+  }
+
+  readMemoCount(): number {
+    return Number(this.sql.all<{ n: number }>('SELECT COUNT(*) AS n FROM readmemo')[0]?.n ?? 0)
   }
 
   /** 取り込んだ記録をすべて消す（持ち主が変わった・数が合わない時に取り込み直す） */
