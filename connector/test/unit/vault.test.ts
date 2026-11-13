@@ -423,7 +423,7 @@ describe('複数の接続（2.9。claude.ai のアカウントごとの許可）
     for (const g of [c, d]) expect((await core.callTool('novel_list_titles', {}, { grant: g })).isError).toBeFalsy()
   })
 
-  it('novel_status: 許可のある呼び出しだけ、最後に「この接続」の行（前の行は1字も変えない）。外された接続は 401', async () => {
+  it('novel_status: 許可のある呼び出しだけ、最後に「この接続」の行（前の行は許可の無い呼び出しと同じ）。外された接続は 401', async () => {
     const data = novel(['本文です。']).data
     const run = async () => {
       const fake = new FakeFirebase()
@@ -433,7 +433,9 @@ describe('複数の接続（2.9。claude.ai のアカウントごとの許可）
     }
     const one = await run()
     const plain = (await one.core.callTool('novel_status', {})).text.split('\n')
-    expect(plain.at(-1)).toMatch(/^アイデアへの追記の依頼: /)
+    // 接続が2つ以上ある時は、今日の数と上限がすべての接続を合わせた数であることの行（許可の無い呼び出しにも出す）
+    expect(plain.at(-2)).toMatch(/^アイデアへの追記の依頼: /)
+    expect(plain.at(-1)).toBe('（読み取り・書き込みの枠と、ゴミ箱へ移す1日100件は、すべての接続を合わせた数です）')
     const two = await run()
     const withGrant = (await two.core.callTool('novel_status', {}, { grant: two.b })).text.split('\n')
     expect(withGrant.slice(0, -1)).toEqual(plain)
@@ -450,9 +452,10 @@ describe('複数の接続（2.9。claude.ai のアカウントごとの許可）
     two.fake.removeConnection('cbbb')
     expect(await two.core.callTool('novel_status', {}, { grant: two.b })).toMatchObject({ isError: true, auth: true, text: expect.stringContaining('連携が解除') })
     expect(two.core.pairingState()).toBe('paired')
-    expect((await two.core.callTool('novel_status', {}, { grant: two.grant })).text.split('\n').at(-1)).toBe(
-      'この接続: 接続1（接続 1 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
-    )
+    const alone = (await two.core.callTool('novel_status', {}, { grant: two.grant })).text.split('\n')
+    expect(alone.at(-1)).toBe('この接続: 接続1（接続 1 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）')
+    // 接続が1つになれば、すべての接続を合わせた数の行は出さない
+    expect(alone.at(-2)).toMatch(/^アイデアへの追記の依頼: /)
     // 2.8 までの許可と記録（v1）は「接続1」
     const fake = new FakeFirebase()
     const legacy = await pairedCore(fake, data)
@@ -1152,10 +1155,12 @@ describe('数の上限（太平洋時間の日ごと）', () => {
     // 取り込み済みの内容は出し、最新の変更を取り込めていないことを知らせる
     expect(last).toContain('読み取り枠を使い切った')
     expect(last).toContain('日本時間16時')
-    // 書き込みは最新を読めないので止める
+    // 書き込みは最新を読めないので止める（残りが取り込みの1ページの分より少ない時は、残りと書かない理由を言う）
     const w = await core.callTool('novel_add_revision_ideas', { title_id: n.titleId, items: [{ heading: 'a', body: 'b' }] })
     expect(w.isError).toBe(true)
-    expect(w.text).toContain('読み取り枠を使い切りました')
+    expect(w.text).toMatch(
+      /^今日のコネクタ用の読み取り枠は、すべての接続を合わせて残り \d+ 件です。書く前に端末からの最新の変更を確かめるには足りないため、何も書いていません（読むツールは前に取り込んだ内容で使えます）。日本時間16時に回復します。$/,
+    )
     // 11/1 の 18:00 JST（太平洋時間 11/1 2:00・冬時間に切り替わった後）: 次は17時
     clock.now = Date.UTC(2026, 10, 1, 9, 0, 0)
     const status = await call(core, 'novel_status')

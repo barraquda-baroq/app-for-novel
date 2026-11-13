@@ -362,7 +362,7 @@ export function buildTrashRequests(data: AppData, input: TrashInput, ctx: TrashC
   }
   if (records.length > Math.max(0, ctx.dailyLeft))
     return fail(
-      `今日（日本時間）ゴミ箱へ移せるのは、あと${Math.max(0, ctx.dailyLeft)}件です（1日${TRASH_LIMITS.perDay}件まで。いま新しく${records.length}件）。数を減らすか、明日にしてください`,
+      `今日（日本時間）ゴミ箱へ移せるのは、あと${Math.max(0, ctx.dailyLeft)}件です（すべての接続を合わせて1日${TRASH_LIMITS.perDay}件まで。いま新しく${records.length}件）。数を減らすか、明日にしてください`,
     )
   return { ok: true, records, items }
 }

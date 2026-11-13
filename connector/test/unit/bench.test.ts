@@ -361,13 +361,20 @@ describe('作品批評（novel_get_critique・novel_add_critique_result）', () 
     expect(text).toContain('--- 相対比較する作品（1作品。作者が比べたい既存の作品）---')
     expect(text).toContain(`${shortId('benchWork', s.workA)}『銀河の果て』（山田） 分析 3件: 構成・文体`)
     expect(text).toContain('novel_get_bench_analysis')
-    const r = await core.callTool('novel_add_critique_result', {
-      title_id: s.titleId,
-      result_markdown: '## 『銀河の果て』と比べて\n…',
+    // 見つからない作品があれば、結果を記録せずに断る（記録した後には比べた作品を足せないため）
+    const input = { title_id: s.titleId, result_markdown: '## 『銀河の果て』と比べて\n…' }
+    const missing = await core.callTool('novel_add_critique_result', {
+      ...input,
       bench_works: [shortId('benchWork', s.workA), '無い作品'],
     })
+    expect(missing.isError).toBe(true)
+    expect(missing.text).toContain(
+      "- 見つからない 作品批評の結果: bench_works の '無い作品' は相対比較に見つかりません。novel_list_bench_works で確かめた w:… の短い id で指すか、bench_works から外してください。この結果はまだ記録していません（直して送り直すと記録します）",
+    )
+    expect(fake.recordDocs(OWNER).filter((d) => d.name.includes('/critiqueResults:'))).toHaveLength(0)
+    // 外して送り直すと記録する（比べた作品も残る）
+    const r = await core.callTool('novel_add_critique_result', { ...input, bench_works: [shortId('benchWork', s.workA)] })
     expect(r.text).toContain('追加 1件')
-    expect(r.text).toContain("bench_works の '無い作品' は見つからないため外しました")
     const docs = fake.recordDocs(OWNER).filter((d) => d.name.includes('/critiqueResults:'))
     const f = docs[0].fields
     const rec = decodeRecord(

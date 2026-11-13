@@ -47,6 +47,7 @@ import {
   readBudgetMessage,
   resetLabel,
   writeBudgetMessage,
+  writeReadBudgetMessage,
   type QuotaCounts,
 } from './quota'
 import { claimConsent, takeRate, type RateKind, type RateResult } from './ratelimit'
@@ -130,6 +131,8 @@ export interface ConnectorState {
   cids: string[]
   /** cid ごとの名前（novel_status の「この接続」） */
   names: Record<string, string>
+  /** cid ごとの許可した時刻（ms。novel_status の「連携: 済み（…）」は呼び出した接続の時刻） */
+  pairedAt: Record<string, number | null>
 }
 
 /** 今日（日本時間）ゴミ箱へ移す依頼を作った数（meta 'trashDaily'。日付が変われば 0 から） */
@@ -389,6 +392,26 @@ export class VaultCore {
     return true
   }
 
+  /**
+   * 書く前に、この呼び出しの n 件を書き込みの数に入れる。残り（すべての接続で1つ）に入らなければ、数えずに呼び出し全体を断る
+   * （一部だけは書かない）。断る文には残りとこの呼び出しの数を出す（field は分けて送る入力の名前）
+   */
+  #needWrites(n: number, field: 'items' | 'cards'): void {
+    if (this.#takeWrites(n)) return
+    const left = this.#d.config.dailyWriteBudget - this.#quota().writes
+    throw new ConnectorError('write_budget', writeBudgetMessage(this.#now(), left, n, field))
+  }
+
+  /**
+   * 読み取りの枠が足りずに取り込めなかった。書き込みの前なら、残りがあっても最新の変更を確かめられないので書かないことを言う
+   * （読むツールの前は、使い切った時の文）
+   */
+  #readBudgetError(forWrite: boolean): ConnectorError {
+    const now = this.#now()
+    if (!forWrite) return new ConnectorError('read_budget', readBudgetMessage(now))
+    return new ConnectorError('read_budget', writeReadBudgetMessage(now, this.#d.config.dailyReadBudget - this.#quota().reads))
+  }
+
   // ---------- 写し ----------
 
   /** Firestore の失敗を、日本語の説明つきの失敗にする（403 は連携が解除されたかを確かめる） */
@@ -511,7 +534,7 @@ export class VaultCore {
   async #fresh(forWrite: boolean): Promise<{ note?: string }> {
     if (!this.mirror.warm().done) {
       const out = await this.#syncStep(8, forWrite)
-      if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
+      if (out.outOfReads) throw this.#readBudgetError(forWrite)
       if (!out.done) {
         this.#d.schedule?.(this.#now() + 1_000)
         throw new ConnectorError('warming', this.#warmingMessage())
@@ -524,7 +547,7 @@ export class VaultCore {
         const out = await this.#syncStep(8, true)
         docs += out.docs
         if (out.done) return {}
-        if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
+        if (out.outOfReads) throw this.#readBudgetError(true)
       }
       // 取り込みの途中の写しでは、以前に削除された作品・カードなどを見分けられないので書かない（続きは alarm で取り込む）
       this.#d.schedule?.(this.#now() + 1_000)
@@ -662,7 +685,8 @@ export class VaultCore {
       lines.push('連携: していません（claude.ai でコネクタに接続し、アプリで許可してください）')
       return { text: lines.join('\n'), auth: this.identity.uid() ? true : undefined, isError: true }
     }
-    lines.push(`連携: 済み（${p.pairedAt ? new Date(p.pairedAt + 9 * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') : '―'} 日本時間）`)
+    // 「連携: 済み（…）」の時刻は、記録を読んだ後に決める（呼び出した接続の許可の時刻。この行の形は変えない）
+    lines.push('')
     let writes: boolean | null = this.#connCheck?.writes ?? null
     let model: number | null = this.#modelCheck?.model ?? null
     try {
@@ -684,6 +708,11 @@ export class VaultCore {
       if (e instanceof ConnectorError && isAuthProblem(e.code)) return { text: e.message, isError: true, auth: true }
       lines.push('（クラウドの設定を読めませんでした）')
     }
+    // 2.9: 許可のある呼び出しは、接続の一覧にあるその接続の許可の時刻（無い・読めなければ、最後に確かめた連携の時刻）
+    const listed = this.#connCheck
+    const cid = grant?.cid ?? LEGACY_CONNECTION_ID
+    const pairedAt = (grant && listed?.cids.includes(cid) ? listed.pairedAt[cid] : null) ?? p.pairedAt
+    lines[1] = `連携: 済み（${pairedAt ? new Date(pairedAt + 9 * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') : '―'} 日本時間）`
     lines.push(`書き込み: ${writes ? '許可' : '停止中（アプリの 設定 → Claude 連携 →「書き込みを許可」）'}`)
     lines.push(
       `アプリのデータの形: ${model ?? '記録なし'}${model === CONNECTOR_MODEL ? '（一致）' : `（コネクタは ${CONNECTOR_MODEL}。書き込みは止まります）`}`,
@@ -707,9 +736,12 @@ export class VaultCore {
     lines.push(
       `アイデアへの追記の依頼: アプリの同期待ち ${warm.done ? liveIdeaAppends(this.views().raw).length.toLocaleString('ja-JP') : '―'}件`,
     )
-    // 2.9: 許可のある呼び出し（/mcp）だけ、最後にこの接続の名前（前の行は 2.8 と1字も変えない。名前を読めた時だけ）
+    // 2.9: 接続が2つ以上ある時は、今日の数と上限がすべての接続を合わせた数であること（ほかのアカウントが使った分も入る。
+    // 許可の無い呼び出しにも出す。「この接続」の行の前に足すだけで、ほかの行は変えない）
+    if ((listed?.cids ?? p.cids ?? []).length >= 2)
+      lines.push(`（読み取り・書き込みの枠と、ゴミ箱へ移す1日${TRASH_LIMITS.perDay}件は、すべての接続を合わせた数です）`)
+    // 2.9: 許可のある呼び出し（/mcp）だけ、最後にこの接続の名前（名前を読めた時だけ。いつも最後の行）
     const conn = grant ? this.#connCheck : null
-    const cid = grant?.cid ?? LEGACY_CONNECTION_ID
     if (conn && conn.cids.includes(cid))
       lines.push(
         `この接続: ${conn.names[cid]}（接続 ${conn.cids.length} / ${MAX_CONNECTIONS}。名前はアプリの 設定 → Claude 連携 で変えられます）`,
@@ -846,7 +878,7 @@ export class VaultCore {
           throw e
         }
         if (!prepared.length) return writeResult(tool, built, created)
-        if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
+        this.#needWrites(prepared.length, 'items')
         let done: 'done' | 'retry'
         try {
           done = await this.#commitPrepared(prepared, created, attempt)
@@ -892,7 +924,7 @@ export class VaultCore {
         await this.#sleep(100 + Math.floor(Math.random() * 200) * (attempt + 1))
         // 断られた後のクラウドを読む（先に始まった取り込みに相乗りしない）
         const out = await this.#syncStep(8, true)
-        if (out.outOfReads) throw new ConnectorError('read_budget', readBudgetMessage(this.#now()))
+        if (out.outOfReads) throw this.#readBudgetError(true)
         // 差分の読み取りで見えない（写しが知らない）文書は、名前を指定して確かめる
         const left = prepared.filter((p) => !created.has(`${p.table}:${p.id}`)).map((p) => `${p.table}:${p.id}`)
         if (left.length && this.#takeReads(left.length + 2)) {
@@ -961,7 +993,7 @@ export class VaultCore {
         }
         const left = () => TRASH_LIMITS.perDay - this.#trashDaily().count
         if (!prepared.length) return trashResult(built, createdTargets(), left())
-        if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
+        this.#needWrites(prepared.length, 'cards')
         const before = created.size
         let done: 'done' | 'retry'
         try {
@@ -1017,7 +1049,7 @@ export class VaultCore {
           throw e
         }
         if (!prepared.length) return result()
-        if (!this.#takeWrites(prepared.length)) throw new ConnectorError('write_budget', writeBudgetMessage(this.#now()))
+        this.#needWrites(prepared.length, 'items')
         let done: 'done' | 'retry'
         try {
           done = await this.#commitPrepared(prepared, created, attempt)
@@ -1110,5 +1142,6 @@ function connectorState(doc: Record<string, unknown>, list: ConnectionInfo[]): C
     writes: doc.writes === true,
     cids: list.map((c) => c.cid),
     names: Object.fromEntries(list.map((c) => [c.cid, c.name])),
+    pairedAt: Object.fromEntries(list.map((c) => [c.cid, c.pairedAt])),
   }
 }

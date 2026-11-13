@@ -447,6 +447,118 @@ describe('相対比較の分析（novel_add_bench_analysis）', () => {
     }
   })
 
+  it('作品名で見つけた作品の著者は、空白（半角・全角）と「・」を除いて比べる（2.9。2つのアカウントが同じ本を同時に足す時。貼り付けも同じ。id は変えない）', () => {
+    const n = sample()
+    const items = (body: string) => [{ viewpoint: '構成', body_markdown: body, run_date: '2026-10-30' }]
+    const first = buildBenchAnalysis(
+      n.data,
+      { work: 'ノルウェイの森', new_work: { name: 'ノルウェイの森', author: '村上春樹' }, items: items('A') },
+      claude,
+    )
+    const workId = first.records[0].record.id
+    expect(workId).toBe(benchWorkId('ノルウェイの森', '村上春樹'))
+    const data = add(n.data, first.records)
+    for (const ctx of [claude, paste])
+      for (const author of ['村上 春樹', '村上　春樹', ' 村上・春樹 ', '村上･春樹', '村上  春樹']) {
+        const r = buildBenchAnalysis(
+          data,
+          { work: 'ノルウェイの森', new_work: { name: 'ノルウェイの森', author }, items: items(author) },
+          ctx,
+        )
+        expect(r.records.map((x) => x.table)).toEqual(['benchAnalyses'])
+        expect((r.records[0].record as BenchAnalysis).workId).toBe(workId)
+        expect(r.notes.join()).not.toContain('別の作品')
+      }
+    expect(
+      buildBenchAnalysis(
+        data,
+        { work: 'ノルウェイの森', new_work: { name: 'ノルウェイの森', author: '村上 春樹' }, items: items('B') },
+        claude,
+      ).notes,
+    ).toEqual([`相対比較の作品 ${shortId('benchWork', workId)}『ノルウェイの森』（村上春樹） に追加しました`])
+    // id の作り方は変えない（前からある作品の id がそのまま。空白の違いは今までどおり別の id）
+    expect(benchWorkId('ノルウェイの森', '村上 春樹')).not.toBe(workId)
+    expect(benchWorkId('ノルウェイの森', '村上  春樹')).toBe(benchWorkId('ノルウェイの森', '村上 春樹'))
+    // 著者の違う同じ作品名は、今までどおり別の作品（かなと漢字の違いも別の著者）
+    for (const author of ['村上龍', 'むらかみはるき']) {
+      const other = buildBenchAnalysis(
+        data,
+        { work: 'ノルウェイの森', new_work: { name: 'ノルウェイの森', author }, items: items(author) },
+        claude,
+      )
+      expect(other.records.map((x) => x.table)).toEqual(['benchWorks', 'benchAnalyses'])
+      expect(other.notes.join()).toContain('別の作品として足しました')
+    }
+  })
+
+  it('空白・「・」の違いだけの作品がいくつかある時は、書き方まで同じ著者の作品、無ければ空白の違いだけの作品。どれも同じなら短い id で指してもらう', () => {
+    const n = sample()
+    const x = addBenchWork(n.data, { name: '海辺', author: '村上春樹' })
+    const y = addBenchWork(x.data, { name: '海辺', author: '村上 春樹' })
+    const items = [{ viewpoint: '構成', body_markdown: 'x', run_date: '2026-10-30' }]
+    const to = (data: AppData, author: string) =>
+      buildBenchAnalysis(data, { work: '海辺', new_work: { name: '海辺', author }, items }, claude)
+    expect((to(y.data, '村上春樹').records[0].record as BenchAnalysis).workId).toBe(x.result)
+    for (const author of ['村上 春樹', '村上　春樹'])
+      expect((to(y.data, author).records[0].record as BenchAnalysis).workId).toBe(y.result)
+    const amb = to(y.data, '村上・春樹')
+    expect(amb.ok).toBe(false)
+    expect(amb.error).toBe('相対比較に作品名「海辺」の作品が2件あります。w:… の短い id で指してください')
+    expect(amb.candidates).toHaveLength(2)
+    // 著者の無い作品より、空白の違いだけの著者の作品に足す
+    const blank = addBenchWork(n.data, { name: '海辺', author: '' })
+    const named = addBenchWork(blank.data, { name: '海辺', author: '村上春樹' })
+    expect((to(named.data, '村上 春樹').records[0].record as BenchAnalysis).workId).toBe(named.result)
+  })
+
+  it('new_work の作品名で前からある【原稿】の回に足した時は、同じ札の回が重なったかもしれないことを別の補足で知らせる（コネクタだけ）', () => {
+    const n = sample()
+    const name = '【原稿】星の庭（第1稿・2回目）'
+    const round = addBenchWork(n.data, { name, author: '私' })
+    const items = [{ viewpoint: '00 読書ノート', body_markdown: 'Bのノート', run_date: '2026-10-30' }]
+    const ref = `${shortId('benchWork', round.result)}『${name}』（私）`
+    const note =
+      '同じ札の回がもうあったため、その回に足しました。このチャットで作った回なら、このままで構いません。別のチャット・アカウントで同時に始めた回なら、札（最後の括弧）を変えて送り直してください（この回に足した分析はそのまま残るので、作者に伝えてください）'
+    const r = buildBenchAnalysis(round.data, { work: name, new_work: { name, author: '私' }, items }, claude)
+    expect(r.notes).toEqual([`相対比較の作品 ${ref} に追加しました`, note])
+    // 作った時・w:… で指した時・new_work の無い時・何も足さなかった時・【原稿】でない作品・貼り付けには出さない
+    const made = buildBenchAnalysis(n.data, { work: name, new_work: { name, author: '私' }, items }, claude)
+    expect(made.notes.join()).not.toContain('同じ札')
+    for (const work of [shortId('benchWork', round.result), name]) {
+      const plain = buildBenchAnalysis(
+        round.data,
+        { work, ...(work === name ? {} : { new_work: { name, author: '私' } }), items },
+        claude,
+      )
+      expect(plain.notes).toEqual([`相対比較の作品 ${ref} に追加しました`])
+    }
+    const again = buildBenchAnalysis(add(round.data, r.records), { work: name, new_work: { name, author: '私' }, items }, claude)
+    expect(again.notes).toEqual([`相対比較の作品 ${ref} には何も追加していません`])
+    const control = addBenchWork(n.data, { name: '【対照】【原稿】星の庭（第1稿）（置換）', author: '私' })
+    const c = buildBenchAnalysis(
+      control.data,
+      {
+        work: '【対照】【原稿】星の庭（第1稿）（置換）',
+        new_work: { name: '【対照】【原稿】星の庭（第1稿）（置換）', author: '私' },
+        items,
+      },
+      claude,
+    )
+    expect(c.notes.join()).not.toContain('同じ札')
+    expect(buildBenchAnalysis(round.data, { work: name, new_work: { name, author: '私' }, items }, paste).notes).toEqual([])
+  })
+
+  it('コネクタ: 1件に入らない分析は、分けた部をできるだけ同じ呼び出しで送るよう返す（ほかのチャットの部と混ざらないように）', () => {
+    const n = sample()
+    const body = 'あ'.repeat(RECORD_LIMITS.recordJson + 10)
+    const r = buildBenchAnalysis(n.data, { work: n.workId, items: [{ viewpoint: '構成', body_markdown: body }] }, claude)
+    expect(r.items[0].status).toBe('invalid')
+    expect(r.items[0].hint).toContain('同じ viewpoint・run_date の別々の items にして送ってください')
+    expect(r.items[0].hint).toContain(
+      '1つの分析の部は、できるだけすべて同じ呼び出しの items に入れる（呼び出しを分けると、同じ日に同じ作品・観点の分析を送ったほかのチャットの部と混ざって並ぶことがあります。items が多くなる時は、ほかの観点を novel_add_bench_analysis の別の呼び出しにする）',
+    )
+  })
+
   it('同じ作品名が2つあれば短い id で指してもらう。入力の形・件数・観点の長さ・日付', () => {
     const n = sample()
     const twin = addBenchWork(n.data, { name: '銀河の果て', author: '別人' }).data
@@ -495,19 +607,48 @@ describe('相対比較の分析（novel_add_bench_analysis）', () => {
 })
 
 describe('作品批評の比べた作品（bench_works）', () => {
-  it('作品の id にして記録する（見つからない作品は外して知らせる）', () => {
+  it('作品の id にして記録する（コネクタは見つからない作品があれば記録せずに断り、貼り付けは外して知らせる）', () => {
     const n = sample()
-    const r = buildCritiqueResult(
-      n.data,
+    const input = { title_id: n.titleId, result_markdown: '## 総評' }
+    const ok = buildCritiqueResult(n.data, { ...input, bench_works: [shortId('benchWork', n.workId), '銀河の果て'] }, claude)
+    expect(ok.records[0].record).toMatchObject({ benchWorkIds: [n.workId] })
+    expect(ok.notes).toEqual([])
+    const refs = [shortId('benchWork', n.workId), '銀河の果て', '無い作品']
+    const r = buildCritiqueResult(n.data, { ...input, bench_works: refs }, claude)
+    expect(r.ok).toBe(true)
+    expect(r.records).toEqual([])
+    expect(r.items).toEqual([
       {
-        title_id: n.titleId,
-        result_markdown: '## 総評',
-        bench_works: [shortId('benchWork', n.workId), '銀河の果て', '無い作品'],
+        index: 0,
+        status: 'not_found',
+        label: '作品批評の結果',
+        hint: "bench_works の '無い作品' は相対比較に見つかりません。novel_list_bench_works で確かめた w:… の短い id で指すか、bench_works から外してください。この結果はまだ記録していません（直して送り直すと記録します）",
       },
-      claude,
-    )
-    expect(r.records[0].record).toMatchObject({ benchWorkIds: [n.workId] })
-    expect(r.notes.join()).toContain("bench_works の '無い作品' は見つからないため外しました")
+    ])
+    const pasted = buildCritiqueResult(n.data, { ...input, bench_works: refs }, paste)
+    expect(pasted.records[0].record).toMatchObject({ benchWorkIds: [n.workId], source: 'paste' })
+    expect(pasted.notes).toEqual([
+      "bench_works の '無い作品' は見つからないため外しました（相対比較の作品 '無い作品' が見つかりません）",
+    ])
+    // 同名の作品が2つ（2つのアカウントが別々に足した作品など）: コネクタは候補の w:… を出して断り、貼り付けは外して知らせる
+    const twin = addBenchWork(n.data, { name: '銀河の果て', author: '別人' })
+    const amb = buildCritiqueResult(twin.data, { ...input, bench_works: ['銀河の果て'] }, claude)
+    expect(amb.records).toEqual([])
+    expect(amb.items[0]).toMatchObject({
+      status: 'ambiguous',
+      hint: "bench_works の '銀河の果て' は、相対比較に同名の作品が2件あるため、どれか決まりません。w:… の短い id で指してください。この結果はまだ記録していません（直して送り直すと記録します）",
+      candidates: [
+        `${shortId('benchWork', n.workId)}『銀河の果て』（山田）`,
+        `${shortId('benchWork', twin.result)}『銀河の果て』（別人）`,
+      ],
+    })
+    const byId = buildCritiqueResult(twin.data, { ...input, bench_works: [shortId('benchWork', twin.result)] }, claude)
+    expect(byId.records[0].record).toMatchObject({ benchWorkIds: [twin.result] })
+    const pastedTwin = buildCritiqueResult(twin.data, { ...input, bench_works: ['銀河の果て'] }, paste)
+    expect('benchWorkIds' in pastedTwin.records[0].record).toBe(false)
+    expect(pastedTwin.notes).toEqual([
+      "bench_works の '銀河の果て' は、相対比較に同名の作品が2件あるため外しました（どれか決まりません。比べた作品に残すには w:… の短い id にしてください）",
+    ])
     const plain = buildCritiqueResult(n.data, { title_id: n.titleId, result_markdown: '## 総評' }, claude)
     expect('benchWorkIds' in plain.records[0].record).toBe(false)
     const bad = buildCritiqueResult(n.data, { title_id: n.titleId, result_markdown: 'x', bench_works: 'x' as never }, claude)
@@ -570,6 +711,14 @@ describe('貼り付け（相対比較の作品の画面）', () => {
     })}\n\`\`\``
     const p = previewPaste(n.data, text, { titleId: n.titleId, now: NOW, plainCritique: {} })
     expect(p.ok && p.records[0].record).toMatchObject({ benchWorkIds: [n.workId] })
+    // 同名の作品が2つある時は、比べた作品を外して記録できる（コネクタのように断らない。外したことは確かめの画面に出る）
+    const twin = addBenchWork(n.data, { name: '銀河の果て', author: '別人' }).data
+    const q = previewPaste(twin, text, { titleId: n.titleId, now: NOW, plainCritique: {} })
+    expect(q.ok && q.created).toBe(1)
+    expect(q.ok && 'benchWorkIds' in q.records[0].record).toBe(false)
+    expect(q.ok && q.calls[0].result.notes).toEqual([
+      "bench_works の '銀河の果て' は、相対比較に同名の作品が2件あるため外しました（どれか決まりません。比べた作品に残すには w:… の短い id にしてください）",
+    ])
   })
 })
 

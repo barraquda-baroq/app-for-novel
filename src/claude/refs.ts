@@ -110,6 +110,12 @@ export const refKey = (s: string): string =>
     .replace(/[\s　]+/g, ' ')
     .trim()
 
+/**
+ * 作品名・資料名で見つけた作品・資料の著者を比べる形（refKey に加えて、空白（半角・全角）と「・」を除く。「村上春樹」「村上 春樹」
+ * 「村上　春樹」は同じ著者）。records.ts の作品・資料を作品名で探す時だけ使い、id（benchWorkId・materialId）は refKey のまま
+ */
+export const authorKey = (s: string): string => refKey(s).replace(/[\s・]/g, '')
+
 /** 「第12話」「第１２話」「第十二話」は扱わず、算用数字（全角も可）だけ */
 const EPISODE_RE = /^(?:(.+?) )?第(\d+)話(?: ?第(\d+)幕)?$/
 

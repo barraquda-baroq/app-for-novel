@@ -53,7 +53,7 @@ import {
   revisionIdeaId,
   strategyNoteId,
 } from './derivedId'
-import { matchesId, readingOrder, refKey, resolvePiece, resolveTitle, shortId, type ReadingItem } from './refs'
+import { authorKey, matchesId, readingOrder, refKey, resolvePiece, resolveTitle, shortId, type ReadingItem } from './refs'
 import { materialRef, resolveMaterial } from './material'
 import { manuscriptOf } from './snapshot'
 import { canClaudeWrite, CLAUDE_RECORD_VERSION } from './visibility'
@@ -1081,9 +1081,46 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
     } else notes.push('scope の話が見つからないため、タイトル全体の批評として記録しました')
   }
   const runDate = runDateOf(input.run_date, ctx, notes)
-  const benchWorkIds = benchRefsOf(data, input.bench_works, notes)
-  if (typeof benchWorkIds === 'string')
-    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: benchWorkIds }], notes }
+  const bench = benchRefsOf(data, input.bench_works)
+  if (typeof bench === 'string')
+    return { ok: true, records: [], items: [{ index: 0, status: 'invalid', label, hint: bench }], notes }
+  const benchWorkIds = bench.ids
+  if (bench.missing.length) {
+    // コネクタ: 比べた作品の決まらない結果は記録しない（記録した後に比べた作品は足せず、w:… で送り直しても同じ内容の重複になるため）。
+    // 貼り付け: 作者が答えをそのまま貼るので、比べた作品を外して記録し、外したことを確かめの画面に出す
+    if (ctx.source === 'claude') {
+      const ambiguous = bench.missing.filter((m) => m.reason === 'ambiguous')
+      const hint = [
+        ...bench.missing.map((m) =>
+          m.reason === 'ambiguous'
+            ? `bench_works の '${short(m.ref, 30)}' は、相対比較に同名の作品が${m.candidates.length}件あるため、どれか決まりません。w:… の短い id で指してください`
+            : `bench_works の '${short(m.ref, 30)}' は相対比較に見つかりません。novel_list_bench_works で確かめた w:… の短い id で指すか、bench_works から外してください`,
+        ),
+        'この結果はまだ記録していません（直して送り直すと記録します）',
+      ].join('。')
+      const candidates = [...new Set(ambiguous.flatMap((m) => m.candidates))].slice(0, 10)
+      return {
+        ok: true,
+        records: [],
+        items: [
+          {
+            index: 0,
+            status: ambiguous.length ? 'ambiguous' : 'not_found',
+            label,
+            hint,
+            ...(candidates.length ? { candidates } : {}),
+          },
+        ],
+        notes,
+      }
+    }
+    for (const m of bench.missing)
+      notes.push(
+        m.reason === 'ambiguous'
+          ? `bench_works の '${short(m.ref, 30)}' は、相対比較に同名の作品が${m.candidates.length}件あるため外しました（どれか決まりません。比べた作品に残すには w:… の短い id にしてください）`
+          : `bench_works の '${short(m.ref, 30)}' は見つからないため外しました（${m.message}）`,
+      )
+  }
   const promptText = input.prompt_text ?? prompt?.body ?? ''
   const id = critiqueResultId({ titleId: title.id, runDate, promptText, resultMarkdown: markdown, artifactUrl: url })
   const status = existing(data, ctx, 'critiqueResults', id, new Set())
@@ -1127,22 +1164,52 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
   }
 }
 
+/** 作品批評の比べた作品（bench_works）のうち、作品の決まらなかった指し方 */
+interface MissingBenchRef {
+  ref: string
+  /** 見つからない・同じ作品名の作品がいくつかある */
+  reason: 'not_found' | 'ambiguous'
+  /** 見つからない理由の文（resolveBenchWork） */
+  message: string
+  /** 同じ作品名の作品（w:…『作品名』（著者）。ambiguous の時だけ） */
+  candidates: string[]
+}
+
 /**
- * 作品批評の比べた作品（bench_works）を作品の id にする（見つからない作品は外して notes に書く）。
+ * 作品批評の比べた作品（bench_works）を作品の id にする（作品の決まらなかった指し方は missing。断るか外すかは呼ぶ側で決める）。
  * 形が違えば理由の文字列
  */
-function benchRefsOf(data: AppData, refs: unknown, notes: string[]): ID[] | string {
-  if (refs === undefined || refs === null) return []
+function benchRefsOf(data: AppData, refs: unknown): { ids: ID[]; missing: MissingBenchRef[] } | string {
+  if (refs === undefined || refs === null) return { ids: [], missing: [] }
   if (!Array.isArray(refs) || refs.length > RECORD_LIMITS.benchRefs)
     return `bench_works は相対比較の作品の指し方（w:… か作品名）の配列（${RECORD_LIMITS.benchRefs}件まで）にしてください`
   const ids: ID[] = []
+  const missing: MissingBenchRef[] = []
   for (const ref of refs) {
+    const shown = String(ref)
     const r = isStr(ref) && ref.trim() ? resolveBenchWork(data, ref) : null
     if (r?.ok) {
       if (!ids.includes(r.value.id)) ids.push(r.value.id)
-    } else notes.push(`bench_works の '${short(String(ref), 30)}' は見つからないため外しました${r ? `（${r.message}）` : ''}`)
+    } else if (r?.reason === 'ambiguous')
+      missing.push({ ref: shown, reason: 'ambiguous', message: r.message, candidates: r.candidates ?? [] })
+    else
+      missing.push({
+        ref: shown,
+        reason: 'not_found',
+        message: r?.message ?? `相対比較の作品 '${shown}' が見つかりません`,
+        candidates: [],
+      })
   }
-  return ids
+  return { ids, missing }
+}
+
+/**
+ * 作品名・資料名の同じものがいくつかある時に、new_work・new_material の著者（want。refKey の形）と合うものを選ぶ: 書き方まで同じ
+ * 著者があればそれ、無ければ空白と「・」の違いだけの著者（著者の無いものは選ばない。2つ以上ならどちらも返し、短い id で指してもらう）
+ */
+function sameAuthor<T>(list: T[], author: (x: T) => string, want: string): T[] {
+  const exact = list.filter((x) => refKey(author(x)) === want)
+  return exact.length ? exact : list.filter((x) => authorKey(author(x)) === authorKey(want))
 }
 
 // ---------- W6 ベンチ作品の分析（2.5） ----------
@@ -1175,14 +1242,18 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
   const records: NewRecord[] = []
   // 作品: work → new_work の作品名の順に探し、無ければ new_work がある時だけ作る。
   // 作品名で見つけた作品は、new_work の著者と作品の著者が両方あって違えば、同じ作品名の別の作品とみなす（短い作品名はよく重なる）。
-  // w:… の短い id・id で指した作品には、著者が違っても足す（違うことを notes で知らせる）
+  // 著者は空白と「・」を除いて比べる（authorKey。「村上 春樹」は「村上春樹」の作品に足す。2つのアカウントが同じ本を同時に足した時に、
+  // 書き方の違いだけで2つの作品にしない）。w:… の短い id・id で指した作品には、著者が違っても足す（違うことを notes で知らせる）
   const works = sortedBenchWorks(data)
   const wantAuthor = newWork ? refKey(newWork.author ?? '') : ''
-  const otherAuthor = (w: BenchWork) => Boolean(wantAuthor && refKey(w.author) && refKey(w.author) !== wantAuthor)
+  const wantAuthorKey = authorKey(wantAuthor)
+  const otherAuthor = (w: BenchWork) => Boolean(wantAuthorKey && authorKey(w.author) && authorKey(w.author) !== wantAuthorKey)
   let work: BenchWork | null = null
   let created: BenchWork | null = null
   /** 作品名は同じで著者の違う作品（別の作品として作った時に知らせる） */
   let nameTwin: BenchWork | null = null
+  /** new_work を付けた呼び出しで、作品名で見つけた既にある作品に足す（【原稿】の回が重なったかもしれない） */
+  let foundByName = false
   const byIdRef = ref ? works.some((w) => matchesId('benchWork', ref, w.id)) : false
   if (byIdRef || !newWork) {
     const found = ref ? resolveBenchWork(data, ref) : null
@@ -1205,10 +1276,12 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       const hits = works.filter((w) => refKey(w.name) === refKey(name))
       if (!hits.length) continue
       const fits = hits.filter((w) => !otherAuthor(w))
-      // 同じ作品名がいくつかあっても、著者まで同じものが1つならそれ（Claude が別の作品として作った後の呼び出しなど）
-      const exact = fits.length > 1 && wantAuthor ? fits.filter((w) => refKey(w.author) === wantAuthor) : fits
+      // 同じ作品名がいくつかあっても、著者まで同じものが1つならそれ（Claude が別の作品として作った後の呼び出しなど）。
+      // 書き方まで同じ著者を先に、無ければ空白と「・」の違いだけの著者を見る（著者の無い作品より、著者の合う作品）
+      const exact = fits.length > 1 && wantAuthor ? sameAuthor(fits, (w) => w.author, wantAuthor) : fits
       if (exact.length === 1) {
         work = exact[0]
+        foundByName = true
         break
       }
       if (fits.length > 1)
@@ -1225,7 +1298,10 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
         (id) => Boolean(ctx.wasDeleted?.('benchWorks', id)),
         (id) => Boolean(ctx.inTrash?.('benchWorks', id)),
       )
-      if (pick?.found) work = pick.found
+      if (pick?.found) {
+        work = pick.found
+        foundByName = true
+      }
       // ゴミ箱に同じ作品名の作品がある間は作り直さない（戻すと同じ作品名の作品が2つになる。手で足した作品も作品名で見分ける）。
       // 書き出しの「は以前に削除されています」は、名作分析のプロンプト（01）が見分けに使うので変えない
       else if (pick?.trashed || ctx.trashedBenchWorkNamed?.(newWork.name))
@@ -1302,7 +1378,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
       '相対比較の分析',
       rec.body,
       (k) =>
-        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ viewpoint・run_date の別々の items にして送ってください（各部の body_markdown の1行目の先頭に「（1/${k}）」「（2/${k}）」…と番号を書く（見出しで始める時は「## （1/${k}）総評」のように # の後ろに。番号だけの行を1行目にしてもよい）。アプリと一覧はこの番号の順に並べます。items が多くなる時は novel_add_bench_analysis を分けて呼ぶ）`,
+        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ viewpoint・run_date の別々の items にして送ってください（各部の body_markdown の1行目の先頭に「（1/${k}）」「（2/${k}）」…と番号を書く（見出しで始める時は「## （1/${k}）総評」のように # の後ろに。番号だけの行を1行目にしてもよい）。アプリと一覧はこの番号の順に並べます。1つの分析の部は、できるだけすべて同じ呼び出しの items に入れる（呼び出しを分けると、同じ日に同じ作品・観点の分析を送ったほかのチャットの部と混ざって並ぶことがあります。items が多くなる時は、ほかの観点を novel_add_bench_analysis の別の呼び出しにする））`,
       'viewpoint を短くしてください',
     )
     if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
@@ -1318,13 +1394,20 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
   } else if (ctx.source === 'claude') {
     // コネクタの答えには、足す先の作品をいつも w:… で出す（Claude が作品の一覧で id を探し直さなくてよいように）。
     // 貼り付けには出さない（［追加］を押す前の確かめに出るので「追加しました」は合わない。作品は各分析の『作品名』で分かる）
-    if (!created)
+    if (!created) {
       notes.push(
         records.length
           ? `相対比較の作品 ${benchWorkRef(work!)} に追加しました`
           : `相対比較の作品 ${benchWorkRef(work!)} には何も追加していません`,
       )
-    else
+      // 【原稿】の回は1回の分析を1つの作品にするので、new_work の作品名で前からある回に足した時は、別のチャット・アカウントが同じ時に
+      // 同じ札を選んだかもしれないことを知らせる（同じチャットの2回目からの呼び出しでも出るので、その時はこのままでよいと書く。
+      // 「相対比較の作品 … に追加しました」の文は変えず、別の補足の行にする）
+      if (records.length && foundByName && work!.name.trim().startsWith('【原稿】'))
+        notes.push(
+          '同じ札の回がもうあったため、その回に足しました。このチャットで作った回なら、このままで構いません。別のチャット・アカウントで同時に始めた回なら、札（最後の括弧）を変えて送り直してください（この回に足した分析はそのまま残るので、作者に伝えてください）',
+        )
+    } else
       notes.push(
         `分析を1つも追加しなかったため、作品『${benchWorkName(created)}』${created.author ? `（${created.author}）` : ''}は相対比較に追加していません`,
       )
@@ -1366,11 +1449,12 @@ export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx
   const notes: string[] = []
   const records: NewRecord[] = []
   // 資料: material → new_material の資料名の順に探し、無ければ new_material がある時だけ作る。
-  // 資料名で見つけた資料は、new_material の著者と資料の著者が両方あって違えば、同じ資料名の別の資料とみなす。
-  // d:… の短い id・id で指した資料には、著者が違っても足す（違うことを notes で知らせる）
+  // 資料名で見つけた資料は、new_material の著者と資料の著者が両方あって違えば、同じ資料名の別の資料とみなす（著者は空白と「・」を
+  // 除いて比べる。相対比較の作品と同じ）。d:… の短い id・id で指した資料には、著者が違っても足す（違うことを notes で知らせる）
   const materials = sortedMaterials(data)
   const wantAuthor = newMaterial ? refKey(newMaterial.author ?? '') : ''
-  const otherAuthor = (m: Material) => Boolean(wantAuthor && refKey(m.author) && refKey(m.author) !== wantAuthor)
+  const wantAuthorKey = authorKey(wantAuthor)
+  const otherAuthor = (m: Material) => Boolean(wantAuthorKey && authorKey(m.author) && authorKey(m.author) !== wantAuthorKey)
   let material: Material | null = null
   let created: Material | null = null
   /** 資料名は同じで著者の違う資料（別の資料として作った時に知らせる） */
@@ -1397,8 +1481,8 @@ export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx
       const hits = materials.filter((m) => refKey(m.name) === refKey(name))
       if (!hits.length) continue
       const fits = hits.filter((m) => !otherAuthor(m))
-      // 同じ資料名がいくつかあっても、著者まで同じものが1つならそれ（Claude が別の資料として作った後の呼び出しなど）
-      const exact = fits.length > 1 && wantAuthor ? fits.filter((m) => refKey(m.author) === wantAuthor) : fits
+      // 同じ資料名がいくつかあっても、著者まで同じものが1つならそれ（Claude が別の資料として作った後の呼び出しなど。相対比較の作品と同じ）
+      const exact = fits.length > 1 && wantAuthor ? sameAuthor(fits, (m) => m.author, wantAuthor) : fits
       if (exact.length === 1) {
         material = exact[0]
         break
@@ -1492,7 +1576,7 @@ export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx
       '資料の記録',
       rec.body,
       (k) =>
-        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ section・run_date の別々の items にして送ってください（各部の body_markdown の1行目の先頭に「（1/${k}）」「（2/${k}）」…と番号を書く（見出しで始める時は「## （1/${k}）要約」のように # の後ろに。番号だけの行を1行目にしてもよい）。アプリと一覧はこの番号の順に並べます。items が多くなる時は novel_add_material_notes を分けて呼ぶ）`,
+        `body_markdown を${k}つ以上に分け（前半・後半のように、見出しの切れ目で）、同じ section・run_date の別々の items にして送ってください（各部の body_markdown の1行目の先頭に「（1/${k}）」「（2/${k}）」…と番号を書く（見出しで始める時は「## （1/${k}）要約」のように # の後ろに。番号だけの行を1行目にしてもよい）。アプリと一覧はこの番号の順に並べます。1つの記録の部は、できるだけすべて同じ呼び出しの items に入れる（呼び出しを分けると、同じ日に同じ資料・項目の記録を送ったほかのチャットの部と混ざって並ぶことがあります。items が多くなる時は、ほかの項目を novel_add_material_notes の別の呼び出しにする））`,
       'section を短くしてください',
     )
     if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })

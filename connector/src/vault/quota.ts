@@ -61,12 +61,32 @@ export function freshQuota(ts: number, prev: QuotaCounts | null): QuotaCounts {
   return prev && prev.day === day ? prev : { day, reads: 0, writes: 0 }
 }
 
+// 2.9: 枠はすべての接続（claude.ai のアカウント）で1つなので、断る文にもそう書く（ほかのアカウントが使った分で断られた Claude が
+// 理由を言えるように）
+
+const fmt = (n: number) => Math.max(0, n).toLocaleString('ja-JP')
+
 export function readBudgetMessage(ts: number): string {
-  return `今日のコネクタ用の読み取り枠を使い切りました（アプリの同期を守るため）。${resetLabel(ts)}に回復します。`
+  return `今日のコネクタ用の読み取り枠を使い切りました（アプリの同期を守るため。すべての接続を合わせて数えます）。${resetLabel(ts)}に回復します。`
 }
 
-export function writeBudgetMessage(ts: number): string {
-  return `今日のコネクタ用の書き込み枠を使い切りました（アプリの同期を守るため）。${resetLabel(ts)}に回復します。`
+/**
+ * 書く前に端末からの最新の変更を読めなかった（読み取りの枠の残りが、取り込みの1ページの分より少ない）。left は残り
+ * （0 なら使い切った時の文）。読むツールは前に取り込んだ内容で答え続ける
+ */
+export function writeReadBudgetMessage(ts: number, left: number): string {
+  if (left <= 0) return readBudgetMessage(ts)
+  return `今日のコネクタ用の読み取り枠は、すべての接続を合わせて残り ${fmt(left)} 件です。書く前に端末からの最新の変更を確かめるには足りないため、何も書いていません（読むツールは前に取り込んだ内容で使えます）。${resetLabel(ts)}に回復します。`
+}
+
+/**
+ * 書き込みの枠に、この呼び出しの分（need 件）が入らない（呼び出し全体を断る。一部だけは書かない）。left は残り（0 なら使い切った
+ * 時の文）。field は分けて送る入力の名前（items・cards）
+ */
+export function writeBudgetMessage(ts: number, left: number, need: number, field = 'items'): string {
+  if (left <= 0)
+    return `今日のコネクタ用の書き込み枠を使い切りました（アプリの同期を守るため。すべての接続を合わせて数えます）。${resetLabel(ts)}に回復します。`
+  return `今日のコネクタ用の書き込み枠は、すべての接続を合わせて残り ${fmt(left)} 件です（この呼び出しは ${fmt(need)} 件）。何も書いていません。${field} を分けて少なくすると書けます。${resetLabel(ts)}に回復します。`
 }
 
 export function firestoreQuotaMessage(ts: number): string {

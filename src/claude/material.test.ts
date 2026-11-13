@@ -430,6 +430,43 @@ describe('資料の記録（novel_add_material_notes）', () => {
     }
   })
 
+  it('資料名で見つけた資料の著者は、空白（半角・全角）と「・」を除いて比べる（2.9。貼り付けも同じ。id は変えない）', () => {
+    const n = sample()
+    const items = (body: string) => [{ section: '要約', body_markdown: body, run_date: '2026-11-02' }]
+    const first = buildMaterialNotes(
+      n.data,
+      { material: '外科の夜明け', new_material: { name: '外科の夜明け', author: 'ユルゲン・トールヴァルト' }, items: items('A') },
+      claude,
+    )
+    const id = first.records[0].record.id
+    expect(id).toBe(materialId('外科の夜明け', 'ユルゲン・トールヴァルト'))
+    const data = add(n.data, first.records)
+    for (const ctx of [claude, paste])
+      for (const author of ['ユルゲン トールヴァルト', 'ユルゲン　トールヴァルト', 'ユルゲントールヴァルト']) {
+        const r = buildMaterialNotes(
+          data,
+          { material: '外科の夜明け', new_material: { name: '外科の夜明け', author }, items: items(author) },
+          ctx,
+        )
+        expect(r.records.map((x) => x.table)).toEqual(['materialNotes'])
+        expect((r.records[0].record as MaterialNote).materialId).toBe(id)
+      }
+    expect(materialId('外科の夜明け', 'ユルゲン トールヴァルト')).not.toBe(id)
+    const other = buildMaterialNotes(
+      data,
+      { material: '外科の夜明け', new_material: { name: '外科の夜明け', author: '別の人' }, items: items('B') },
+      claude,
+    )
+    expect(other.records.map((x) => x.table)).toEqual(['materials', 'materialNotes'])
+    // 空白の違いだけの資料が2つあれば、書き方まで同じ著者の資料。どれも同じでなければ短い id で指してもらう
+    const x = addMaterial(n.data, { name: '海辺', author: '村上春樹' })
+    const y = addMaterial(x.data, { name: '海辺', author: '村上 春樹' })
+    const to = (author: string) =>
+      buildMaterialNotes(y.data, { material: '海辺', new_material: { name: '海辺', author }, items: items(author) }, claude)
+    expect((to('村上 春樹').records[0].record as MaterialNote).materialId).toBe(y.result)
+    expect(to('村上・春樹').error).toBe('資料の棚に資料名「海辺」の資料が2件あります。d:… の短い id で指してください')
+  })
+
   it('同じ資料名が2つあれば短い id で指してもらう。入力の形・件数・項目の長さ・日付', () => {
     const n = sample()
     const twin = addMaterial(n.data, { name: '江戸の暮らし', author: '別人' }).data
@@ -498,7 +535,10 @@ describe('資料の記録（novel_add_material_notes）', () => {
     expect(r.items[0].hint).toContain('body_markdown を2つ以上に分け')
     expect(r.items[0].hint).toContain('同じ section・run_date の別々の items')
     expect(r.items[0].hint).toContain('1行目の先頭に「（1/2）」')
-    expect(r.items[0].hint).toContain('novel_add_material_notes を分けて呼ぶ')
+    // 1つの記録の部は同じ呼び出しで送る（呼び出しを分けると、ほかのチャットの部と混ざって並ぶことがある。2.9）
+    expect(r.items[0].hint).toContain(
+      '1つの記録の部は、できるだけすべて同じ呼び出しの items に入れる（呼び出しを分けると、同じ日に同じ資料・項目の記録を送ったほかのチャットの部と混ざって並ぶことがあります。items が多くなる時は、ほかの項目を novel_add_material_notes の別の呼び出しにする）',
+    )
     expect(buildMaterialNotes(n.data, input, paste).items[0].status).toBe('created')
     // 作った記録は同期の形にしてもそのまま読める
     const ok = buildMaterialNotes(n.data, { material: n.materialId, items: [{ section: '要約', body_markdown: '短い' }] }, claude)
