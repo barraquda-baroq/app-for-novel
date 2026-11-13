@@ -70,6 +70,16 @@ export function effectiveFolderId(data: FolderData, idea: Pick<Idea, 'titleId' |
   return sectionOf(data.titles, f.titleId) === sectionOf(data.titles, idea.titleId) ? f.id : null
 }
 
+/**
+ * 入っているフォルダを付け替える（null = フォルダの外。項目ごと消し、null は書かない: 同期の3者マージで、項目の無い古いカードと
+ * 同じに見えるように）
+ */
+export function withIdeaFolder<T extends Pick<Idea, 'folderId'>>(idea: T, folderId: ID | null): T {
+  const { folderId: _f, ...rest } = idea
+  void _f
+  return (folderId === null ? rest : { ...rest, folderId }) as T
+}
+
 /** 入れ物の鍵: 仕切り＋フォルダ（null = フォルダの外。フォルダは仕切り＋親の effectiveParentId で） */
 export function containerKey(section: ID | null, folderId: ID | null): string {
   return `${section ?? ''}|${folderId ?? ''}`
@@ -193,15 +203,20 @@ const LINE_BREAKS = /[\r\n\t\v\f\u0085\u2028\u2029]/g
 const EDGE_SPACES = /^[\s\u3000]+|[\s\u3000]+$/gu
 
 /**
- * フォルダの名前をそろえる。NFC、改行・タブは半角の空白、前後の空白（全角も）を除き、続く半角の空白は1つ、
- * 中の全角の空白は残す（「2026/11/12　港町」）、40字まで（切った後の終わりの空白も除く）
+ * フォルダの名前をそろえる（字の数では切らない）。NFC、改行・タブは半角の空白、前後の空白（全角も）を除き、続く半角の空白は1つ、
+ * 中の全角の空白は残す（「2026/11/12　港町」）。アプリの操作は、これが40字を超えたら断る（黙って切らない）
  */
-export function normalizeFolderName(s: string): string {
-  const t = (typeof s === 'string' ? s : '')
+export function tidyFolderName(s: string): string {
+  return (typeof s === 'string' ? s : '')
     .normalize('NFC')
     .replace(LINE_BREAKS, ' ')
     .replace(/ {2,}/g, ' ')
     .replace(EDGE_SPACES, '')
+}
+
+/** フォルダの名前をそろえ（tidyFolderName）、40字まで（切った後の終わりの空白も除く） */
+export function normalizeFolderName(s: string): string {
+  const t = tidyFolderName(s)
   const chars = Array.from(t)
   return chars.length > IDEA_FOLDER_NAME_MAX ? chars.slice(0, IDEA_FOLDER_NAME_MAX).join('').replace(EDGE_SPACES, '') : t
 }

@@ -20,9 +20,13 @@ import {
   recordSubmissionSnapshot,
   snapshotPieceBody,
   submissionsOf,
+  trashIdea,
   updateMemo,
 } from './entityOps'
+import { createIdeaFolder, deleteIdeaFolder, moveIdeaFolder } from './ideaFolderOps'
+import { buildIdeaTree } from './ideaFolders'
 import { repairData } from './repair'
+import { transact } from './tx'
 import {
   addChapter,
   addEpisode,
@@ -800,5 +804,157 @@ describe('ゴミ箱の種類: アイデアのフォルダ（2.9）', () => {
     expect(trashLabel.ideaFolder({ name: ' 場面の相談 ' })).toBe('場面の相談')
     expect(trashLabel.ideaFolder({ name: '2026/11/12\u3000港町' })).toBe('2026/11/12\u3000港町')
     expect(trashLabel.ideaFolder({ name: '' })).toBe('無題のフォルダ')
+  })
+})
+
+describe('アイデアのフォルダ（2.9）を戻す', () => {
+  const names = (list: { folder: { name: string } }[]) => list.map((n) => n.folder.name)
+  const bodies = (list: { body: string }[]) => list.map((i) => i.body)
+  const folderIn = (data: AppData, titleId: ID | null, parentId: ID | null, name: string) => {
+    const r = createIdeaFolder(data, titleId, parentId, name)
+    return { data: r.data, id: r.result }
+  }
+  const card = (data: AppData, titleId: ID | null, body: string, folderId: ID | null = null) => {
+    const r = addIdea(data, titleId, '', body, folderId)
+    return { data: r.data, id: r.result }
+  }
+  const entryOf = (data: AppData, kind: TrashEntry['kind']) => listTrash(data.trashEntries).find((e) => e.kind === kind)!
+
+  /** 星の庭: 1段目「筋」「場面」（場面の中に「雨の駅」）、カード */
+  function folderFixture() {
+    const t = createTitle(emptyData(), '星の庭')
+    let r = folderIn(t.data, t.result, null, '場面')
+    const scene = r.id
+    r = folderIn(r.data, t.result, null, '筋')
+    const plot = r.id
+    r = folderIn(r.data, t.result, scene, '雨の駅')
+    const rain = r.id
+    let c = card(r.data, t.result, '場面1', scene)
+    const scene1 = c.id
+    c = card(c.data, t.result, '雨1', rain)
+    const rain1 = c.id
+    c = card(c.data, t.result, '雨2', rain)
+    const rain2 = c.id
+    c = card(c.data, t.result, '外1')
+    return { data: c.data, titleId: t.result, scene, plot, rain, scene1, rain1, rain2, loose: c.id }
+  }
+
+  it('フォルダを、中のフォルダ・カードと一緒に元の位置へ戻す', () => {
+    const f = folderFixture()
+    const deleted = deleteIdeaFolder(f.data, f.scene)
+    expect(buildIdeaTree(deleted, f.titleId).count).toBe(1)
+    const r = restoreTrashEntry(deleted, entryOf(deleted, 'ideaFolder').id)
+    expect(r.result).toMatchObject({ kind: 'ideaFolder', titleId: f.titleId, movedToUnassigned: false, outOfFolder: false })
+    const tree = buildIdeaTree(r.data, f.titleId)
+    expect(names(tree.folders)).toEqual(['筋', '場面'])
+    expect(names(tree.folders[1].folders)).toEqual(['雨の駅'])
+    expect(bodies(tree.folders[1].ideas)).toEqual(['場面1'])
+    expect(bodies(tree.folders[1].folders[0].ideas)).toEqual(['雨1', '雨2'])
+    expect(r.data.trashEntries).toEqual({})
+    expect(r.data.trashRecords).toEqual({})
+  })
+
+  it('タイトルが無い: フォルダ・中のフォルダ・カードを どのタイトルにも属さない へ（ホームの1段目の後ろ）', () => {
+    const f = folderFixture()
+    let data = deleteIdeaFolder(f.data, f.scene)
+    data = folderIn(data, null, null, '新作の相談').data
+    data = deleteTitle(data, f.titleId)
+    const r = restoreTrashEntry(data, entryOf(data, 'ideaFolder').id)
+    expect(r.result).toMatchObject({ titleId: null, movedToUnassigned: true, outOfFolder: false })
+    const tree = buildIdeaTree(r.data, null)
+    // タイトルを消した時に「筋」もホームへ移っている。戻した「場面」はその後ろ
+    expect(names(tree.folders)).toEqual(['新作の相談', '筋', '場面'])
+    expect(names(tree.folders[2].folders)).toEqual(['雨の駅'])
+    expect(bodies(tree.folders[2].folders[0].ideas)).toEqual(['雨1', '雨2'])
+    expect(r.data.ideaFolders[f.rain].titleId).toBeNull()
+    expect(r.data.ideas[f.rain1].titleId).toBeNull()
+  })
+
+  it('親のフォルダが無い2段目: 1段目のフォルダとして、兄弟の後ろへ戻す（知らせる）', () => {
+    const f = folderFixture()
+    let data = deleteIdeaFolder(f.data, f.rain)
+    data = deleteIdeaFolder(data, f.scene)
+    const r = restoreTrashEntry(data, listTrash(data.trashEntries).find((e) => e.label === '雨の駅')!.id)
+    expect(r.result).toMatchObject({ outOfFolder: true, movedToUnassigned: false, titleId: f.titleId })
+    expect(r.data.ideaFolders[f.rain].parentId).toBeNull()
+    const tree = buildIdeaTree(r.data, f.titleId)
+    expect(names(tree.folders)).toEqual(['筋', '雨の駅'])
+    expect(bodies(tree.folders[1].ideas)).toEqual(['雨1', '雨2'])
+    // 親が2段目になっていても（3段目にはしない）
+    const t2 = folderFixture()
+    let d2 = deleteIdeaFolder(t2.data, t2.rain)
+    d2 = moveIdeaFolder(d2, t2.plot, { titleId: t2.titleId, parentId: t2.scene })
+    const entry = entryOf(d2, 'ideaFolder')
+    const main = d2.trashRecords[entry.recordIds[0]]
+    d2 = { ...d2, trashRecords: { ...d2.trashRecords, [main.id]: { ...main, record: { ...main.record, parentId: t2.plot } } } }
+    const r2 = restoreTrashEntry(d2, entry.id)
+    expect(r2.result.outOfFolder).toBe(true)
+    expect(r2.data.ideaFolders[t2.rain].parentId).toBeNull()
+  })
+
+  it('カード: 入っていたフォルダへ戻す。フォルダが無ければフォルダの外の末尾へ（項目を消し、知らせる）', () => {
+    const f = folderFixture()
+    let data = deleteIdea(f.data, f.rain1)
+    let r = restoreTrashEntry(data, entryOf(data, 'idea').id)
+    expect(r.result.outOfFolder).toBe(false)
+    expect(r.data.ideas[f.rain1].folderId).toBe(f.rain)
+    expect(bodies(buildIdeaTree(r.data, f.titleId).folders[1].folders[0].ideas)).toEqual(['雨1', '雨2'])
+    data = deleteIdea(f.data, f.rain1)
+    data = deleteIdeaFolder(data, f.rain)
+    r = restoreTrashEntry(data, entryOf(data, 'idea').id)
+    expect(r.result).toMatchObject({ outOfFolder: true, movedToUnassigned: false, titleId: f.titleId })
+    expect('folderId' in r.data.ideas[f.rain1]).toBe(false)
+    expect(bodies(buildIdeaTree(r.data, f.titleId).loose)).toEqual(['外1', '雨1'])
+  })
+
+  it('タイトルを消した後のカード: タイトルと一緒にホームへ移ったフォルダに戻る', () => {
+    const f = folderFixture()
+    let data = deleteIdea(f.data, f.rain2)
+    data = deleteTitle(data, f.titleId)
+    const r = restoreTrashEntry(data, entryOf(data, 'idea').id)
+    expect(r.result).toMatchObject({ movedToUnassigned: true, outOfFolder: false, titleId: null })
+    expect(r.data.ideas[f.rain2]).toMatchObject({ titleId: null, folderId: f.rain })
+    const home = buildIdeaTree(r.data, null)
+    expect(bodies(home.folders.find((n) => n.folder.id === f.scene)!.folders[0].ideas)).toEqual(['雨1', '雨2'])
+  })
+
+  it('Claude の依頼でゴミ箱へ移したフォルダの中のカードも、同じフォルダへ戻る', () => {
+    const f = folderFixture()
+    // Claude の依頼で移す時の形（src/domain/claudeTrash.ts）
+    const opts = { at: 5, entryId: 'te-claude', recordId: (i: number) => `tr-claude-${i}`, by: 'claude' as const }
+    const moved = transact(f.data, (tx) => trashIdea(tx, tx.get('ideas', f.rain1)!, opts))
+    const entry = moved.data.trashEntries[moved.result]
+    expect(entry).toMatchObject({ by: 'claude', parentLabel: '場面 › 雨の駅' })
+    const r = restoreTrashEntry(moved.data, entry.id)
+    expect(r.data.ideas[f.rain1].folderId).toBe(f.rain)
+    expect(bodies(buildIdeaTree(r.data, f.titleId).folders[1].folders[0].ideas)).toEqual(['雨1', '雨2'])
+  })
+
+  it('同じ id が残っていれば複製として戻し、中のフォルダの親とカードの folderId も新しい id に付け替える', () => {
+    const f = folderFixture()
+    let data = deleteIdeaFolder(f.data, f.scene)
+    // 別の端末から同じ id のフォルダが届いた
+    const live = { ...f.data.ideaFolders[f.scene], name: '場面（別）' }
+    data = { ...data, ideaFolders: { ...data.ideaFolders, [f.scene]: live } }
+    const r = restoreTrashEntry(data, entryOf(data, 'ideaFolder').id)
+    expect(r.result.copied).toBe(true)
+    const copyId = r.result.id
+    expect(copyId).not.toBe(f.scene)
+    expect(r.data.ideaFolders[f.scene].name).toBe('場面（別）')
+    expect(r.data.ideaFolders[copyId].name).toBe('場面')
+    const rainCopies = Object.values(r.data.ideaFolders).filter((x) => x.name === '雨の駅')
+    expect(rainCopies).toHaveLength(1)
+    expect(rainCopies[0].parentId).toBe(copyId)
+    const scene1 = Object.values(r.data.ideas).find((i) => i.body === '場面1')!
+    expect(scene1.folderId).toBe(copyId)
+  })
+
+  it('修復はフォルダのゴミ箱の件をそのまま残す', () => {
+    const f = folderFixture()
+    const data = deleteIdeaFolder(f.data, f.scene)
+    const repaired = repairData(data)
+    expect(repaired.fixes).toEqual([])
+    expect(Object.keys(repaired.data.trashEntries)).toEqual(Object.keys(data.trashEntries))
+    expect(Object.keys(repaired.data.trashRecords).sort()).toEqual(Object.keys(data.trashRecords).sort())
   })
 })

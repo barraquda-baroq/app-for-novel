@@ -128,12 +128,22 @@ export function trashDays(entries: TrashEntry[], records: AppData['trashRecords'
   return days
 }
 
-/** 戻した後のお知らせ（同じ名前の稿があって名前を変えた稿があれば、そのことも伝える） */
+/**
+ * 戻した後のお知らせ（同じ名前の稿があって名前を変えた稿があれば、そのことも伝える）。2.9: 元のフォルダが無くて、アイデアを
+ * フォルダの外へ・フォルダを1段目として戻した時は、そのことも伝える
+ */
 export function restoredMessage(
-  r: Pick<RestoreResult, 'label' | 'copied' | 'movedToUnassigned'> & Partial<Pick<RestoreResult, 'renamed'>>,
+  r: Pick<RestoreResult, 'label' | 'copied' | 'movedToUnassigned'> &
+    Partial<Pick<RestoreResult, 'renamed' | 'kind' | 'outOfFolder'>>,
 ): string {
   const name = `「${r.label.trim() || '（名前なし）'}」`
-  if (r.movedToUnassigned) return `${name}を「どのタイトルにも属さない」に戻しました（元のタイトルがないため）`
+  const folder = r.outOfFolder
+    ? r.kind === 'ideaFolder'
+      ? '元のフォルダが無いため、1段目のフォルダとして戻しました'
+      : '元のフォルダが無いため、フォルダの外に戻しました'
+    : ''
+  if (r.movedToUnassigned)
+    return `${name}を「どのタイトルにも属さない」に戻しました（元のタイトルがないため）${folder ? `。${folder}` : ''}`
   const renamed = r.renamed ?? []
   const note =
     renamed.length === 0
@@ -141,7 +151,8 @@ export function restoredMessage(
       : renamed.length === 1
         ? `（同じ名前の稿があったため、「${renamed[0]}」という名前にしました）`
         : `（同じ名前の稿があったため、${renamed.length}稿の名前に「（復元）」を付けました）`
-  if (r.copied) return `${name}を複製として元の場所に戻しました（同じものが残っていたため）${note}`
+  if (r.copied) return `${name}を複製として元の場所に戻しました（同じものが残っていたため）${note}${folder ? `。${folder}` : ''}`
+  if (folder) return `${name}は、${folder}`
   return `${name}を元の場所に戻しました${note}`
 }
 

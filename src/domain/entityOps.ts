@@ -11,6 +11,7 @@ import {
   folderNameKey,
   folderPathLabel,
   sectionOf,
+  withIdeaFolder,
   type IdeaTree,
 } from './ideaFolders'
 
@@ -394,16 +395,6 @@ function openIdeasIn(tx: Tx, section: ID | null, folderId: ID | null, exceptId?:
 /** 入れ物の末尾の order（済みのものも含めた最大の次。済みでないアイデアの末尾になる） */
 function nextIdeaOrder(tx: Tx, section: ID | null, folderId: ID | null, exceptId?: ID): number {
   return nextOrder(tx.all('ideas').filter((i) => i.id !== exceptId && inContainer(tx.data, i, section, folderId)))
-}
-
-/**
- * 入っているフォルダを付け替える（2.9）。null = フォルダの外（項目ごと消す。null は書かない: 同期の3者マージで、項目の無い古い
- * カードと同じに見えるように）
- */
-export function withIdeaFolder(idea: Idea, folderId: ID | null): Idea {
-  const { folderId: _f, ...rest } = idea
-  void _f
-  return folderId === null ? rest : { ...rest, folderId }
 }
 
 /** 移す先・足す先の入れ物を確かめる（タイトルがある・フォルダがあり同じ仕切り） */

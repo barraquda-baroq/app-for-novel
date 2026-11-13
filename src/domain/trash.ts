@@ -3,7 +3,7 @@
 // 戻す時はその場所へ並べ直す（直前にあった要素がまだあればその直後、なければ控えた位置）。
 // すべて純粋関数で、新しい AppData を返す。戻せない時は DomainError を投げる。
 import { ideaLabelLine } from '../claude/ideaAppend'
-import { ideaFolderName } from './ideaFolders'
+import { effectiveFolderId, effectiveParentId, ideaFolderName, isTopFolder, sectionOf, withIdeaFolder } from './ideaFolders'
 import { actsOf, isSplit, locatePiece } from './structure'
 import { Tx, transact } from './tx'
 import {
@@ -385,8 +385,13 @@ export interface RestoreResult {
   titleId: ID | null
   /** 同じ id のものが残っていたので、新しい id の複製として戻した */
   copied: boolean
-  /** 元のタイトルがなかったので「どのタイトルにも属さない」へ戻した（アイデアのみ） */
+  /** 元のタイトルがなかったので「どのタイトルにも属さない」へ戻した（アイデアとアイデアのフォルダ） */
   movedToUnassigned: boolean
+  /**
+   * 2.9: 元のフォルダが無かった（ゴミ箱にある・削除した・別の仕切り）ので、アイデアはフォルダの外へ、中のフォルダ（2段目）は
+   * 1段目のフォルダとして戻した
+   */
+  outOfFolder: boolean
   /** 戻す先に同じ名前の稿があったので名前を変えて戻した稿の、新しい名前（「第3稿（復元）」。稿のみ。無ければ空） */
   renamed: string[]
 }
@@ -914,6 +919,8 @@ function relinkAct(tx: Tx, restored: Piece): void {
  * - 同じ id のものが残っていれば上書きせず、新しい id の複製として戻す（稿は名前に「（ゴミ箱から復元）」を付ける）
  * - 稿は、戻す先の話・幕に同じ名前の稿が今あれば「（復元）」「（復元2）」…を付けて戻す
  * - アイデアは元のタイトルが無ければ「どのタイトルにも属さない」へ戻す（タイトルを消した時と同じ扱い）
+ * - 2.9: アイデアは入っていたフォルダへ戻す（フォルダが同じ仕切りに無ければフォルダの外へ）。アイデアのフォルダは、中のフォルダ・
+ *   カードと一緒に戻す（タイトルが無ければ どのタイトルにも属さない へ、親のフォルダが無ければ1段目として）
  */
 export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; result: RestoreResult } {
   const entry = data.trashEntries[entryId]
@@ -960,6 +967,7 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
     const origin = entry.origin ?? { titleId: null, index: -1 }
     let titleId: ID | null = null
     let movedToUnassigned = false
+    let outOfFolder = false
     let renamed: string[] = []
     switch (entry.kind) {
       case 'title':
@@ -1006,16 +1014,66 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
         break
       }
       case 'idea': {
-        const i = restored as Idea
+        let i = restored as Idea
+        // 元のタイトルがない: タイトルを消した時と同じく「どのタイトルにも属さない」の末尾へ（タイトルと一緒にホームへ移った
+        // フォルダがあれば、その中に戻る）
         if (i.titleId !== null && !tx.get('titles', i.titleId)) {
-          // 元のタイトルがない: タイトルを消した時と同じく「どのタイトルにも属さない」の末尾へ
-          const order = nextOrder(tx.all('ideas').filter((x) => x.id !== i.id && x.titleId === null))
-          tx.put('ideas', { ...i, titleId: null, order, updatedAt: now() })
+          i = { ...i, titleId: null }
           movedToUnassigned = true
-        } else {
-          titleId = i.titleId
-          placeInOrder(tx, 'ideas', mainId, (x) => x.titleId === i.titleId, origin)
+        } else titleId = i.titleId
+        // 2.9: 入っていたフォルダが同じ仕切りに無ければ（ゴミ箱にある・削除した・別の仕切り）、フォルダの外へ（項目を消す）
+        if (typeof i.folderId === 'string' && effectiveFolderId(tx.data, i) === null) {
+          i = withIdeaFolder(i, null)
+          outOfFolder = true
         }
+        const section = sectionOf(tx.data.titles, i.titleId)
+        const folderId = effectiveFolderId(tx.data, i)
+        const peer = (x: Idea) => sectionOf(tx.data.titles, x.titleId) === section && effectiveFolderId(tx.data, x) === folderId
+        if (movedToUnassigned || outOfFolder) {
+          // 控えた位置は前の入れ物のものなので、戻す先の入れ物の末尾へ
+          const order = nextOrder(tx.all('ideas').filter((x) => x.id !== i.id && peer(x)))
+          tx.put('ideas', { ...i, order, updatedAt: now() })
+        } else placeInOrder(tx, 'ideas', mainId, peer, origin)
+        break
+      }
+      case 'ideaFolder': {
+        // 2.9: フォルダ・中のフォルダ・カードは上でもう戻した（中のフォルダとカードは控えた並びのまま）
+        const main = restored as IdeaFolder
+        let f = main
+        if (f.titleId !== null && !tx.get('titles', f.titleId)) {
+          // 元のタイトルがない: この件で戻したフォルダとカードを どのタイトルにも属さない へ（中のつながりはそのまま）
+          const ts = now()
+          for (const item of items) {
+            const id = ids.get(item.record.id) ?? item.record.id
+            if (item.table === 'ideaFolders') {
+              const r = tx.get('ideaFolders', id)
+              if (r && r.titleId === main.titleId) tx.put('ideaFolders', { ...r, titleId: null, updatedAt: ts })
+            } else if (item.table === 'ideas') {
+              const r = tx.get('ideas', id)
+              if (r && r.titleId === main.titleId) tx.put('ideas', { ...r, titleId: null, updatedAt: ts })
+            }
+          }
+          f = tx.get('ideaFolders', mainId)!
+          movedToUnassigned = true
+        } else titleId = f.titleId
+        const section = sectionOf(tx.data.titles, f.titleId)
+        // 親のフォルダが無い（ゴミ箱にある・削除した・2段目・別の仕切り）: 1段目として戻す
+        if (f.parentId !== null) {
+          const p = typeof f.parentId === 'string' && f.parentId !== f.id ? tx.get('ideaFolders', f.parentId) : undefined
+          if (!p || sectionOf(tx.data.titles, p.titleId) !== section || !isTopFolder(tx.data, p)) {
+            f = { ...f, parentId: null }
+            tx.put('ideaFolders', f)
+            outOfFolder = true
+          }
+        }
+        const parentId = effectiveParentId(tx.data, f)
+        const peer = (x: IdeaFolder) =>
+          sectionOf(tx.data.titles, x.titleId) === section && effectiveParentId(tx.data, x) === parentId
+        if (movedToUnassigned || outOfFolder) {
+          // 控えた位置は前の入れ物のものなので、戻す先の兄弟のフォルダの後ろへ
+          const order = nextOrder(tx.all('ideaFolders').filter((x) => x.id !== mainId && peer(x)))
+          tx.put('ideaFolders', { ...f, order, updatedAt: now() })
+        } else placeInOrder(tx, 'ideaFolders', mainId, peer, origin)
         break
       }
       case 'settingCategory': {
@@ -1082,6 +1140,7 @@ export function restoreTrashEntry(data: AppData, entryId: ID): { data: AppData; 
       titleId,
       copied: ids.has(main.record.id),
       movedToUnassigned,
+      outOfFolder,
       renamed,
     }
   })

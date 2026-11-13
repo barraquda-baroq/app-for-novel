@@ -7,6 +7,7 @@ import * as BT from '../domain/benchTags'
 import * as C from '../domain/claudeOps'
 import * as CR from '../domain/claudeRequests'
 import * as E from '../domain/entityOps'
+import * as F from '../domain/ideaFolderOps'
 import * as M from '../domain/materialOps'
 import {
   applyPieceEdits,
@@ -52,6 +53,22 @@ export const actions = {
   moveIdeaTo: (ideaId: ID, titleId: ID | null, index: number, folderId: ID | null = null) =>
     apply((d) => E.moveIdeaTo(d, ideaId, titleId, index, folderId)),
   deleteIdea: (ideaId: ID) => apply((d) => E.deleteIdea(d, ideaId)),
+
+  // 2.9: アイデアのフォルダ（仕切りの中に2段まで）
+  /** parentId = null は1段目。戻り値は新しいフォルダの id */
+  createIdeaFolder: (titleId: ID | null, parentId: ID | null, name: string) =>
+    run((d) => F.createIdeaFolder(d, titleId, parentId, name)),
+  renameIdeaFolder: (id: ID, name: string) => apply((d) => F.renameIdeaFolder(d, id, name)),
+  moveIdeaFolderStep: (id: ID, dir: -1 | 1) => apply((d) => F.moveIdeaFolderStep(d, id, dir)),
+  /** to の仕切りの1段目（parentId = null）か、その中の2段目へ。index は移す先の兄弟の中の位置（既定は先頭） */
+  moveIdeaFolder: (id: ID, to: F.FolderPlace, index?: number) => apply((d) => F.moveIdeaFolder(d, id, to, index)),
+  /** 中のフォルダ・カードと一緒にゴミ箱の1件へ */
+  deleteIdeaFolder: (id: ID) => apply((d) => F.deleteIdeaFolder(d, id)),
+  /** 「選んで移す」: 移す先の末尾へ今の順で。戻り値は移した数（もう無いカードは飛ばす） */
+  moveIdeas: (ids: readonly ID[], to: F.IdeaPlace) => run((d) => F.moveIdeas(d, ids, to)),
+  /** 「新しいフォルダを作って移す」（1回の操作）。戻り値は新しいフォルダの id と移した数 */
+  createIdeaFolderAndMove: (titleId: ID | null, parentId: ID | null, name: string, ids: readonly ID[]) =>
+    run((d) => F.createIdeaFolderAndMove(d, titleId, parentId, name, ids)),
 
   // 本編: 話数追加・特殊追加
   addEpisode: (titleId: ID, target?: ID | null) => run((d) => S.addEpisode(d, titleId, target)),
