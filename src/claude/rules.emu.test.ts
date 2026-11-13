@@ -496,6 +496,130 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     expect((await getDoc(ownRef('ideas:cy-3c.4d'))).data()?.deleted).toBe(true)
   })
 
+  it('Claude のアイデアのフォルダ（2.9）: id が cf-… で JSON が 2,000 字までの新しい記録だけ作れる。作者のフォルダの書き換え・削除・作り直しは拒む', async () => {
+    const ownRef = (docId: string) => doc(owner.fs, 'users', owner.uid, 'records', docId)
+    // ホームの1段目と、その中の2段目（日付の名前）、そのカード（同じ1回の書き込み。コネクタと同じ並び: フォルダが先）
+    const top = connectorRecord('ideaFolders', 'cf-1a.2b', { titleId: null, parentId: null, name: '新作の相談', order: -1 })
+    const sub = connectorRecord('ideaFolders', 'cf-3c.4d', {
+      titleId: null,
+      parentId: 'cf-1a.2b',
+      name: '2026/11/12　港町',
+      order: 0,
+    })
+    const card = connectorRecord('ideas', 'cy-7a.8b', {
+      titleId: null,
+      folderId: 'cf-3c.4d',
+      heading: '',
+      body: '2026/11/12 14:32\n・港町の主人公',
+      checked: false,
+      checkedAt: null,
+      order: -1,
+    })
+    expect(await connectorCommit(anon, owner.uid, [top, sub, card])).toBe(200)
+    expect(decodeRecord((await getDoc(ownRef('ideaFolders:cf-3c.4d'))).data() as RecordDoc, () => undefined)).toMatchObject({
+      id: 'cf-3c.4d',
+      parentId: 'cf-1a.2b',
+      name: '2026/11/12　港町',
+      source: 'claude',
+    })
+    expect((await getDoc(ownRef('ideas:cy-7a.8b'))).data()?.device).toBe('claude-connector')
+    // タイトルのフォルダも同じ形で作れる
+    expect(
+      await connectorCommit(anon, owner.uid, [
+        connectorRecord('ideaFolders', 'cf-5e', { parentId: null, name: '場面の相談', order: 0 }),
+      ]),
+    ).toBe(200)
+    // もうあれば作れない。書き換え（名前を変える・移す）・削除はできない
+    expect(await connectorCommit(anon, owner.uid, [top])).not.toBe(200)
+    const renamed = connectorRecord('ideaFolders', 'cf-1a.2b', { titleId: null, parentId: null, name: '別の名前', order: -1 })
+    expect(await connectorCommit(anon, owner.uid, [{ ...renamed, noPrecondition: true }])).toBe(403)
+    const moved = connectorRecord('ideaFolders', 'cf-3c.4d', {
+      titleId: 't1',
+      parentId: null,
+      name: '2026/11/12　港町',
+      order: 0,
+    })
+    expect(await connectorCommit(anon, owner.uid, [{ ...moved, noPrecondition: true }])).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, 'ideaFolders:cf-1a.2b')).toBe(403)
+    // 作者のフォルダ（id は UUID）: 持ち主は作る・名前を変える・削除の印にする・消すができる。コネクタは書き換え・削除・先に作るができない
+    const authorId = crypto.randomUUID()
+    const authorFolder = { titleId: null, parentId: null, name: '作者のフォルダ', order: 0, createdAt: 1, updatedAt: 1 }
+    await setDoc(ownRef(`ideaFolders:${authorId}`), recordDoc('ideaFolders', authorId, authorFolder))
+    await updateDoc(ownRef(`ideaFolders:${authorId}`), {
+      ...recordDoc('ideaFolders', authorId, { ...authorFolder, name: '名前を変えた', updatedAt: 2 }),
+    })
+    expect(JSON.parse(String((await getDoc(ownRef(`ideaFolders:${authorId}`))).data()?.json)).name).toBe('名前を変えた')
+    const forged = connectorRecord('ideaFolders', authorId, { titleId: null, parentId: null, name: 'Claude', order: 0 })
+    expect(await connectorCommit(anon, owner.uid, [{ ...forged, noPrecondition: true }])).toBe(403)
+    expect(await connectorDelete(anon, owner.uid, `ideaFolders:${authorId}`)).toBe(403)
+    // 作者のカードをフォルダへ移す（書き換え）こともできない
+    const authorCard = crypto.randomUUID()
+    await setDoc(
+      ownRef(`ideas:${authorCard}`),
+      recordDoc('ideas', authorCard, { titleId: null, heading: '', body: '作者のアイデア', order: 0 }),
+    )
+    const intoFolder = connectorRecord('ideas', authorCard, {
+      titleId: null,
+      folderId: 'cf-1a.2b',
+      heading: '',
+      body: '作者のアイデア',
+    })
+    expect(await connectorCommit(anon, owner.uid, [{ ...intoFolder, noPrecondition: true }])).toBe(403)
+    const unsent = crypto.randomUUID()
+    expect(await connectorCommit(anon, owner.uid, [connectorRecord('ideaFolders', unsent)])).toBe(403)
+    expect((await getDoc(ownRef(`ideaFolders:${unsent}`))).exists()).toBe(false)
+    await updateDoc(ownRef(`ideaFolders:${authorId}`), {
+      json: null,
+      deleted: true,
+      hash: '',
+      updated: serverTimestamp(),
+      device: 'owner-device',
+    })
+    expect((await getDoc(ownRef(`ideaFolders:${authorId}`))).data()?.deleted).toBe(true)
+    await deleteDoc(ownRef(`ideaFolders:${authorId}`))
+    expect((await getDoc(ownRef(`ideaFolders:${authorId}`))).exists()).toBe(false)
+    const denied: [string, ConnectorWrite][] = [
+      ['フォルダの id が UUID', connectorRecord('ideaFolders', crypto.randomUUID())],
+      ['フォルダの id がカードの形（cy-）', connectorRecord('ideaFolders', 'cy-9a')],
+      ['フォルダの id が追記の依頼の形（cu-）', connectorRecord('ideaFolders', 'cu-9a')],
+      ['フォルダの id に大文字', connectorRecord('ideaFolders', 'cf-9A')],
+      ['フォルダの id が cf- だけ', connectorRecord('ideaFolders', 'cf-')],
+      ['カードの表に cf-', connectorRecord('ideas', 'cf-9b')],
+      ['フォルダの json が 2,000 字を超える', { ...connectorRecord('ideaFolders', 'cf-long'), json: 'x'.repeat(2_001) }],
+      ['フォルダの削除の印', { ...connectorRecord('ideaFolders', 'cf-del'), extra: { deleted: true } }],
+      ['フォルダの分割（chunks）', { ...connectorRecord('ideaFolders', 'cf-chunks'), extra: { chunks: 1 } }],
+      ['表の名前が違う', { ...connectorRecord('ideaFolders', 'cf-table'), docId: 'ideas:cf-table' }],
+      ['ゴミ箱の件（フォルダの削除）', connectorRecord('trashEntries', 'te-cf-1')],
+      ['ゴミ箱の中身（フォルダの削除）', connectorRecord('trashRecords', 'tr-cf-1')],
+    ]
+    for (const [what, w] of denied) expect([what, await connectorCommit(anon, owner.uid, [w])]).toEqual([what, 403])
+    // 2,000 字ちょうどは作れる
+    const edge = connectorRecord('ideaFolders', 'cf-edge', { titleId: null, parentId: null, name: '端', order: 0 })
+    expect(
+      await connectorCommit(anon, owner.uid, [
+        { ...edge, json: `${edge.json.slice(0, -1)}${' '.repeat(2_000 - edge.json.length)}}` },
+      ]),
+    ).toBe(200)
+    // フォルダが1件でも形が違えば、カードと一緒にまとめて拒む（カードだけが残ることはない）
+    const okCard = connectorRecord('ideas', 'cy-mixed', { titleId: null, folderId: 'cf-bad', heading: '', body: '中身' })
+    const badFolder = { ...connectorRecord('ideaFolders', 'cf-bad'), json: 'x'.repeat(2_001) }
+    expect(await connectorCommit(anon, owner.uid, [badFolder, okCard])).toBe(403)
+    expect((await getDoc(ownRef('ideas:cy-mixed'))).exists()).toBe(false)
+    // 削除の印になったフォルダを、コネクタは作り直せない
+    await updateDoc(ownRef('ideaFolders:cf-5e'), {
+      json: null,
+      deleted: true,
+      hash: '',
+      updated: serverTimestamp(),
+      device: 'owner-device',
+    })
+    expect(
+      await connectorCommit(anon, owner.uid, [
+        connectorRecord('ideaFolders', 'cf-5e', { parentId: null, name: '場面の相談', order: 0 }),
+      ]),
+    ).not.toBe(200)
+  })
+
   it('相対比較の作品とその分析: 作れるのは新しい記録だけ（書き換え・削除・決まった形でない作成は拒む）', async () => {
     const work = connectorRecord('benchWorks', 'cw-1', { name: '銀河の果て', author: '山田' })
     const analysis = connectorRecord('benchAnalyses', 'ca-1', { workId: 'cw-1', viewpoint: '構成', body: '## 構成' })
@@ -612,6 +736,10 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     // 2.8: Claude のアイデア（ホームも）・アイデアへの追記の依頼も作れない
     expect(await connectorCommit(anon, owner.uid, [connectorRecord('ideas', 'cy-off', { titleId: null })])).toBe(403)
     expect(await connectorCommit(anon, owner.uid, [connectorRecord('ideaAppends', 'cu-off')])).toBe(403)
+    // 2.9: Claude のフォルダも作れない
+    expect(
+      await connectorCommit(anon, owner.uid, [connectorRecord('ideaFolders', 'cf-off', { titleId: null, parentId: null })]),
+    ).toBe(403)
     expect(await connectorQuery(anon, owner.uid)).toBeGreaterThan(0)
     await expect(updateDoc(connectorRef(), { pairing: 'b'.repeat(64) })).rejects.toThrow()
     await expect(updateDoc(connectorRef(), { pairedAt: 12345 })).rejects.toThrow()

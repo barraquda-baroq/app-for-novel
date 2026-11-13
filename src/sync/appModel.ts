@@ -9,10 +9,11 @@ import { doc, onSnapshot, runTransaction, serverTimestamp, type Firestore, type 
 /**
  * このアプリが書くデータの形の版。2 = 2.2（幕）、3 = 2.3（推敲案・改稿案・戦略メモ・作品批評）、4 = 2.5（ベンチ作品）、5 = 2.6（資料）、
  * 6 = 2.7（ゴミ箱へ移す依頼の表・相対比較の作品のタグ）、
- * 7 = 2.8（Claude がコネクタで作るアイデア・アイデアへの追記の依頼の表・アイデアのゴミ箱へ移す依頼）。
+ * 7 = 2.8（Claude がコネクタで作るアイデア・アイデアへの追記の依頼の表・アイデアのゴミ箱へ移す依頼）、
+ * 8 = 2.9（アイデアのフォルダの表 ideaFolders・アイデアの folderId・ゴミ箱の種類 ideaFolder）。
  * データの形を変えたら上げる。Claude 用のコネクタも同じ値（CONNECTOR_MODEL）を持ち、違えば書き込まない（読むのは続ける）
  */
-export const DATA_MODEL = 7
+export const DATA_MODEL = 8
 // 記録に添えるアプリの版（古い版のアプリの画面で「どの版に更新すればよいか」を出すため）
 export { APP_VERSION } from './appVersion'
 

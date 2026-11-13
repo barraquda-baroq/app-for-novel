@@ -8,7 +8,7 @@ import { FirestoreError, FirestoreRest } from '../../src/vault/firestore'
 import { DecryptError, isPairingKey, pairingHash, seal, unseal } from '../../src/vault/crypto'
 import { nextPacificMidnight, pacificDay, resetLabel } from '../../src/vault/quota'
 import { fromFields, fromValue, timestampMicros, toValue } from '../../src/vault/values'
-import { EncodeError, prepareWrite, rowsOfCommit } from '../../src/vault/writer'
+import { EncodeError, WRITABLE_TABLES, prepareWrite, rowsOfCommit } from '../../src/vault/writer'
 import { safeError, safeUrl, safeValue } from '../../src/log'
 import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../../src/version'
 import { RATE_LIMITS, sourceBucket, sourceNetwork, takeRate } from '../../src/vault/ratelimit'
@@ -16,6 +16,8 @@ import { MirrorStore } from '../../src/vault/store'
 import { nodeSql } from '../support/nodeSql'
 import { APP_VERSION, DATA_MODEL } from '../../../src/sync/appModel'
 import { PAIRING_FIXTURE as F } from '../../../src/test/pairingFixture'
+import { IDEA_LIMITS } from '../../../src/claude/ideaAppend'
+import { CLAUDE_FOLDER_ID } from '../../../src/claude/ideaFolders'
 
 describe('Firestore の値', () => {
   it('文字列・整数（10進の文字列）・真偽・null・時刻・入れ子', () => {
@@ -176,6 +178,68 @@ describe('書き込みの形（作るだけ）', () => {
     )
     // ほかの表は今までどおり cy-・cu- でなくてよく、200,000 字まで
     expect(prepareWrite(fs, 'o', { table: 'revisionIdeas', record: { ...rec, body: 'あ'.repeat(60_000) } as never }).id).toBe('ci-1')
+  })
+
+  it('Claude のアイデアのフォルダ（2.9）は id が cf-… で、JSON が 2,000 字までのものだけ（アクセスルールと同じ）', () => {
+    const folder = {
+      id: 'cf-1a.2b',
+      titleId: null,
+      parentId: null,
+      name: '新作の相談',
+      order: -1,
+      source: 'claude',
+      v: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const p = prepareWrite(fs, 'o', { table: 'ideaFolders', record: folder as never })
+    expect(p.write.update!.name).toBe('projects/p/databases/(default)/documents/users/o/records/ideaFolders:cf-1a.2b')
+    expect(p.write.currentDocument).toEqual({ exists: false })
+    expect(p.write.update!.fields.device).toEqual({ stringValue: 'claude-connector' })
+    // id の形が違う（作者のフォルダの UUID・カード・追記の依頼の形・大文字・cf- だけ）
+    for (const id of ['0b6f2c1e-5d1a-4c3e-9f0a-1b2c3d4e5f60', 'cy-1a', 'cu-1a', 'cf-1A', 'cf-'])
+      expect(() => prepareWrite(fs, 'o', { table: 'ideaFolders', record: { ...folder, id } as never })).toThrow(
+        '記録の id が不正です',
+      )
+    // カードの表に cf- は書けない
+    expect(() => prepareWrite(fs, 'o', { table: 'ideas', record: { ...folder, body: '' } as never })).toThrow(
+      '記録の id が不正です',
+    )
+    // 2,000 字まで
+    const room = 2_000 - JSON.stringify({ ...folder, name: '' }).length
+    expect(
+      prepareWrite(fs, 'o', { table: 'ideaFolders', record: { ...folder, name: 'あ'.repeat(room) } as never }).json,
+    ).toHaveLength(2_000)
+    expect(() =>
+      prepareWrite(fs, 'o', { table: 'ideaFolders', record: { ...folder, name: 'あ'.repeat(room + 1) } as never }),
+    ).toThrow('フォルダの記録が大きすぎます（1件は JSON にして 2,000 字まで）')
+  })
+})
+
+describe('アクセスルールとの合わせ（コネクタが作れる表）', () => {
+  const root = path.resolve(import.meta.dirname, '../../..')
+  const read = (name: string) => fs.readFileSync(path.join(root, name), 'utf8')
+  /** connectorCreate の本体（関数の宣言から閉じ括弧まで） */
+  const connectorCreate = (rules: string) => {
+    const start = rules.indexOf('function connectorCreate(docId)')
+    return rules.slice(start, rules.indexOf('\n    }\n', start))
+  }
+
+  it('本番とエミュレーターのルールの connectorCreate は同じで、作れる表は書き込みの表（WRITABLE_TABLES）と同じ', () => {
+    const prod = connectorCreate(read('firestore.rules'))
+    expect(prod).toContain('d.table in [')
+    expect(connectorCreate(read('firestore.emu.rules'))).toBe(prod)
+    const list = prod.slice(prod.indexOf('d.table in [') + 'd.table in ['.length, prod.indexOf(']', prod.indexOf('d.table in [')))
+    const tables = [...list.matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1])
+    expect(new Set(tables)).toEqual(WRITABLE_TABLES)
+    expect(tables.at(-1)).toBe('ideaFolders')
+  })
+
+  it('2.9: フォルダは id が cf-…・JSON が 2,000 字まで（書き込みの最後の守りと同じ値）', () => {
+    const prod = connectorCreate(read('firestore.rules'))
+    expect(prod).toContain("&& (d.table != 'ideaFolders' || (d.id.matches('^cf-[0-9a-z.]+$') && d.json.size() <= 2000))")
+    expect(CLAUDE_FOLDER_ID.source).toBe('^cf-[0-9a-z.]+$')
+    expect(IDEA_LIMITS.folderJson).toBe(2000)
   })
 })
 

@@ -7,7 +7,8 @@ rules_version = '2';
 // - 2.3: Claude 用のコネクタ（Cloudflare Worker）は、持ち主がアプリで許可した匿名のアカウント（config/connector の uid）として、
 //   持ち主の記録を読み、Claude の10の表（推敲案など。2.5 のベンチ作品とその分析、2.6 の資料とその記録も）と、2.8 の Claude の
 //   アイデア（ideas。id は cy-…。作るだけで、作者のアイデアの書き換え・削除はできない）、2.7 のゴミ箱へ移す依頼と 2.8 のアイデアへの
-//   追記の依頼（ideaAppends。id は cu-…）に新しい記録を作ることだけができる（書き換え・削除・ゴミ箱の表・原稿の表は不可）。
+//   追記の依頼（ideaAppends。id は cu-…）、2.9 の Claude のアイデアのフォルダ（ideaFolders。id は cf-…）に新しい記録を作ることだけが
+//   できる（書き換え・削除・ゴミ箱の表・原稿の表は不可）。
 //   ゴミ箱へ移す依頼・アイデアへの追記の依頼は作るだけで、カードを確かめてゴミ箱へ移す・カードの終わりに足すのはアプリ（持ち主）。
 //   持ち主の読み書きは今までどおり（|| の左で決まるので、コネクタのための読み取りは増えない）。
 service cloud.firestore {
@@ -59,6 +60,10 @@ service cloud.firestore {
     // 新しく作るだけなので、作者が資料・相対比較の作品に付けたタグ（記録の json の中）をコネクタが書き換えることはない
     // （コネクタは作る資料・作品にタグを付けない。タグは作者がアプリで付けて管理し、作品のタグは「14 検索用タグ」からアプリが付ける）。
     // カードの削除・ゴミ箱の表（trashEntries・trashRecords）への作成は、コネクタには許さない。
+    // 2.9: Claude のアイデアのフォルダ（ideaFolders。id は cf-…。作るだけ。JSON は 2,000 字まで）。作者のフォルダの id（UUID）とは
+    // 重ならない。カードと一緒にだけ作ることと、「読む＋書き込む」のタイトル・書き込みを許可したホームにだけ作ることはコネクタが守り、
+    // ルールが読めない titleId・parentId・folderId の食い違い（3段目・別の仕切り）はアプリが見せ方で外す（src/domain/ideaFolders.ts）。
+    // コネクタは作者のフォルダの名前の変更・移動・削除や、カードの移動はできない（書き換えはできない）。
     // 書き込みは持ち主が「書き込みを許可」している間だけ（config/connector の writes）
     function connectorCreate(docId) {
       let d = request.resource.data;
@@ -66,7 +71,7 @@ service cloud.firestore {
         && d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.table in ['proofSuggestions', 'proofBatches', 'revisionIdeas', 'strategyNotes', 'critiquePrompts', 'critiqueResults',
-          'benchWorks', 'benchAnalyses', 'materials', 'materialNotes', 'trashRequests', 'ideas', 'ideaAppends']
+          'benchWorks', 'benchAnalyses', 'materials', 'materialNotes', 'trashRequests', 'ideas', 'ideaAppends', 'ideaFolders']
         && d.id is string && d.id.size() > 0 && d.id.size() <= 64
         && docId == d.table + ':' + d.id
         && d.device == 'claude-connector'
@@ -76,6 +81,7 @@ service cloud.firestore {
         && (d.table != 'trashRequests' || d.json.size() <= 2000)
         && (d.table != 'ideas' || (d.id.matches('^cy-[0-9a-z.]+$') && d.json.size() <= 50000))
         && (d.table != 'ideaAppends' || (d.id.matches('^cu-[0-9a-z.]+$') && d.json.size() <= 50000))
+        && (d.table != 'ideaFolders' || (d.id.matches('^cf-[0-9a-z.]+$') && d.json.size() <= 2000))
         && d.hash is string && d.hash.size() <= 64;
     }
 

@@ -29,6 +29,8 @@ import { applyClaudeRequests } from '../domain/claudeRequests'
 import { applyTrashRequests } from '../domain/claudeTrash'
 import * as C from '../domain/claudeOps'
 import * as E from '../domain/entityOps'
+import * as F from '../domain/ideaFolderOps'
+import { buildIdeaTree, type IdeaFolderNode } from '../domain/ideaFolders'
 import { hashJson } from '../domain/hash'
 import * as M from '../domain/materialOps'
 import { repairData } from '../domain/repair'
@@ -2144,7 +2146,7 @@ describe('ゴミ箱へ移す依頼の同期（2.7。エミュレーター）', (
     await b.online()
     await waitFor(async () => (await b.load()).trashRequests[req.id], '受け取り直す')
     expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
-    expect(SYNC_SCHEMA).toBe(6)
+    expect(SYNC_SCHEMA).toBe(7)
   })
 })
 
@@ -2402,7 +2404,7 @@ describe('Claude のアイデアと追記の依頼の同期（2.8。エミュレ
     await b.online()
     await waitFor(async () => (await b.load()).ideaAppends[req.id], '受け取り直す')
     expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
-    expect(SYNC_SCHEMA).toBe(6)
+    expect(SYNC_SCHEMA).toBe(7)
   })
 
   it('Claude の追記を足したアイデアはゴミ箱へ移せ（追記した後の形で入り、戻すと Claude のアイデアのまま）、依頼の後に作者が直したアイデアは移さない', async () => {
@@ -2525,6 +2527,189 @@ describe('Claude のアイデアと追記の依頼の同期（2.8。エミュレ
     expect(data.ideas[home.id]).toBeUndefined()
     expect(data.trashRequests).toEqual({})
     expect(data.trashEntries[trashEntryIdsOf(req.id).entry]).toMatchObject({ kind: 'idea', by: 'claude' })
+  })
+})
+
+describe('アイデアのフォルダの同期（2.9。エミュレーター）', () => {
+  /** 見せ方の木（仕切りの中の1段目・2段目と、そのカード）を、名前と本文で書き出す（両方の端末で同じかを比べる） */
+  function treeOf(data: AppData, section: string | null) {
+    const tree = buildIdeaTree(data, section)
+    const node = (n: IdeaFolderNode): unknown => ({
+      name: n.folder.name,
+      ideas: n.ideas.map((i) => i.body),
+      folders: n.folders.map(node),
+    })
+    return { folders: tree.folders.map(node), loose: tree.loose.map((i) => i.body) }
+  }
+
+  /** 2台と『灰の庭』。ホームに作者のカードが8枚（「案1」…「案8」） */
+  async function twoDevices() {
+    const who = account()
+    const a = await makeDevice('a', who)
+    const b = await makeDevice('b', who)
+    await a.online()
+    await b.online()
+    let titleId = ''
+    await a.edit((d) => {
+      const t = E.createTitle(d, '灰の庭')
+      titleId = t.result
+      let data = t.data
+      for (let i = 1; i <= 8; i++) data = E.addIdea(data, null, '', `案${i}`).data
+      return data
+    })
+    await settle(a, b)
+    const cards = (data: AppData) =>
+      Object.values(data.ideas)
+        .sort((x, y) => x.order - y.order)
+        .map((i) => i.id)
+    return { a, b, titleId, ids: cards(await a.load()) }
+  }
+
+  it('フォルダを作ってカードをまとめて移すと、もう一方の端末に同じ木で届く（中の2段目も）', async () => {
+    const { a, b, ids } = await twoDevices()
+    let folderId = ''
+    await a.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, null, '新作の相談', ids)
+      folderId = r.result.folderId
+      expect(r.result.moved).toBe(8)
+      return r.data
+    })
+    await settle(a, b)
+    const data = await b.load()
+    expect(data.ideaFolders[folderId]).toMatchObject({ titleId: null, parentId: null, name: '新作の相談' })
+    expect(treeOf(data, null)).toEqual({
+      folders: [{ name: '新作の相談', folders: [], ideas: ['案1', '案2', '案3', '案4', '案5', '案6', '案7', '案8'] }],
+      loose: [],
+    })
+    // b で2段目を作り、そこへ3枚を移す（今の順で末尾に）
+    let subId = ''
+    await b.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, folderId, '2026/11/12　港町', ids.slice(5))
+      subId = r.result.folderId
+      return r.data
+    })
+    await settle(a, b)
+    const after = await a.load()
+    expect(after.ideaFolders[subId]).toMatchObject({ titleId: null, parentId: folderId, name: '2026/11/12　港町' })
+    expect(treeOf(after, null)).toEqual({
+      folders: [
+        {
+          name: '新作の相談',
+          folders: [{ name: '2026/11/12　港町', folders: [], ideas: ['案6', '案7', '案8'] }],
+          ideas: ['案1', '案2', '案3', '案4', '案5'],
+        },
+      ],
+      loose: [],
+    })
+    // フォルダの外のカードは folderId の項目を持たない（null を書かない）。移したカードは持つ
+    expect(Object.values(after.ideas).every((i) => typeof i.folderId === 'string')).toBe(true)
+    expect([...a.notes, ...b.notes]).toEqual([])
+  })
+
+  it('2台が同じカードを別々の場所へ移すと、後から送った端末の場所（仕切り＋フォルダの組）にそろう', async () => {
+    const { a, b, titleId, ids } = await twoDevices()
+    let home = ''
+    let inTitle = ''
+    await a.edit((d) => {
+      const h = F.createIdeaFolder(d, null, null, 'ホームのフォルダ')
+      home = h.result
+      const t = F.createIdeaFolder(h.data, titleId, null, '場面の相談')
+      inTitle = t.result
+      return t.data
+    })
+    await settle(a, b)
+    const card = ids[0]
+    a.offline()
+    b.offline()
+    // a はホームのフォルダへ、b はタイトルのフォルダへ（仕切りも変わる）
+    await a.edit((d) => E.moveIdeaTo(d, card, null, 0, home))
+    await b.edit((d) => E.moveIdeaTo(d, card, titleId, 0, inTitle))
+    await a.online()
+    await settle(a)
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      // 組がそろう（タイトルの仕切りとホームのフォルダの組み合わせにはならない）
+      expect([data.ideas[card].titleId, data.ideas[card].folderId]).toEqual([titleId, inTitle])
+      expect(treeOf(data, titleId).folders).toEqual([{ name: '場面の相談', folders: [], ideas: ['案1'] }])
+      expect(treeOf(data, null).folders).toEqual([{ name: 'ホームのフォルダ', folders: [], ideas: [] }])
+    }
+    // 逆の順（b が先・a が後）でも、後から送った端末の組にそろう
+    const second = ids[1]
+    a.offline()
+    b.offline()
+    await a.edit((d) => E.moveIdeaTo(d, second, null, 0, home))
+    await b.edit((d) => E.moveIdeaTo(d, second, titleId, 0, inTitle))
+    await b.online()
+    await settle(b)
+    await a.online()
+    await settle(a, b)
+    const data = await b.load()
+    expect([data.ideas[second].titleId, data.ideas[second].folderId]).toEqual([null, home])
+    expect(treeOf(data, null).folders).toEqual([{ name: 'ホームのフォルダ', folders: [], ideas: ['案2'] }])
+  })
+
+  it('片方でフォルダを削除・片方でそのフォルダにカードを足すと、カードはフォルダの外に出て、フォルダを戻すと中に戻る', async () => {
+    const { a, b, ids } = await twoDevices()
+    let folderId = ''
+    await a.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, null, '新作の相談', ids.slice(0, 2))
+      folderId = r.result.folderId
+      return r.data
+    })
+    await settle(a, b)
+    b.offline()
+    await a.edit((d) => F.deleteIdeaFolder(d, folderId))
+    let added = ''
+    await b.edit((d) => {
+      const r = E.addIdea(d, null, '', 'オフラインで足した案', folderId)
+      added = r.result
+      return r.data
+    })
+    await b.online()
+    await settle(a, b)
+    for (const d of [a, b]) {
+      const data = await d.load()
+      expect(data.ideaFolders[folderId]).toBeUndefined()
+      // 足したカードはフォルダへの参照を持ったまま、フォルダの外に見える（並びはフォルダの中で付いたもの）
+      expect(data.ideas[added].folderId).toBe(folderId)
+      const tree = treeOf(data, null)
+      expect(tree.folders).toEqual([])
+      expect([...tree.loose].sort()).toEqual(['オフラインで足した案', '案3', '案4', '案5', '案6', '案7', '案8'].sort())
+    }
+    // フォルダを戻すと、中のカードと一緒に、足したカードも中に戻る（もう一方の端末でも）
+    const entry = Object.values((await a.load()).trashEntries).find((e) => e.kind === 'ideaFolder')!
+    expect(entry.label).toBe('新作の相談')
+    await a.edit((d) => T.restoreTrashEntry(d, entry.id).data)
+    await settle(a, b)
+    const back = await b.load()
+    expect(treeOf(back, null)).toEqual({
+      folders: [{ name: '新作の相談', folders: [], ideas: ['案1', '案2', 'オフラインで足した案'] }],
+      loose: ['案3', '案4', '案5', '案6', '案7', '案8'],
+    })
+    expect(back.trashEntries).toEqual({})
+  })
+
+  it('同期の形の版が古い端末（2.8）は、次の同期でフォルダを受け取り直す', async () => {
+    const { a, b, ids } = await twoDevices()
+    b.offline()
+    let folderId = ''
+    await a.edit((d) => {
+      const r = F.createIdeaFolderAndMove(d, null, null, '新作の相談', ids.slice(0, 1))
+      folderId = r.result.folderId
+      return r.data
+    })
+    await settle(a)
+    // 受け取った位置がずっと先にある端末（2.8 の端末が知らない表を飛ばして位置を進めた時と同じ）
+    await b.p.setMeta('cursor', { s: 4_000_000_000, n: 0 })
+    await b.p.setMeta('syncSchema', 6)
+    await b.online()
+    await waitFor(async () => (await b.load()).ideaFolders[folderId], '受け取り直す')
+    await settle(a, b)
+    expect(await b.p.getMeta('syncSchema')).toBe(SYNC_SCHEMA)
+    expect(SYNC_SCHEMA).toBe(7)
+    expect(treeOf(await b.load(), null).folders).toEqual([{ name: '新作の相談', folders: [], ideas: ['案1'] }])
   })
 })
 
