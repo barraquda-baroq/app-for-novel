@@ -24,10 +24,21 @@ export const PAIRING_KEY_BYTES = 32
 export const PAIRING_TTL_MS = 15 * 60_000
 /** 連携の印 s の長さの上限 */
 export const STATE_MAX_LENGTH = 2048
-/** config/connector の形の版 */
-export const CONNECTOR_DOC_VERSION = 1
+/** config/connector の形の版（1 = 2.8 まで、2 = 2.9 の接続の一覧。アプリは 2 だけを書く） */
+export const CONNECTOR_DOC_VERSION = 2
 /** config/connector に書くキー（firestore.rules の validConnector と同じ） */
-export const CONNECTOR_DOC_KEYS = ['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v'] as const
+export const CONNECTOR_DOC_KEYS = [
+  'uid',
+  'pairing',
+  'pairedAt',
+  'approvedOn',
+  'writes',
+  'v',
+  'pairingCid',
+  'connections',
+] as const
+/** 接続ごとの記録のキー（firestore.rules の validConnection と同じ） */
+export const CONNECTION_KEYS = ['name', 'pairing', 'pairedAt', 'approvedOn'] as const
 /** approvedOn（連携した端末の呼び名）の長さの上限（firestore.rules と同じ） */
 export const APPROVED_ON_MAX_LENGTH = 100
 
@@ -263,11 +274,17 @@ export function connectionsOf(
   return out.sort((a, b) => (a.pairedAt ?? 0) - (b.pairedAt ?? 0) || (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0))
 }
 
-/** config/connector に書く内容（pairedAt はサーバー時刻を書く側で足す） */
-export interface ConnectorWrite {
+/**
+ * 連携の画面の［許可する］で config/connector に足す接続（pairedAt はサーバー時刻を書く側で足す）。
+ * writes は「書き込みを許可」（すべての接続に効く1つ）。replaceCid を渡すと、その接続と入れ替える
+ */
+export interface ConnectionApproval {
+  /** コネクタの匿名のアカウント */
   uid: string
   pairing: string
   approvedOn: string
   writes: boolean
-  v: typeof CONNECTOR_DOC_VERSION
+  cid: string
+  name: string
+  replaceCid?: string | null
 }

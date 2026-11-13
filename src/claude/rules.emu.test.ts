@@ -13,6 +13,7 @@ import {
   serverTimestamp,
   setDoc,
   terminate,
+  Timestamp,
   updateDoc,
   type Firestore,
 } from 'firebase/firestore'
@@ -23,6 +24,7 @@ import { decodeRecord, encodeRecord, type RecordDoc } from '../sync/codec'
 import type { Rec } from '../sync/merge'
 import { appModelRef } from '../sync/appModel'
 import type { TableName } from '../domain/types'
+import { addConnection, removeConnection, renameConnection } from '../features/claude/connectorDoc'
 
 const PROJECT = 'demo-novel-studio'
 const FS = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`
@@ -219,13 +221,24 @@ afterAll(async () => {
 })
 
 const connectorRef = () => doc(owner.fs, 'config', 'connector')
+/** 連携の記録の接続（2.9。接続ごとの指紋・時刻） */
+const MAIN_CID = 'cmain0000001'
+const connection = (name: string, hash: string, pairedAt: unknown = serverTimestamp(), approvedOn = 'テストの Mac') => ({
+  name,
+  pairing: hash,
+  pairedAt,
+  approvedOn,
+})
+/** アプリが許可した時の記録（2.9 の v2。接続1つ） */
 const pairing = (writes = true, uid = anon.uid) => ({
   uid,
   pairing: 'a'.repeat(64),
   pairedAt: serverTimestamp(),
   approvedOn: 'テストの Mac',
   writes,
-  v: 1,
+  v: 2,
+  pairingCid: MAIN_CID,
+  connections: { [MAIN_CID]: connection('接続1', 'a'.repeat(64)) },
 })
 
 // テストは順に進む（連携する前 → 連携 → 書き込みの停止 → 連携の解除）
@@ -715,8 +728,10 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       }),
     })
     expect(model.status).toBe(403)
-    // 連携の uid に Google のアカウントを書いても、そのアカウントはコネクタにならない
+    // 連携の uid に Google のアカウントを書いても、そのアカウントはコネクタにならない（身元を変える時は消してから作る）
     const google = await googleUser(account('google-connector'))
+    await expect(setDoc(connectorRef(), pairing(true, google.uid))).rejects.toThrow()
+    await deleteDoc(connectorRef())
     await setDoc(connectorRef(), pairing(true, google.uid))
     await expect(getDoc(doc(google.fs, 'users', owner.uid, 'records', 'titles:t1'))).rejects.toThrow()
     await expect(
@@ -726,6 +741,7 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
       ),
     ).rejects.toThrow()
     // 元に戻す
+    await deleteDoc(connectorRef())
     await setDoc(connectorRef(), pairing())
     expect(await connectorQuery(anon, owner.uid)).toBeGreaterThan(0)
   })
@@ -743,8 +759,15 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     expect(await connectorQuery(anon, owner.uid)).toBeGreaterThan(0)
     await expect(updateDoc(connectorRef(), { pairing: 'b'.repeat(64) })).rejects.toThrow()
     await expect(updateDoc(connectorRef(), { pairedAt: 12345 })).rejects.toThrow()
-    // 連携し直す（指紋と時刻を新しくする）のはよい
-    await updateDoc(connectorRef(), { pairing: 'c'.repeat(64), pairedAt: serverTimestamp(), writes: true })
+    // 2.9: 上の指紋・時刻だけを新しくするのも拒む（その接続の指紋・時刻もそろえる）
+    await expect(updateDoc(connectorRef(), { pairing: 'c'.repeat(64), pairedAt: serverTimestamp() })).rejects.toThrow()
+    // 連携し直す（指紋と時刻を、その接続と上の両方で新しくする）のはよい
+    await updateDoc(connectorRef(), {
+      pairing: 'c'.repeat(64),
+      pairedAt: serverTimestamp(),
+      writes: true,
+      [`connections.${MAIN_CID}`]: connection('接続1', 'c'.repeat(64)),
+    })
     expect(await connectorCommit(anon, owner.uid, [connectorRecord('proofSuggestions', 'cs-on')])).toBe(200)
   })
 
@@ -758,5 +781,203 @@ describe('本番のアクセスルール: Claude 用のコネクタ（エミュ�
     expect(await connectorCommit(anon, owner.uid, [connectorRecord('proofSuggestions', 'cs-after')])).toBe(403)
     // 持ち主は今までどおり
     expect((await getDoc(doc(owner.fs, 'users', owner.uid, 'records', 'titles:t1'))).exists()).toBe(true)
+  })
+})
+
+// ---------- 2.9: 連携の記録の接続の一覧 ----------
+
+/** 2.8 のアプリが書いた形（v1）の記録を、管理者として置く（2.9 のルールでは作れない） */
+async function adminPutConnectorV1(uid: string, hash: string, writes = true): Promise<void> {
+  const res = await fetch(`${FS}/config/connector`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+    body: JSON.stringify({
+      fields: {
+        uid: v(uid),
+        pairing: v(hash),
+        pairedAt: { timestampValue: new Date().toISOString() },
+        approvedOn: v('2.8 の Mac'),
+        writes: v(writes),
+        v: v(1),
+      },
+    }),
+  })
+  if (!res.ok) throw new Error(`PATCH config/connector: ${res.status} ${await res.text()}`)
+}
+
+/** 匿名のアカウント（コネクタ）が config/connector を書く（REST）。HTTP の状態 */
+async function anonWriteConnector(fields: Record<string, Value>): Promise<number> {
+  const res = await fetch(`${FS}/config/connector`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anon.token}` },
+    body: JSON.stringify({ fields }),
+  })
+  return res.status
+}
+
+describe('本番のアクセスルール: 連携の記録の接続の一覧（2.9。エミュレーター）', () => {
+  const H = (c: string) => c.repeat(64)
+  const read = async () =>
+    (await getDoc(connectorRef())).data() as Record<string, unknown> & {
+      connections: Record<string, { name: string; pairing: string; pairedAt: Timestamp; approvedOn: string }>
+      pairedAt: Timestamp
+    }
+  const v2 = (cid: string, hash: string, more: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => ({
+    uid: anon.uid,
+    pairing: hash,
+    pairedAt: serverTimestamp(),
+    approvedOn: 'テストの Mac',
+    writes: true,
+    v: 2,
+    pairingCid: cid,
+    connections: { [cid]: connection('接続1', hash), ...more },
+    ...over,
+  })
+  const others = (n: number) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [`cx${i}`, connection(`接続${i + 2}`, H('z'), Timestamp.now())]))
+
+  it('作る: v2 の形で、最後に許可した接続の指紋・時刻（サーバー時刻）がそろう時だけ。10まで', async () => {
+    await deleteDoc(connectorRef())
+    const denied: [string, Record<string, unknown>][] = [
+      ['v1 の形', { uid: anon.uid, pairing: H('a'), pairedAt: serverTimestamp(), approvedOn: 'Mac', writes: true, v: 1 }],
+      ['v が 1', v2('c1', H('a'), {}, { v: 1 })],
+      ['v が 3', v2('c1', H('a'), {}, { v: 3 })],
+      ['接続の時刻がサーバー時刻でない', v2('c1', H('a'), { c1: connection('接続1', H('a'), Timestamp.now()) })],
+      ['上の時刻がサーバー時刻でない', v2('c1', H('a'), {}, { pairedAt: Timestamp.now() })],
+      ['接続の指紋が上と違う', v2('c1', H('a'), { c1: connection('接続1', H('b')) })],
+      ['最後の接続が一覧に無い', v2('c1', H('a'), {}, { pairingCid: 'c2' })],
+      ['接続の id に大文字', v2('C1', H('a'))],
+      ['接続の id に記号', v2('c-1', H('a'))],
+      ['接続の id が c だけ', v2('c', H('a'))],
+      ['接続の項目が多い', v2('c1', H('a'), { c1: { ...connection('接続1', H('a')), extra: 1 } })],
+      ['接続の項目が足りない', v2('c1', H('a'), { c1: { name: '接続1', pairing: H('a'), pairedAt: serverTimestamp() } })],
+      ['名前が空', v2('c1', H('a'), { c1: connection('', H('a')) })],
+      ['名前が 41 字', v2('c1', H('a'), { c1: connection('あ'.repeat(41), H('a')) })],
+      ['接続が 11', v2('c1', H('a'), others(10))],
+      ['一覧が空', { ...v2('c1', H('a')), connections: {} }],
+      ['一覧が map でない', { ...v2('c1', H('a')), connections: 'c1' }],
+      ['一覧が無い', Object.fromEntries(Object.entries(v2('c1', H('a'))).filter(([k]) => k !== 'connections'))],
+      ['持ち主自身の uid', v2('c1', H('a'), {}, { uid: owner.uid })],
+    ]
+    for (const [what, d] of denied) await expect(setDoc(connectorRef(), d), what).rejects.toThrow()
+    // 持ち主でない Google のアカウント・コネクタの匿名のアカウントは作れない
+    const stranger = await googleUser(account('stranger3'))
+    await expect(setDoc(doc(stranger.fs, 'config', 'connector'), v2('c1', H('a'), {}, { uid: anon.uid }))).rejects.toThrow()
+    expect(await anonWriteConnector({ uid: v(anon.uid), writes: v(true), v: v(2) })).toBe(403)
+    expect((await getDoc(connectorRef())).exists()).toBe(false)
+    // 10 までは作れる（ほかの接続の形・時刻はルールでは見ない。アプリとコネクタが用心して読む）
+    await setDoc(connectorRef(), v2('c1', H('a'), others(9)))
+    const d = await read()
+    expect(Object.keys(d.connections)).toHaveLength(10)
+    // 接続の中のサーバー時刻も、ルールの request.time と同じ
+    expect(d.connections.c1.pairedAt.toMillis()).toBe(d.pairedAt.toMillis())
+    await deleteDoc(connectorRef())
+  })
+
+  it('2.8 の記録（v1）: 書き込みの許可だけは変えられ、上書きは拒み、一覧の形に移せる（指紋・時刻・接続 c0 はそのまま）', async () => {
+    await adminPutConnectorV1(anon.uid, H('a'))
+    const before = await read()
+    // 2.8 のアプリの「書き込みを許可」（v1 のまま）
+    await updateDoc(connectorRef(), { writes: false })
+    expect((await read()).writes).toBe(false)
+    expect(await connectorCommit(anon, owner.uid, [connectorRecord('proofSuggestions', 'cs-v1-off')])).toBe(403)
+    await updateDoc(connectorRef(), { writes: true })
+    // 2.8 のアプリの連携（v1 の上書き）・指紋だけの書き換えは拒む
+    await expect(
+      setDoc(connectorRef(), {
+        uid: anon.uid,
+        pairing: H('b'),
+        pairedAt: serverTimestamp(),
+        approvedOn: 'Mac',
+        writes: true,
+        v: 1,
+      }),
+    ).rejects.toThrow()
+    await expect(updateDoc(connectorRef(), { pairing: H('b'), pairedAt: serverTimestamp() })).rejects.toThrow()
+    // 一覧の形に移す: 時刻を変える・接続を c0 以外にするのは拒む
+    const migrated = {
+      uid: anon.uid,
+      pairing: before.pairing,
+      pairedAt: before.pairedAt,
+      approvedOn: before.approvedOn,
+      writes: true,
+      v: 2,
+      pairingCid: 'c0',
+      connections: { c0: connection('接続1', H('a'), before.pairedAt, '2.8 の Mac') },
+    }
+    await expect(setDoc(connectorRef(), { ...migrated, pairedAt: Timestamp.now() })).rejects.toThrow()
+    await expect(setDoc(connectorRef(), { ...migrated, pairing: H('c') })).rejects.toThrow()
+    await expect(
+      setDoc(connectorRef(), { ...migrated, pairingCid: 'c1', connections: { c1: migrated.connections.c0 } }),
+    ).rejects.toThrow()
+    await setDoc(connectorRef(), migrated)
+    const after = await read()
+    expect(after.pairingCid).toBe('c0')
+    expect(after.pairedAt.toMillis()).toBe(before.pairedAt.toMillis())
+    expect(await connectorQuery(anon, owner.uid)).toBeGreaterThan(0)
+    await deleteDoc(connectorRef())
+  })
+
+  it('アプリの操作（トランザクション）: 2.8 の記録に足す・名前を変える・1つ解除する・最後の1つで記録を消す', async () => {
+    await adminPutConnectorV1(anon.uid, H('a'))
+    const before = await read()
+    const approval = { uid: anon.uid, approvedOn: 'テストの iPhone', writes: true, replaceCid: null }
+    // 新しい許可（2.8 の接続は c0「接続1」に移る）
+    await addConnection({ ...approval, pairing: H('b'), cid: 'cnew000000001', name: '接続2' }, owner.fs)
+    let d = await read()
+    expect(d.v).toBe(2)
+    expect(d.pairingCid).toBe('cnew000000001')
+    expect(d.pairing).toBe(H('b'))
+    expect(Object.keys(d.connections).sort()).toEqual(['c0', 'cnew000000001'])
+    expect(d.connections.c0).toEqual({ name: '接続1', pairing: H('a'), pairedAt: before.pairedAt, approvedOn: '2.8 の Mac' })
+    expect(d.connections.cnew000000001.pairedAt.toMillis()).toBe(d.pairedAt.toMillis())
+    // 3つ目を足す・名前を変える（上の指紋・時刻・最後の接続はそのまま）
+    await addConnection({ ...approval, pairing: H('c'), cid: 'cthird0000001', name: '接続3' }, owner.fs)
+    const third = await read()
+    await renameConnection('c0', '仕事用', owner.fs)
+    d = await read()
+    expect(d.connections.c0.name).toBe('仕事用')
+    expect([d.pairing, d.pairedAt.toMillis(), d.pairingCid]).toEqual([third.pairing, third.pairedAt.toMillis(), 'cthird0000001'])
+    // 名前を変えるついでに指紋・時刻を変えるのは拒む
+    await expect(updateDoc(connectorRef(), { pairing: H('d'), 'connections.c0.name': '別' })).rejects.toThrow()
+    await expect(updateDoc(connectorRef(), { pairedAt: Timestamp.now(), 'connections.c0.name': '別' })).rejects.toThrow()
+    await expect(updateDoc(connectorRef(), { pairingCid: 'c0', 'connections.c0.name': '別' })).rejects.toThrow()
+    // 身元の書き換えは拒む（変わった時は消して作り直す）
+    await expect(updateDoc(connectorRef(), { uid: 'someone-else' })).rejects.toThrow()
+    // 最後に許可した接続を外しても、pairingCid はそのまま
+    expect(await removeConnection('cthird0000001', owner.fs)).toBe('removed')
+    d = await read()
+    expect(Object.keys(d.connections).sort()).toEqual(['c0', 'cnew000000001'])
+    expect(d.pairingCid).toBe('cthird0000001')
+    expect(await removeConnection('cthird0000001', owner.fs)).toBe('none')
+    // 書き込みの許可だけ（v2 の記録）
+    await updateDoc(connectorRef(), { writes: false })
+    expect((await read()).writes).toBe(false)
+    await updateDoc(connectorRef(), { writes: true })
+    // 持ち主でない・コネクタは書き換え・削除できない
+    const stranger = await googleUser(account('stranger4'))
+    await expect(updateDoc(doc(stranger.fs, 'config', 'connector'), { writes: false })).rejects.toThrow()
+    await expect(deleteDoc(doc(stranger.fs, 'config', 'connector'))).rejects.toThrow()
+    expect(await anonWriteConnector({ uid: v(anon.uid), writes: v(true) })).toBe(403)
+    const del = await fetch(`${FS}/config/connector`, { method: 'DELETE', headers: { Authorization: `Bearer ${anon.token}` } })
+    expect(del.status).toBe(403)
+    // 新しい許可で 11 にはできない
+    for (let i = 3; i <= 10; i++)
+      await addConnection({ ...approval, pairing: H('e'), cid: `cfill${i}`, name: `接続${i + 1}` }, owner.fs)
+    expect(Object.keys((await read()).connections)).toHaveLength(10)
+    await expect(addConnection({ ...approval, pairing: H('f'), cid: 'celeven', name: '接続12' }, owner.fs)).rejects.toThrow(
+      '接続が10あります',
+    )
+    // 入れ替えなら足せる
+    await addConnection({ ...approval, pairing: H('f'), cid: 'celeven', name: '接続12', replaceCid: 'cfill3' }, owner.fs)
+    expect(Object.keys((await read()).connections)).toHaveLength(10)
+    // 1つずつ解除して、最後の1つで記録を消す
+    for (const cid of Object.keys((await read()).connections).slice(1))
+      expect(await removeConnection(cid, owner.fs)).toBe('removed')
+    const last = Object.keys((await read()).connections)
+    expect(last).toHaveLength(1)
+    expect(await removeConnection(last[0], owner.fs)).toBe('deleted')
+    expect((await getDoc(connectorRef())).exists()).toBe(false)
+    expect(await connectorQuery(anon, owner.uid)).toBeLessThan(0)
   })
 })

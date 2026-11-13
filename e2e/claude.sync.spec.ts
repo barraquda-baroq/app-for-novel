@@ -11,6 +11,7 @@ import { shortId } from '../src/claude/refs'
 import { buildTrashRequests } from '../src/claude/trashRequest'
 import { claudeView } from '../src/claude/visibility'
 import type { Idea } from '../src/domain/types'
+import { DATA_MODEL } from '../src/sync/appModel'
 import { encodeRecord } from '../src/sync/codec'
 import type { Rec } from '../src/sync/merge'
 import { darkSurfaces, noHorizontalScroll, openApp, openHomeBands, seed, seedTitleWithEpisodes, tapSize } from './helpers'
@@ -19,7 +20,14 @@ const DOCS = 'http://127.0.0.1:8080/v1/projects/demo-novel-studio/databases/(def
 // エミュレーターでアクセスルールを通さずに読み書きする
 const ADMIN = { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }
 
-type Fields = Record<string, { stringValue?: string; booleanValue?: boolean; integerValue?: string; timestampValue?: string }>
+type Value = {
+  stringValue?: string
+  booleanValue?: boolean
+  integerValue?: string
+  timestampValue?: string
+  mapValue?: { fields: Fields }
+}
+type Fields = Record<string, Value>
 
 /** コネクタと同じ形の記録（device: claude-connector）を、アクセスルールを通さずに置く */
 async function putConnectorRecord(uid: string, table: string, rec: Rec): Promise<void> {
@@ -102,7 +110,8 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
     await route.fulfill({
       status: 200,
       headers: { 'content-type': 'application/json', 'access-control-allow-origin': from, vary: 'Origin' },
-      body: JSON.stringify({ uid: 'anon-e2e-connector', version: 'e2e', model: 3 }),
+      // 2.9: コネクタがアプリより古い版なら許可させないので、アプリと同じデータの形を答える
+      body: JSON.stringify({ uid: 'anon-e2e-connector', version: 'e2e', model: DATA_MODEL }),
     })
   })
   await context.route(`${origin}/pair/callback**`, async (route) => {
@@ -143,9 +152,17 @@ test('連携の画面: 持ち主が許可すると、指紋だけを記録し、
   expect(conn!.uid.stringValue).toBe('anon-e2e-connector')
   expect(conn!.pairing.stringValue).toBe(sha256(`${state}.${k}`))
   expect(conn!.writes.booleanValue).toBe(true)
-  expect(conn!.v.integerValue).toBe('1')
+  expect(conn!.v.integerValue).toBe('2')
   expect(conn!.approvedOn.stringValue).toBeTruthy()
   expect(conn!.pairedAt.timestampValue).toBeTruthy()
+  // 2.9: 接続の一覧（初めての接続は「接続1」。指紋・時刻は上と同じ）
+  const cid = conn!.pairingCid.stringValue!
+  expect(cid).toMatch(/^c[0-9a-z]{12}$/)
+  const entries = conn!.connections.mapValue!.fields
+  expect(Object.keys(entries)).toEqual([cid])
+  expect(entries[cid].mapValue!.fields.name.stringValue).toBe('接続1')
+  expect(entries[cid].mapValue!.fields.pairing.stringValue).toBe(conn!.pairing.stringValue)
+  expect(entries[cid].mapValue!.fields.pairedAt.timestampValue).toBe(conn!.pairedAt.timestampValue)
   expect(JSON.stringify(conn)).not.toContain(k)
 
   // タイトルの「Claude に見せる」の変更は、コネクタへ移る前に送られている

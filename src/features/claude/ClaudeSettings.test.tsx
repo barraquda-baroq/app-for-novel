@@ -107,7 +107,16 @@ describe('設定 → Claude 連携', () => {
     act(() =>
       conn.emit?.({
         state: 'paired',
-        status: { uid: 'anon', pairedAt: new Date(2026, 9, 28, 9, 5).getTime(), approvedOn: 'Mac', writes: true },
+        status: {
+          uid: 'anon',
+          pairedAt: new Date(2026, 9, 28, 9, 5).getTime(),
+          approvedOn: 'Mac',
+          writes: true,
+          connections: [
+            { cid: 'c0', name: '接続1', pairing: 'p', pairedAt: new Date(2026, 9, 28, 9, 5).getTime(), approvedOn: 'Mac' },
+          ],
+          pairingCid: 'c0',
+        },
       }),
     )
     const info = screen.getByTestId('claude-pairing-info')

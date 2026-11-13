@@ -95,25 +95,59 @@ service cloud.firestore {
     }
 
     // コネクタとの連携（src/features/claude の連携の画面が書く）。持ち主だけが書け、持ち主と、記録されたコネクタだけが読める。
-    // pairing は連携の確かめの指紋、pairedAt は連携した時刻（作る時はサーバー時刻。「書き込みを許可」を変える時は変えない）
+    // pairing は連携の確かめの指紋、pairedAt は連携した時刻（許可した時はサーバー時刻。「書き込みを許可」・一覧の編集では変えない）。
+    // 2.9: 接続ごとの記録（claude.ai のアカウントごと。10まで）。ルールは map の中を順に見られないので、新しく許可した接続（pairingCid）
+    // だけ形を確かめる（ほかの項目はアプリとコネクタが用心して読む）。上の pairing・pairedAt・approvedOn は最後に許可した接続のもの
+    // （2.8 のコネクタも公開の間に確かめられる）。uid と writes は今までどおり上にあり、isConnector・connectorCreate は変えない
+    function validConnection(c) {
+      return c is map
+        && c.keys().hasOnly(['name', 'pairing', 'pairedAt', 'approvedOn'])
+        && c.keys().hasAll(['name', 'pairing', 'pairedAt', 'approvedOn'])
+        && c.name is string && c.name.size() > 0 && c.name.size() <= 40
+        && c.pairing is string && c.pairing.size() <= 128
+        && c.pairedAt is timestamp
+        && c.approvedOn is string && c.approvedOn.size() <= 100;
+    }
+
     function validConnector() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v'])
-        && d.keys().hasAll(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v'])
+      return d.keys().hasOnly(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v', 'pairingCid', 'connections'])
+        && d.keys().hasAll(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v', 'pairingCid', 'connections'])
         && d.uid is string && d.uid.size() > 0 && d.uid.size() <= 128 && d.uid != request.auth.uid
         && d.pairing is string && d.pairing.size() <= 128
+        && d.pairedAt is timestamp
         && d.approvedOn is string && d.approvedOn.size() <= 100
         && d.writes is bool
-        && d.v is int;
+        && d.v == 2
+        && d.pairingCid is string && d.pairingCid.matches('^c[0-9a-z]{1,31}$')
+        && d.connections is map && d.connections.size() >= 1 && d.connections.size() <= 10;
+    }
+
+    // 新しい許可（接続を足す・入れ替える。2.8 の記録からの移し替えも）: 最後の許可の時刻と、その接続の指紋・時刻がそろう（時刻はサーバー時刻）
+    function newApproval() {
+      let d = request.resource.data;
+      return d.pairedAt == request.time
+        && d.pairingCid in d.connections
+        && validConnection(d.connections[d.pairingCid])
+        && d.connections[d.pairingCid].pairing == d.pairing
+        && d.connections[d.pairingCid].pairedAt == request.time;
     }
 
     match /config/connector {
       allow get: if signedIn() && (request.auth.uid == ownerUid() || resource.data.uid == request.auth.uid);
-      allow create: if signedIn() && request.auth.uid == ownerUid() && validConnector()
-        && request.resource.data.pairedAt == request.time;
-      allow update: if signedIn() && request.auth.uid == ownerUid() && validConnector()
-        && (request.resource.data.pairedAt == request.time
-          || (request.resource.data.pairing == resource.data.pairing && request.resource.data.pairedAt == resource.data.pairedAt));
+      allow create: if signedIn() && request.auth.uid == ownerUid() && validConnector() && newApproval();
+      allow update: if signedIn() && request.auth.uid == ownerUid() && (
+          // (i) 「書き込みを許可」だけ（2.8 の記録・2.8 のアプリからも）
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['writes']) && request.resource.data.writes is bool)
+          // (ii) 新しい許可（コネクタの身元は変えない。身元が変わった時は消して作り直す）
+          || (validConnector() && request.resource.data.uid == resource.data.uid && newApproval())
+          // (iii) 一覧の編集（名前を変える・1つ解除する・2.8 の記録を一覧の形にする）。身元・最後の許可の指紋・時刻・接続（pairingCid）は変えない
+          || (validConnector()
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.pairing == resource.data.pairing
+            && request.resource.data.pairedAt == resource.data.pairedAt
+            && request.resource.data.pairingCid == resource.data.get('pairingCid', 'c0')));
+      // 「連携をすべて解除」
       allow delete: if signedIn() && request.auth.uid == ownerUid();
     }
 

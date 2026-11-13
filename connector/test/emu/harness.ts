@@ -16,10 +16,10 @@ import { createConflictHooks } from '../../../src/sync/conflicts'
 import { createSyncEngine, type SyncEngine, type SyncTarget } from '../../../src/sync/engine'
 import { stableStringify } from '../../../src/sync/merge'
 import type { VaultConfig } from '../../src/config'
-import { VaultCore } from '../../src/vault/core'
-import { pairingHash, randomPairingKey } from '../../../src/claude/pairing'
+import { VaultCore, type GrantProps } from '../../src/vault/core'
+import { defaultConnectionName, newConnectionId, pairingHash, randomPairingKey } from '../../../src/claude/pairing'
 import { approvePairing, prepareConnect } from '../../../src/features/claude/connectLogic'
-import { readOwnerUid, writeConnector } from '../../../src/features/claude/connectorDoc'
+import { addConnection, deleteConnector, readConnectorDoc, readOwnerUid } from '../../../src/features/claude/connectorDoc'
 import { nodeSql } from '../support/nodeSql'
 
 export const PROJECT = 'demo-novel-studio'
@@ -217,11 +217,16 @@ export function makeConnector(opts: { sql?: ReturnType<typeof nodeSql>; config?:
 
 /**
  * アプリの連携の画面と同じ手順で連携する（src/features/claude/connectLogic.ts の prepareConnect・approvePairing と、
- * connectorDoc.ts の readOwnerUid・writeConnector をそのまま使う。Firestore は持ち主の端末のもの）:
- * 持ち主か確かめ、コネクタの身元を受け取り、config/connector に指紋を書いて、アプリが移る /pair/callback の URL の
- * state と k で、コネクタの /pair/callback と同じ確かめをする（state は claude.ai から、k はアプリの中だけ）
+ * connectorDoc.ts の readOwnerUid・readConnectorDoc・addConnection・deleteConnector をそのまま使う。Firestore は持ち主の端末のもの）:
+ * 持ち主か確かめ、コネクタの身元といまの接続の一覧を受け取り、config/connector の一覧に接続（指紋）を足して、アプリが移る
+ * /pair/callback の URL の state と k で、コネクタの /pair/callback と同じ確かめをする（state は claude.ai から、k はアプリの中だけ）。
+ * 2.9: 呼ぶたびに新しい接続（名前は既定の「接続n」。replaceCid で入れ替え）。返す grant は、その接続の OAuth の許可の props と同じ
  */
-export async function pair(core: VaultCore, owner: Device, opts: { writes?: boolean } = {}) {
+export async function pair(
+  core: VaultCore,
+  owner: Device,
+  opts: { writes?: boolean; name?: string; replaceCid?: string } = {},
+): Promise<{ uid: string; cid: string; grant: GrantProps }> {
   const origin = 'https://connector.emu.test'
   const state = `state-${Math.random().toString(36).slice(2)}`
   const prep = await prepareConnect(
@@ -233,34 +238,82 @@ export async function pair(core: VaultCore, owner: Device, opts: { writes?: bool
         const id = await core.connectIdentity()
         return { ok: true, identity: { uid: id.uid, version: id.version, model: id.model } }
       },
+      readConnector: () => readConnectorDoc(owner.fs),
+      dataModel: DATA_MODEL,
       cancelled: () => false,
     },
     owner.uid,
   )
   if (prep.step !== 'ready') throw new Error(`連携の画面が先へ進みません: ${prep.step}`)
+  // 連携の画面と同じ既定（コネクタが用意し直された時は、前の接続は数えない）
+  const current = prep.existing && prep.existing.uid === prep.identity.uid ? prep.existing : null
+  const cid = newConnectionId()
   let url = ''
   const approved = await approvePairing(
     {
       origin,
-      writeConnector: (d) => writeConnector(d, owner.fs),
+      addConnection: (a) => addConnection(a, owner.fs),
+      deleteConnector: () => deleteConnector(owner.fs),
       setAccess: () => undefined,
       flush: async () => true,
       navigate: (u) => (url = u),
       randomKey: () => randomPairingKey(),
       deviceLabel: () => 'テストの Mac',
     },
-    { state, identity: prep.identity, ownerUid: prep.ownerUid, writes: opts.writes ?? true, access: [] },
+    {
+      state,
+      identity: prep.identity,
+      ownerUid: prep.ownerUid,
+      writes: opts.writes ?? current?.writes ?? true,
+      access: [],
+      cid,
+      name: opts.name ?? defaultConnectionName((current?.connections ?? []).map((c) => c.name)),
+      replaceCid: opts.replaceCid ?? null,
+    },
   )
   if (!approved.ok) throw new Error(`連携を記録できません: ${approved.error}`)
   const back = new URL(url)
   const r = await core.verifyPairing(await pairingHash(back.searchParams.get('state') ?? '', back.searchParams.get('k') ?? ''))
   if (!r.ok) throw new Error(`連携できません: ${r.reason} ${r.message}`)
+  if (r.cid !== cid) throw new Error(`許可した接続が違います: ${r.cid} ${cid}`)
   // 初回の取り込み（alarm と同じ）
   for (let i = 0; i < 500; i++) if ((await core.alarm()) === null) break
-  return { uid: prep.identity.uid }
+  return { uid: prep.identity.uid, cid, grant: { ownerUid: r.ownerUid, gen: r.gen, cid } }
 }
 
-/** ツールを呼ぶ（freshMs: 0 なので、毎回クラウドの変更を読み直す） */
-export async function tool(core: VaultCore, name: string, args: Record<string, unknown> = {}) {
-  return core.callTool(name, args)
+/**
+ * ツールを呼ぶ（freshMs: 0 なので、毎回クラウドの変更を読み直す）。grant を渡すと /mcp と同じく、その許可（接続）で呼ぶ
+ */
+export async function tool(core: VaultCore, name: string, args: Record<string, unknown> = {}, grant?: GrantProps) {
+  return core.callTool(name, args, grant ? { grant } : {})
+}
+
+/** エミュレーターの管理者として config/connector を読む（作られた時刻 = コネクタの連携の代。無ければ null） */
+export async function adminConnectorDoc(): Promise<{ createTime: string; fields: Record<string, unknown> } | null> {
+  const res = await fetch(`http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents/config/connector`, {
+    headers: { Authorization: 'Bearer owner' },
+  })
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`GET config/connector: ${res.status} ${await res.text()}`)
+  const j = (await res.json()) as { createTime: string; fields: Record<string, unknown> }
+  return { createTime: j.createTime, fields: j.fields }
+}
+
+/** 2.8 のアプリが書いた形（v1）の連携の記録を、エミュレーターの管理者として置く（2.9 のアクセスルールでは作れない） */
+export async function adminPutConnectorV1(uid: string, hash: string, writes = true): Promise<void> {
+  const res = await fetch(`http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents/config/connector`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+    body: JSON.stringify({
+      fields: {
+        uid: { stringValue: uid },
+        pairing: { stringValue: hash },
+        pairedAt: { timestampValue: new Date().toISOString() },
+        approvedOn: { stringValue: '2.8 の Mac' },
+        writes: { booleanValue: writes },
+        v: { integerValue: '1' },
+      },
+    }),
+  })
+  if (!res.ok) throw new Error(`PATCH config/connector: ${res.status} ${await res.text()}`)
 }

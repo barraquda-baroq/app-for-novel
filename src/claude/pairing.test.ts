@@ -9,7 +9,10 @@ import {
   connectionNameKey,
   connectionsOf,
   connectPageUrl,
+  CONNECTION_KEYS,
+  CONNECTION_NAME_MAX,
   CONNECTOR_DOC_KEYS,
+  CONNECTOR_DOC_VERSION,
   defaultConnectionName,
   identityUrl,
   isPairingHash,
@@ -105,6 +108,24 @@ describe('身元と記録の形', () => {
       expect(m, file).not.toBeNull()
       const keys = m![1].split(',').map((k) => k.trim().replace(/'/g, ''))
       expect(new Set(keys)).toEqual(new Set(CONNECTOR_DOC_KEYS))
+    }
+  })
+
+  it('2.9: 記録の版・接続ごとのキー・接続の id の形・数の上限もアクセスルールと同じ', () => {
+    for (const [file, rules] of [
+      ['firestore.rules', prodRules],
+      ['firestore.emu.rules', emuRules],
+    ]) {
+      const body = /function validConnector\(\)[\s\S]*?\n {4}\}/.exec(rules)![0]
+      expect(body, file).toContain(`d.v == ${CONNECTOR_DOC_VERSION}`)
+      expect(body, file).toContain(`d.pairingCid.matches('${CONNECTION_ID.source}')`)
+      expect(body, file).toContain(`d.connections.size() <= ${MAX_CONNECTIONS}`)
+      const one = /function validConnection\(c\)[\s\S]*?hasOnly\(\[([^\]]*)\]\)[\s\S]*?\n {4}\}/.exec(rules)
+      expect(one, file).not.toBeNull()
+      expect(new Set(one![1].split(',').map((k) => k.trim().replace(/'/g, '')))).toEqual(new Set(CONNECTION_KEYS))
+      // アプリの名前の上限（20）はルールの上限（40）の中
+      const max = Number(/c\.name\.size\(\) <= (\d+)/.exec(one![0])![1])
+      expect(CONNECTION_NAME_MAX).toBeLessThanOrEqual(max)
     }
   })
 })

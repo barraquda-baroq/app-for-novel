@@ -22,7 +22,7 @@ vi.mock('../../sync/controller', async () => {
     syncNow: vi.fn(),
   }
 })
-vi.mock('./connectorDoc', () => ({ readOwnerUid: h.readOwnerUid, writeConnector: vi.fn() }))
+vi.mock('./connectorDoc', () => ({ readOwnerUid: h.readOwnerUid, addConnection: vi.fn(), readConnectorDoc: vi.fn() }))
 vi.mock('./connectLogic', async (importOriginal) => {
   const original = await importOriginal<typeof import('./connectLogic')>()
   return { ...original, CONNECTOR_ORIGIN: 'https://conn.example.workers.dev', fetchIdentity: h.fetchIdentity }

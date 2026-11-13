@@ -3,11 +3,14 @@
 // 2. クラウドの持ち主のアカウントか確かめる（config/owner）
 // 3. 同期が揃うのを待つ（見せるタイトルを正しく出し、連携の記録を書く前に）
 // 4. ビルドの時に決めたコネクタの origin から、コネクタの匿名のアカウントを受け取る（URL の uid・origin は使わない）
-// 5. 見せるタイトル・書き込みを許可するかを選んで［許可する］→ 連携の記録（指紋だけ）を書き、送ってからコネクタへ移る
+// 5. 見せるタイトル・書き込みを許可するかを選んで［許可する］→ 連携の記録の接続の一覧（2.9。10まで）に接続（指紋だけ）を足し、
+//    送ってからコネクタへ移る。接続の id は画面を開くごとに1つ作り、記録に失敗した後のやり直しでも同じものを使う（重ならない）。
+//    コネクタがこのアプリより古い版なら許可させない（2.8 までのコネクタは、許可するとほかの接続を切ってしまう）
 // 手順は connectLogic.ts（prepareConnect・approvePairing）、URL・k・指紋の決まりはコネクタと同じ src/claude/pairing.ts。
 // iPhone / Android のアプリでは連携できない（コネクタは Web 版の画面からだけ受け付ける）ので、同じ印のままブラウザで開いてもらう。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { defaultConnectionName, newConnectionId } from '../../claude/pairing'
 import { claudeAccessOf, CLAUDE_ACCESS_OPTIONS } from '../../claude/visibility'
 import { sortedTitles } from '../../domain/entityOps'
 import { TRASH_RETENTION_DAYS } from '../../domain/trash'
@@ -33,6 +36,7 @@ import {
   randomPairingKey,
   validState,
   type ConnectorIdentity,
+  type ConnectorStatus,
 } from './connectLogic'
 import { leaveTo } from './leave'
 import './claude.css'
@@ -54,9 +58,17 @@ type Step =
   | { step: 'syncTimeout' }
   | { step: 'identity' }
   | { step: 'identityError'; error: string }
-  | { step: 'ready'; identity: ConnectorIdentity; ownerUid: string }
+  | { step: 'connectorOld'; identity: ConnectorIdentity }
+  | { step: 'ready'; identity: ConnectorIdentity; ownerUid: string; existing: ConnectorStatus | null; existingError: boolean }
   | { step: 'saving' }
-  | { step: 'saveError'; error: string; identity: ConnectorIdentity; ownerUid: string }
+  | {
+      step: 'saveError'
+      error: string
+      identity: ConnectorIdentity
+      ownerUid: string
+      existing: ConnectorStatus | null
+      existingError: boolean
+    }
   | { step: 'done' }
   | { step: 'cancelled' }
 
@@ -116,8 +128,16 @@ export function ConnectPage() {
   const mismatch = sync.accountMismatch !== null
   const [step, setStep] = useState<Step>({ step: 'checking' })
   const [attemptNo, setAttemptNo] = useState(0)
-  // 選んだ内容は記録に失敗した後も残す（連携の記録の間はフォームを外すので、フォームの中には持たない）
-  const [draft, setDraft] = useState<ApproveDraft>({ writes: true, access: {} })
+  // 選んだ内容は記録に失敗した後も残す（連携の記録の間はフォームを外すので、フォームの中には持たない）。
+  // 接続の id は画面を開くごとに1つ（claude.ai で接続し直すと、新しい画面になり新しい id）
+  const [draft, setDraft] = useState<ApproveDraft>(() => ({
+    writes: null,
+    access: {},
+    cid: newConnectionId(),
+    name: null,
+    mode: 'add',
+    replaceCid: null,
+  }))
   const host = CONNECTOR_ORIGIN ? new URL(CONNECTOR_ORIGIN).host : ''
   const [native] = useState(isNative)
 
@@ -137,6 +157,8 @@ export function ConnectPage() {
           readOwnerUid: () => doc.readOwnerUid(),
           waitSynced: (ms) => waitForSynced(ms),
           fetchIdentity: (origin) => fetchIdentity(origin),
+          readConnector: () => doc.readConnectorDoc(),
+          dataModel: DATA_MODEL,
           cancelled: () => cancelled,
           onStep: (s) => set({ step: s }),
         },
@@ -269,19 +291,41 @@ export function ConnectPage() {
             <RetryButton onClick={retry} />
           </Notice>
         )
+      case 'connectorOld':
+        return (
+          <Notice tone="warn" testId="connect-connector-old">
+            <p>
+              コネクタがまだこのアプリの版になっていません（いまのコネクタは {step.identity.version || '不明'}・データの形{' '}
+              {step.identity.model ?? '不明'}
+              ）。このまま許可すると、ほかの接続が切れてしまうため許可できません。コネクタを更新してから（npm run
+              deploy。docs/DEPLOY.md）、claude.ai でもう一度「接続」を押してください。
+            </p>
+          </Notice>
+        )
       case 'ready':
       case 'saveError':
         return (
           <ApproveForm
             identity={step.identity}
             ownerUid={step.ownerUid}
+            existing={step.existing}
+            existingError={step.existingError}
             state={state}
             error={step.step === 'saveError' ? step.error : null}
             draft={draft}
             onDraftChange={setDraft}
             onSaving={() => setStep({ step: 'saving' })}
             onDone={() => setStep({ step: 'done' })}
-            onError={(error) => setStep({ step: 'saveError', error, identity: step.identity, ownerUid: step.ownerUid })}
+            onError={(error) =>
+              setStep({
+                step: 'saveError',
+                error,
+                identity: step.identity,
+                ownerUid: step.ownerUid,
+                existing: step.existing,
+                existingError: step.existingError,
+              })
+            }
             onCancel={() => setStep({ step: 'cancelled' })}
           />
         )
@@ -347,13 +391,24 @@ function RetryButton({ onClick }: { onClick: () => void }) {
 
 /** 連携の画面で選んでいる内容（タイトルは変えたものだけ。変えていなければいまの設定を出す） */
 interface ApproveDraft {
-  writes: boolean
+  /** 「書き込みを許可」（null = いまの設定。記録が無ければ許可） */
+  writes: boolean | null
   access: Record<ID, ClaudeAccess>
+  /** 足す接続の id（画面を開くごとに1つ。やり直しでも同じ） */
+  cid: string
+  /** 接続の名前（null = 既定の名前） */
+  name: string | null
+  /** 新しい接続として足す・前の接続と入れ替える */
+  mode: 'add' | 'replace'
+  replaceCid: string | null
 }
 
 interface ApproveFormProps {
   identity: ConnectorIdentity
   ownerUid: string
+  /** いまの連携の記録（無ければ null） */
+  existing: ConnectorStatus | null
+  existingError: boolean
   state: string
   error: string | null
   draft: ApproveDraft
@@ -367,6 +422,7 @@ interface ApproveFormProps {
 function ApproveForm({
   identity,
   ownerUid,
+  existing,
   state,
   error,
   draft,
@@ -378,7 +434,11 @@ function ApproveForm({
 }: ApproveFormProps) {
   const data = useData()
   const titles = useMemo(() => sortedTitles(data), [data])
-  const writes = draft.writes
+  // コネクタが用意し直された時（記録の uid が違う）は、前の接続は使えないので、新しく始める
+  const current = existing && existing.uid === identity.uid ? existing : null
+  const connections = current?.connections ?? []
+  const writes = draft.writes ?? current?.writes ?? true
+  const name = draft.name ?? defaultConnectionName(connections.map((c) => c.name))
   // 新しい版のアプリで書かれたデータがある間は、タイトルの設定を送れない
   const outdated = useSync((s) => !!s.status?.outdated)
   const busy = useRef(false)
@@ -397,7 +457,8 @@ function ApproveForm({
       const r = await approvePairing(
         {
           origin: CONNECTOR_ORIGIN,
-          writeConnector: (d) => doc.writeConnector(d),
+          addConnection: (a) => doc.addConnection(a),
+          deleteConnector: () => doc.deleteConnector(),
           setAccess: (titleId, a) => {
             attempt(() => actions.setTitleClaudeAccess(titleId, a))
           },
@@ -406,7 +467,16 @@ function ApproveForm({
           randomKey: () => randomPairingKey(),
           deviceLabel: () => deviceLabel(),
         },
-        { state, identity, ownerUid, writes, access: changes },
+        {
+          state,
+          identity,
+          ownerUid,
+          writes,
+          access: changes,
+          cid: draft.cid,
+          name,
+          replaceCid: draft.mode === 'replace' ? draft.replaceCid : null,
+        },
       )
       if (r.ok) onDone()
       else onError(r.error)

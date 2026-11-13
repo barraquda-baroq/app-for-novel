@@ -13,12 +13,16 @@ import * as E from '../../../src/domain/entityOps'
 import * as M from '../../../src/domain/materialOps'
 import * as S from '../../../src/domain/storyOps'
 import { isClaudeIdea } from '../../../src/claude/ideaAppend'
+import { pairingHash, randomPairingKey } from '../../../src/claude/pairing'
+import { deleteConnector, removeConnection, renameConnection } from '../../../src/features/claude/connectorDoc'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { FirestoreError } from '../../src/vault/firestore'
 import { decodeRecord, type RecordDoc } from '../../../src/sync/codec'
 import { stableStringify } from '../../../src/sync/merge'
 import {
   account,
+  adminConnectorDoc,
+  adminPutConnectorV1,
   cleanup,
   clearFirestore,
   emuRules,
@@ -666,5 +670,113 @@ describe('コネクタ（エミュレーター・本番のアクセスルール�
     const d = snap.data() as RecordDoc
     expect(d.device).toBe('claude-connector')
     expect(decodeRecord(d, () => undefined)).toMatchObject({ id, titleId: null, name: '全体の批評', source: 'claude' })
+  })
+
+  it('複数の接続（2.9）: 2回許可すると一覧に2つ。どちらの許可も使え、1つ解除するとその許可だけ使えない（Vault は連携したまま）。すべて解除で両方とも使えない', async () => {
+    const { owner, titleId } = await ownerWithNovel(['本文の一話目。'])
+    const { core } = makeConnector()
+    const first = await pair(core, owner)
+    const second = await pair(core, owner)
+    expect(first.cid).not.toBe(second.cid)
+    expect(second.grant.gen).toBe(first.grant.gen)
+    const d = (await getDoc(doc(owner.fs, 'config', 'connector'))).data()!
+    expect(d.v).toBe(2)
+    expect(d.pairingCid).toBe(second.cid)
+    expect(Object.keys(d.connections).sort()).toEqual([first.cid, second.cid].sort())
+    expect([d.connections[first.cid].name, d.connections[second.cid].name]).toEqual(['接続1', '接続2'])
+    const last = (text: string) => text.split('\n').at(-1)
+    for (const [p, name] of [
+      [first, '接続1'],
+      [second, '接続2'],
+    ] as const) {
+      const status = await tool(core, 'novel_status', {}, p.grant)
+      expect(status.isError).toBeUndefined()
+      expect(last(status.text)).toBe(`この接続: ${name}（接続 2 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）`)
+      expect((await tool(core, 'novel_list_titles', {}, p.grant)).text).toContain('『星の庭』')
+    }
+    const input = { title_id: titleId, items: [{ heading: '二つ目の接続から', body: '書ける' }] }
+    expect((await tool(core, 'novel_add_revision_ideas', input, second.grant)).text).toContain('追加 1件')
+    // 名前を変える（novel_status の「この接続」もすぐ変わる）
+    await renameConnection(first.cid, '仕事用', owner.fs)
+    expect(last((await tool(core, 'novel_status', {}, first.grant)).text)).toBe(
+      'この接続: 仕事用（接続 2 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
+    )
+    // 1つ解除: その許可だけが「連携が解除されています」（401）。ほかの接続・Vault の連携はそのまま
+    expect(await removeConnection(first.cid, owner.fs)).toBe('removed')
+    const gone = await tool(core, 'novel_status', {}, first.grant)
+    expect(gone.auth).toBe(true)
+    expect(gone.text).toContain('Novel Studio 側で連携が解除されています')
+    expect((await tool(core, 'novel_list_titles', {}, first.grant)).auth).toBe(true)
+    expect(await core.checkGrant(first.grant)).toBe(false)
+    expect(core.pairingState()).toBe('paired')
+    expect((await tool(core, 'novel_list_titles', {}, second.grant)).isError).toBeUndefined()
+    expect(last((await tool(core, 'novel_status', {}, second.grant)).text)).toBe(
+      'この接続: 接続2（接続 1 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
+    )
+    expect(await core.checkGrant(second.grant)).toBe(true)
+    // 連携をすべて解除（記録を消す）: どの許可も使えず、Vault の連携も外れる
+    await deleteConnector(owner.fs)
+    for (const p of [second, first]) expect((await tool(core, 'novel_status', {}, p.grant)).auth).toBe(true)
+    expect(core.pairingState()).toBe('unpaired')
+    expect(await core.checkGrant(second.grant)).toBe(false)
+    // もう一度許可すると新しい代（前の許可は戻らない）
+    const again = await pair(core, owner)
+    expect(again.grant.gen).not.toBe(second.grant.gen)
+    expect((await tool(core, 'novel_status', {}, second.grant)).auth).toBe(true)
+    expect((await tool(core, 'novel_status', {}, again.grant)).isError).toBeUndefined()
+  })
+
+  it('入れ替え（2.9）: 入れ替えた接続はすぐ使えず、新しい接続は前の名前を引き継がない（名前は画面で決める）', async () => {
+    const { owner } = await ownerWithNovel(['本文'])
+    const { core } = makeConnector()
+    const first = await pair(core, owner)
+    const second = await pair(core, owner, { replaceCid: first.cid, name: '接続1' })
+    const d = (await getDoc(doc(owner.fs, 'config', 'connector'))).data()!
+    expect(Object.keys(d.connections)).toEqual([second.cid])
+    expect(d.connections[second.cid].name).toBe('接続1')
+    expect((await tool(core, 'novel_list_titles', {}, first.grant)).auth).toBe(true)
+    expect((await tool(core, 'novel_list_titles', {}, second.grant)).isError).toBeUndefined()
+  })
+
+  it('2.8 からの移し替え（2.9）: 2.8 のアプリの記録（v1）で連携した許可（接続の id が無い）は、接続を足した後もそのまま使え（作られた時刻 = 代は同じ）、接続1 を解除すると使えない', async () => {
+    const { owner } = await ownerWithNovel(['本文'])
+    const { core } = makeConnector()
+    // 2.8 のアプリが書いた記録と、2.8 のコネクタの許可（props に cid が無い）
+    const id = await core.connectIdentity()
+    const hash = await pairingHash('state-2.8', randomPairingKey())
+    await adminPutConnectorV1(id.uid, hash)
+    const v1 = await core.verifyPairing(hash)
+    if (!v1.ok) throw new Error(v1.message)
+    expect(v1.cid).toBe('c0')
+    for (let i = 0; i < 500; i++) if ((await core.alarm()) === null) break
+    const legacy = { ownerUid: v1.ownerUid, gen: v1.gen }
+    const before = (await adminConnectorDoc())!
+    const last = (text: string) => text.split('\n').at(-1)
+    expect(last((await tool(core, 'novel_status', {}, legacy)).text)).toBe(
+      'この接続: 接続1（接続 1 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）',
+    )
+    // 2.9 のアプリで接続を足す: 記録は一覧の形に移り（作られた時刻は同じ）、2.8 の接続は c0「接続1」のまま
+    const added = await pair(core, owner)
+    const after = (await adminConnectorDoc())!
+    expect(after.createTime).toBe(before.createTime)
+    expect(added.grant.gen).toBe(legacy.gen)
+    const d = (await getDoc(doc(owner.fs, 'config', 'connector'))).data()!
+    expect(d.v).toBe(2)
+    expect(d.connections.c0).toMatchObject({ name: '接続1', pairing: hash, approvedOn: '2.8 の Mac' })
+    expect(d.connections.c0.pairedAt.toMillis()).toBe(
+      Date.parse(String((before.fields.pairedAt as { timestampValue: string }).timestampValue)),
+    )
+    expect(d.connections[added.cid].name).toBe('接続2')
+    const status = await tool(core, 'novel_status', {}, legacy)
+    expect(status.isError).toBeUndefined()
+    expect(last(status.text)).toBe('この接続: 接続1（接続 2 / 10。名前はアプリの 設定 → Claude 連携 で変えられます）')
+    expect((await tool(core, 'novel_list_titles', {}, legacy)).isError).toBeUndefined()
+    expect(await core.checkGrant(legacy)).toBe(true)
+    // 接続1 を解除すると、2.8 の許可は使えない（2.9 で足した接続はそのまま）
+    expect(await removeConnection('c0', owner.fs)).toBe('removed')
+    expect((await tool(core, 'novel_status', {}, legacy)).auth).toBe(true)
+    expect(await core.checkGrant(legacy)).toBe(false)
+    expect((await tool(core, 'novel_list_titles', {}, added.grant)).isError).toBeUndefined()
+    expect((await adminConnectorDoc())!.createTime).toBe(before.createTime)
   })
 })

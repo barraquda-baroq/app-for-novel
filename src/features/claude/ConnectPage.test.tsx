@@ -8,7 +8,7 @@ import { createPersistence } from '../../db/persistence'
 import { actions } from '../../store/actions'
 import { getData, getPersistence, initStore, resetStoreForTests } from '../../store/appStore'
 import { AppFrame } from '../../ui/Layout'
-import type { ConnectorWrite } from './connectLogic'
+import type { ConnectionApproval, ConnectorStatus } from './connectLogic'
 
 const ORIGIN = 'https://conn.example.workers.dev'
 
@@ -29,9 +29,14 @@ interface FakeSync {
 const sync = vi.hoisted(() => ({ store: null as unknown as UseBoundStore<StoreApi<FakeSync>> }))
 const doc = vi.hoisted(() => ({
   owner: 'owner-uid' as string | null,
+  /** いまの連携の記録（null = 無い） */
+  existing: null as ConnectorStatus | null,
   written: [] as unknown[],
   readOwnerUid: vi.fn(),
-  writeConnector: vi.fn(),
+  readConnectorDoc: vi.fn(),
+  addConnection: vi.fn(),
+  deleteConnector: vi.fn(),
+  removeConnection: vi.fn(),
 }))
 const leave = vi.hoisted(() => ({ leaveTo: vi.fn() }))
 /** 仮のクラウド: 「いますぐ同期」で端末内の送信待ちを受け取る（online が false なら受け取らない） */
@@ -65,7 +70,10 @@ vi.mock('../../sync/controller', async () => {
 vi.mock('../../sync/appModel', () => ({ DATA_MODEL: 3 }))
 vi.mock('./connectorDoc', () => ({
   readOwnerUid: doc.readOwnerUid,
-  writeConnector: doc.writeConnector,
+  readConnectorDoc: doc.readConnectorDoc,
+  addConnection: doc.addConnection,
+  deleteConnector: doc.deleteConnector,
+  removeConnection: doc.removeConnection,
 }))
 vi.mock('./leave', () => leave)
 vi.mock('./connectLogic', async (importOriginal) => {
@@ -93,15 +101,18 @@ function renderPage(state = 'state-123') {
 beforeEach(async () => {
   await initStore(createPersistence(`test-db-connect-${++n}`))
   doc.owner = 'owner-uid'
+  doc.existing = null
   cloud.online = true
   cloud.uploads = 0
   doc.written = []
-  doc.readOwnerUid.mockClear()
-  doc.writeConnector.mockClear()
+  for (const f of [doc.readOwnerUid, doc.readConnectorDoc, doc.addConnection, doc.deleteConnector, doc.removeConnection])
+    f.mockReset()
   doc.readOwnerUid.mockImplementation(async () => doc.owner)
-  doc.writeConnector.mockImplementation(async (d: ConnectorWrite) => {
+  doc.readConnectorDoc.mockImplementation(async () => doc.existing)
+  doc.addConnection.mockImplementation(async (d: ConnectionApproval) => {
     doc.written.push(d)
   })
+  doc.deleteConnector.mockImplementation(async () => undefined)
   leave.leaveTo.mockReset()
   fetchMock.mockReset()
   fetchMock.mockImplementation(
@@ -161,7 +172,9 @@ describe('連携の画面', () => {
         pairing: await sha(`state-123.${k}`),
         approvedOn: 'ブラウザ',
         writes: false,
-        v: 1,
+        cid: expect.stringMatching(/^c[0-9a-z]{12}$/),
+        name: '接続1',
+        replaceCid: null,
       },
     ])
     expect(JSON.stringify(doc.written)).not.toContain(k)
@@ -173,10 +186,11 @@ describe('連携の画面', () => {
     expect(screen.getByTestId('connect-done')).toBeTruthy()
   })
 
-  it('記録に失敗しても、選んだ内容（書き込みを許可しない）はそのまま。やり直すと writes: false で記録する', async () => {
+  it('記録に失敗しても、選んだ内容（書き込みを許可しない）はそのまま。やり直すと writes: false・同じ接続の id で記録する', async () => {
     const user = userEvent.setup()
     actions.createTitle('見せる作品')
-    doc.writeConnector.mockImplementationOnce(async () => {
+    doc.addConnection.mockImplementationOnce(async (d: ConnectionApproval) => {
+      doc.written.push({ failed: d.cid })
       throw Object.assign(new Error('x'), { code: 'unavailable' })
     })
     renderPage()
@@ -190,8 +204,10 @@ describe('連携の画面', () => {
     expect(screen.getByTestId('connect-access-read').getAttribute('aria-pressed')).toBe('true')
     await user.click(screen.getByTestId('connect-approve'))
     await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
-    expect(doc.written).toHaveLength(1)
-    expect((doc.written[0] as ConnectorWrite).writes).toBe(false)
+    expect(doc.written).toHaveLength(2)
+    const [failed, ok] = doc.written as [{ failed: string }, ConnectionApproval]
+    expect(ok.writes).toBe(false)
+    expect(ok.cid).toBe(failed.failed)
   })
 
   it('新しい版のアプリのデータがあって送れない間は、許可できない（何も書かない）', async () => {
@@ -201,7 +217,7 @@ describe('連携の画面', () => {
     const form = await screen.findByTestId('connect-form')
     expect(within(form).getByTestId('connect-outdated')).toBeTruthy()
     expect((within(form).getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(true)
-    expect(doc.writeConnector).not.toHaveBeenCalled()
+    expect(doc.addConnection).not.toHaveBeenCalled()
   })
 
   it('持ち主でなければ問い合わせも記録もしない', async () => {
@@ -209,7 +225,8 @@ describe('連携の画面', () => {
     renderPage()
     await screen.findByTestId('connect-not-owner')
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(doc.writeConnector).not.toHaveBeenCalled()
+    expect(doc.readConnectorDoc).not.toHaveBeenCalled()
+    expect(doc.addConnection).not.toHaveBeenCalled()
   })
 
   it('同期が揃うまで待ち、揃ってから問い合わせる', async () => {
@@ -241,13 +258,28 @@ describe('連携の画面', () => {
     await screen.findByTestId('connect-identity-error')
     first.unmount()
 
-    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ uid: 'anon-uid', model: 2 }), { status: 200 }))
+    // コネクタがアプリより新しい版: 許可はできる（書き込めないことを知らせる）
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ uid: 'anon-uid', model: 4 }), { status: 200 }))
     renderPage()
     const form = await screen.findByTestId('connect-form')
-    expect(within(form).getByTestId('connect-model-warning').textContent).toContain('（2）')
+    expect(within(form).getByTestId('connect-model-warning').textContent).toContain('（4）')
     await user.click(within(form).getByTestId('connect-cancel'))
     expect(screen.getByTestId('connect-cancelled')).toBeTruthy()
-    expect(doc.writeConnector).not.toHaveBeenCalled()
+    expect(doc.addConnection).not.toHaveBeenCalled()
     expect(leave.leaveTo).not.toHaveBeenCalled()
+  })
+
+  it('コネクタがアプリより古い版なら、許可させない（ほかの接続を切ってしまうため）', async () => {
+    fetchMock.mockImplementation(
+      async () => new Response(JSON.stringify({ uid: 'anon-uid', version: '2.8.0', model: 2 }), { status: 200 }),
+    )
+    renderPage()
+    const old = await screen.findByTestId('connect-connector-old')
+    expect(old.textContent).toBe(
+      'コネクタがまだこのアプリの版になっていません（いまのコネクタは 2.8.0・データの形 2）。このまま許可すると、ほかの接続が切れてしまうため許可できません。コネクタを更新してから（npm run deploy。docs/DEPLOY.md）、claude.ai でもう一度「接続」を押してください。',
+    )
+    expect(screen.queryByTestId('connect-approve')).toBeNull()
+    expect(doc.readConnectorDoc).not.toHaveBeenCalled()
+    expect(doc.addConnection).not.toHaveBeenCalled()
   })
 })
