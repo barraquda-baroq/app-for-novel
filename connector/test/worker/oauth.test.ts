@@ -582,6 +582,42 @@ describe('/mcp の Origin', () => {
   })
 })
 
+describe('/mcp の本文の大きさ', () => {
+  it('1,000,000 バイトを超える呼び出しは、ツールを呼ばずに 413 と日本語の文（ライブラリの英語の文にしない）。下回れば今までどおり', async () => {
+    seed(novel(['本文']).data)
+    const { cb, verifier } = await connect()
+    const t = await exchange(cb, verifier)
+    expect((await ready(t.access_token)).status).toBe(200)
+    const before = fake.calls.length
+    // 日本語は1字3バイト: 340,000字で 1,020,000 バイトを超える（字数では上限より少ない）
+    const big = await mcp(t.access_token, 'tools/call', {
+      name: 'novel_add_revision_ideas',
+      arguments: { title_id: '星の庭', items: [{ heading: '長い案', body: '字'.repeat(340_000) }] },
+    })
+    expect(big.status).toBe(413)
+    const err = (await big.json()) as { jsonrpc: string; id: null; error: { code: number; message: string } }
+    expect(err).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32000,
+        message:
+          '1回の呼び出しが大きすぎます（送る内容は合わせて 1,000,000 バイトまで。日本語でおよそ 33万字）。何も受け取っていません（何も書いていません）。items を減らして（長い本文は分けて）、いくつかの呼び出しで送ってください。',
+      },
+    })
+    // Vault（Firebase）は呼ばない
+    expect(fake.calls.length).toBe(before)
+    // 上限より小さければ、ツールが答える（1件の記録の上限は 200,000 字なので、その断り）
+    const under = await mcp(t.access_token, 'tools/call', {
+      name: 'novel_add_revision_ideas',
+      arguments: { title_id: '星の庭', items: [{ heading: '長い案', body: '字'.repeat(300_000) }] },
+    })
+    expect(under.status).toBe(200)
+    const r = await rpcJson(under)
+    expect(String(r.result.content[0].text)).toContain('200,000')
+  })
+})
+
 describe('/connect/identity（アプリの連携の画面が読む）', () => {
   it('アプリの origin だけに CORS。ほかの origin は 403。preflight は 204', async () => {
     const ok = await SELF.fetch(`${H}/connect/identity`, { headers: { Origin: APP } })

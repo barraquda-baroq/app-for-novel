@@ -497,6 +497,14 @@ function ApproveForm({
   const writes: boolean | null = draft.writes ?? (list.state === 'ok' ? (current?.writes ?? true) : null)
   const name = draft.name ?? (mode === 'replace' && target ? target.name : defaultConnectionName(connections.map((c) => c.name)))
   const nameProblem = connectionNameProblem(name, connections, mode === 'replace' ? (target?.cid ?? null) : null)
+  // 15分以内の許可の勧め。2つ目のアカウントを続けて接続した時（相対比較と推敲を別のアカウントで、など）にも出るので、
+  // 別のアカウントなら入れ替えないことを添える（入れ替えると前のアカウントがすぐ使えなくなる）
+  const recentNote = recent
+    ? `15分以内に許可した「${recent.name}」があります。同じ claude.ai のアカウントで接続できずにやり直している時は「${recent.name}と入れ替える」を選ぶと、使わない接続が一覧に残りません。` +
+      (full
+        ? `別の claude.ai のアカウントを足している時は、使っていない接続を選ぶか、下の一覧で1つ解除してください（「${recent.name}」と入れ替えると、そのアカウントはすぐ使えなくなります）。`
+        : `別の claude.ai のアカウントを足している時は「新しい接続として足す」で許可してください（入れ替えると「${recent.name}」のアカウントはすぐ使えなくなります）。`)
+    : null
   const listBusy = list.state === 'loading' || removing
   const canApprove = !outdated && !listBusy && nameProblem === null && (mode === 'add' ? !full : !!target)
 
@@ -680,10 +688,9 @@ function ApproveForm({
           </p>
         ) : null}
         {/* 10ある時に既定で選んである時は、なぜ選んであるかの説明として出す（作者が選んだ時は出さない） */}
-        {recent && !(mode === 'replace' && draft.replaceCid === recent.cid) ? (
+        {recent && recentNote && !(mode === 'replace' && draft.replaceCid === recent.cid) ? (
           <p className="cn-notice is-info" data-testid="connect-recent">
-            15分以内に許可した「{recent.name}」があります。claude.ai で接続できずにやり直している時は「{recent.name}
-            と入れ替える」を選ぶと、使わない接続が一覧に残りません。
+            {recentNote}
           </p>
         ) : null}
         {n > 0 ? (
@@ -720,7 +727,7 @@ function ApproveForm({
 
       <section className="cn-titles" aria-labelledby="cn-titles-heading">
         <h2 id="cn-titles-heading">
-          Claude に見せるタイトル<span className="sx-count">{shown}</span>
+          Claude に見せるタイトル（すべての接続に共通）<span className="sx-count">{shown}</span>
         </h2>
         {titles.length === 0 ? (
           <p className="small muted">タイトルがまだありません（後で作ったタイトルも、各タイトルの画面で設定できます）。</p>

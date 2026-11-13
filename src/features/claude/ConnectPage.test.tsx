@@ -384,12 +384,41 @@ describe('連携の画面', () => {
       renderPage()
       const recent = await screen.findByTestId('connect-recent')
       expect(recent.textContent).toBe(
-        '15分以内に許可した「接続3」があります。claude.ai で接続できずにやり直している時は「接続3と入れ替える」を選ぶと、使わない接続が一覧に残りません。',
+        '15分以内に許可した「接続3」があります。同じ claude.ai のアカウントで接続できずにやり直している時は「接続3と入れ替える」を選ぶと、使わない接続が一覧に残りません。別の claude.ai のアカウントを足している時は「新しい接続として足す」で許可してください（入れ替えると「接続3」のアカウントはすぐ使えなくなります）。',
       )
       await user.click(screen.getByTestId('connect-mode-replace'))
       expect((screen.getByTestId('connect-replace-target') as HTMLSelectElement).value).toBe('cnew')
       // その接続と入れ替える時は勧めない
       expect(screen.queryByTestId('connect-recent')).toBeNull()
+    })
+
+    it('別のアカウントを続けて足す時（1つ目を許可して数分後）: 足すのままにするよう知らせ、触らずに許可すると前の接続は残る', async () => {
+      const user = userEvent.setup()
+      // 相対比較のアカウント A を接続した4分後に、推敲のアカウント B の許可の画面を開いた
+      doc.existing = status([entry('cA', '接続1', 4)])
+      renderPage()
+      const section = await screen.findByTestId('connect-connection')
+      const recent = within(section).getByTestId('connect-recent')
+      expect(recent.textContent).toContain(
+        '別の claude.ai のアカウントを足している時は「新しい接続として足す」で許可してください（入れ替えると「接続1」のアカウントはすぐ使えなくなります）。',
+      )
+      // やり直しの勧めは「同じアカウント」の時だけ
+      expect(recent.textContent).toContain('同じ claude.ai のアカウントで接続できずにやり直している時は「接続1と入れ替える」')
+      expect((within(section).getByTestId('connect-mode-add') as HTMLInputElement).checked).toBe(true)
+      expect((within(section).getByTestId('connect-name') as HTMLInputElement).value).toBe('接続2')
+      await user.click(screen.getByTestId('connect-approve'))
+      await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
+      expect(doc.written).toEqual([expect.objectContaining({ name: '接続2', replaceCid: null })])
+    })
+
+    it('タイトルの「Claude に見せる」は、すべての接続に共通だと見出しに出す（「書き込みを許可」と同じ）', async () => {
+      doc.existing = status([entry('cA', '接続1', 4)])
+      renderPage()
+      const heading = await screen.findByRole('heading', { name: /^Claude に見せるタイトル/ })
+      expect(heading.textContent).toMatch(/^Claude に見せるタイトル（すべての接続に共通）\d+$/)
+      expect(screen.getByTestId('connect-writes').parentElement?.textContent).toContain(
+        '推敲案などの書き込みも許可（すべての接続に効きます）',
+      )
     })
 
     const tenEntries = () => Array.from({ length: 10 }, (_, i) => entry(`c${i + 1}`, `接続${i + 1}`, 1000 - i))
@@ -462,6 +491,11 @@ describe('連携の画面', () => {
       expect(select.value).toBe('c10')
       expect((screen.getByTestId('connect-name') as HTMLInputElement).value).toBe('接続10')
       expect(screen.getByTestId('connect-recent').textContent).toContain('15分以内に許可した「接続10」があります。')
+      // 足すことはできないので、別のアカウントなら使っていない接続を選ぶか1つ解除するように言う（足すとは言わない）
+      expect(screen.getByTestId('connect-recent').textContent).toContain(
+        '別の claude.ai のアカウントを足している時は、使っていない接続を選ぶか、下の一覧で1つ解除してください（「接続10」と入れ替えると、そのアカウントはすぐ使えなくなります）。',
+      )
+      expect(screen.getByTestId('connect-recent').textContent).not.toContain('新しい接続として足す')
       expect((screen.getByTestId('connect-approve') as HTMLButtonElement).disabled).toBe(false)
       await user.click(screen.getByTestId('connect-approve'))
       await waitFor(() => expect(leave.leaveTo).toHaveBeenCalledTimes(1))
