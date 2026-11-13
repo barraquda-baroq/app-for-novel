@@ -81,6 +81,11 @@ export class Vault extends DurableObject<Env> {
     return this.#core.takeRate(kind, bucket)
   }
 
+  /** 同意の承認を1回だけ通す（POST /authorize。KV に承認の後の取引を書く前） */
+  claimConsent(key: string): boolean {
+    return this.#core.claimConsent(key)
+  }
+
   nightly(): Promise<'ok' | 'rescan' | 'skipped'> {
     return this.#core.nightly()
   }

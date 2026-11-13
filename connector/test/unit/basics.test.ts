@@ -11,13 +11,23 @@ import { fromFields, fromValue, timestampMicros, toValue } from '../../src/vault
 import { EncodeError, WRITABLE_TABLES, prepareWrite, rowsOfCommit } from '../../src/vault/writer'
 import { safeError, safeUrl, safeValue } from '../../src/log'
 import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../../src/version'
-import { RATE_LIMITS, sourceBucket, sourceNetwork, takeRate } from '../../src/vault/ratelimit'
+import {
+  ACCESS_TOKEN_TTL_SECONDS,
+  CONSENT_CLAIM_MS,
+  KV_WRITES,
+  RATE_LIMITS,
+  claimConsent,
+  sourceBucket,
+  sourceNetwork,
+  takeRate,
+} from '../../src/vault/ratelimit'
 import { MirrorStore } from '../../src/vault/store'
 import { nodeSql } from '../support/nodeSql'
 import { APP_VERSION, DATA_MODEL } from '../../../src/sync/appModel'
 import { PAIRING_FIXTURE as F } from '../../../src/test/pairingFixture'
 import { IDEA_LIMITS } from '../../../src/claude/ideaAppend'
 import { CLAUDE_FOLDER_ID } from '../../../src/claude/ideaFolders'
+import { MAX_CONNECTIONS } from '../../../src/claude/pairing'
 
 describe('Firestore の値', () => {
   it('文字列・整数（10進の文字列）・真偽・null・時刻・入れ子', () => {
@@ -319,7 +329,7 @@ describe('接続の要求の回数の上限（ネットワークごと＋全体�
     expect(Object.keys(store.getMeta<{ buckets: Record<string, unknown> }>('rate:authorize:sources')!.buckets)).toEqual([a])
   })
 
-  it('たくさんのネットワークからでも、全体で1日300回まで（断った分は数えない）', () => {
+  it('たくさんのネットワークからでも、全体で1日150回まで（断った分は数えない）', () => {
     const store = new MirrorStore(nodeSql())
     let ok = 0
     for (let i = 0; i < 400; i++) if (takeRate(store, 'authorize', at + i, `net-${i % 40}`).ok) ok++
@@ -327,6 +337,27 @@ describe('接続の要求の回数の上限（ネットワークごと＋全体�
     expect(takeRate(store, 'authorize', at + 500, 'net-new')).toEqual({ ok: false, scope: 'global', window: 'day' })
     // ネットワークごとの記録は、通した分だけ（全体の上限まで）
     expect(Object.keys(store.getMeta<{ buckets: Record<string, unknown> }>('rate:authorize:sources')!.buckets)).toHaveLength(40)
+  })
+
+  it('OAuth の KV の書き込み（1日 1,000 回）: 接続の要求の上限まで送られても、接続 10 のトークンの更新と連携の分が十分に残る', () => {
+    // 接続の要求1回で2回（同意の取引と承認の後の取引。承認は同じ同意で1回だけ）、更新はアクセストークンが切れるたびに2回
+    const refreshes = MAX_CONNECTIONS * Math.ceil(86_400 / ACCESS_TOKEN_TTL_SECONDS) * KV_WRITES.perRefresh
+    const requests = RATE_LIMITS.authorize.global.perDay * KV_WRITES.perAuthorize
+    // 連携を終える分（10の接続をそれぞれ1日1回つなぎ直す）と、DCR の登録（ENABLE_DCR の時だけ）
+    const pairings = MAX_CONNECTIONS * KV_WRITES.perPairing + RATE_LIMITS.register.global.perDay
+    expect(refreshes).toBe(480)
+    expect(requests + refreshes + pairings).toBeLessThanOrEqual(KV_WRITES.perDay * 0.9)
+  })
+
+  it('同意の承認は1回だけ通す（送り直しは false）。覚えておくのは期限まで', () => {
+    const store = new MirrorStore(nodeSql())
+    expect(claimConsent(store, 'key-a', at)).toBe(true)
+    expect(claimConsent(store, 'key-a', at + 1_000)).toBe(false)
+    expect(claimConsent(store, 'key-b', at + 2_000)).toBe(true)
+    expect(claimConsent(store, 'key-a', at + CONSENT_CLAIM_MS - 1)).toBe(false)
+    // 期限を過ぎた印は捨てる（ライブラリの同意の取引はもう無い）
+    expect(claimConsent(store, 'key-c', at + CONSENT_CLAIM_MS + 3_000)).toBe(true)
+    expect(Object.keys(store.getMeta<Record<string, number>>('consentClaims')!)).toEqual(['key-c'])
   })
 
   it('bucket が無ければ unknown にまとめる。DCR の登録は全体だけ', () => {

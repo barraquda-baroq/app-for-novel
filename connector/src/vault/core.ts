@@ -49,7 +49,7 @@ import {
   writeBudgetMessage,
   type QuotaCounts,
 } from './quota'
-import { takeRate, type RateKind, type RateResult } from './ratelimit'
+import { claimConsent, takeRate, type RateKind, type RateResult } from './ratelimit'
 import { MirrorStore, type SqlRunner } from './store'
 import { fail, type ToolResult } from './tools/common'
 import { ideaAddError, ideaAddResult, ideaAppendResult } from './tools/ideas'
@@ -157,8 +157,13 @@ export class VaultCore {
   readonly #mutex = new Mutex()
   #lastSync = 0
   #views: { version: number; raw: AppData; view: AppData; hidden: number } | null = null
-  /** 最後に読めた config/connector（at はその時刻） */
-  #connCheck: (ConnectorState & { at: number }) | null = null
+  /**
+   * 最後に読めた config/connector（at は読み始めた時刻、seq は読み始めた順の番号）。Durable Object は Firestore の答えを待つ間に
+   * ほかの呼び出しも進めるので、遅く届いた古い一覧で、後から読み始めた一覧（足したばかりの接続を含む）を上書きしない
+   */
+  #connCheck: (ConnectorState & { at: number; seq: number }) | null = null
+  /** config/connector を読み始めた数（#readConnector と verifyPairing。読み始めた順の番号に使う） */
+  #connSeq = 0
   #modelCheck: { model: number | null; at: number } | null = null
 
   constructor(deps: VaultDeps) {
@@ -301,6 +306,8 @@ export class VaultCore {
     if (!ownerUid) return bad('owner')
     let conn: Record<string, unknown> | null = null
     let gen = ''
+    const seq = ++this.#connSeq
+    const startedAt = this.#now()
     try {
       const d = (await this.fs.batchGet(['config/connector'])).get('config/connector')
       conn = d ? fromFields(d.fields) : null
@@ -330,9 +337,11 @@ export class VaultCore {
       this.mirror.reset()
       this.#views = null
     }
-    const state = connectorState(conn, list)
+    // 確かめている間に、後から読み始めた同じ記録の一覧が届いていれば、そちらを覚えたままにする（新しい）
+    const cached = this.#connCheck
+    const state = cached && cached.seq > seq && prev.gen === gen ? cached : { ...connectorState(conn, list), at: startedAt, seq }
     this.store.setMeta('pairing', { state: 'paired', ownerUid, pairedAt, gen, cids: state.cids } satisfies PairingMeta)
-    this.#connCheck = { ...state, at: now }
+    this.#connCheck = state
     this.#modelCheck = null
     log('paired', { writes: state.writes, connections: state.cids.length })
     this.#d.schedule?.(now + 500)
@@ -375,11 +384,7 @@ export class VaultCore {
       if (e.code === 'RESOURCE_EXHAUSTED' || e.status === 429)
         throw new ConnectorError('firestore_quota', firestoreQuotaMessage(this.#now()))
       if (e.status === 403) {
-        const conn = await this.#readConnector()
-        if (conn === null) {
-          this.#setUnpaired('connector_gone')
-          throw new ConnectorError('unpaired', MESSAGES.unpaired)
-        }
+        if ((await this.#readConnector()) === null) throw new ConnectorError('unpaired', MESSAGES.unpaired)
         throw new ConnectorError('permission', MESSAGES.permission)
       }
       logError('firestore_failed', e, { status: e.status, code: e.code })
@@ -392,31 +397,43 @@ export class VaultCore {
   /**
    * config/connector を読む。「書き込みを許可」と接続の一覧を返す（読めない・このコネクタのものでない・確かめた連携の後に作り直された・
    * 正しい接続が1つも無い = null。作り直された記録は、連携の画面で許可しただけでまだ確かめていない（/pair/callback を通っていない）
-   * ので、前の許可では使わない）。読めた内容は #connCheck に覚え、接続の一覧が変わった時だけ連携の状態にも残す
+   * ので、前の許可では使わない）。読めた内容は #connCheck に覚え、接続の一覧が変わった時だけ連携の状態にも残す。null の時は連携を外す。
+   * 読み始めた順で覚える: 後から読み始めた読み取り・確かめ（verifyPairing）の一覧がもう届いていれば、この答えは捨ててそちらを返す。
+   * null の答えも、後から読み取り・確かめを始めていれば連携は外さない（連携し直した後に届いた古い答えで、新しい連携を外さない。
+   * 外すかどうかは後の答えで決める）。この時も null を返す（読み始めた時の記録はもう無いので、いまの連携の許可は断ってよい）
    */
   async #readConnector(): Promise<ConnectorState | null> {
+    const seq = ++this.#connSeq
+    const at = this.#now()
+    let state: ConnectorState | null = null
     try {
       this.#countReads(3)
       const d = (await this.fs.batchGet(['config/connector'])).get('config/connector')
-      if (!d) return null
-      const f = fromFields(d.fields)
-      if (f.uid !== this.identity.uid()) return null
-      if ((d.createTime ?? '') !== (this.pairing().gen ?? '')) return null
-      const list = connectionsOf(f, plainMillis)
-      if (!list) return null
-      const state = connectorState(f, list)
-      this.#connCheck = { ...state, at: this.#now() }
-      const m = this.pairing()
-      const before = m.cids ?? [LEGACY_CONNECTION_ID]
-      if (m.state === 'paired' && (before.length !== state.cids.length || before.some((c) => !state.cids.includes(c))))
-        this.store.setMeta('pairing', { ...m, cids: state.cids } satisfies PairingMeta)
-      return state
+      if (d && (d.createTime ?? '') === (this.pairing().gen ?? '')) {
+        const f = fromFields(d.fields)
+        const list = f.uid === this.identity.uid() ? connectionsOf(f, plainMillis) : null
+        if (list) state = connectorState(f, list)
+      }
     } catch (e) {
-      if (e instanceof FirestoreError && e.status === 403) return null
-      if (e instanceof ConnectorError) throw e
-      logError('connector_read_failed', e)
-      throw new ConnectorError('unavailable', MESSAGES.unavailable)
+      if (!(e instanceof FirestoreError && e.status === 403)) {
+        if (e instanceof ConnectorError) throw e
+        logError('connector_read_failed', e)
+        throw new ConnectorError('unavailable', MESSAGES.unavailable)
+      }
     }
+    const cached = this.#connCheck
+    if (cached && cached.seq > seq) return cached
+    if (!state) {
+      if (seq < this.#connSeq) log('connector_gone_superseded')
+      else this.#setUnpaired('connector_gone')
+      return null
+    }
+    this.#connCheck = { ...state, at, seq }
+    const m = this.pairing()
+    const before = m.cids ?? [LEGACY_CONNECTION_ID]
+    if (m.state === 'paired' && (before.length !== state.cids.length || before.some((c) => !state.cids.includes(c))))
+      this.store.setMeta('pairing', { ...m, cids: state.cids } satisfies PairingMeta)
+    return state
   }
 
   #requirePaired(): void {
@@ -585,10 +602,7 @@ export class VaultCore {
     let model: number | null = this.#modelCheck?.model ?? null
     try {
       const conn = await this.#readConnector()
-      if (conn === null) {
-        this.#setUnpaired('connector_gone')
-        return { text: MESSAGES.unpaired, isError: true, auth: true }
-      }
+      if (conn === null) return { text: MESSAGES.unpaired, isError: true, auth: true }
       // 一覧から外された接続（いま読んだ一覧に無い）: この許可だけを断る（ほかの接続・Vault の連携はそのまま）
       if (grant && !conn.cids.includes(grant.cid ?? LEGACY_CONNECTION_ID)) {
         log('grant_removed', { tool: 'novel_status' })
@@ -681,13 +695,10 @@ export class VaultCore {
     return (this.#connCheck?.cids ?? this.pairing().cids ?? [LEGACY_CONNECTION_ID]).includes(cid)
   }
 
-  /** config/connector を読む。消された・作り直された・正しい接続が無い時は連携を外して unpaired */
+  /** config/connector を読む。消された・作り直された・正しい接続が無い時は unpaired（連携を外すのは #readConnector） */
   async #readConnectorOrUnpair(): Promise<ConnectorState> {
     const conn = await this.#readConnector()
-    if (conn === null) {
-      this.#setUnpaired('connector_gone')
-      throw new ConnectorError('unpaired', MESSAGES.unpaired)
-    }
+    if (conn === null) throw new ConnectorError('unpaired', MESSAGES.unpaired)
     return conn
   }
 
@@ -938,6 +949,11 @@ export class VaultCore {
   /** 回数の上限（/authorize はネットワークごと＋全体・DCR は全体）。超えていれば、どの上限か */
   takeRate(kind: RateKind, bucket?: string): RateResult {
     return takeRate(this.store, kind, this.#now(), bucket)
+  }
+
+  /** 同意（handle の指紋）の承認を1回だけ通す（POST /authorize。2回目からは false） */
+  claimConsent(key: string): boolean {
+    return claimConsent(this.store, key, this.#now())
   }
 }
 

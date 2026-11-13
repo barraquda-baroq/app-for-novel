@@ -1,8 +1,10 @@
-// 回数の上限（Vault の SQLite に数える）。OAuth の KV（1日1,000回の書き込み）を、いたずらの接続要求で使い切らないように、
-// /authorize の受け付け（beginConsent の前）と、DCR（ENABLE_DCR の時だけ）の登録を数える。
+// 回数の上限（Vault の SQLite に数える。KV には書かない）。OAuth の KV（1日1,000回の書き込み）を、いたずらの接続要求で使い切らない
+// ように、/authorize の受け付け（beginConsent の前）と、DCR（ENABLE_DCR の時だけ）の登録を数える。
 // /authorize は送ってきたネットワークごと（IPv4 は1つのアドレス、IPv6 は /48。生の IP は残さない）と、コネクタ全体の1日の上限の
 // 両方で数える: 1か所から送り続けても、持ち主がほかのネットワークから接続できる分が残る。
 // ネットワークごとの数は、その日の分だけを1つの記録に持つ（日が替われば捨てる。全体の上限までしか増えない）。
+// 同意の画面の［Novel Studio で確認する］（POST /authorize）は数えない代わりに、同じ同意（handle）を1回しか進めない（claimConsent）。
+// 数えた GET 1回で KV に書くのは2回まで（同意の取引と、承認した後の取引）。
 import type { MirrorStore } from './store'
 
 export type RateKind = 'authorize' | 'register'
@@ -12,11 +14,38 @@ interface Limit {
   perDay: number
 }
 
+/** OAuth のアクセストークンの有効期間（秒。index.ts の accessTokenTTL）。claude.ai は切れるたびに更新する */
+export const ACCESS_TOKEN_TTL_SECONDS = 3600
+
+/**
+ * OAuth の KV の書き込みの見積もり（無料枠は1日 1,000 回）: 接続の要求1回で2回（GET /authorize の同意の取引と、POST の承認の後の
+ * 取引）、連携を終えるまでにあと3回（許可・コードの交換の許可とトークン。連携1回で約5回）、トークンの更新1回で2回（許可とトークン）
+ */
+export const KV_WRITES = { perDay: 1_000, perAuthorize: 2, perPairing: 3, perRefresh: 2 } as const
+
 export const RATE_LIMITS: Record<RateKind, { source?: Limit; global: Limit }> = {
-  // 全体の 300 回 ≒ KV の 300 回の書き込み（残りの約700回はトークンの更新と連携に。トークンの更新は1回で KV に2回書くので、
-  // 2.9 の接続 10 が1時間ごとに更新すると1日に約 480 回）
-  authorize: { source: { perHour: 10, perDay: 20 }, global: { perDay: 300 } },
+  // 全体の 150 回 ≒ KV の 300 回の書き込み。接続 10 が1時間ごとに更新すると1日に 10 × 24 × 2 = 480 回。合わせて 780 回で、
+  // 連携・DCR の登録の分が残る（basics.test.ts で確かめる）
+  authorize: { source: { perHour: 10, perDay: 20 }, global: { perDay: 150 } },
   register: { global: { perHour: 10, perDay: 10 } },
+}
+
+/** 同意を承認したことを覚えておく時間（ライブラリの同意の取引の期限 10分より長く） */
+export const CONSENT_CLAIM_MS = 20 * 60_000
+
+/**
+ * 同意（handle の指紋 key）の承認を1回だけ通す（2回目からは false）。ライブラリは承認で KV の同意の取引を消すが、KV の削除はすぐには
+ * 届かず（同時に・ほかの場所から送り直すと、消える前に読めることがある）、1つの GET から承認の後の取引を何回も書けてしまうため。
+ * 覚えるのは、承認できた（本物の同意の取引がある）key だけ。期限を過ぎたものは捨てる
+ */
+export function claimConsent(store: MirrorStore, key: string, now: number): boolean {
+  const saved = store.getMeta<Record<string, number>>('consentClaims')
+  const live: Record<string, number> = {}
+  for (const [k, until] of Object.entries(saved && typeof saved === 'object' ? saved : {}))
+    if (typeof until === 'number' && until > now) live[k] = until
+  if (Object.hasOwn(live, key)) return false
+  store.setMeta('consentClaims', { ...live, [key]: now + CONSENT_CLAIM_MS })
+  return true
 }
 
 export type RateResult = { ok: true } | { ok: false; scope: 'source' | 'global'; window: 'hour' | 'day' }

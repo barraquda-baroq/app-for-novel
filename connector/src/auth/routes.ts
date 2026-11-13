@@ -1,7 +1,7 @@
 // OAuth のライブラリが受け持たない画面と API（defaultHandler）:
 //   GET  /                 状態（準備OK / 匿名ログイン無効 / 未連携）。データは出さない
 //   GET  /authorize        受け付けるクライアントか確かめ（KV に書く前）、回数を数え、同意の画面
-//   POST /authorize        ［Novel Studio で確認する］→ アプリの連携の画面（#/claude/connect?s=<state>）へ
+//   POST /authorize        ［Novel Studio で確認する］→ アプリの連携の画面（#/claude/connect?s=<state>）へ（同じ同意は1回だけ）
 //   GET  /pair/callback    アプリから戻る（?state=…&k=…）。cookie と k の指紋を確かめて、claude.ai へ許可を返す
 //   GET  /connect/identity アプリの連携の画面が読むコネクタの身元 { uid, version, model }（CORS はアプリの origin だけ）
 // 連携の決まり（DECISIONS 9。URL の形・k・指紋はアプリと同じ src/claude/pairing.ts）: アプリは config/connector に
@@ -149,6 +149,12 @@ async function authorizeGet(request: Request, env: Env): Promise<Response> {
   }
 }
 
+/** 同意を1回だけ進めるための印（handle の sha256 の先頭32文字。handle そのものは残さない） */
+async function consentKey(handle: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`consent|${handle}`)))
+  return Array.from(d.slice(0, 16), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 async function authorizePost(request: Request, env: Env): Promise<Response> {
   const oauth = helpers(env)
   const cfg = workerConfig(env, request.url)
@@ -167,6 +173,11 @@ async function authorizePost(request: Request, env: Env): Promise<Response> {
     }
     // 同意の画面に範囲の選択は出さない: いつも novel と offline_access（更新用トークン）
     const approved = await oauth.approveConsent(request, handle, { scope: SCOPES_SUPPORTED })
+    // 同じ同意は1回だけ進める（KV の同意の取引は承認で消えるが、すぐには届かないので、送り直しで KV に何回も書かせない）
+    if (!(await vault(env).claimConsent(await consentKey(handle)))) {
+      log('authorize_replayed')
+      return errorPage('この接続の要求はもう使われています。claude.ai でもう一度「接続」を押してください。')
+    }
     const { state, headers } = await oauth.beginUpstream(approved.request, { data: { t: Date.now() }, headers: approved.headers })
     headers.set('Location', connectPageUrl(cfg.appOrigin, state))
     headers.set('Cache-Control', 'no-store')

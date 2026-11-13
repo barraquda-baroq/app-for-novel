@@ -11,6 +11,7 @@ import { workerConfig, type Env } from './env'
 import { log, logError } from './log'
 import { createMcpFetch } from './mcp/handler'
 import type { GrantProps } from './vault/core'
+import { ACCESS_TOKEN_TTL_SECONDS } from './vault/ratelimit'
 import { vault } from './vault/Vault'
 
 export { Vault } from './vault/Vault'
@@ -44,7 +45,7 @@ export function oauthOptions(env: Env, requestUrl?: string): OAuthProviderOption
     scopesSupported: SCOPES_SUPPORTED,
     requiredScopes: ['novel'],
     resourceMetadata: { resource: cfg.mcpResource, resource_name: 'Novel Studio' },
-    accessTokenTTL: 3600,
+    accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
     refreshTokenTTL: 180 * 86_400,
     refreshTokenIdleTTL: 180 * 86_400,
     tokenExchangeCallback: async ({ grantType, env: e, props }) => {

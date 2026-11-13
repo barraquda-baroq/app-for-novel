@@ -606,6 +606,41 @@ describe('/connect/identity（アプリの連携の画面が読む）', () => {
   })
 })
 
+describe('OAuth の KV の書き込み（無料枠 1日 1,000 回）', () => {
+  it('接続の要求1回（同意の画面 → 承認）で KV に書くのは2回。承認の送り直しは、KV の削除が届く前でも書かずに断る', async () => {
+    const puts: string[] = []
+    const put = env.OAUTH_KV.put.bind(env.OAUTH_KV)
+    vi.spyOn(env.OAUTH_KV, 'put').mockImplementation((async (key: string, ...rest: unknown[]) => {
+      puts.push(key)
+      return (put as (...a: unknown[]) => Promise<void>)(key, ...rest)
+    }) as never)
+    // KV の削除は、ほかの場所にはすぐには届かない（承認で消した同意の取引を、送り直した要求がまだ読める）
+    vi.spyOn(env.OAUTH_KV, 'delete').mockImplementation((async () => undefined) as never)
+    const { challenge } = await pkce()
+    const get = await SELF.fetch(authorizeUrl(challenge), { headers: { 'CF-Connecting-IP': clientIp } })
+    expect(get.status).toBe(200)
+    const handle = /name="handle" value="([^"]+)"/.exec(await get.text())![1]
+    const cookie = cookiesOf(get)
+    expect(puts).toHaveLength(1)
+    const approve = () =>
+      SELF.fetch(`${H}/authorize`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+        body: new URLSearchParams({ handle, decision: 'approve' }),
+      })
+    expect((await approve()).status).toBe(302)
+    expect(puts).toHaveLength(2)
+    expect(puts.every((k) => k.startsWith('transaction:'))).toBe(true)
+    for (let i = 0; i < 3; i++) {
+      const again = await approve()
+      expect(again.status).toBe(400)
+      expect(await again.text()).toContain('この接続の要求はもう使われています')
+    }
+    expect(puts).toHaveLength(2)
+  })
+})
+
 describe('回数の上限（最後に確かめる: 同じ Durable Object に数えるため）', () => {
   it('1つのネットワークから1時間に10回を超える接続の要求は断る（それまでは同意の画面）。ほかのネットワークからは接続できる', async () => {
     const { challenge } = await pkce()

@@ -31,14 +31,21 @@ export interface Clock {
 
 export function makeCore(
   fake: FakeFirebase,
-  opts: { clock?: Clock; config?: Partial<VaultConfig>; secret?: string; sql?: ReturnType<typeof nodeSql> } = {},
+  opts: {
+    clock?: Clock
+    config?: Partial<VaultConfig>
+    secret?: string
+    sql?: ReturnType<typeof nodeSql>
+    /** fake.fetch の代わり（答えを遅らせるテスト用） */
+    fetch?: typeof fetch
+  } = {},
 ) {
   const clock = opts.clock ?? { now: Date.UTC(2026, 9, 29, 3, 0, 0) }
   const sql = opts.sql ?? nodeSql()
   const scheduled: (number | null)[] = []
   const core = new VaultCore({
     sql,
-    fetch: fake.fetch as typeof fetch,
+    fetch: opts.fetch ?? (fake.fetch as typeof fetch),
     config: config(fake, opts.config),
     secret: opts.secret ?? SECRET,
     now: () => clock.now,
