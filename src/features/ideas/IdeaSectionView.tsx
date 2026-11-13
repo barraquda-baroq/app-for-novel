@@ -4,8 +4,9 @@
 // 済み（実装した・没にした）のアイデアは、入れ物（フォルダの外・フォルダの中）ごとに、済みでないものの下に「済み n件」の区切りを
 // 挟んでまとまる。件数は仕切りのすべてのカード（フォルダの中も）。
 // ［選んで移す］（カードが1枚以上ある時）: この仕切りのカードを選び、下の帯の［移す…］でまとめて移す（IdeaMoveDialog）。
-// Esc・［やめる］・移した後・画面を離れた時にやめる。もう無いカード（この仕切りに見えないカード）は選択から除く。
-import { useEffect, useId, useState } from 'react'
+// Esc・［やめる］・移した後・画面を離れた時にやめる（［やめる］の後は［選んで移す］にフォーカス）。もう無いカード（この仕切りに見えないカード）は
+// 選択から除く。
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { isIdeaChecked, type IdeaSection } from '../../domain/entityOps'
 import { paths } from '../../routes'
@@ -56,6 +57,13 @@ export function IdeaSectionView({
   const selectedCount = useSelection((s) => (s.section === key ? s.ids.size : 0))
   /** まとめて移すダイアログで移すカード（開いた時に選んでいたもの） */
   const [bulk, setBulk] = useState<string[] | null>(null)
+  const startRef = useRef<HTMLButtonElement>(null)
+
+  // ［やめる］: 押したボタンは下の帯ごと消えるので、フォーカスを［選んで移す］へ戻す（body に落とさない）
+  const cancelSelect = () => {
+    startRef.current?.focus()
+    stopSelect()
+  }
 
   // 選んでいる間に、カードがもう無くなった・ほかの仕切りへ移った時は、選択から除く。カードが無くなったらやめる
   useEffect(() => {
@@ -180,6 +188,7 @@ export function IdeaSectionView({
             </button>
             {count > 0 ? (
               <button
+                ref={startRef}
                 type="button"
                 className={`btn btn-sm btn-ghost idea-select-start${selecting ? ' is-active' : ''}`}
                 aria-pressed={selecting}
@@ -223,7 +232,7 @@ export function IdeaSectionView({
               <MoveIcon />
               移す…
             </button>
-            <button type="button" className="btn btn-sm" onClick={stopSelect} data-testid="idea-select-cancel">
+            <button type="button" className="btn btn-sm" onClick={cancelSelect} data-testid="idea-select-cancel">
               やめる
             </button>
             {selectedCount === 0 ? (

@@ -27,7 +27,7 @@ import { IdeaMoveDialog } from './IdeaMoveDialog'
 import { SparkIcon } from './ideaIcons'
 import { ideaEditText, ideaModalDraftKey, ideaShortLabel, rebaseIdeaEdit, splitLead, titleNameFromIdea } from './ideaLogic'
 import { useKeepInPlace } from '../../ui/keepInPlace'
-import { REVEAL_MS, revealIdea, useReveal } from './reveal'
+import { REVEAL_FRESH_MS, REVEAL_MS, revealIdea, useReveal } from './reveal'
 import { toggleSelected, useIsSelected } from './selection'
 import { writeLocal } from './storage'
 
@@ -64,13 +64,17 @@ function useOverflow(text: string, expanded: boolean, checked: boolean) {
   return [ref, overflow] as const
 }
 
-/** quick capture などで「表示」を押した時に、このカードまでスクロールして少しの間目立たせる（済みにした・外した時は目立たせるだけ） */
+/**
+ * quick capture などで「表示」を押した時・移した後に、このカードまでスクロールして少しの間目立たせる（済みにした・外した時は目立たせるだけ）。
+ * 頼んでから時間がたってから描いたカード（ホームへ戻った・帯を開き直した）は見せない（REVEAL_FRESH_MS）
+ */
 function useRevealed(ideaId: string, ref: RefObject<HTMLLIElement | null>): boolean {
   // 同じアイデアをもう一度見せる時も反応させる（seq が変わる）
   const seq = useReveal((s) => (s.id === ideaId ? s.seq : 0))
   const [on, setOn] = useState(false)
   useEffect(() => {
     if (!seq) return
+    if (Date.now() - useReveal.getState().at > REVEAL_FRESH_MS) return
     setOn(true)
     let raf = 0
     if (useReveal.getState().scroll) {

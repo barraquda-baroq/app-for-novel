@@ -1,8 +1,9 @@
 // アイデアのフォルダ（2.9）の E2E テスト: 作る・名前を変える・並べ替える・削除してゴミ箱から戻す、2段目（日付から始まる名前）、
 // フォルダを移す（ほかの1段目へ・1段目にする・1段目をほかの1段目の中へ）、カードをフォルダへ出し入れする、選んで移す、
-// 開け閉めを覚える、Claude が作ったフォルダの印、360px の幅。
+// 移した後にカードを見せるのは一度だけ、スマホの上の切り替えと選んで移すの帯の重なり、開け閉めを覚える、Claude が作ったフォルダの印、
+// 360px の幅。
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { noHorizontalScroll, openApp, openHomeBands, seed, tapSize } from './helpers'
+import { homeBandToggle, noHorizontalScroll, openApp, openHomeBands, seed, tapSize } from './helpers'
 import type { AppData, Idea, IdeaFolder } from '../src/domain/types'
 
 const UNASSIGNED = 'どのタイトルにも属さない'
@@ -435,6 +436,103 @@ test.describe('アイデアのフォルダ', () => {
     await expect(none.getByTestId('idea-select-count')).toHaveText('8件を選択中')
     await page.keyboard.press('Escape')
     await expect(none.getByTestId('idea-select-bar')).toHaveCount(0)
+  })
+
+  test('移した後にカードを見せるのは一度だけ: ほかの画面からホームのリンクで戻った時・帯を閉じて開き直した時は、スクロールもフォーカスもしない', async ({
+    page,
+  }) => {
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の庭')
+      for (let i = 0; i < 12; i++) actions.addIdea(t, '', `星の案${i + 1}`)
+      const top = actions.createIdeaFolder(null, null, '新作の相談')
+      const a = actions.addIdea(null, '', '移す案')
+      for (let i = 0; i < 6; i++) actions.addIdea(null, '', `ホームの案${i + 1}`)
+      return { t, top, a }
+    })
+    await openHomeBands(page, 'ideas')
+    const card = page.locator(`[data-testid="idea-card"][data-idea-id="${ids.a}"]`)
+    const scrollY = () => page.evaluate(() => window.scrollY)
+
+    // 移した直後は、移した先（フォルダの中で描き直したカード）を見せる
+    await card.getByTestId('idea-move').click()
+    await page.locator(`[data-testid="idea-move-option"][data-folder="${ids.top}"]`).click()
+    await page.getByTestId('idea-move-submit').click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect(cardsDirectlyIn(folderById(page, ids.top))).toHaveCount(1)
+    await expect(card).toHaveClass(/is-revealed/)
+    await expect(card).toBeFocused()
+    await expect(card).toBeInViewport()
+    await expect.poll(scrollY).toBeGreaterThan(0)
+    await expect(card).not.toHaveClass(/is-revealed/, { timeout: 5000 })
+
+    // 先頭に戻ってタイトルの画面へ行き、ホームのリンクで戻る（新しく開いたホームは先頭から。カードへは動かない）
+    await page.evaluate(() => {
+      ;(document.activeElement as HTMLElement | null)?.blur()
+      window.scrollTo(0, 0)
+    })
+    await expect.poll(scrollY).toBe(0)
+    await section(page, ids.t).getByTestId('idea-section-open').click()
+    await expect(page.getByTestId('title-name')).toHaveValue('星の庭')
+    await page.getByRole('link', { name: 'ホーム（アイデアとタイトル一覧）' }).click()
+    await expect(page.getByTestId('home')).toBeVisible()
+    await expect(card).toBeAttached()
+    // 見せてしまうなら、この間にスクロールしてフォーカスする
+    await page.waitForTimeout(1000)
+    expect(await scrollY()).toBe(0)
+    await expect(card).not.toBeFocused()
+    await expect(card).not.toHaveClass(/is-revealed/)
+
+    // 帯を閉じて開き直しても同じ
+    await homeBandToggle(page, 'ideas').click()
+    await expect(card).toHaveCount(0)
+    const y = await scrollY()
+    await homeBandToggle(page, 'ideas').click()
+    await expect(card).toBeAttached()
+    await page.waitForTimeout(1000)
+    expect(await scrollY()).toBe(y)
+    await expect(card).not.toBeFocused()
+    await expect(card).not.toHaveClass(/is-revealed/)
+  })
+
+  test('スマホ: 選んで移すの下の帯は、上の切り替え（タイトル・アイデア・相対比較・資料）の下を通り、押す所を取らない', async ({
+    page,
+  }, info) => {
+    test.skip(info.project.name !== 'mobile', 'スマホの上の切り替えで確かめる')
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の庭')
+      for (let i = 0; i < 6; i++) actions.addIdea(t, '', `星の案${i + 1}`)
+      for (let i = 0; i < 15; i++) actions.addIdea(null, '', `ホームの案${i + 1}`)
+      return { t }
+    })
+    // 選ぶ仕切りの後ろにも中身がある（どのタイトルにも属さない・相対比較・資料）
+    await openHomeBands(page, 'ideas', 'bench', 'materials')
+    const sec = section(page, ids.t)
+    await sec.getByTestId('idea-select-start').click()
+    await expect(sec.getByTestId('idea-select-bar')).toBeVisible()
+    // 仕切りの終わりの帯を、上の切り替えの真ん中の高さまでスクロールして、そこを押した時に当たる要素を見る
+    const hit = await page.evaluate(() => {
+      const nav = document.querySelector('[data-testid="home-jump"]')!
+      const bar = document.querySelector('[data-testid="idea-select-bar"]')!
+      const center = () => {
+        const r = nav.getBoundingClientRect()
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+      }
+      for (let i = 0; i < 6; i++) {
+        const b = bar.getBoundingClientRect()
+        window.scrollBy(0, b.top + b.height / 2 - center().y)
+      }
+      const { x, y } = center()
+      const b = bar.getBoundingClientRect()
+      const el = document.elementFromPoint(x, y)
+      return {
+        barUnderNav: b.top <= y && b.bottom >= y,
+        inNav: Boolean(el?.closest('[data-testid="home-jump"]')),
+        inBar: Boolean(el?.closest('[data-testid="idea-select-bar"]')),
+      }
+    })
+    expect(hit).toEqual({ barUnderNav: true, inNav: true, inBar: false })
   })
 
   test('フォルダの開け閉めは、読み込み直しても覚えている（帯・仕切りの開け閉めとは別）', async ({ page }) => {

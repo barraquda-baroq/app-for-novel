@@ -193,8 +193,10 @@ describe('開け閉め', () => {
     await user.click(toggle('雨の駅'))
     expect(toggle('雨の駅').getAttribute('aria-expanded')).toBe('false')
     expect(toggle('雨の駅').getAttribute('aria-controls')).toBeNull()
-    expect(toggle('雨の駅').getAttribute('aria-label')).toBe('『雨の駅』を開く')
-    expect(toggle('場面の相談').getAttribute('aria-label')).toBe('『場面の相談』を折りたたむ')
+    // 読み上げは中の名前と数（件）のまま。開いているかは aria-expanded で伝える
+    expect(toggle('雨の駅').hasAttribute('aria-label')).toBe(false)
+    expect(screen.getByRole('button', { name: /^雨の駅\s*2\s*件$/, expanded: false })).toBe(toggle('雨の駅'))
+    expect(screen.getByRole('button', { name: /^場面の相談\s*4\s*件$/, expanded: true })).toBe(toggle('場面の相談'))
     expect(toggle('場面の相談').getAttribute('aria-controls')).toBe(folder('場面の相談').querySelector('.idea-folder-body')!.id)
     expect(folder('雨の駅').querySelector<HTMLElement>('.idea-folder-body')!.hidden).toBe(true)
     expect(JSON.parse(localStorage.getItem(FOLDER_COLLAPSED_KEY)!)).toEqual([sub])
@@ -264,6 +266,20 @@ describe('「Claude が作成」の印', () => {
     await user.click(within(dialog()).getByRole('button', { name: '変更' }))
     expect(getData().ideaFolders['cf-abc.1']).toMatchObject({ name: '港町の新作', source: 'claude' })
     expect(within(head('港町の新作')).getByTestId('idea-folder-by')).toBeTruthy()
+  })
+
+  it('開け閉めのボタンの読み上げに、カードの数（件）と「Claude が作成」の印も入る（開いているかは aria-expanded）', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      putFolder({ id: 'cf-abc.1', name: '港町', source: 'claude', v: 1, order: 0 })
+      actions.addIdea(null, '', '灯台の案', 'cf-abc.1')
+    })
+    renderHomeIdeas()
+    const button = screen.getByRole('button', { name: /港町.*1\s*件.*Claude が作成/, expanded: true })
+    expect(button).toBe(toggle('港町'))
+    expect(button.hasAttribute('aria-label')).toBe(false)
+    await user.click(button)
+    expect(screen.getByRole('button', { name: /港町.*1\s*件.*Claude が作成/, expanded: false })).toBe(toggle('港町'))
   })
 })
 

@@ -456,11 +456,12 @@
   background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
 }
 
-/* 仕切りの中の下に残る帯（選んだ数・移す・やめる）。重なりは画面の上の帯・ダイアログ・知らせより下 */
+/* 仕切りの中の下に残る帯（選んだ数・移す・やめる）。重なりはカードより上で、画面の上の帯・スマホの切り替え（.home-jump の 10）・
+   ダイアログ・知らせより下（仕切りの終わりが上へ行った時に、切り替えの上にかぶさって押す所を取らない） */
 .idea-select-bar {
   position: sticky;
   bottom: calc(var(--safe-bottom) + 8px);
-  z-index: 15;
+  z-index: 5;
   display: flex;
   align-items: center;
   flex-wrap: wrap;

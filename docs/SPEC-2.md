@@ -1003,6 +1003,8 @@
     フォルダの数と、見せないタイトルなら「（どのタイトルにも属さないフォルダの名前は、Claude にも見えるようになります）」。
   - 画面は [SPEC.md](SPEC.md) の「アイデア」の「フォルダ」（`IdeaSectionView.tsx`・`IdeaFolderView.tsx`・`IdeaMoveDialog.tsx`・
     `IdeaFolderMoveDialog.tsx`・`selection.ts`・`folderCollapse.ts`）。カードが入れ物を変えると描き直され、開いている編集の画面は閉じる（下書きは残る）。
+    移した後にカードを見せる（`reveal.ts` の `revealIdeaInTree`。スクロール・フォーカス・目立たせる）のは、頼んでから1秒以内に描いたカードだけ
+    （`REVEAL_FRESH_MS`。移すのと同じ時に描き直したカードは見せる）。頼んだ記録は残るが、後で描いたカード（ホームへ戻った・帯を開き直した）には効かない。
 - **ゴミ箱**（`src/domain/trash.ts`）: フォルダの削除はゴミ箱の1件（種類 `ideaFolder`。中身はフォルダ・中のフォルダ・そのカード・中のフォルダごとの
   カードの順、`origin` は仕切りと兄弟の中の位置、`parentLabel` は2段目の時の親の名前、場所は「タイトル名 › 親」、ゴミ箱の画面に「フォルダ2つ・
   カード12件」）。戻す時:

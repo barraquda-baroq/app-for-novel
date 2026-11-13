@@ -1,5 +1,6 @@
 // 追加したアイデアのカードを見せる（スクロールして少しの間だけ目立たせる）ための小さな状態。
 // 2.9: 見せる前に、カードの入っている仕切り（ホーム）とフォルダ（folderChain）を開く（revealIdeaInTree）。
+// 見せるのは頼んだ直後だけ（REVEAL_FRESH_MS）。後でカードを描き直した時（ホームへ戻った・帯を開き直した）にもう一度は見せない。
 import { createContext } from 'react'
 import { create } from 'zustand'
 import { effectiveFolderId, folderChain, sectionOf } from '../../domain/ideaFolders'
@@ -15,13 +16,20 @@ interface RevealState {
   seq: number
   /** そのカードまでスクロールしてフォーカスするか（false なら目立たせるだけ） */
   scroll: boolean
+  /** 頼んだ時刻（Date.now()） */
+  at: number
 }
 
-export const useReveal = create<RevealState>(() => ({ id: null, seq: 0, scroll: false }))
+export const useReveal = create<RevealState>(() => ({ id: null, seq: 0, scroll: false, at: 0 }))
 
 export function revealIdea(id: ID, scroll = true): void {
-  useReveal.setState((s) => ({ id, seq: s.seq + 1, scroll }))
+  useReveal.setState((s) => ({ id, seq: s.seq + 1, scroll, at: Date.now() }))
 }
+
+/**
+ * 頼んでからこの時間（ミリ秒）より後に描いたカードは見せない。移すと入れ物が変わってカードを描き直すが、それは頼んだのと同じ時なので見せる
+ */
+export const REVEAL_FRESH_MS = 1000
 
 /** 目立たせる時間（ミリ秒） */
 export const REVEAL_MS = 2400

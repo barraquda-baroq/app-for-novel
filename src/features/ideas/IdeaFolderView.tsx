@@ -2,6 +2,7 @@
 // カードをその下に並べ、カードは入れ物（仕切り＋フォルダ）ごとに「済み n件」の区切りと並べ替え（↑↓）の端を持つ。
 // 見出し: 開け閉め（この端末に覚えておく。folderCollapse.ts）・名前・下のすべてのカードの数・「Claude が作成」の印・
 // ［＋］（このフォルダにアイデアを追加）・［…］（操作のメニュー。見出しの長押し・右クリックでも開く）。
+// 開け閉めのボタンの読み上げは、中の名前・数・印のまま（開いているかは aria-expanded で伝える）。
 // メニューは仕切りごとに1つだけ置き（IdeaFolderMenuProvider）、見出しは開く対象（フォルダの id）を渡すだけにする
 // （本編の一覧の RowMenu と同じ。メニューの中身は開いた時のデータから作る）。
 // 「選んで移す」で選んでいる間は、見出しに中のカード（中のフォルダのものも）をまとめて選ぶ□を出し、［＋］［…］は出さない
@@ -293,7 +294,6 @@ export function IdeaFolderView({ node, titleId, sectionName, unassigned, parentN
           className="idea-folder-toggle"
           aria-expanded={!collapsed}
           aria-controls={collapsed ? undefined : bodyId}
-          aria-label={collapsed ? `『${name}』を開く` : `『${name}』を折りたたむ`}
           onClick={() => toggleFolder(id)}
           data-testid="idea-folder-toggle"
         >
