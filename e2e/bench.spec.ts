@@ -3,7 +3,7 @@
 // 自分の原稿の分析（原稿ごとにまとめたカード・同じ原稿の分析）、作品のタグ（ジャンル。2.7。作品の画面の「ジャンル」・
 // 「14 検索用タグ」からの自動のタグ・棚のタグの絞り込みとタグの管理）、360px の画面、ディープダーク。
 import { expect, test, type Page } from '@playwright/test'
-import { darkSurfaces, noHorizontalScroll, openApp, seed, tapSize } from './helpers'
+import { darkSurfaces, homeBandToggle, noHorizontalScroll, openApp, openHomeBands, seed, tapSize } from './helpers'
 
 const dialog = (page: Page) => page.getByRole('dialog')
 
@@ -104,8 +104,10 @@ test.describe('相対比較', () => {
     page,
   }) => {
     await openApp(page)
+    await openHomeBands(page)
     const { titleId, workId } = await seedShelf(page)
     await openApp(page)
+    await openHomeBands(page)
     const shelf = page.getByTestId('bench-shelf')
     await expect(shelf.getByRole('heading', { name: '相対比較', level: 2 })).toBeVisible()
     await expect(shelf.getByTestId('new-bench-work')).toHaveText('作品を追加')
@@ -121,7 +123,7 @@ test.describe('相対比較', () => {
     if (await page.getByTestId('home-jump').isVisible()) {
       await expect(page.getByTestId('home-jump-bench')).toHaveText('相対比較1')
       await page.getByTestId('home-jump-bench').click()
-      await expect(shelf.getByRole('heading', { name: '相対比較', level: 2 })).toBeFocused()
+      await expect(homeBandToggle(page, 'bench')).toBeFocused()
       await expect(page.getByTestId('home-jump-bench')).toHaveAttribute('aria-current', 'true')
     }
 
@@ -176,6 +178,7 @@ test.describe('相対比較', () => {
     await row.getByTestId('trash-restore').click()
     await expect(page.getByRole('status').filter({ hasText: '「銀河の果て」を元の場所に戻しました' })).toBeVisible()
     await openApp(page)
+    await openHomeBands(page)
     await expect.poll(() => cardNames(page)).toEqual(['銀河の果て', '海の記憶'])
     await expect(page.getByTestId('bench-card').first().getByTestId('bench-card-count')).toHaveText('分析 2件')
     expect(await page.evaluate((t) => window.__ns.getData().titles[t].benchWorkIds, titleId)).toEqual([workId])
@@ -184,6 +187,7 @@ test.describe('相対比較', () => {
 
   test('作品の画面: 観点ごとの分析を開閉し、長い分析は「全文を表示」。分析を追加・直す・削除する', async ({ page }) => {
     await openApp(page)
+    await openHomeBands(page)
     const { workId } = await seedShelf(page)
     await openApp(page, `/bench/${workId}`)
     await expect(page.getByRole('navigation', { name: '現在地' })).toContainText('ホーム')
@@ -242,6 +246,7 @@ test.describe('相対比較', () => {
     test.skip(browserName !== 'chromium', 'クリップボードの読み取りは Chromium だけ')
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await openApp(page)
+    await openHomeBands(page)
     const { workId } = await seedShelf(page)
     await openApp(page, `/bench/${workId}`)
     await page.getByTestId('bench-manual').click()
@@ -298,6 +303,7 @@ test.describe('相対比較', () => {
     test.skip(browserName !== 'chromium', 'クリップボードの読み取りは Chromium だけ')
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await openApp(page)
+    await openHomeBands(page)
     const { titleId, workId } = await seedShelf(page)
     const other = await seed(page, ({ actions }) => actions.addBenchWork({ name: '海の記憶', author: '佐藤' }))
     await openApp(page, `/t/${titleId}?tab=critique`)
@@ -349,8 +355,10 @@ test.describe('相対比較', () => {
     page,
   }) => {
     await openApp(page)
+    await openHomeBands(page)
     const { r1, r2, r3 } = await seedManuscript(page)
     await openApp(page)
+    await openHomeBands(page)
     const shelf = page.getByTestId('bench-shelf')
     await expect(shelf.getByTestId('bench-count')).toHaveText('4')
     await expect(shelf.getByTestId('bench-list').locator(':scope > li')).toHaveCount(2)
@@ -410,6 +418,7 @@ test.describe('相対比較', () => {
     page,
   }) => {
     await openApp(page)
+    await openHomeBands(page)
     const ids = await seed(page, ({ actions }) => ({
       work: actions.addBenchWork({ name: '港の喫茶店', author: '山田' }),
       control: actions.addBenchWork({ name: '【対照】港の喫茶店', author: '山田' }),
@@ -454,7 +463,12 @@ test.describe('相対比較', () => {
       actions.setBenchWorkTags(c, ['ミステリー'])
       actions.addMaterial({ name: '資料', tags: ['軍事'] })
     })
+    // ?view=bench（作品の画面のパンくず）は、閉じていた相対比較の帯（2.9）を開いて、見出しのボタンにフォーカスする
     await openApp(page, '/?view=bench')
+    await expect(homeBandToggle(page, 'bench')).toHaveAttribute('aria-expanded', 'true')
+    await expect(homeBandToggle(page, 'bench')).toBeFocused()
+    await expect(homeBandToggle(page, 'titles')).toHaveAttribute('aria-expanded', 'false')
+    await expect(homeBandToggle(page, 'materials')).toHaveAttribute('aria-expanded', 'false')
     const chip = (tag: string) => page.locator(`[data-testid="bench-tag-chip"][data-tag="${tag}"]`)
     await expect(page.getByTestId('bench-tag-chip')).toHaveCount(4)
     await expect(page.locator('[data-testid="bench-tag-chip"][data-tag="軍事"]')).toHaveCount(0)
@@ -493,8 +507,10 @@ test.describe('相対比較', () => {
     test.skip(info.project.name !== 'mobile', 'スマホの幅で確かめる')
     await page.setViewportSize({ width: 360, height: 760 })
     await openApp(page)
+    await openHomeBands(page)
     const { titleId, workId } = await seedShelf(page)
     await openApp(page)
+    await openHomeBands(page)
     await expect(page.getByTestId('home-jump-bench')).toBeVisible()
     await noHorizontalScroll(page)
     // タグのチップは横にはみ出さない（1行にして横にスクロール）
@@ -538,6 +554,7 @@ test.describe('相対比較', () => {
     const project = testInfo.project.name
     const dir = 'e2e/artifacts/screens'
     await openApp(page)
+    await openHomeBands(page)
     await darkSurfaces(page, ['.home-bench-card', '.bw-chip', '.badge', '.btn', '.home-mat-tag', '.home-mat-cardtag'])
     await page.getByTestId('bench-shelf').screenshot({ path: `${dir}/bench-${project}-deep-dark-shelf.png` })
     await openApp(page, `/bench/${workId}`)

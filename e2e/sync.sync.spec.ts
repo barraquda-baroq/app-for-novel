@@ -1,11 +1,13 @@
 // 同期の E2E テスト（Firebase エミュレーター）。2つのブラウザの文脈を2台の端末に見立てる。
 import { expect, test, type Browser, type Page } from '@playwright/test'
-import { openApp, seed } from './helpers'
+import { openApp, openHomeBands, seed } from './helpers'
 
 async function device(browser: Browser): Promise<Page> {
   const ctx = await browser.newContext()
   const page = await ctx.newPage()
   await openApp(page)
+  // ホームのタイトルの帯（2.9。起動した時は閉じている）を開いて、届いたタイトルを見えるようにする
+  await openHomeBands(page, 'titles')
   return page
 }
 

@@ -108,3 +108,23 @@ export async function tapSize(target: Locator, label: string, both = true): Prom
   expect(box?.height, label).toBeGreaterThanOrEqual(34)
   if (both) expect(box?.width, label).toBeGreaterThanOrEqual(34)
 }
+
+export type HomeBand = 'titles' | 'ideas' | 'bench' | 'materials'
+
+/** ホームの帯の見出しのボタン（2.9） */
+export function homeBandToggle(page: Page, area: HomeBand): Locator {
+  return page.locator(`[data-testid="home-band-toggle"][data-area="${area}"]`)
+}
+
+/**
+ * ホームの帯（2.9。起動した時・読み込み直した時は4つとも閉じている）を開く。areas を省くと4つとも。
+ * 開いている帯は押さない（押すと閉じるため）
+ */
+export async function openHomeBands(page: Page, ...areas: HomeBand[]): Promise<void> {
+  const list: HomeBand[] = areas.length ? areas : ['titles', 'ideas', 'bench', 'materials']
+  for (const area of list) {
+    const toggle = homeBandToggle(page, area)
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  }
+}

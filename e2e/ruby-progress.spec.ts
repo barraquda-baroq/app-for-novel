@@ -1,7 +1,7 @@
 // ルビ・傍点の表示（通し読み・一覧の抜粋）、記法を除いた文字数、各話の進捗の E2E テスト。
 import { readFileSync } from 'node:fs'
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { openApp, seed } from './helpers'
+import { openApp, openHomeBands, seed } from './helpers'
 
 const BODY = '　彼は｜魔法使い《ウィザード》だった。\n東京《とうきょう》の空に《《星》》が落ちた。\n作品名は｜《銀河》です。'
 /** 表示される文字（記号とルビの読みを除く）: 空白・改行を除いて数える */
@@ -126,6 +126,7 @@ test.describe('ルビ・傍点', () => {
     const total = BODY_CHARS + 4
 
     await openApp(page, '/')
+    await openHomeBands(page, 'titles')
     await expect(page.getByTestId('title-card-chars')).toHaveText(`${total}字`)
 
     await openApp(page, `/t/${titleId}`)

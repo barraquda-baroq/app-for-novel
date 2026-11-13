@@ -2,7 +2,7 @@
 // 開発用フック __ns.setNativeKeyboard で届いたことにして、記号バー・ダイアログ・ほかの画面の下端がキーボードの上に来ることを確かめる。
 // Chromium（desktop・mobile）と、E2E_WEBKIT=1 の時は WebKit でも動かす（playwright.config.ts）。
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { openApp, seed } from './helpers'
+import { openApp, openHomeBands, seed } from './helpers'
 
 const W = 390
 const H = 844
@@ -119,6 +119,7 @@ test('原稿画面: 括弧の一覧はキーボードの上の記号バーの上
 
 test('ダイアログ: 背景とダイアログの下端がキーボードの上に来る', async ({ page }) => {
   await openApp(page)
+  await openHomeBands(page, 'ideas')
   await page.locator('[data-testid="idea-section"][data-section="none"]').getByTestId('idea-add').click()
   const body = page.getByTestId('idea-body-input')
   await expect(body).toBeVisible()

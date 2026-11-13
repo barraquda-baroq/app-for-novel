@@ -4,7 +4,7 @@
 // 「タグを管理」（名前を変える・まとめる・削除）、手動の依頼文のコピーと結果の貼り付け（2回目は増えない）、360px の画面、ディープダーク。
 // タグは作者が付けて管理するもので、Claude（コネクタ・手動の依頼文・貼り付け）は付けない。
 import { expect, test, type Page } from '@playwright/test'
-import { darkSurfaces, openApp, seed, tapSize } from './helpers'
+import { darkSurfaces, homeBandToggle, openApp, openHomeBands, seed, tapSize } from './helpers'
 
 const dialog = (page: Page) => page.getByRole('dialog')
 
@@ -77,8 +77,10 @@ test.describe('資料', () => {
     page,
   }) => {
     await openApp(page)
+    await openHomeBands(page)
     await seedShelf(page)
     await openApp(page)
+    await openHomeBands(page)
     const shelf = page.getByTestId('material-shelf')
     await expect(shelf.getByRole('heading', { name: '資料', level: 2 })).toBeVisible()
     await expect(shelf.getByTestId('material-count')).toHaveText('2')
@@ -94,7 +96,7 @@ test.describe('資料', () => {
     if (await page.getByTestId('home-jump').isVisible()) {
       await expect(page.getByTestId('home-jump').getByRole('button')).toHaveText(['タイトル0', 'アイデア0', '相対比較0', '資料2'])
       await page.getByTestId('home-jump-materials').click()
-      await expect(shelf.getByRole('heading', { name: '資料', level: 2 })).toBeFocused()
+      await expect(homeBandToggle(page, 'materials')).toBeFocused()
       await expect(page.getByTestId('home-jump-materials')).toHaveAttribute('aria-current', 'true')
     }
 
@@ -119,13 +121,18 @@ test.describe('資料', () => {
     await expect(page).toHaveTitle('資料: 戦場の医療 — Novel Studio')
     await expect(page.getByTestId('material-tag')).toHaveText(['医療', 'ミリタリ'])
     await expect(page.getByTestId('material-notes-empty')).toBeVisible()
-    // パンくず「ホーム › 資料 › 資料名」の「資料」で棚へ戻る
+    // パンくず「ホーム › 資料 › 資料名」の「資料」で棚へ戻る。読み込み直して（ホームの帯は4つとも閉じる。2.9）から戻っても、
+    // 資料の帯を開いて見出しのボタンにフォーカスする（ほかの帯は閉じたまま）
+    await page.reload()
     const crumbs = page.getByRole('navigation', { name: '現在地' })
     await expect(crumbs).toContainText('ホーム')
     await expect(crumbs).toContainText('戦場の医療')
     await crumbs.getByRole('link', { name: '資料', exact: true }).click()
+    await expect(homeBandToggle(page, 'materials')).toHaveAttribute('aria-expanded', 'true')
     await expect(shelf.getByRole('heading', { name: '資料', level: 2 })).toBeInViewport()
-    await expect(shelf.getByRole('heading', { name: '資料', level: 2 })).toBeFocused()
+    await expect(homeBandToggle(page, 'materials')).toBeFocused()
+    await expect(homeBandToggle(page, 'titles')).toHaveAttribute('aria-expanded', 'false')
+    await expect(homeBandToggle(page, 'bench')).toHaveAttribute('aria-expanded', 'false')
     if (await page.getByTestId('home-jump').isVisible())
       await expect(page.getByTestId('home-jump-materials')).toHaveAttribute('aria-current', 'true')
     await expect.poll(() => cardNames(page)).toEqual(['現代の特殊部隊', '江戸の町と暮らし', '戦場の医療'])
@@ -154,6 +161,7 @@ test.describe('資料', () => {
     await row.getByTestId('trash-restore').click()
     await expect(page.getByRole('status').filter({ hasText: '「現代の特殊部隊」を元の場所に戻しました' })).toBeVisible()
     await openApp(page)
+    await openHomeBands(page)
     await expect.poll(() => cardNames(page)).toEqual(['戦場の医療', '現代の特殊部隊', '江戸の町と暮らし'])
     const restored = page.getByTestId('material-card').nth(1)
     await expect(restored.getByTestId('material-card-count')).toHaveText('記録 4件')
@@ -165,6 +173,7 @@ test.describe('資料', () => {
     page,
   }) => {
     await openApp(page)
+    await openHomeBands(page)
     const { materialId } = await seedShelf(page)
     await openApp(page, `/materials/${materialId}`)
     await expect(page.getByTestId('material-biblio')).toHaveText('山田・軍事出版・2019')
@@ -236,6 +245,7 @@ test.describe('資料', () => {
     page,
   }) => {
     await openApp(page)
+    await openHomeBands(page)
     const { id } = await seed(page, ({ actions }) => {
       actions.addMaterial({ name: '戦国の合戦', tags: ['歴史', '戦闘'] })
       return { id: actions.addMaterial({ name: '現代の特殊部隊', author: '山田' }) }
@@ -299,6 +309,7 @@ test.describe('資料', () => {
   test('タグ: 日本語の入力の変換中は「、」・Enter で足さず、確定してから足す', async ({ page, browserName }) => {
     test.skip(browserName !== 'chromium', '変換中の入力は Chromium の DevTools プロトコルで作る')
     await openApp(page)
+    await openHomeBands(page)
     const id = await seed(page, ({ actions }) => actions.addMaterial({ name: '現代の特殊部隊' }))
     await openApp(page, `/materials/${id}`)
     await page.getByTestId('material-edit-tags').click()
@@ -325,8 +336,10 @@ test.describe('資料', () => {
     page,
   }) => {
     await openApp(page)
+    await openHomeBands(page)
     const { a, b, c } = await seedTagged(page)
     await openApp(page)
+    await openHomeBands(page)
     const shelf = page.getByTestId('material-shelf')
     const all = ['現代の特殊部隊', '戦国の合戦', '戦場の医療', '江戸の町と暮らし']
     await expect.poll(() => cardNames(page)).toEqual(all)
@@ -437,6 +450,7 @@ test.describe('資料', () => {
     test.skip(browserName !== 'chromium', 'クリップボードの読み取りは Chromium だけ')
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await openApp(page)
+    await openHomeBands(page)
     const { materialId } = await seedShelf(page)
     await openApp(page, `/materials/${materialId}`)
     await page.getByTestId('material-manual').click()
@@ -512,8 +526,10 @@ test.describe('資料', () => {
     test.skip(info.project.name !== 'mobile', 'スマホの幅で確かめる')
     await page.setViewportSize({ width: 360, height: 760 })
     await openApp(page)
+    await openHomeBands(page)
     const { materialId } = await seedShelf(page)
     await openApp(page)
+    await openHomeBands(page)
     // 上の切り替えの4つ（タイトル・アイデア・相対比較・資料）が1列に収まり、名前も数も切れない
     const jump = page.getByTestId('home-jump').getByRole('button')
     await expect(jump).toHaveCount(4)
@@ -592,6 +608,7 @@ test.describe('資料', () => {
     const project = testInfo.project.name
     const dir = 'e2e/artifacts/screens'
     await openApp(page)
+    await openHomeBands(page)
     await chip(page, 'ミリタリ').click()
     await darkSurfaces(page, [
       '.home-mat-card',

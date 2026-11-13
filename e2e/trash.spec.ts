@@ -278,6 +278,78 @@ test.describe('ゴミ箱', () => {
     expect(await page.evaluate((id) => window.__ns.getData().benchAnalyses[id]?.viewpoint, analysis.id)).toBe(analysis.viewpoint)
   })
 
+  test('アイデアのフォルダ（2.9）は中のフォルダ・カードと一緒に1件で並び（種類・場所・中身の数）、戻すと一緒に戻る。親が無い2段目は1段目に戻る', async ({
+    page,
+  }, info) => {
+    if (info.project.name === 'mobile') await page.setViewportSize({ width: 360, height: 740 })
+    await openApp(page)
+    const ids = await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の庭')
+      const scene = actions.createIdeaFolder(t, null, '場面の相談')
+      const rain = actions.createIdeaFolder(t, scene, '雨の駅')
+      const port = actions.createIdeaFolder(t, scene, '港町')
+      actions.addIdea(t, '', '場面の案', scene)
+      actions.addIdea(t, '', '雨の案1', rain)
+      actions.addIdea(t, '', '雨の案2', rain)
+      const home = actions.createIdeaFolder(null, null, '新作の相談')
+      const sub = actions.createIdeaFolder(null, home, '2026/11/12\u3000港町')
+      const card = actions.addIdea(null, '', '港町の案', sub)
+      actions.deleteIdeaFolder(scene)
+      actions.deleteIdeaFolder(sub)
+      return { t, scene, rain, port, home, sub, card }
+    })
+    await openTrashFromHome(page)
+    await expect(trashRows(page)).toHaveCount(2)
+    const sceneRow = trashRows(page).filter({ has: page.getByTestId('trash-label').getByText('場面の相談', { exact: true }) })
+    await expect(sceneRow.getByTestId('trash-kind')).toHaveText('アイデアのフォルダ')
+    await expect(sceneRow.getByTestId('trash-place')).toHaveText('星の庭')
+    await expect(sceneRow.getByTestId('trash-detail')).toHaveText('フォルダ2つ・カード3件')
+    // 2段目は「仕切り › 親のフォルダ」
+    const subRow = trashRows(page).filter({ hasText: '2026/11/12' })
+    await expect(subRow.getByTestId('trash-place')).toHaveText('どのタイトルにも属さない › 新作の相談')
+    await expect(subRow.getByTestId('trash-detail')).toHaveText('カード1件')
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(0)
+    await page.screenshot({ path: `e2e/artifacts/screens/trash-folders-${info.project.name}.png`, fullPage: true })
+
+    // 戻すと、中のフォルダとカードも一緒に元の場所へ
+    await sceneRow.getByTestId('trash-restore').click()
+    await expect(page.getByRole('status').filter({ hasText: '「場面の相談」を元の場所に戻しました' })).toBeVisible()
+    const placed = await page.evaluate((i) => {
+      const d = window.__ns.getData()
+      return {
+        folders: [i.scene, i.rain, i.port].map((id) => [d.ideaFolders[id]?.titleId, d.ideaFolders[id]?.parentId ?? null]),
+        cards: Object.values(d.ideas)
+          .filter((c) => c.titleId === i.t)
+          .map((c) => [c.body, c.folderId])
+          .sort(),
+      }
+    }, ids)
+    expect(placed.folders).toEqual([
+      [ids.t, null],
+      [ids.t, ids.scene],
+      [ids.t, ids.scene],
+    ])
+    expect(placed.cards).toEqual([
+      ['場面の案', ids.scene],
+      ['雨の案1', ids.rain],
+      ['雨の案2', ids.rain],
+    ])
+
+    // 親のフォルダが無ければ、2段目は1段目として戻す（知らせる）
+    await seed(page, ({ actions }, id: string) => actions.deleteIdeaFolder(id), ids.home)
+    await expect(trashRows(page)).toHaveCount(2)
+    await subRow.getByTestId('trash-restore').click()
+    await expect(
+      page.getByRole('status').filter({ hasText: '元のフォルダが無いため、1段目のフォルダとして戻しました' }),
+    ).toBeVisible()
+    const sub = await page.evaluate((i) => {
+      const d = window.__ns.getData()
+      return [d.ideaFolders[i.sub]?.titleId, d.ideaFolders[i.sub]?.parentId, d.ideas[i.card]?.folderId]
+    }, ids)
+    expect(sub).toEqual([null, null, ids.sub])
+  })
+
   test('削除してから30日たったものは、起動した時に完全に削除される', async ({ page }) => {
     await openApp(page)
     const day = 24 * 60 * 60 * 1000

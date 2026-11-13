@@ -13,7 +13,7 @@ import { claudeView } from '../src/claude/visibility'
 import type { Idea } from '../src/domain/types'
 import { encodeRecord } from '../src/sync/codec'
 import type { Rec } from '../src/sync/merge'
-import { darkSurfaces, noHorizontalScroll, openApp, seed, seedTitleWithEpisodes, tapSize } from './helpers'
+import { darkSurfaces, noHorizontalScroll, openApp, openHomeBands, seed, seedTitleWithEpisodes, tapSize } from './helpers'
 
 const DOCS = 'http://127.0.0.1:8080/v1/projects/demo-novel-studio/databases/(default)/documents'
 // エミュレーターでアクセスルールを通さずに読み書きする
@@ -278,6 +278,8 @@ test('Claude のアイデア（2.8）: コネクタが作ったアイデアが�
   const ctx = await browser.newContext()
   const page = await ctx.newPage()
   await openApp(page)
+  // ホームのアイデアの帯（2.9。起動した時は閉じている）を開いておく
+  await openHomeBands(page, 'ideas')
   const uid = await signIn(page, `e2e-ideas-${Date.now()}`)
   const titleId = await seed(page, ({ actions }) => {
     const t = actions.createTitle('灰の庭')

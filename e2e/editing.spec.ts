@@ -1,6 +1,6 @@
 // 原稿画面の保存ボタン・未保存の警告・端末内の控え・巻き戻し／進む・記号バー・見出し付きコピーの E2E テスト
 import { expect, test, type Dialog, type Locator, type Page, type TestInfo } from '@playwright/test'
-import { openApp, seed } from './helpers'
+import { openApp, openHomeBands, seed } from './helpers'
 
 const BODY = '吾輩は猫である。名前はまだ無い。'
 const isDesktop = (info: TestInfo) => info.project.name === 'desktop'
@@ -243,7 +243,8 @@ test.describe('画面を離れる時の確認', () => {
     const errors: string[] = []
     page.on('pageerror', (e) => errors.push(e.message))
     const ids = await seedWork(page)
-    // ホーム → タイトル → 話（アプリ内のリンクで開く。「戻る」でタイトルに戻れる履歴にする）
+    // ホーム → タイトル → 話（アプリ内のリンクで開く。「戻る」でタイトルに戻れる履歴にする）。ホームのタイトルの帯（2.9）を開いておく
+    await openHomeBands(page, 'titles')
     await page.locator(`a[href$="/t/${ids.titleId}"]`).first().click()
     await expect(page).toHaveURL(new RegExp(`/t/${ids.titleId}$`))
     await page.locator(`a[href$="/p/${ids.pieceId}"]`).first().click()
