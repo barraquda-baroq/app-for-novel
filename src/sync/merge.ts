@@ -268,6 +268,44 @@ export const TEXT_FIELDS: Partial<Record<TableName, readonly string[]>> = {
   materialNotes: ['body'],
 }
 
+/**
+ * 2.9: 場所として組で合わせる項目（アイデアは仕切り＋入っているフォルダ、アイデアのフォルダは仕切り＋親）。項目ごとに合わせると、
+ * 別の端末がほかのタイトルへ移したカードに、この端末が選んだ前のタイトルのフォルダが付くことがあるため（見せ方の決まりで外へ
+ * 出すので壊れはしないが、2台で同じ場所にそろうように）。無い項目は null として比べ、書く時は無いまま（null は書かない）
+ */
+export const LOCATION_FIELDS: Partial<Record<TableName, readonly string[]>> = {
+  ideas: ['titleId', 'folderId'],
+  ideaFolders: ['titleId', 'parentId'],
+}
+
+/**
+ * 場所の組を合わせる（mergeFields の後で）。両方の端末が場所を変えていて組が違えば、場所と並び（order）はこの端末のもの。
+ * 片方だけが場所を変えていれば、場所と並びはその側のもの（前の入れ物での並べ替えを、新しい入れ物に持ち込まない。場所を変えて
+ * いない側の null と無い項目の違いも持ち込まない）
+ */
+function mergeLocation(
+  fields: readonly string[],
+  out: Record<string, unknown>,
+  b: Record<string, unknown>,
+  m: Record<string, unknown>,
+  t: Record<string, unknown>,
+): void {
+  const at = (r: Record<string, unknown>, k: string) => r[k] ?? null
+  const moved = (r: Record<string, unknown>) => fields.some((k) => !deepEqual(at(r, k), at(b, k)))
+  const take = (k: string, v: unknown) => {
+    if (v === undefined) delete out[k]
+    else out[k] = v
+  }
+  const mine = moved(m)
+  const theirs = moved(t)
+  if (!mine && !theirs) return
+  // 両方が同じ場所へ移していたら、並びは項目ごとに合わせたまま（両方で変えていたらこの端末）
+  if (mine && theirs && fields.every((k) => deepEqual(at(m, k), at(t, k)))) return
+  const side = mine ? m : t
+  for (const k of fields) take(k, side[k])
+  take('order', side.order)
+}
+
 export function joinConflictText(theirs: string, mine: string, device: string): string {
   return `${theirs}\n\n――――（同期の競合: ${device}で同時に書かれた内容）――――\n${mine}`
 }
@@ -361,6 +399,8 @@ export function mergeFields(table: TableName, base: Rec | null, mine: Rec, their
     if (hash === undefined) delete out.claudeHash
     else out.claudeHash = hash
   }
+  const location = LOCATION_FIELDS[table]
+  if (location) mergeLocation(location, out, b, m, t)
   let overridden: FieldMerge['overridden']
   if (table === 'pieces' && opts.acts) {
     const side = opts.acts.structure

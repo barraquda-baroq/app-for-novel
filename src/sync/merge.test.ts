@@ -8,12 +8,15 @@ import {
   contentEqual,
   deepEqual,
   LIST_FIELDS,
+  LOCATION_FIELDS,
   mergeFields,
   mergeList,
   mergeRecordLegacy,
   mergeRemote,
   NEWER_FIELDS,
   stableStringify,
+  TEXT_FIELDS,
+  TEXT_TABLES,
   type MergeResult,
 } from './merge'
 
@@ -607,6 +610,124 @@ describe('アイデアの済み（チェック）のマージ', () => {
     const mine = { ...base, checked: true, checkedAt: 5, updatedAt: 5 }
     const theirs = { ...base, checked: true, checkedAt: 4, updatedAt: 4 }
     expect(mergeRemote('ideas', base, mine, theirs, D).record).toMatchObject({ checked: true, checkedAt: 5 })
+  })
+})
+
+describe('アイデアとフォルダの場所（2.9）: 場所は組で合わせる', () => {
+  const card = {
+    id: 'i',
+    titleId: 'T1',
+    folderId: 'F1',
+    heading: '',
+    body: '内容',
+    checked: false,
+    checkedAt: null,
+    order: 3,
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  const without = (r: Record<string, unknown>, k: string) => {
+    const out = { ...r }
+    delete out[k]
+    return out as typeof card
+  }
+
+  it('両方が別の場所へ移していたら、場所（仕切り＋フォルダ）と並びはこの端末のもの（項目ごとに混ぜない）', () => {
+    // この端末は同じタイトルの別のフォルダへ、別の端末はほかのタイトルのフォルダの外へ
+    const mine = { ...card, folderId: 'F2', order: 0, updatedAt: 3 }
+    const theirs = { ...without(card, 'folderId'), titleId: 'T2', order: 7, updatedAt: 2 }
+    expect(mergeRemote('ideas', card, mine, theirs, D).record).toMatchObject({ titleId: 'T1', folderId: 'F2', order: 0 })
+    // 向きを変えると、もう一方の端末の場所（フォルダの外。項目は無いまま）
+    const back = mergeRemote('ideas', card, theirs, mine, D).record as Record<string, unknown>
+    expect(back).toMatchObject({ titleId: 'T2', order: 7 })
+    expect('folderId' in back).toBe(false)
+  })
+
+  it('片方だけが移していたら、その側の場所と並び（もう一方の、前の入れ物での並べ替えを持ち込まない）', () => {
+    const reordered = { ...card, order: 0, updatedAt: 3 }
+    const moved = { ...card, titleId: 'T2', folderId: 'G1', order: 9, updatedAt: 2 }
+    // この端末は並べ替えだけ、別の端末が移した
+    expect(mergeRemote('ideas', card, reordered, moved, D).record).toMatchObject({ titleId: 'T2', folderId: 'G1', order: 9 })
+    // この端末が移した（並びの数は前と同じでも）、別の端末は並べ替えだけ
+    const movedSameOrder = { ...card, folderId: 'F2', updatedAt: 3 }
+    expect(mergeRemote('ideas', card, movedSameOrder, reordered, D).record).toMatchObject({ folderId: 'F2', order: 3 })
+  })
+
+  it('同じ場所へ移していたら、並びは今までどおり（両方で変えていたらこの端末）', () => {
+    const mine = { ...card, folderId: 'F2', order: 1, updatedAt: 3 }
+    const theirs = { ...card, folderId: 'F2', order: 4, updatedAt: 2 }
+    expect(mergeRemote('ideas', card, mine, theirs, D).record).toMatchObject({ folderId: 'F2', order: 1 })
+  })
+
+  it('無い項目は null と同じに比べ、書く時は無いまま（null を書かない）', () => {
+    const base = without(card, 'folderId')
+    // 作り物の記録の null は「フォルダの外」のまま（場所を変えたことにしない）
+    const mine = { ...base, folderId: null, order: 0, updatedAt: 3 } as unknown as typeof card
+    const theirs = { ...base, titleId: 'T2', order: 5, updatedAt: 2 }
+    const r = mergeRemote('ideas', base, mine, theirs, D).record as Record<string, unknown>
+    expect(r).toMatchObject({ titleId: 'T2', order: 5 })
+    expect('folderId' in r).toBe(false)
+    // 両方がフォルダの外のまま、ほかの項目だけ変えた時も項目は足さない
+    const edited = { ...base, body: '直した', updatedAt: 3 }
+    const checked = { ...base, checked: true, checkedAt: 2, updatedAt: 2 }
+    const merged = mergeRemote('ideas', base, edited, checked, D).record as Record<string, unknown>
+    expect(merged).toMatchObject({ body: '直した', checked: true })
+    expect('folderId' in merged).toBe(false)
+    // フォルダから出した端末の場所を採ると、項目は無い
+    const out = { ...without(card, 'folderId'), order: 2, updatedAt: 3 }
+    const into = { ...card, folderId: 'F3', titleId: 'T2', order: 8, updatedAt: 2 }
+    const taken = mergeRemote('ideas', card, out, into, D).record as Record<string, unknown>
+    expect(taken).toMatchObject({ titleId: 'T1', order: 2 })
+    expect('folderId' in taken).toBe(false)
+  })
+
+  it('本文を直した端末と、移した端末: 両方残る（本文と場所は別の項目）', () => {
+    const edited = { ...card, body: '直した', updatedAt: 3 }
+    const moved = { ...card, folderId: 'F2', order: 0, updatedAt: 2 }
+    expect(mergeRemote('ideas', card, edited, moved, D).record).toMatchObject({ body: '直した', folderId: 'F2', order: 0 })
+  })
+
+  it('フォルダは仕切り＋親の組', () => {
+    const folder = { id: 'f', titleId: 'T1', parentId: 'P1', name: '雨の駅', order: 2, createdAt: 1, updatedAt: 1 }
+    const mine = { ...folder, parentId: null, order: 0, updatedAt: 3 }
+    const theirs = { ...folder, titleId: 'T2', parentId: 'Q1', order: 6, updatedAt: 2 }
+    expect(mergeRemote('ideaFolders', folder, mine, theirs, D).record).toMatchObject({ titleId: 'T1', parentId: null, order: 0 })
+    const renamed = { ...folder, name: '雨の駅舎', order: 0, updatedAt: 3 }
+    expect(mergeRemote('ideaFolders', folder, renamed, theirs, D).record).toMatchObject({
+      name: '雨の駅舎',
+      titleId: 'T2',
+      parentId: 'Q1',
+      order: 6,
+    })
+    // 名前は短い項目（両方で変えたらこの端末）。並び・文章の項目ではない
+    const theirsName = { ...folder, name: '駅', updatedAt: 2 }
+    expect(mergeRemote('ideaFolders', folder, renamed, theirsName, D).record).toMatchObject({ name: '雨の駅舎' })
+    expect(LIST_FIELDS.ideaFolders).toBeUndefined()
+    expect(TEXT_FIELDS.ideaFolders).toBeUndefined()
+    expect(NEWER_FIELDS.ideaFolders).toBeUndefined()
+    expect(LOCATION_FIELDS).toEqual({ ideas: ['titleId', 'folderId'], ideaFolders: ['titleId', 'parentId'] })
+  })
+
+  it('フォルダの削除と名前の変更がぶつかったら削除（文章の表ではないので控えはゴミ箱に作らない）', () => {
+    const folder = { id: 'f', titleId: null, parentId: null, name: '新作の相談', order: 0, createdAt: 1, updatedAt: 1 }
+    const renamed = { ...folder, name: '新作', updatedAt: 2 }
+    const r = mergeRemote('ideaFolders', folder, null, renamed, D)
+    expect(r.record).toBeNull()
+    expect(TEXT_TABLES.has('ideaFolders')).toBe(false)
+  })
+
+  it('カードの削除と並べ替え・移動がぶつかったら、今までどおり削除を優先して控えを返す（2.8 と同じ）', () => {
+    const reordered = { ...card, order: 0, updatedAt: 2 }
+    expect(mergeRemote('ideas', card, null, reordered, D)).toEqual({ record: null, deletedEdit: reordered })
+    const moved = { ...card, folderId: 'F2', updatedAt: 2 }
+    expect(mergeRemote('ideas', card, moved, null, D)).toEqual({ record: null, deletedEdit: moved })
+    expect(TEXT_TABLES.has('ideas')).toBe(true)
+  })
+
+  it('別のタブの保存（mergeRecordLegacy に表を渡す）も同じ合わせ方', () => {
+    const mine = { ...card, folderId: 'F2', order: 0, updatedAt: 3 }
+    const theirs = { ...without(card, 'folderId'), titleId: 'T2', order: 7, updatedAt: 2 }
+    expect(mergeRecordLegacy(card, mine, theirs, 'ideas')).toMatchObject({ titleId: 'T1', folderId: 'F2', order: 0 })
   })
 })
 
