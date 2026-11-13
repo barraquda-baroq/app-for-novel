@@ -129,8 +129,9 @@ export function trashDays(entries: TrashEntry[], records: AppData['trashRecords'
 }
 
 /**
- * 戻した後のお知らせ（同じ名前の稿があって名前を変えた稿があれば、そのことも伝える）。2.9: 元のフォルダが無くて、アイデアを
- * フォルダの外へ・フォルダを1段目として戻した時は、そのことも伝える
+ * 戻した後のお知らせ（同じ名前の稿があって名前を変えた稿があれば、そのことも伝える）。2.9: 元のフォルダが元の場所に無くて
+ * （ゴミ箱にある・削除した・別のタイトルへ移した・2段目になった）、アイデアをフォルダの外へ・フォルダを1段目として戻した時は、
+ * そのことも伝える
  */
 export function restoredMessage(
   r: Pick<RestoreResult, 'label' | 'copied' | 'movedToUnassigned'> &
@@ -139,8 +140,8 @@ export function restoredMessage(
   const name = `「${r.label.trim() || '（名前なし）'}」`
   const folder = r.outOfFolder
     ? r.kind === 'ideaFolder'
-      ? '元のフォルダが無いため、1段目のフォルダとして戻しました'
-      : '元のフォルダが無いため、フォルダの外に戻しました'
+      ? '元のフォルダが元の場所に無いため、1段目のフォルダとして戻しました'
+      : '元のフォルダが元の場所に無いため、フォルダの外に戻しました'
     : ''
   if (r.movedToUnassigned)
     return `${name}を「どのタイトルにも属さない」に戻しました（元のタイトルがないため）${folder ? `。${folder}` : ''}`

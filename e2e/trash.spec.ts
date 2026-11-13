@@ -341,7 +341,7 @@ test.describe('ゴミ箱', () => {
     await expect(trashRows(page)).toHaveCount(2)
     await subRow.getByTestId('trash-restore').click()
     await expect(
-      page.getByRole('status').filter({ hasText: '元のフォルダが無いため、1段目のフォルダとして戻しました' }),
+      page.getByRole('status').filter({ hasText: '元のフォルダが元の場所に無いため、1段目のフォルダとして戻しました' }),
     ).toBeVisible()
     const sub = await page.evaluate((i) => {
       const d = window.__ns.getData()

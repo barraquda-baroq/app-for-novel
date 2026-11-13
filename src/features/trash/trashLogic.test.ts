@@ -159,18 +159,18 @@ describe('ゴミ箱の一覧の表記', () => {
     ).toBe(
       '「各幕の採用していなかった稿（3稿）」を元の場所に戻しました（同じ名前の稿があったため、2稿の名前に「（復元）」を付けました）',
     )
-    // 2.9: 元のフォルダが無い時
+    // 2.9: 元のフォルダが元の場所に無い時（ゴミ箱にある・別のタイトルへ移した…）
     expect(restoredMessage({ label: '案', kind: 'idea', copied: false, movedToUnassigned: false, outOfFolder: true })).toBe(
-      '「案」は、元のフォルダが無いため、フォルダの外に戻しました',
+      '「案」は、元のフォルダが元の場所に無いため、フォルダの外に戻しました',
     )
     expect(
       restoredMessage({ label: '雨の駅', kind: 'ideaFolder', copied: false, movedToUnassigned: false, outOfFolder: true }),
-    ).toBe('「雨の駅」は、元のフォルダが無いため、1段目のフォルダとして戻しました')
+    ).toBe('「雨の駅」は、元のフォルダが元の場所に無いため、1段目のフォルダとして戻しました')
     expect(restoredMessage({ label: '案', kind: 'idea', copied: false, movedToUnassigned: true, outOfFolder: true })).toBe(
-      '「案」を「どのタイトルにも属さない」に戻しました（元のタイトルがないため）。元のフォルダが無いため、フォルダの外に戻しました',
+      '「案」を「どのタイトルにも属さない」に戻しました（元のタイトルがないため）。元のフォルダが元の場所に無いため、フォルダの外に戻しました',
     )
     expect(restoredMessage({ label: '案', kind: 'idea', copied: true, movedToUnassigned: false, outOfFolder: true })).toBe(
-      '「案」を複製として元の場所に戻しました（同じものが残っていたため）。元のフォルダが無いため、フォルダの外に戻しました',
+      '「案」を複製として元の場所に戻しました（同じものが残っていたため）。元のフォルダが元の場所に無いため、フォルダの外に戻しました',
     )
     expect(restoredMessage({ label: '案', kind: 'idea', copied: false, movedToUnassigned: false, outOfFolder: false })).toBe(
       '「案」を元の場所に戻しました',

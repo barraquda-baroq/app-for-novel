@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { restoredMessage } from '../features/trash/trashLogic'
 import { parseBackup } from './backup'
 import {
   addEntry,
@@ -905,6 +906,38 @@ describe('アイデアのフォルダ（2.9）を戻す', () => {
     expect(r.result).toMatchObject({ outOfFolder: true, movedToUnassigned: false, titleId: f.titleId })
     expect('folderId' in r.data.ideas[f.rain1]).toBe(false)
     expect(bodies(buildIdeaTree(r.data, f.titleId).loose)).toEqual(['外1', '雨1'])
+  })
+
+  it('カード: フォルダを別のタイトルへ移した後は、フォルダはあっても元の場所に無いので、フォルダの外へ（知らせの文もそう言う）', () => {
+    const f = folderFixture()
+    const other = createTitle(f.data, '灰の街')
+    let data = deleteIdea(other.data, f.scene1)
+    data = moveIdeaFolder(data, f.scene, { titleId: other.result, parentId: null })
+    const r = restoreTrashEntry(data, entryOf(data, 'idea').id)
+    expect(r.result).toMatchObject({ kind: 'idea', outOfFolder: true, movedToUnassigned: false, titleId: f.titleId })
+    // フォルダは別のタイトルにある
+    expect(r.data.ideaFolders[f.scene].titleId).toBe(other.result)
+    expect(names(buildIdeaTree(r.data, other.result).folders)).toEqual(['場面'])
+    expect('folderId' in r.data.ideas[f.scene1]).toBe(false)
+    expect(bodies(buildIdeaTree(r.data, f.titleId).loose)).toEqual(['外1', '場面1'])
+    expect(restoredMessage(r.result)).toBe('「場面1」は、元のフォルダが元の場所に無いため、フォルダの外に戻しました')
+  })
+
+  it('2段目: 親を別のタイトルへ移した後は、親はあっても元の場所に無いので、1段目として（知らせの文もそう言う）', () => {
+    const f = folderFixture()
+    const other = createTitle(f.data, '灰の街')
+    let data = deleteIdeaFolder(other.data, f.rain)
+    data = moveIdeaFolder(data, f.scene, { titleId: other.result, parentId: null })
+    const r = restoreTrashEntry(data, entryOf(data, 'ideaFolder').id)
+    expect(r.result).toMatchObject({ kind: 'ideaFolder', outOfFolder: true, movedToUnassigned: false, titleId: f.titleId })
+    // 親は別のタイトルにある
+    expect(r.data.ideaFolders[f.scene].titleId).toBe(other.result)
+    expect(names(buildIdeaTree(r.data, other.result).folders)).toEqual(['場面'])
+    expect(r.data.ideaFolders[f.rain]).toMatchObject({ titleId: f.titleId, parentId: null })
+    const tree = buildIdeaTree(r.data, f.titleId)
+    expect(names(tree.folders)).toEqual(['筋', '雨の駅'])
+    expect(bodies(tree.folders[1].ideas)).toEqual(['雨1', '雨2'])
+    expect(restoredMessage(r.result)).toBe('「雨の駅」は、元のフォルダが元の場所に無いため、1段目のフォルダとして戻しました')
   })
 
   it('タイトルを消した後のカード: タイトルと一緒にホームへ移ったフォルダに戻る', () => {
