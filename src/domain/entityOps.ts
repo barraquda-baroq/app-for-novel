@@ -3,6 +3,16 @@ import { actsOf, adoptedMetrics, adoptedText, episodeNumbers, flatten, isSplit, 
 import { bodyMetrics, textHash } from './text'
 import { isValidPageSetup, PAGE_CHARS_MAX, PAGE_CHARS_MIN, PAGE_LINES_MAX, PAGE_LINES_MIN, samePageSetup } from './pageSetup'
 import { isIdeaChecked, sortIdeas } from './ideaSort'
+import {
+  IDEA_FOLDER_NAME_MAX,
+  buildIdeaTree,
+  effectiveFolderId,
+  effectiveParentId,
+  folderNameKey,
+  folderPathLabel,
+  sectionOf,
+  type IdeaTree,
+} from './ideaFolders'
 
 export { textHash }
 import { orderOrigin, putInTrash, trashLabel, type TrashSpec } from './trash'
@@ -13,6 +23,7 @@ import {
   type AppData,
   type ID,
   type Idea,
+  type IdeaFolder,
   type Memo,
   type PageSetup,
   type SettingCategory,
@@ -131,15 +142,67 @@ export function moveTitleStep(data: AppData, titleId: ID, dir: -1 | 1): AppData 
   return transact(data, (tx) => putAll(tx, 'titles', stepOrder(tx.all('titles'), titleId, dir))).data
 }
 
+/** タイトルを消した時にホームの1段目と名前が重なったフォルダの名前に付けるタイトル名の上限（字の数。長ければ切って「…」） */
+const FOLDER_TITLE_SUFFIX_MAX = 20
+
+/**
+ * ホームへ移すフォルダの名前（2.9）。ホームの1段目に同じ名前（folderNameKey）があれば「名前（タイトル名）」にする
+ * （全体が40字までになるように名前の側を切る。それでも重なれば「 2」「 3」…を足す）。taken は使えない名前の鍵
+ */
+function homeFolderName(name: string, titleName: string, taken: ReadonlySet<string>): string {
+  const t = Array.from(titleName.trim() || '無題のタイトル')
+  const title = t.length > FOLDER_TITLE_SUFFIX_MAX ? `${t.slice(0, FOLDER_TITLE_SUFFIX_MAX - 1).join('')}…` : t.join('')
+  for (let n = 1; ; n++) {
+    const tail = `（${title}）${n > 1 ? ` ${n}` : ''}`
+    const head = Array.from(name)
+      .slice(0, IDEA_FOLDER_NAME_MAX - Array.from(tail).length)
+      .join('')
+      .trimEnd()
+    const candidate = `${head}${tail}`
+    if (!taken.has(folderNameKey(candidate))) return candidate
+  }
+}
+
+/**
+ * タイトルのフォルダをホーム（どのタイトルにも属さない）へ移す（2.9。カードと同じ）。中のつながり（親・カードの folderId）は
+ * そのままなので、木の形も変わらない。1段目はホームの1段目の後ろへもとの順で入れ、2段目の並びはそのまま。
+ * ホームの1段目と同じ名前の1段目は「名前（タイトル名）」にする（同じ段に同じ名前を作らない）。タイトルを戻してもフォルダは戻らない
+ */
+function moveTitleFoldersHome(tx: Tx, title: Title): void {
+  const folders = tx.all('ideaFolders').filter((f) => f.titleId === title.id)
+  if (!folders.length) return
+  // 1段目かどうかは、タイトルがあるうちに見せ方の決まりで決める
+  const data = tx.data
+  const isTop = (f: IdeaFolder) => effectiveParentId(data, f) === null
+  const homeTops = tx.all('ideaFolders').filter((f) => sectionOf(data.titles, f.titleId) === null && isTop(f))
+  const homeKeys = new Set(homeTops.map((f) => folderNameKey(f.name)))
+  const tops = folders.filter(isTop).sort(byOrder)
+  const taken = new Set([...homeKeys, ...tops.map((f) => folderNameKey(f.name))])
+  const placed = new Map<ID, Pick<IdeaFolder, 'name' | 'order'>>()
+  let order = nextOrder(homeTops)
+  for (const f of tops) {
+    let name = f.name
+    if (homeKeys.has(folderNameKey(f.name))) {
+      name = homeFolderName(f.name, title.name, taken)
+      taken.add(folderNameKey(name))
+    }
+    placed.set(f.id, { name, order: order++ })
+  }
+  const ts = now()
+  for (const f of folders) tx.put('ideaFolders', { ...f, titleId: null, ...placed.get(f.id), updatedAt: ts })
+}
+
 /**
  * タイトルと配下（章・話・稿・メモ・設定項目・応募計画と、その応募時の原稿の控え、2.3 の推敲案・改稿案・戦略メモ・
  * 作品批評）をまとめてゴミ箱へ移す。共通の批評プロンプト（titleId = null）はほかのタイトルでも使うので残す。
- * タイトルに紐づくアイデアは「どのタイトルにも属さない」へ移す（ゴミ箱から戻してもアイデアは戻らない）
+ * タイトルに紐づくアイデアとアイデアのフォルダ（2.9）は「どのタイトルにも属さない」へ移す（ゴミ箱から戻してもアイデア・フォルダは
+ * 戻らない）
  */
 export function deleteTitle(data: AppData, titleId: ID): AppData {
   return transact(data, (tx) => {
     const title = tx.get('titles', titleId)
     if (!title) return
+    moveTitleFoldersHome(tx, title)
     const belongs = (r: { titleId: ID | null }) => r.titleId === titleId
     const submissions = tx.all('submissions').filter(belongs).sort(byOrder)
     const records: TrashSpec['records'] = [
@@ -180,6 +243,7 @@ export function deleteTitle(data: AppData, titleId: ID): AppData {
       records,
     })
     collectSnapshotTexts(tx)
+    // カードは入っているフォルダ（folderId）を持ったまま移すので、フォルダの中の並びも変わらない
     let order = nextOrder(tx.all('ideas').filter((i) => i.titleId === null))
     for (const idea of tx.all('ideas').filter(belongs).sort(byOrder)) {
       tx.put('ideas', { ...idea, titleId: null, order: order++, updatedAt: now() })
@@ -258,46 +322,111 @@ export interface IdeaSection {
   /** null = どのタイトルにも属さない */
   titleId: ID | null
   name: string
-  /** 並び（sortIdeas）: 済みでないもの → 済み */
+  /** 仕切りのすべてのカード（フォルダの中も。並び（sortIdeas）: 済みでないもの → 済み）。件数・目次・書きとめる先に使う */
   ideas: Idea[]
+  /** 2.9: 仕切りの木（フォルダ（2段まで）とフォルダの外のカード。src/domain/ideaFolders.ts の buildIdeaTree） */
+  tree: IdeaTree
 }
 
 // 済みと並び（isIdeaChecked・sortIdeas）は ideaSort.ts にある（フォルダの見せ方・ゴミ箱からも使う）。前からの読み込みのために、
 // ここからも同じ名前で出す
 export { isIdeaChecked, sortIdeas }
 
-/** アイデア領域の仕切り。タイトルの数だけ仕切りがあり、最後に「どのタイトルにも属さない」 */
+/** ideaSections の最後の答え（アイデア・フォルダ・タイトルの表が同じなら作り直さない。ほかの表の変更では木を組み直さない） */
+let sectionsMemo: {
+  ideas: AppData['ideas']
+  ideaFolders: AppData['ideaFolders']
+  titles: AppData['titles']
+  sections: IdeaSection[]
+} | null = null
+
+/**
+ * アイデア領域の仕切り。タイトルの数だけ仕切りがあり、最後に「どのタイトルにも属さない」（タイトルが無いカード・フォルダもここ）。
+ * 同じ表に対しては同じ答え（配列）を返すので、呼び出し側で並べ替えたり書き換えたりしない
+ */
 export function ideaSections(data: AppData): IdeaSection[] {
+  const memo = sectionsMemo
+  if (memo && memo.ideas === data.ideas && memo.ideaFolders === data.ideaFolders && memo.titles === data.titles) {
+    return memo.sections
+  }
   const ideas = sortIdeas(Object.values(data.ideas))
+  const bySection = new Map<ID | null, Idea[]>()
+  for (const i of ideas) {
+    const key = sectionOf(data.titles, i.titleId)
+    const list = bySection.get(key)
+    if (list) list.push(i)
+    else bySection.set(key, [i])
+  }
   const sections: IdeaSection[] = sortedTitles(data).map((t) => ({
     titleId: t.id,
     name: t.name,
-    ideas: ideas.filter((i) => i.titleId === t.id),
+    ideas: bySection.get(t.id) ?? [],
+    tree: buildIdeaTree(data, t.id),
   }))
   sections.push({
     titleId: null,
     name: 'どのタイトルにも属さない',
-    ideas: ideas.filter((i) => i.titleId === null || !data.titles[i.titleId]),
+    ideas: bySection.get(null) ?? [],
+    tree: buildIdeaTree(data, null),
   })
+  sectionsMemo = { ideas: data.ideas, ideaFolders: data.ideaFolders, titles: data.titles, sections }
   return sections
 }
 
-/** 同じ仕切りの、済みでないアイデア（order の順） */
-function openIdeasIn(tx: Tx, titleId: ID | null, exceptId?: ID): Idea[] {
+/** カードの入れ物（仕切り＋入っているフォルダ。フォルダの外は null）。見せ方の決まり（ideaFolders.ts）で決める */
+function ideaContainer(data: AppData, idea: Idea): { section: ID | null; folderId: ID | null } {
+  return { section: sectionOf(data.titles, idea.titleId), folderId: effectiveFolderId(data, idea) }
+}
+
+/** 同じ入れ物（仕切り＋フォルダ）のカードか */
+function inContainer(data: AppData, idea: Idea, section: ID | null, folderId: ID | null): boolean {
+  return sectionOf(data.titles, idea.titleId) === section && effectiveFolderId(data, idea) === folderId
+}
+
+/** 同じ入れ物（仕切り＋フォルダ。null = フォルダの外）の、済みでないアイデア（order の順） */
+function openIdeasIn(tx: Tx, section: ID | null, folderId: ID | null, exceptId?: ID): Idea[] {
   return tx
     .all('ideas')
-    .filter((i) => i.titleId === titleId && i.id !== exceptId && !isIdeaChecked(i))
+    .filter((i) => i.id !== exceptId && !isIdeaChecked(i) && inContainer(tx.data, i, section, folderId))
     .sort(byOrder)
 }
 
-/** 仕切りの末尾の order（済みのものも含めた最大の次。済みでないアイデアの末尾になる） */
-const nextIdeaOrder = (tx: Tx, titleId: ID | null, exceptId?: ID) =>
-  nextOrder(tx.all('ideas').filter((i) => i.titleId === titleId && i.id !== exceptId))
+/** 入れ物の末尾の order（済みのものも含めた最大の次。済みでないアイデアの末尾になる） */
+function nextIdeaOrder(tx: Tx, section: ID | null, folderId: ID | null, exceptId?: ID): number {
+  return nextOrder(tx.all('ideas').filter((i) => i.id !== exceptId && inContainer(tx.data, i, section, folderId)))
+}
 
-/** アイデアを足す（済みでないものの末尾）。今の版の画面からは見出しを渡さない（heading は古い形のデータを作るテスト用） */
-export function addIdea(data: AppData, titleId: ID | null, heading = '', body = ''): { data: AppData; result: ID } {
+/**
+ * 入っているフォルダを付け替える（2.9）。null = フォルダの外（項目ごと消す。null は書かない: 同期の3者マージで、項目の無い古い
+ * カードと同じに見えるように）
+ */
+export function withIdeaFolder(idea: Idea, folderId: ID | null): Idea {
+  const { folderId: _f, ...rest } = idea
+  void _f
+  return folderId === null ? rest : { ...rest, folderId }
+}
+
+/** 移す先・足す先の入れ物を確かめる（タイトルがある・フォルダがあり同じ仕切り） */
+function requireContainer(tx: Tx, titleId: ID | null, folderId: ID | null): void {
+  if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
+  if (folderId === null) return
+  const f = tx.get('ideaFolders', folderId)
+  if (!f || sectionOf(tx.data.titles, f.titleId) !== titleId) throw new DomainError('フォルダが見つかりません')
+}
+
+/**
+ * アイデアを足す（入れ物の済みでないものの末尾）。folderId（2.9）を渡すと、そのフォルダ（どちらの段でもよい。同じ仕切り）に入れる。
+ * 今の版の画面からは見出しを渡さない（heading は古い形のデータを作るテスト用）
+ */
+export function addIdea(
+  data: AppData,
+  titleId: ID | null,
+  heading = '',
+  body = '',
+  folderId: ID | null = null,
+): { data: AppData; result: ID } {
   return transact(data, (tx) => {
-    if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
+    requireContainer(tx, titleId, folderId)
     const ts = now()
     const idea: Idea = {
       id: newId(),
@@ -306,7 +435,8 @@ export function addIdea(data: AppData, titleId: ID | null, heading = '', body = 
       body,
       checked: false,
       checkedAt: null,
-      order: nextIdeaOrder(tx, titleId),
+      order: nextIdeaOrder(tx, titleId, folderId),
+      ...(folderId === null ? {} : { folderId }),
       createdAt: ts,
       updatedAt: ts,
     }
@@ -331,8 +461,8 @@ export function updateIdea(data: AppData, ideaId: ID, patch: Partial<Pick<Idea, 
 }
 
 /**
- * 済みにする・外す。済みにすると斜線＋グレーで仕切りの下へ沈む（並びは sortIdeas）。
- * 外すと、済みでないアイデアの末尾に戻る。削除（ゴミ箱）とは別
+ * 済みにする・外す。済みにすると斜線＋グレーで入れ物（仕切り・フォルダ）の下へ沈む（並びは sortIdeas）。
+ * 外すと、入れ物の済みでないアイデアの末尾に戻る。削除（ゴミ箱）とは別
  */
 export function setIdeaChecked(data: AppData, ideaId: ID, checked: boolean): AppData {
   return transact(data, (tx) => {
@@ -340,57 +470,63 @@ export function setIdeaChecked(data: AppData, ideaId: ID, checked: boolean): App
     if (!i) throw new DomainError('アイデアが見つかりません')
     if (isIdeaChecked(i) === checked) return
     const ts = now()
+    const { section, folderId } = ideaContainer(tx.data, i)
     tx.put('ideas', {
       ...i,
       checked,
       checkedAt: checked ? ts : null,
-      ...(checked ? {} : { order: nextIdeaOrder(tx, i.titleId, i.id) }),
+      ...(checked ? {} : { order: nextIdeaOrder(tx, section, folderId, i.id) }),
       updatedAt: ts,
     })
   }).data
 }
 
-/** 別の仕切り（タイトル or どのタイトルにも属さない）へ移す。移動先の末尾に入る（済みのものは済みのまま） */
+/**
+ * 別の仕切り（タイトル or どのタイトルにも属さない）のフォルダの外へ移す（「この案でタイトルを作る」など）。移動先の末尾に入る
+ * （済みのものは済みのまま）。入っていたフォルダからは出す（2.9。フォルダは仕切りの中のもの）
+ */
 export function moveIdeaToSection(data: AppData, ideaId: ID, titleId: ID | null): AppData {
   return transact(data, (tx) => {
     const i = tx.get('ideas', ideaId)
     if (!i) throw new DomainError('アイデアが見つかりません')
     if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
-    if (i.titleId === titleId) return
-    tx.put('ideas', { ...i, titleId, order: nextIdeaOrder(tx, titleId), updatedAt: now() })
+    if (i.titleId === titleId && effectiveFolderId(tx.data, i) === null) return
+    tx.put('ideas', { ...withIdeaFolder(i, null), titleId, order: nextIdeaOrder(tx, titleId, null, i.id), updatedAt: now() })
   }).data
 }
 
 /**
- * アイデアを指定の仕切り（null = どのタイトルにも属さない）の、済みでないアイデアの中の index 番目（0始まり）へ移す。
- * 済みのアイデアは位置を選べない（移動先でも済みのまま下にまとまる）ので、index は使わず仕切りだけ移す
+ * アイデアを指定の入れ物（仕切り（null = どのタイトルにも属さない）＋フォルダ（2.9。null = フォルダの外））の、済みでないアイデアの
+ * 中の index 番目（0始まり）へ移す。フォルダは移す先の仕切りのもの（どちらの段でもよい）。フォルダの外へ移すと項目ごと消す。
+ * 済みのアイデアは位置を選べない（移動先でも済みのまま下にまとまる）ので、index は使わず入れ物だけ移す
  */
-export function moveIdeaTo(data: AppData, ideaId: ID, titleId: ID | null, index: number): AppData {
+export function moveIdeaTo(data: AppData, ideaId: ID, titleId: ID | null, index: number, folderId: ID | null = null): AppData {
   return transact(data, (tx) => {
     const idea = tx.get('ideas', ideaId)
     if (!idea) throw new DomainError('アイデアが見つかりません')
-    if (titleId !== null && !tx.get('titles', titleId)) throw new DomainError('タイトルが見つかりません')
+    requireContainer(tx, titleId, folderId)
+    const moved = idea.titleId !== titleId || effectiveFolderId(tx.data, idea) !== folderId
+    const placed: Idea = moved ? { ...withIdeaFolder(idea, folderId), titleId } : idea
     if (isIdeaChecked(idea)) {
-      if (idea.titleId !== titleId) tx.put('ideas', { ...idea, titleId, order: nextIdeaOrder(tx, titleId), updatedAt: now() })
+      if (moved) tx.put('ideas', { ...placed, order: nextIdeaOrder(tx, titleId, folderId, ideaId), updatedAt: now() })
       return
     }
-    const list = openIdeasIn(tx, titleId, ideaId)
-    list.splice(Math.max(0, Math.min(index, list.length)), 0, { ...idea, titleId })
+    const list = openIdeasIn(tx, titleId, folderId, ideaId)
+    list.splice(Math.max(0, Math.min(index, list.length)), 0, placed)
     const ts = now()
     list.forEach((it, i) => {
-      if (it.id === ideaId) {
-        if (it.order !== i || idea.titleId !== titleId) tx.put('ideas', { ...it, order: i, updatedAt: ts })
-      } else if (it.order !== i) tx.put('ideas', { ...it, order: i, updatedAt: ts })
+      if (it.order !== i || (it.id === ideaId && moved)) tx.put('ideas', { ...it, order: i, updatedAt: ts })
     })
   }).data
 }
 
-/** 済みでないアイデアの中で1つ上（-1）・下（+1）へ。済みのアイデアは動かさない */
+/** 同じ入れ物（仕切り＋フォルダ）の済みでないアイデアの中で1つ上（-1）・下（+1）へ。済みのアイデアは動かさない */
 export function moveIdeaStep(data: AppData, ideaId: ID, dir: -1 | 1): AppData {
   return transact(data, (tx) => {
     const i = tx.get('ideas', ideaId)
     if (!i || isIdeaChecked(i)) return
-    putAll(tx, 'ideas', stepOrder(openIdeasIn(tx, i.titleId), ideaId, dir))
+    const { section, folderId } = ideaContainer(tx.data, i)
+    putAll(tx, 'ideas', stepOrder(openIdeasIn(tx, section, folderId), ideaId, dir))
   }).data
 }
 
@@ -408,23 +544,22 @@ export type IdeaTrashOptions = Pick<TrashSpec, 'at' | 'entryId' | 'recordId' | '
 
 /**
  * アイデア1つをゴミ箱の1件にする（作者の削除と Claude の依頼で同じ形。仕切りのタイトル名と、戻す位置を控える）。
- * 戻すと、Claude が作ったアイデアの項目（source・claudeHash・appendIds など）もそのまま戻る
+ * 2.9: 戻す位置は入れ物（仕切り＋フォルダ）の中で控え、フォルダの中なら場所の表記（「新作の相談 › 雨の駅」）も控える。
+ * 戻すと、Claude が作ったアイデアの項目（source・claudeHash・appendIds など）と入っていたフォルダもそのまま戻る
  */
 export function trashIdea(tx: Tx, idea: Idea, opts: IdeaTrashOptions = {}): ID {
   // 存在しないタイトルを指すアイデアは「どのタイトルにも属さない」に表示されているので、そこにあったものとして控える
-  const title = idea.titleId === null ? undefined : tx.get('titles', idea.titleId)
-  const sectionId = title ? title.id : null
-  // 戻す位置は、同じ側（済みでないもの・済みのもの）の並びの中で控える（済みのものは並び順を使わないため）
+  const { section, folderId } = ideaContainer(tx.data, idea)
+  const title = section === null ? undefined : tx.get('titles', section)
+  // 戻す位置は、同じ入れ物の同じ側（済みでないもの・済みのもの）の並びの中で控える（済みのものは並び順を使わないため）
   const checked = isIdeaChecked(idea)
-  const peers = tx
-    .all('ideas')
-    .filter((i) => (i.titleId !== null && tx.get('titles', i.titleId) ? i.titleId : null) === sectionId)
-    .filter((i) => isIdeaChecked(i) === checked)
+  const peers = tx.all('ideas').filter((i) => isIdeaChecked(i) === checked && inContainer(tx.data, i, section, folderId))
   return putInTrash(tx, {
     kind: 'idea',
     label: trashLabel.idea(idea),
     titleName: title?.name ?? '',
-    origin: { titleId: sectionId, ...orderOrigin(peers, idea.id) },
+    ...(folderId === null ? {} : { parentLabel: folderPathLabel(tx.data, folderId) }),
+    origin: { titleId: section, ...orderOrigin(peers, idea.id) },
     records: [{ table: 'ideas', record: idea }],
     ...opts,
   })

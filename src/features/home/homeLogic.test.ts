@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { setTitleClaudeAccess } from '../../domain/claudeOps'
 import { addIdea, createTitle, updateTitle } from '../../domain/entityOps'
 import { addEpisode, addSpecial, setActiveVersion, setChaptersEnabled, updateVersion } from '../../domain/storyOps'
 import { emptyData, type AppData } from '../../domain/types'
@@ -133,6 +134,63 @@ describe('タイトル削除の確認文', () => {
     )
     expect(msg).toContain('30日後に完全に削除されます（それまではゴミ箱から元に戻せます）。')
     expect(msg).toContain('アイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります')
+  })
+
+  const emptySummary = {
+    episodes: 1,
+    specials: 0,
+    missingActive: 0,
+    missingEpisodes: 0,
+    missingSpecials: 0,
+    missingActs: 0,
+    activeChars: 0,
+  }
+
+  it('2.9: フォルダがあれば、フォルダも移ることと名前の付け方を書く。Claude に見せないタイトルなら名前が見えるようになることも', () => {
+    const msg = deleteTitleMessage({ summary: emptySummary, versionCount: 1, ideaCount: 3, folderCount: 2, claudeHidden: false })
+    expect(msg).toContain(
+      'このタイトルのアイデア（3件）とフォルダ（2個）は削除されず、「どのタイトルにも属さない」へ移ります（同じ名前のフォルダがあれば、名前の後ろに（タイトル名）を付けます）。',
+    )
+    expect(msg).not.toContain('Claude')
+    const hidden = deleteTitleMessage({
+      summary: emptySummary,
+      versionCount: 1,
+      ideaCount: 0,
+      folderCount: 1,
+      claudeHidden: true,
+    })
+    expect(hidden).toContain(
+      'アイデア（0件）とフォルダ（1個）は削除されず、「どのタイトルにも属さない」へ移ります（同じ名前のフォルダがあれば、名前の後ろに（タイトル名）を付けます）。（どのタイトルにも属さないフォルダの名前は、Claude にも見えるようになります）',
+    )
+    // フォルダが無ければ今までどおり（見せないタイトルでも）
+    const none = deleteTitleMessage({ summary: emptySummary, versionCount: 1, ideaCount: 2, folderCount: 0, claudeHidden: true })
+    expect(none).toContain('このタイトルのアイデア（2件）は削除されず、「どのタイトルにも属さない」へ移ります。')
+    expect(none).not.toContain('フォルダ')
+  })
+
+  it('2.9: タイトルカードの情報にフォルダの数と Claude に見せないかを入れる', () => {
+    const t = createTitle(emptyData(), '星の庭')
+    const folder = (id: string, titleId: string | null, parentId: string | null) => ({
+      id,
+      titleId,
+      parentId,
+      name: id,
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    let data: AppData = {
+      ...t.data,
+      ideaFolders: { a: folder('a', t.result, null), b: folder('b', t.result, 'a'), c: folder('c', null, null) },
+    }
+    let info = titleCardInfo(data, t.result)!
+    expect(info).toMatchObject({ folderCount: 2, claudeHidden: false })
+    data = setTitleClaudeAccess(data, t.result, 'none')
+    info = titleCardInfo(data, t.result)!
+    expect(info.claudeHidden).toBe(true)
+    expect(deleteTitleMessage(info)).toContain('Claude にも見えるようになります')
+    data = setTitleClaudeAccess(data, t.result, 'read')
+    expect(titleCardInfo(data, t.result)!.claudeHidden).toBe(false)
   })
 
   it('アイデアがなくても移動先を説明する', () => {

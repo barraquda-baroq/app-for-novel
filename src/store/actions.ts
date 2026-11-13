@@ -41,12 +41,16 @@ export const actions = {
   setTitlePageSetup: (titleId: ID, setup: PageSetup | null) => apply((d) => E.setTitlePageSetup(d, titleId, setup)),
 
   // アイデア
-  addIdea: (titleId: ID | null, heading = '', body = '') => run((d) => E.addIdea(d, titleId, heading, body)),
+  /** folderId（2.9）: 入れるフォルダ（null = フォルダの外） */
+  addIdea: (titleId: ID | null, heading = '', body = '', folderId: ID | null = null) =>
+    run((d) => E.addIdea(d, titleId, heading, body, folderId)),
   updateIdea: (ideaId: ID, patch: Parameters<typeof E.updateIdea>[2]) => apply((d) => E.updateIdea(d, ideaId, patch)),
   setIdeaChecked: (ideaId: ID, checked: boolean) => apply((d) => E.setIdeaChecked(d, ideaId, checked)),
   moveIdeaToSection: (ideaId: ID, titleId: ID | null) => apply((d) => E.moveIdeaToSection(d, ideaId, titleId)),
   moveIdeaStep: (ideaId: ID, dir: -1 | 1) => apply((d) => E.moveIdeaStep(d, ideaId, dir)),
-  moveIdeaTo: (ideaId: ID, titleId: ID | null, index: number) => apply((d) => E.moveIdeaTo(d, ideaId, titleId, index)),
+  /** 仕切り＋フォルダ（2.9。null = フォルダの外）の、済みでないアイデアの中の index 番目へ */
+  moveIdeaTo: (ideaId: ID, titleId: ID | null, index: number, folderId: ID | null = null) =>
+    apply((d) => E.moveIdeaTo(d, ideaId, titleId, index, folderId)),
   deleteIdea: (ideaId: ID) => apply((d) => E.deleteIdea(d, ideaId)),
 
   // 本編: 話数追加・特殊追加

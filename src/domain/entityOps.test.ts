@@ -43,7 +43,7 @@ import { addEpisode, deleteVersion, setActiveVersion, updateVersion } from './st
 import { countChars, textStats } from './text'
 import { repairData } from './repair'
 import { listTrash, restoreTrashEntry } from './trash'
-import { DomainError, emptyData, type AppData, type Idea, type Submission } from './types'
+import { DomainError, emptyData, type AppData, type Idea, type IdeaFolder, type Submission } from './types'
 
 describe('アイデア領域', () => {
   it('タイトルを増やすと仕切りが増え、どのタイトルにも属さない仕切りが常に最後にある', () => {
@@ -197,6 +197,231 @@ describe('アイデアの書き換え・ゴミ箱（2.8）', () => {
     expect(ideaEditedByAuthor(back.ideas[f.claude.id])).toBe(false)
     // 何も無ければ何もしない
     expect(deleteIdea(f.data, 'nope').ideas).toBe(f.data.ideas)
+  })
+})
+
+describe('アイデアのフォルダの中のカード（2.9）', () => {
+  const folder = (id: string, titleId: string | null, parentId: string | null, name: string, order: number): IdeaFolder => ({
+    id,
+    titleId,
+    parentId,
+    name,
+    order,
+    createdAt: 1,
+    updatedAt: 1,
+  })
+  const withFolders = (data: AppData, ...fs: IdeaFolder[]): AppData => ({
+    ...data,
+    ideaFolders: { ...data.ideaFolders, ...Object.fromEntries(fs.map((f) => [f.id, f])) },
+  })
+  const add = (data: AppData, titleId: string | null, body: string, folderId: string | null = null) => {
+    const r = addIdea(data, titleId, '', body, folderId)
+    return { data: r.data, id: r.result }
+  }
+  const bodies = (list: Idea[]) => list.map((i) => i.body)
+
+  /** タイトル「星の庭」に 1段目「場面」とその中の「雨の駅」、ホームに「新作の相談」。カードはフォルダの外・中に */
+  function fixture() {
+    const t = createTitle(emptyData(), '星の庭')
+    let data = withFolders(
+      t.data,
+      folder('f-scene', t.result, null, '場面', 0),
+      folder('f-rain', t.result, 'f-scene', '雨の駅', 0),
+      folder('f-home', null, null, '新作の相談', 0),
+    )
+    let r = add(data, t.result, '外1')
+    const loose1 = r.id
+    r = add(r.data, t.result, '場面1', 'f-scene')
+    const scene1 = r.id
+    r = add(r.data, t.result, '雨1', 'f-rain')
+    const rain1 = r.id
+    r = add(r.data, t.result, '雨2', 'f-rain')
+    const rain2 = r.id
+    r = add(r.data, t.result, '外2')
+    const loose2 = r.id
+    data = r.data
+    return { data, titleId: t.result, loose1, loose2, scene1, rain1, rain2 }
+  }
+
+  it('ideaSections: ideas は今までどおり仕切りのすべてのカード、tree にフォルダの木。表が同じなら同じ答え', () => {
+    const f = fixture()
+    const sections = ideaSections(f.data)
+    const [title, home] = sections
+    // ideas は仕切りのすべてのカード（order は入れ物ごとなので、ここでは顔ぶれだけを見る）
+    expect(bodies(title.ideas).sort()).toEqual(['場面1', '外1', '外2', '雨1', '雨2'])
+    expect(title.tree.folders.map((n) => n.folder.name)).toEqual(['場面'])
+    expect(title.tree.folders[0].folders.map((n) => n.folder.name)).toEqual(['雨の駅'])
+    expect(bodies(title.tree.folders[0].ideas)).toEqual(['場面1'])
+    expect(bodies(title.tree.folders[0].folders[0].ideas)).toEqual(['雨1', '雨2'])
+    expect(bodies(title.tree.loose)).toEqual(['外1', '外2'])
+    expect(title.tree.count).toBe(5)
+    expect(home.ideas).toEqual([])
+    expect(home.tree.folders.map((n) => n.folder.name)).toEqual(['新作の相談'])
+    // アイデア・フォルダ・タイトルの表が同じなら作り直さない（ほかの表が変わっても）
+    expect(ideaSections({ ...f.data, memos: {} })).toBe(sections)
+    expect(ideaSections(withFolders(f.data, folder('f-new', null, null, '別', -1)))).not.toBe(sections)
+    expect(ideaSections(setIdeaChecked(f.data, f.loose1, true))).not.toBe(sections)
+  })
+
+  it('addIdea: フォルダを渡すとその中の末尾に入る。無いフォルダ・別の仕切りのフォルダは断る。フォルダの外には項目を書かない', () => {
+    const f = fixture()
+    const r = add(f.data, f.titleId, '雨3', 'f-rain')
+    expect(r.data.ideas[r.id]).toMatchObject({ folderId: 'f-rain', titleId: f.titleId })
+    expect(bodies(ideaSections(r.data)[0].tree.folders[0].folders[0].ideas)).toEqual(['雨1', '雨2', '雨3'])
+    // 並びは入れ物ごと（フォルダの外の末尾は、フォルダの中のカードの order に関係しない）
+    const loose = add(f.data, f.titleId, '外3')
+    expect('folderId' in loose.data.ideas[loose.id]).toBe(false)
+    expect(loose.data.ideas[loose.id].order).toBe(f.data.ideas[f.loose2].order + 1)
+    expect(() => addIdea(f.data, f.titleId, '', 'x', 'nope')).toThrow('フォルダが見つかりません')
+    expect(() => addIdea(f.data, f.titleId, '', 'x', 'f-home')).toThrow('フォルダが見つかりません')
+    expect(() => addIdea(f.data, null, '', 'x', 'f-scene')).toThrow('フォルダが見つかりません')
+    // ホームのフォルダにはホームのカードとして入る
+    const home = add(f.data, null, '相談1', 'f-home')
+    expect(bodies(ideaSections(home.data).at(-1)!.tree.folders[0].ideas)).toEqual(['相談1'])
+  })
+
+  it('setIdeaChecked: 外すと、入っているフォルダの済みでないカードの末尾に戻る', () => {
+    const f = fixture()
+    let data = setIdeaChecked(f.data, f.rain1, true)
+    expect(bodies(ideaSections(data)[0].tree.folders[0].folders[0].ideas)).toEqual(['雨2', '雨1'])
+    data = add(data, f.titleId, '雨3', 'f-rain').data
+    data = setIdeaChecked(data, f.rain1, false)
+    expect(bodies(ideaSections(data)[0].tree.folders[0].folders[0].ideas)).toEqual(['雨2', '雨3', '雨1'])
+    expect(data.ideas[f.rain1].folderId).toBe('f-rain')
+    // フォルダの外のカードの並びは変わらない
+    expect(bodies(ideaSections(data)[0].tree.loose)).toEqual(['外1', '外2'])
+  })
+
+  it('moveIdeaStep: 同じ入れ物（仕切り＋フォルダ）の中で動かす', () => {
+    const f = fixture()
+    let data = moveIdeaStep(f.data, f.rain2, -1)
+    expect(bodies(ideaSections(data)[0].tree.folders[0].folders[0].ideas)).toEqual(['雨2', '雨1'])
+    // 入れ物の先頭・末尾では動かない（フォルダの外のカードと入れ替わらない）
+    expect(moveIdeaStep(data, f.rain2, -1).ideas).toBe(data.ideas)
+    expect(moveIdeaStep(data, f.scene1, 1).ideas).toBe(data.ideas)
+    data = moveIdeaStep(data, f.loose2, -1)
+    expect(bodies(ideaSections(data)[0].tree.loose)).toEqual(['外2', '外1'])
+  })
+
+  it('moveIdeaTo: フォルダの中の選んだ位置へ・フォルダの外へ。外へ出すと項目ごと消す（null は書かない）', () => {
+    const f = fixture()
+    let data = moveIdeaTo(f.data, f.loose1, f.titleId, 1, 'f-rain')
+    expect(data.ideas[f.loose1].folderId).toBe('f-rain')
+    expect(bodies(ideaSections(data)[0].tree.folders[0].folders[0].ideas)).toEqual(['雨1', '外1', '雨2'])
+    expect(bodies(ideaSections(data)[0].tree.loose)).toEqual(['外2'])
+    data = moveIdeaTo(data, f.loose1, f.titleId, 0)
+    expect('folderId' in data.ideas[f.loose1]).toBe(false)
+    expect(bodies(ideaSections(data)[0].tree.loose)).toEqual(['外1', '外2'])
+    // 2段目から1段目へ（同じ仕切り）、別の仕切りのフォルダへ（タイトルも変わる）
+    data = moveIdeaTo(data, f.rain1, f.titleId, 0, 'f-scene')
+    expect(bodies(ideaSections(data)[0].tree.folders[0].ideas)).toEqual(['雨1', '場面1'])
+    data = moveIdeaTo(data, f.rain1, null, 0, 'f-home')
+    expect(data.ideas[f.rain1]).toMatchObject({ titleId: null, folderId: 'f-home' })
+    expect(() => moveIdeaTo(data, f.rain1, f.titleId, 0, 'f-home')).toThrow('フォルダが見つかりません')
+    expect(() => moveIdeaTo(data, f.rain1, f.titleId, 0, 'nope')).toThrow('フォルダが見つかりません')
+    // 済みのカードは入れ物だけ移す（入れ物の末尾の order。済みのまま）
+    data = setIdeaChecked(data, f.rain2, true)
+    data = moveIdeaTo(data, f.rain2, f.titleId, 0)
+    expect(data.ideas[f.rain2]).toMatchObject({ checked: true, titleId: f.titleId })
+    expect('folderId' in data.ideas[f.rain2]).toBe(false)
+    expect(Object.values(data.ideas).some((i) => (i as { folderId?: unknown }).folderId === null)).toBe(false)
+  })
+
+  it('moveIdeaTo: 同じ入れ物の中の位置だけ変える時は、入っているフォルダの参照をそのままにする', () => {
+    const f = fixture()
+    const data = moveIdeaTo(f.data, f.rain2, f.titleId, 0, 'f-rain')
+    expect(bodies(ideaSections(data)[0].tree.folders[0].folders[0].ideas)).toEqual(['雨2', '雨1'])
+    // 見せ方でフォルダの外にあるカード（フォルダが無い）を同じ仕切りの外の中で動かしても、参照は消さない
+    const dangling = { ...f.data, ideas: { ...f.data.ideas, [f.loose1]: { ...f.data.ideas[f.loose1], folderId: 'gone' } } }
+    const moved = moveIdeaTo(dangling, f.loose1, f.titleId, 1)
+    expect(moved.ideas[f.loose1].folderId).toBe('gone')
+    expect(bodies(ideaSections(moved)[0].tree.loose)).toEqual(['外2', '外1'])
+  })
+
+  it('moveIdeaToSection: 別の仕切りのフォルダの外へ（入っていたフォルダから出す）。同じ仕切りのフォルダの中からも外へ出す', () => {
+    const f = fixture()
+    let data = moveIdeaToSection(f.data, f.rain1, null)
+    expect(data.ideas[f.rain1].titleId).toBeNull()
+    expect('folderId' in data.ideas[f.rain1]).toBe(false)
+    data = moveIdeaToSection(data, f.scene1, f.titleId)
+    expect('folderId' in data.ideas[f.scene1]).toBe(false)
+    expect(bodies(ideaSections(data)[0].tree.loose)).toEqual(['外1', '外2', '場面1'])
+    // もうフォルダの外にあれば何もしない
+    expect(moveIdeaToSection(data, f.loose1, f.titleId).ideas).toBe(data.ideas)
+  })
+
+  it('trashIdea: 戻す位置は入れ物の中で控え、フォルダの中なら場所の表記を控える。戻すと同じフォルダに戻る', () => {
+    const f = fixture()
+    const deleted = deleteIdea(f.data, f.rain2)
+    const [entry] = Object.values(deleted.trashEntries)
+    expect(entry).toMatchObject({
+      kind: 'idea',
+      titleName: '星の庭',
+      parentLabel: '場面 › 雨の駅',
+      origin: { titleId: f.titleId, index: f.data.ideas[f.rain2].order, prevId: f.rain1 },
+    })
+    // フォルダの外のカードは場所の表記を持たない（今までと同じ形）
+    const outside = Object.values(deleteIdea(f.data, f.loose2).trashEntries)[0]
+    expect(outside.parentLabel).toBeUndefined()
+    expect(outside.origin).toEqual({ titleId: f.titleId, index: f.data.ideas[f.loose2].order, prevId: f.loose1 })
+    const back = restoreTrashEntry(deleted, entry.id).data
+    expect(back.ideas[f.rain2].folderId).toBe('f-rain')
+    expect(bodies(ideaSections(back)[0].tree.folders[0].folders[0].ideas)).toEqual(['雨1', '雨2'])
+  })
+
+  it('deleteTitle: フォルダもホームへ移る（中のつながり・カードの folderId はそのまま。1段目はホームの1段目の後ろへ）', () => {
+    const f = fixture()
+    let data = withFolders(f.data, folder('f-plot', f.titleId, null, '筋', 1), folder('f-home2', null, null, '道具', 5))
+    data = deleteTitle(data, f.titleId)
+    const [home] = ideaSections(data)
+    expect(home.titleId).toBeNull()
+    expect(home.tree.folders.map((n) => n.folder.name)).toEqual(['新作の相談', '道具', '場面', '筋'])
+    const scene = home.tree.folders[2]
+    expect(scene.folders.map((n) => n.folder.name)).toEqual(['雨の駅'])
+    expect(bodies(scene.ideas)).toEqual(['場面1'])
+    expect(bodies(scene.folders[0].ideas)).toEqual(['雨1', '雨2'])
+    expect(bodies(home.tree.loose)).toEqual(['外1', '外2'])
+    expect(data.ideaFolders['f-scene']).toMatchObject({ titleId: null, parentId: null, order: 6 })
+    expect(data.ideaFolders['f-plot']).toMatchObject({ titleId: null, order: 7 })
+    // 2段目の並び・親はそのまま
+    expect(data.ideaFolders['f-rain']).toMatchObject({ titleId: null, parentId: 'f-scene', order: 0 })
+    // フォルダはタイトルのゴミ箱の件には入らない（タイトルを戻しても戻らない）
+    const [entry] = Object.values(data.trashEntries)
+    expect(entry.recordIds.map((id) => data.trashRecords[id].table)).not.toContain('ideaFolders')
+    const back = restoreTrashEntry(data, entry.id).data
+    expect(back.ideaFolders['f-scene'].titleId).toBeNull()
+  })
+
+  it('deleteTitle: ホームの1段目と同じ名前（字の幅・空白の違いも同じ）の1段目は「名前（タイトル名）」にする。それも重なれば「 2」…', () => {
+    const t = createTitle(emptyData(), '星の庭')
+    let data = withFolders(
+      t.data,
+      folder('h1', null, null, '新作 の相談 ＡＢ', 0),
+      folder('h2', null, null, '場面（星の庭）', 1),
+      folder('a', t.result, null, '新作\u3000の相談  AB', 0),
+      folder('b', t.result, null, '場面', 1),
+      folder('c', t.result, null, '筋', 2),
+      folder('a-sub', t.result, 'a', '新作の相談', 0),
+      folder('h-b', null, null, '場面', 2),
+    )
+    data = deleteTitle(data, t.result)
+    expect(data.ideaFolders.a.name).toBe('新作\u3000の相談  AB（星の庭）')
+    expect(data.ideaFolders.b.name).toBe('場面（星の庭） 2')
+    expect(data.ideaFolders.c.name).toBe('筋')
+    // 2段目は親と一緒に移るので、名前は変えない
+    expect(data.ideaFolders['a-sub'].name).toBe('新作の相談')
+    // 長い名前・長いタイトル名でも40字まで
+    const long = createTitle(emptyData(), 'とても長いタイトルの名前をここに書いておくとどうなるでしょうか')
+    let d2 = withFolders(
+      long.data,
+      folder('h', null, null, 'あ'.repeat(40), 0),
+      folder('x', long.result, null, 'あ'.repeat(40), 0),
+    )
+    d2 = deleteTitle(d2, long.result)
+    const name = d2.ideaFolders.x.name
+    expect(Array.from(name).length).toBeLessThanOrEqual(40)
+    expect(name).toMatch(/（とても長いタイトルの名前をここに書いて…）$/)
+    expect(name.startsWith('あ')).toBe(true)
   })
 })
 

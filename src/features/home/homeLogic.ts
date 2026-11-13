@@ -1,4 +1,5 @@
 // ホーム画面（タイトル群・アイデア領域・相対比較の棚・資料の棚）で使う、表示用の純粋な計算。データは変更しない。
+import { claudeAccessOf } from '../../claude/access'
 import { missingActiveLabel, titleLastEdited, titleSummary, type TitleSummary } from '../../domain/entityOps'
 import { formatCount } from '../../domain/text'
 import { trashNotice } from '../../domain/trash'
@@ -26,6 +27,10 @@ export interface TitleCardInfo {
   chaptersEnabled: boolean
   lastEdited: number
   ideaCount: number
+  /** 2.9: このタイトルのアイデアのフォルダの数（どちらの段も） */
+  folderCount: number
+  /** Claude に見せない（claudeAccess = none）タイトル */
+  claudeHidden: boolean
   versionCount: number
 }
 
@@ -34,6 +39,8 @@ export function titleCardInfo(data: AppData, titleId: ID): TitleCardInfo | null 
   if (!title) return null
   let ideaCount = 0
   for (const idea of Object.values(data.ideas)) if (idea.titleId === titleId) ideaCount += 1
+  let folderCount = 0
+  for (const f of Object.values(data.ideaFolders)) if (f.titleId === titleId) folderCount += 1
   let versionCount = 0
   for (const v of Object.values(data.versions)) if (v.titleId === titleId) versionCount += 1
   return {
@@ -44,6 +51,8 @@ export function titleCardInfo(data: AppData, titleId: ID): TitleCardInfo | null 
     chaptersEnabled: title.chaptersEnabled,
     lastEdited: titleLastEdited(data, titleId),
     ideaCount,
+    folderCount,
+    claudeHidden: claudeAccessOf(title) === 'none',
     versionCount,
   }
 }
@@ -67,18 +76,32 @@ export function charsLabel(chars: number): string {
   return `${formatCount(chars)}字`
 }
 
-/** タイトル削除の確認文。何が消え、アイデアがどこへ行くかをはっきり書く */
-export function deleteTitleMessage(info: Pick<TitleCardInfo, 'summary' | 'versionCount' | 'ideaCount'>): string {
+/**
+ * タイトル削除の確認文。何が消え、アイデアがどこへ行くかをはっきり書く。2.9: フォルダがあれば、フォルダも移ることと、
+ * 名前が重なった時の名前の付け方、Claude に見せないタイトルならフォルダの名前が Claude に見えるようになることも書く
+ */
+export function deleteTitleMessage(
+  info: Pick<TitleCardInfo, 'summary' | 'versionCount' | 'ideaCount'> &
+    Partial<Pick<TitleCardInfo, 'folderCount' | 'claudeHidden'>>,
+): string {
   const { episodes, specials } = info.summary
   const parts = [`全${episodes}話`]
   if (specials > 0) parts.push(`特殊ブロック${specials}件`)
   parts.push(`推敲バージョン${info.versionCount}稿`)
   const lines = [trashNotice(`このタイトルのすべての話・推敲バージョン・設定項目・戦略・メモ（${parts.join('、')}）をまとめて`)]
-  lines.push(
-    info.ideaCount > 0
-      ? `このタイトルのアイデア（${info.ideaCount}件）は削除されず、「どのタイトルにも属さない」へ移ります。`
-      : 'このタイトルのアイデアがあった場合は、削除されずに「どのタイトルにも属さない」へ移ります。',
-  )
+  const folders = info.folderCount ?? 0
+  if (folders > 0) {
+    lines.push(
+      `このタイトルのアイデア（${info.ideaCount}件）とフォルダ（${folders}個）は削除されず、「どのタイトルにも属さない」へ移ります（同じ名前のフォルダがあれば、名前の後ろに（タイトル名）を付けます）。` +
+        (info.claudeHidden ? '（どのタイトルにも属さないフォルダの名前は、Claude にも見えるようになります）' : ''),
+    )
+  } else {
+    lines.push(
+      info.ideaCount > 0
+        ? `このタイトルのアイデア（${info.ideaCount}件）は削除されず、「どのタイトルにも属さない」へ移ります。`
+        : 'このタイトルのアイデアがあった場合は、削除されずに「どのタイトルにも属さない」へ移ります。',
+    )
+  }
   return lines.join('\n\n')
 }
 
