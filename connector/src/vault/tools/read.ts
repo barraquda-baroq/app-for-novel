@@ -90,7 +90,7 @@ import {
   submissionTextStatus,
   textLimitRange,
 } from '../../../../src/domain/submissionTexts'
-import { bodyMetrics, formatCount, textHash } from '../../../../src/domain/text'
+import { bodyMetrics, countChars, formatCount, textHash } from '../../../../src/domain/text'
 import { TRASH_RETENTION_DAYS } from '../../../../src/domain/trash'
 import type {
   AppData,
@@ -111,7 +111,6 @@ import {
   fail,
   head,
   itemBudget,
-  length,
   num,
   ok,
   pageBody,
@@ -335,7 +334,7 @@ function ideaItems(view: AppData, ideas: readonly Idea[]): NoteItem[] {
     const ref = shortId('idea', i.id)
     const heading = i.heading.trim()
     const done = isIdeaChecked(i) ? '【済】' : ''
-    const chars = `（${formatCount(length(i.body))}字）`
+    const chars = `（${formatCount(countChars(i.body))}字）`
     const name = heading || (i.body.split(/\r\n?|\n/).find((l) => l.trim()) ?? '').trim()
     if (!isClaudeIdea(i))
       return {
@@ -449,7 +448,7 @@ function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos'): Not
       id: m.id,
       ref: shortId('memo', m.id),
       name: m.name,
-      line: `${shortId('memo', m.id)} ${m.name.trim() || '（無題のメモ）'}（${formatCount(length(m.body))}字）${m.body.trim() ? `: ${head(m.body)}` : ''}`,
+      line: `${shortId('memo', m.id)} ${m.name.trim() || '（無題のメモ）'}（${formatCount(bodyMetrics(m).chars)}字）${m.body.trim() ? `: ${head(m.body)}` : ''}`,
       full: () => `=== メモ: ${m.name.trim() || '（無題のメモ）'} [${shortId('memo', m.id)}] ===\n${m.body}`,
     }))
   const out: NoteItem[] = []
@@ -460,7 +459,7 @@ function noteItems(view: AppData, title: Title, kind: 'settings' | 'memos'): Not
         id: e.id,
         ref: shortId('settingEntry', e.id),
         name: e.name,
-        line: `${shortId('settingEntry', e.id)} ${c.name.trim() || '（無題の項目）'} / ${e.name.trim() || '（無題）'}（フィールド${fields.length}・本文 ${formatCount(length(e.body))}字）${fields[0] ? `: ${head(`${fields[0].key}: ${fields[0].value}`, 40)}` : ''}`,
+        line: `${shortId('settingEntry', e.id)} ${c.name.trim() || '（無題の項目）'} / ${e.name.trim() || '（無題）'}（フィールド${fields.length}・本文 ${formatCount(countChars(e.body))}字）${fields[0] ? `: ${head(`${fields[0].key}: ${fields[0].value}`, 40)}` : ''}`,
         full: () =>
           [
             `=== 設定: ${c.name.trim() || '（無題の項目）'} / ${e.name.trim() || '（無題）'} [${shortId('settingEntry', e.id)}] ===`,
@@ -1101,13 +1100,13 @@ export function getCritique(ctx: ReadContext, args: Args): ToolResult {
   ]
   for (const p of allPrompts)
     lines.push(
-      `${shortId('critiquePrompt', p.id)}「${p.name}」（${p.titleId === null ? '共通' : 'このタイトル'}・${formatCount(length(p.body))}字）: ${head(p.body, 60)}`,
+      `${shortId('critiquePrompt', p.id)}「${p.name}」（${p.titleId === null ? '共通' : 'このタイトル'}・${formatCount(countChars(p.body))}字）: ${head(p.body, 60)}`,
     )
   if (!allPrompts.length) lines.push('（ありません）')
   lines.push(`--- 批評の結果（${results.length}件。新しい日付から）---`)
   for (const r of results.slice(0, LIST_RESULTS))
     lines.push(
-      `${shortId('critiqueResult', r.id)} ${r.runDate}「${r.promptName || '（プロンプトなし）'}」${r.scope.kind === 'range' ? r.scope.label : 'タイトル全体'}・${r.manuscript ? manuscriptLabel(r.manuscript, current) : '原稿の控えなし'}${r.resultMarkdown ? `・Markdown ${formatCount(length(r.resultMarkdown))}字` : ''}${r.artifactUrl ? '・URL あり' : ''}${r.benchWorkIds?.length ? `・${compared(r.benchWorkIds)}` : ''}${r.resultMarkdown ? `\n  ${head(r.resultMarkdown, 80)}` : ''}`,
+      `${shortId('critiqueResult', r.id)} ${r.runDate}「${r.promptName || '（プロンプトなし）'}」${r.scope.kind === 'range' ? r.scope.label : 'タイトル全体'}・${r.manuscript ? manuscriptLabel(r.manuscript, current) : '原稿の控えなし'}${r.resultMarkdown ? `・Markdown ${formatCount(countChars(r.resultMarkdown))}字` : ''}${r.artifactUrl ? '・URL あり' : ''}${r.benchWorkIds?.length ? `・${compared(r.benchWorkIds)}` : ''}${r.resultMarkdown ? `\n  ${head(r.resultMarkdown, 80)}` : ''}`,
     )
   if (results.length > LIST_RESULTS)
     lines.push(

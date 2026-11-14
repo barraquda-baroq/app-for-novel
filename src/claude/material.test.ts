@@ -743,6 +743,14 @@ describe('並び・Claude に渡す形', () => {
     expect(materialLine(plain.data, plain.data.materials[plain.result])).toBe(
       `${shortId('material', plain.result)}『料理帖』\n  記録 0件`,
     )
+    // 記録の字数はアプリの資料の画面の「合計 n字」と同じ数え方（空白・改行・全角の空白・表の詰め物・ルビの記法と読みを除く。
+    // 空白・改行込みでは 66字＋10字）
+    const table = '## 文体\n\n| 観点 | 評価 |\n| --- | --- |\n| 文の長さ | 短い |\n\n　主人公は｜漢字《かんじ》を読む。\n'
+    let spaced = addMaterialNote(plain.data, plain.result, { section: '要約', body: table, runDate: '2026-10-01' }).data
+    spaced = addMaterialNote(spaced, plain.result, { section: '年表', body: '短い　文。\n次の行。', runDate: '2026-10-02' }).data
+    expect(materialLine(spaced, spaced.materials[plain.result]).split('\n')[1]).toBe(
+      '  記録 2件（47字）: 要約 1件（最新 2026-10-01）・年表 1件（最新 2026-10-02）',
+    )
     // 項目で絞る（前後の空白・正規化の違いは問わない。空なら絞らない）
     const notes = materialNotesOf(n.data, n.materialId)
     expect(filterBySections(notes, [' 年表']).map((x) => x.body)).toEqual(['年表・新しい', '年表・古い'])

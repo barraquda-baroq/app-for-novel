@@ -1342,6 +1342,11 @@ export const WRITE_OUTPUT_SCHEMA: Record<string, unknown> = {
           },
           "label": {
             "type": "string"
+          },
+          "chars": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [

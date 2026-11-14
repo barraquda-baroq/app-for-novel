@@ -3,6 +3,7 @@
 // 書けた分だけ。
 import { describe, expect, it } from 'vitest'
 import { addBenchWork } from '../../../src/domain/benchOps'
+import { addMaterial } from '../../../src/domain/materialOps'
 import type { AppData } from '../../../src/domain/types'
 import { novel } from '../../../src/test/claudeFixture'
 import { MESSAGES } from '../../src/vault/errors'
@@ -282,6 +283,32 @@ describe('L5-4・L5-9・L3-8: 書けなかった分', () => {
     // 初めの試しの「もうある」（何も書いていない）は今までどおり数えない: 上の L3-8 のテスト
   })
 
+  it('書けたのに答えが届かず、試し直しで「重複」から「追加」にした分析にも、字数の行と chars を出す（送った本文から数える）', async () => {
+    const n = novel(['本文。'])
+    const { core, b, plan } = await scriptedCommits(n.data)
+    plan(lost)
+    const r = await core.callTool(
+      'novel_add_bench_analysis',
+      {
+        work: '作品A',
+        new_work: { name: '作品A', author: '高橋' },
+        items: [
+          { viewpoint: '文体', body_markdown: '## 文体\n\n| 観点 | 評価 |\n| --- | --- |\n| 文 | 短い |', run_date: '2026-10-30' },
+          { viewpoint: '人物', body_markdown: '　主人公は｜漢字《かんじ》を読む。', run_date: '2026-10-30' },
+        ],
+      },
+      { grant: b },
+    )
+    const lines = r.text.split('\n')
+    expect(lines[0]).toBe('相対比較に分析を追加: 追加 2件')
+    expect(lines[1]).toMatch(/^- 追加 n:\S+ 『作品A』の「文体」$/)
+    // ##文体 4・|観点|評価| 7・|---|---| 9・|文|短い| 6
+    expect(lines[2]).toBe('    字数: 26字（空白・改行を除く。アプリと同じ数え方）')
+    expect(lines[3]).toMatch(/^- 追加 n:\S+ 『作品A』の「人物」$/)
+    expect(lines[4]).toBe('    字数: 10字（空白・改行を除く。アプリと同じ数え方）')
+    expect((r.structured as { created: { chars?: number }[] }).created.map((c) => c.chars)).toEqual([26, 10])
+  })
+
   it('5xx が3回続き、最後の試しだけ書けていた（504 で待ち切ったなど）組は、書けたか分からないので数えたまま。もう一度送ると重複になり、数は増えない', async () => {
     const s = hundred()
     const { core, fake, b, plan } = await scriptedCommits(s.n.data)
@@ -377,5 +404,101 @@ describe('L5-4・L5-9・L3-8: 書けなかった分', () => {
     const r = await core.callTool('novel_add_strategy_note', { title_id: n.titleId, heading: '公募', body: '本文' }, { grant: a })
     expect(r.text).toContain('追加 1件')
     expect(writes(core) - before).toBe(1)
+  })
+})
+
+describe('追加の答えの字数（2.9。アプリと同じ数え方: 空白・改行・ルビの記法と読みを除く）', () => {
+  const line = (n: string) => `    字数: ${n}字（空白・改行を除く。アプリと同じ数え方）`
+  /** 空白・改行込みでは 66字、アプリの数え方では 39字（##文体 4・|観点|評価| 7・|---|---| 9・|文の長さ|短い| 9・主人公は漢字を読む。 10） */
+  const TABLE = '## 文体\n\n| 観点 | 評価 |\n| --- | --- |\n| 文の長さ | 短い |\n\n　主人公は｜漢字《かんじ》を読む。\n'
+  /** 3,019字（空白・改行込み）→ 2,980字: 149字の行が20行、各行の頭に全角の空白 */
+  const LONG = Array.from({ length: 20 }, () => `　${'あ'.repeat(149)}`).join('\n')
+  const created = (r: { structured?: unknown }) => (r.structured as { created: { id: string; chars?: number }[] }).created
+
+  it('相対比較の分析・資料の記録: 「- 追加」の行（そのまま）の下に、記録ごとの字数の行。分けた部はそれぞれ。重複には出さない', async () => {
+    expect(TABLE.length).toBe(66)
+    expect(LONG.length).toBe(3_019)
+    const n = novel(['本文。'])
+    const data = addMaterial(addBenchWork(n.data, { name: '銀河の果て', author: '山田' }).data, { name: '外科の歴史', author: '高橋' }).data
+    const { core } = await pairedCore(new FakeFirebase(), data)
+    const input = {
+      work: '銀河の果て',
+      items: [
+        { viewpoint: '文体', body_markdown: TABLE, run_date: '2026-10-30' },
+        { viewpoint: '16 現実の成果データ', body_markdown: `（1/2）\n${LONG}`, run_date: '2026-10-30' },
+        { viewpoint: '16 現実の成果データ', body_markdown: '（2/2）\n続き。', run_date: '2026-10-30' },
+      ],
+    }
+    const r = await core.callTool('novel_add_bench_analysis', input)
+    const lines = r.text.split('\n')
+    expect(lines[0]).toBe('相対比較に分析を追加: 追加 3件')
+    expect(lines.slice(1, 7).map((l) => l.replace(/^- 追加 n:[0-9a-z]{8} /, '- 追加 n:… '))).toEqual([
+      '- 追加 n:… 『銀河の果て』の「文体」',
+      line('39'),
+      '- 追加 n:… 『銀河の果て』の「16 現実の成果データ」',
+      line('2,985'),
+      '- 追加 n:… 『銀河の果て』の「16 現実の成果データ」',
+      line('8'),
+    ])
+    expect(lines[7]).toMatch(/^補足: 相対比較の作品 w:[0-9a-z]{8}『銀河の果て』（山田） に追加しました$/)
+    expect(created(r).map((c) => c.chars)).toEqual([39, 2_985, 8])
+    // 同じ内容をもう一度: 重複の行には字数を出さない
+    const dup = await core.callTool('novel_add_bench_analysis', input)
+    expect(dup.text).not.toContain('字数:')
+    expect(created(dup)).toEqual([])
+
+    const k = await core.callTool('novel_add_material_notes', {
+      material: '外科の歴史',
+      items: [{ section: '要約', body_markdown: LONG, run_date: '2026-10-31' }],
+    })
+    const kl = k.text.split('\n')
+    expect(kl[1]).toMatch(/^- 追加 k:[0-9a-z]{8} 『外科の歴史』の「要約」$/)
+    expect(kl[2]).toBe(line('2,980'))
+    expect(created(k)[0].chars).toBe(2_980)
+  })
+
+  it('批評の結果（Markdown だけ数える。URL だけなら出さない）・戦略メモ・改稿案（見出しは数えない）。推敲案には出さない', async () => {
+    const n = novel(['海が見れる。'])
+    const { core } = await pairedCore(new FakeFirebase(), n.data)
+    const t = n.titleId
+    const result = await core.callTool('novel_add_critique_result', {
+      title_id: t,
+      prompt_text: '長いプロンプトの控え　'.repeat(20),
+      result_markdown: TABLE,
+      run_date: '2026-10-30',
+    })
+    expect(result.text.split('\n').slice(1, 3)).toEqual([expect.stringMatching(/^- 追加 a:[0-9a-z]{8} 作品批評の結果$/), line('39')])
+    expect(created(result)[0].chars).toBe(39)
+    const url = await core.callTool('novel_add_critique_result', { title_id: t, artifact_url: 'https://claude.ai/x', run_date: '2026-10-30' })
+    expect(url.text.split('\n')[1]).toMatch(/^- 追加 a:/)
+    expect(url.text).not.toContain('字数:')
+    expect(created(url)[0]).not.toHaveProperty('chars')
+
+    const note = await core.callTool('novel_add_strategy_note', { title_id: t, heading: '応募戦略（とても長い見出し）', body: LONG })
+    expect(note.text.split('\n').slice(1, 3)).toEqual([expect.stringMatching(/^- 追加 g:[0-9a-z]{8} 「応募戦略/), line('2,980')])
+    expect(created(note)[0].chars).toBe(2_980)
+
+    const ideas = await core.callTool('novel_add_revision_ideas', {
+      title_id: t,
+      items: [
+        { heading: '冒頭', body: TABLE },
+        { heading: '結末', body: '余韻を　残す。\n' },
+      ],
+    })
+    expect(ideas.text.split('\n').slice(1, 5)).toEqual([
+      expect.stringMatching(/^- 追加 r:[0-9a-z]{8} 「冒頭」$/),
+      line('39'),
+      expect.stringMatching(/^- 追加 r:[0-9a-z]{8} 「結末」$/),
+      line('6'),
+    ])
+    expect(created(ideas).map((c) => c.chars)).toEqual([39, 6])
+
+    const proof = await core.callTool('novel_add_proofreading', {
+      title_id: t,
+      items: [{ piece: '#1', excerpt: '海が見れる', category: 'ra_nuki', suggestion: '海が見られる', reason: 'ら抜き言葉' }],
+    })
+    expect(proof.text).toContain('追加 1件')
+    expect(proof.text).not.toContain('字数:')
+    expect(created(proof)[0]).not.toHaveProperty('chars')
   })
 })

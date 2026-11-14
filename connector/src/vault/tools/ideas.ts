@@ -11,6 +11,7 @@ import { CLAUDE_PATH_SEP } from '../../../../src/claude/ideaFolders'
 import { IDEA_ADD_HINTS, type IdeaAddBuild, type IdeaAppendBuild, type IdeaAppendItemStatus } from '../../../../src/claude/ideaWrite'
 import { summarizeItems } from '../../../../src/claude/records'
 import { shortId } from '../../../../src/claude/refs'
+import { countChars, formatCount } from '../../../../src/domain/text'
 import { capText, fail, type ToolResult } from './common'
 
 const ADD_STATUS_LABELS = {
@@ -137,7 +138,7 @@ export function ideaAppendResult(built: IdeaAppendBuild, created: ReadonlySet<st
   } else {
     if (built.request)
       lines.push(
-        `足す形: カードの終わりに空行を置き、「${appendHeader(built.request.createdAt)}」の行の下に内容（${Array.from(built.text ?? '').length.toLocaleString('ja-JP')}字）`,
+        `足す形: カードの終わりに空行を置き、「${appendHeader(built.request.createdAt)}」の行の下に内容（${formatCount(countChars(built.text ?? ''))}字）`,
       )
     lines.push(
       '追記は依頼として送りました。アプリを開いて同期すると、カードの終わりに足されます（前の中身と作者が直した所は残り、並びの位置と「済み」は変わりません）。Claude からは、もう追記した後の中身が見えます。続けて追記する時は、もう一度 novel_get_notes で読んでから、新しい印（本文の見出しの「印: 」の後ろの8字）を read_mark に渡してください。本文（稿）は書き換えていません。',

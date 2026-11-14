@@ -929,6 +929,41 @@ describe('読むツール', () => {
     expect(p.isError).toBe(true)
   })
 
+  it('一覧の「（n字）」はアプリと同じ数え方（空白・改行・全角の空白・ルビの記法と読みを除く）: メモ・設定・批評プロンプト・批評の結果', async () => {
+    const fake = new FakeFirebase()
+    const n = novel(['本文'])
+    const t = n.titleId
+    // 空白・改行込みでは 66字。アプリの数え方では 39字
+    const table = '## 文体\n\n| 観点 | 評価 |\n| --- | --- |\n| 文の長さ | 短い |\n\n　主人公は｜漢字《かんじ》を読む。\n'
+    expect(table.length).toBe(66)
+    n.data.memos = { m1: { id: 'm1', titleId: t, name: 'プロット', body: table, order: 0, createdAt: 1, updatedAt: 1 } }
+    n.data.settingCategories = {
+      c1: { id: 'c1', titleId: t, name: 'キャラクター', fieldTemplate: [], order: 0, createdAt: 1, updatedAt: 1 },
+    }
+    n.data.settingEntries = {
+      e1: {
+        id: 'e1',
+        titleId: t,
+        categoryId: 'c1',
+        name: '主人公',
+        fields: [{ id: 'f1', key: '年齢', value: '17' }],
+        // 空白・改行込みでは 16字
+        body: '　｜漢字《かんじ》を読む\n少年。',
+        order: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }
+    const { core } = await pairedCore(fake, n.data)
+    expect(await call(core, 'novel_get_notes', { title_id: t, kind: 'memos' })).toContain('プロット（39字）: ')
+    expect(await call(core, 'novel_get_notes', { title_id: t, kind: 'settings' })).toContain('キャラクター / 主人公（フィールド1・本文 8字）')
+    await core.callTool('novel_save_critique_prompt', { scope: 'title', title_id: t, name: '総評', body: table })
+    await core.callTool('novel_add_critique_result', { title_id: t, result_markdown: table, run_date: '2026-10-30' })
+    const critique = await call(core, 'novel_get_critique', { title_id: t })
+    expect(critique).toMatch(/q:\S+「総評」（このタイトル・39字）: /)
+    expect(critique).toMatch(/a:\S+ 2026-10-30「（プロンプトなし）」タイトル全体・.*・Markdown 39字\n/)
+  })
+
   it('アイデア（novel_get_notes kind=ideas）: 済みは【済】を付けて後ろに並べ、古い版の見出しはそのまま出す', async () => {
     const fake = new FakeFirebase()
     const n = novel(['本文'])
@@ -960,7 +995,7 @@ describe('読むツール', () => {
       '記憶を売る古書店（8字）: 客は記憶を売る。',
       '天窓の栞（4字）',
       '【済】止まった時計（6字）',
-      '【済】雨の駅 来ない列車を待つ（12字）',
+      '【済】雨の駅 来ない列車を待つ（11字）',
     ])
     expect(list).not.toContain('見出しなし')
     const full = await call(core, 'novel_get_notes', { title_id: t, kind: 'ideas', full: true })

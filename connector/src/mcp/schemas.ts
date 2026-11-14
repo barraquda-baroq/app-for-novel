@@ -477,7 +477,9 @@ export type ToolName = keyof typeof SCHEMAS
 
 /** 書き込みツールの結果（structuredContent）の形 */
 export const WRITE_OUTPUT = z.object({
-  created: z.array(z.object({ id: z.string(), label: z.string() })),
+  // chars: Claude が書いた本文の文字数（アプリと同じ数え方。相対比較の分析・資料の記録・批評の結果・戦略メモ・改稿案だけ。
+  // アイデアのツールも同じ形を使うので省ける）
+  created: z.array(z.object({ id: z.string(), label: z.string(), chars: z.number().int().optional() })),
   skipped: z.array(
     z.object({ index: z.number().int(), reason: z.string(), id: z.string().optional(), hint: z.string().optional() }),
   ),

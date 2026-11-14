@@ -14,6 +14,7 @@ import { BENCH_LIMITS, benchWorkName, sortedBenchWorks } from '../domain/benchOp
 import { hashJson } from '../domain/hash'
 import { MATERIAL_LIMITS, materialName, sortedMaterials } from '../domain/materialOps'
 import { adoptedText, isSplit, pieceFullLabel, pieceLabel } from '../domain/structure'
+import { countChars } from '../domain/text'
 import type {
   AppData,
   BenchAnalysis,
@@ -333,6 +334,12 @@ export interface ItemResult {
    * structuredContent の reason は status のまま）
    */
   statusLabel?: string
+  /**
+   * Claude が書いた本文の文字数（アプリと同じ数え方: 空白・改行・ルビの記法と読みを除く。countChars）。相対比較の分析・資料の記録・
+   * 批評の結果（結果の Markdown だけ。URL だけの結果には無い）・戦略メモ・改稿案（本文だけ。見出しは数えない）の、作る記録と
+   * 同じものがある記録に付ける（試し直しで2回目に「重複」になった記録も、コネクタの答えでは「追加」にして字数を出すため）
+   */
+  chars?: number
 }
 
 export interface BuildResult {
@@ -842,7 +849,16 @@ export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx
     }
     const id = revisionIdeaId(title.id, item.heading, item.body)
     const status = existing(data, ctx, 'revisionIdeas', id, seen)
-    if (status) return items.push({ index, status, id, table: 'revisionIdeas', label, hint: STATUS_HINTS[status] })
+    if (status)
+      return items.push({
+        index,
+        status,
+        id,
+        table: 'revisionIdeas',
+        label,
+        hint: STATUS_HINTS[status],
+        chars: countChars(item.body),
+      })
     const rec: RevisionIdea = {
       id,
       ...base(ctx, title.id),
@@ -872,6 +888,7 @@ export function buildRevisionIdeas(data: AppData, input: RevisionIdeasInput, ctx
       id,
       table: 'revisionIdeas',
       label,
+      chars: countChars(rec.body),
       ...(missing.length ? { hint: `見つからない話を外しました: ${missing.map((m) => short(m, 20)).join('、')}` } : {}),
     })
   })
@@ -953,7 +970,7 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
     return {
       ok: true,
       records: [],
-      items: [{ index: 0, status, id, table: 'strategyNotes', label, hint: STATUS_HINTS[status] }],
+      items: [{ index: 0, status, id, table: 'strategyNotes', label, hint: STATUS_HINTS[status], chars: countChars(input.body) }],
       notes,
     }
   const model = modelOf(input.model)
@@ -980,7 +997,7 @@ export function buildStrategyNote(data: AppData, input: StrategyNoteInput, ctx: 
   return {
     ok: true,
     records: [{ table: 'strategyNotes', record: rec }],
-    items: [{ index: 0, status: 'created', id, table: 'strategyNotes', label }],
+    items: [{ index: 0, status: 'created', id, table: 'strategyNotes', label, chars: countChars(rec.body) }],
     notes,
   }
 }
@@ -1147,13 +1164,15 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
       )
   }
   const promptText = input.prompt_text ?? prompt?.body ?? ''
+  // 字数は結果の Markdown だけ（プロンプトの控えは数えない。URL だけの結果には付けない）
+  const chars = markdown.trim() ? { chars: countChars(markdown) } : {}
   const id = critiqueResultId({ titleId: title.id, runDate, promptText, resultMarkdown: markdown, artifactUrl: url })
   const status = existing(data, ctx, 'critiqueResults', id, new Set())
   if (status)
     return {
       ok: true,
       records: [],
-      items: [{ index: 0, status, id, table: 'critiqueResults', label, hint: STATUS_HINTS[status] }],
+      items: [{ index: 0, status, id, table: 'critiqueResults', label, hint: STATUS_HINTS[status], ...chars }],
       notes,
     }
   const rec: CritiqueResult = {
@@ -1184,7 +1203,7 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
   return {
     ok: true,
     records: [{ table: 'critiqueResults', record: rec }],
-    items: [{ index: 0, status: 'created', id, table: 'critiqueResults', label }],
+    items: [{ index: 0, status: 'created', id, table: 'critiqueResults', label, ...chars }],
     notes,
   }
 }
@@ -1382,7 +1401,8 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
     notes.push(...itemNotes)
     const id = benchAnalysisId({ workId: work!.id, viewpoint: item.viewpoint, runDate, body: item.body_markdown })
     const status = existing(data, ctx, 'benchAnalyses', id, seen)
-    if (status) return items.push({ index, status, id, table: 'benchAnalyses', label, hint: STATUS_HINTS[status] })
+    const chars = countChars(item.body_markdown)
+    if (status) return items.push({ index, status, id, table: 'benchAnalyses', label, hint: STATUS_HINTS[status], chars })
     // 同じ呼び出しの分析は、送った順に1ずつずらした時刻にする（観点のまとまりの順が送った順になるように）
     const at = ctx.now + index
     const rec: BenchAnalysis = {
@@ -1409,7 +1429,7 @@ export function buildBenchAnalysis(data: AppData, input: BenchAnalysisInput, ctx
     if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
     seen.add(`benchAnalyses:${id}`)
     records.push({ table: 'benchAnalyses', record: rec })
-    items.push({ index, status: 'created', id, table: 'benchAnalyses', label })
+    items.push({ index, status: 'created', id, table: 'benchAnalyses', label, chars })
   })
   // 作品は、分析を1つでも作る時だけ作る（先に作る）
   if (created && records.length) {
@@ -1580,7 +1600,8 @@ export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx
     notes.push(...itemNotes)
     const id = materialNoteId({ materialId: material!.id, section: item.section, runDate, body: item.body_markdown })
     const status = existing(data, ctx, 'materialNotes', id, seen)
-    if (status) return items.push({ index, status, id, table: 'materialNotes', label, hint: STATUS_HINTS[status] })
+    const chars = countChars(item.body_markdown)
+    if (status) return items.push({ index, status, id, table: 'materialNotes', label, hint: STATUS_HINTS[status], chars })
     // 同じ呼び出しの記録は、送った順に1ずつずらした時刻にする（ほかの項目のまとまりの順が送った順になるように）
     const at = ctx.now + index
     const rec: MaterialNote = {
@@ -1607,7 +1628,7 @@ export function buildMaterialNotes(data: AppData, input: MaterialNotesInput, ctx
     if (tooBig) return items.push({ index, status: 'invalid', label, hint: tooBig })
     seen.add(`materialNotes:${id}`)
     records.push({ table: 'materialNotes', record: rec })
-    items.push({ index, status: 'created', id, table: 'materialNotes', label })
+    items.push({ index, status: 'created', id, table: 'materialNotes', label, chars })
   })
   // 資料は、記録を1つでも作る時だけ作る（先に作る）
   if (created && records.length) {

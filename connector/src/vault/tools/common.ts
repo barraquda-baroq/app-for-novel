@@ -75,11 +75,6 @@ export function head(text: string, n = 60): string {
   return chars.length > n ? `${chars.slice(0, n).join('')}[...]` : one
 }
 
-/** 文字数（コードポイント） */
-export function length(text: string): number {
-  return Array.from(text).length
-}
-
 /** 1つの項目を全文で読む時の、1回に返す文字数（char_budget。既定 60,000、Claude Code では 12,000） */
 export function itemBudget(v: unknown, claudeCode: boolean): number {
   const n = num(v)

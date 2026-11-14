@@ -1,5 +1,7 @@
 // 書き込みツール（W1〜W7）の結果の形。テキストに加えて structuredContent に
-// { created: [{ id, label }], skipped: [{ index, reason, hint }] } を返す（原稿は入れない）。
+// { created: [{ id, label, chars? }], skipped: [{ index, reason, hint }] } を返す（原稿は入れない）。
+// Claude が書いた本文のある記録（相対比較の分析・資料の記録・批評の結果・戦略メモ・改稿案）は、「- 追加」の行の下に
+// 「    字数: 2,980字（空白・改行を除く。アプリと同じ数え方）」の行を足す（「- 追加」の行は V30 が読むので変えない。chars も同じ数）。
 import {
   summarizeItems,
   WRITE_TOOL_LABELS,
@@ -9,6 +11,7 @@ import {
   type WriteTool,
 } from '../../../../src/claude/records'
 import { shortId, type ShortIdKind } from '../../../../src/claude/refs'
+import { formatCount } from '../../../../src/domain/text'
 import type { ClaudeTableName } from '../../../../src/domain/types'
 import { capText, fail, type ToolResult } from './common'
 
@@ -34,6 +37,26 @@ const WHERE: Record<WriteTool, string> = {
   novel_add_bench_analysis: 'アプリのホームの「相対比較」',
   novel_add_material_notes: 'アプリのホームの「資料」',
 }
+
+/**
+ * 「- 追加」の行の下に字数の行を出す表（Claude が書いた本文のある記録。推敲案・実行の記録・批評プロンプトには出さない）。
+ * 数は builder が ItemResult.chars に入れる（試し直しで「重複」から「追加」にした記録も、送った本文から数えてある）
+ */
+const CHARS_TABLES: ReadonlySet<ClaudeTableName> = new Set([
+  'benchAnalyses',
+  'materialNotes',
+  'critiqueResults',
+  'strategyNotes',
+  'revisionIdeas',
+])
+
+/** 字数の行（アプリの文字数と同じ数え方: 空白・改行・ルビの記法と読みを除く） */
+export function charsLine(chars: number): string {
+  return `    字数: ${formatCount(chars)}字（空白・改行を除く。アプリと同じ数え方）`
+}
+
+const charsOf = (it: ItemResult): number | undefined =>
+  it.table && CHARS_TABLES.has(it.table) && it.chars !== undefined ? it.chars : undefined
 
 const STATUS_LABELS: Record<ItemStatus, string> = {
   created: '追加',
@@ -78,7 +101,11 @@ export function writeResult(
     .filter(Boolean)
     .join('・')
   const lines: string[] = [`${WRITE_TOOL_LABELS[tool]}: ${summary || '追加するものはありませんでした'}`]
-  for (const it of created) lines.push(`- 追加 ${shortId(KIND[it.table!], it.id!)} ${it.label}`)
+  for (const it of created) {
+    lines.push(`- 追加 ${shortId(KIND[it.table!], it.id!)} ${it.label}`)
+    const chars = charsOf(it)
+    if (chars !== undefined) lines.push(charsLine(chars))
+  }
   for (const it of skipped) {
     lines.push(`- ${it.statusLabel ?? STATUS_LABELS[it.status]} ${it.label}${it.hint ? `: ${it.hint}` : ''}`)
     if (it.candidates?.length) for (const c of it.candidates.slice(0, 5)) lines.push(`    候補: ${c}`)
@@ -102,7 +129,10 @@ export function writeResult(
     text: capText(lines.join('\n')),
     isError: !created.length && !batchMade && (needsFix || opts.failed) ? true : undefined,
     structured: {
-      created: created.map((it) => ({ id: shortId(KIND[it.table!], it.id!), label: it.label })),
+      created: created.map((it) => {
+        const chars = charsOf(it)
+        return { id: shortId(KIND[it.table!], it.id!), label: it.label, ...(chars !== undefined ? { chars } : {}) }
+      }),
       skipped: [
         ...skipped.map((it) => ({ index: it.index, reason: it.status, ...(it.hint ? { hint: it.hint } : {}) })),
         ...unwritten.map((it) => ({ index: it.index, reason: 'not_written', hint: '書けませんでした（もう一度送ると追加します）' })),

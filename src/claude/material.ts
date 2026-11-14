@@ -5,7 +5,7 @@
 // - 資料はどのタイトルにも属さない利用者の覚え書きなので、タイトルの「Claude に見せる」とは関係なく見せる
 // - タグ（ミリタリ・現代・戦闘…）は作者が自分で付けて管理するもの。Claude には見せる（「タグ: ミリタリ・現代」）が、Claude は付けない
 import { MATERIAL_SECTIONS, materialName, sectionKey, sortedMaterials } from '../domain/materialOps'
-import { formatCount } from '../domain/text'
+import { bodyMetrics, formatCount } from '../domain/text'
 import type { AppData, Material, MaterialNote } from '../domain/types'
 import { materialNotesOf, materialSectionGroups } from './materialOrder'
 import { matchesId, refKey, shortId, type Resolved } from './refs'
@@ -123,7 +123,8 @@ export function materialNotesBlocks(
  */
 export function materialLine(data: Pick<AppData, 'materialNotes' | 'trashRequests'>, m: Material): string {
   const notes = materialNotesOf(data, m.id)
-  const total = notes.reduce((n, x) => n + Array.from(x.body).length, 0)
+  // 字数はアプリの資料の画面の「合計 n字」と同じ数え方（空白・改行・ルビの記法と読みを除く）
+  const total = notes.reduce((n, x) => n + bodyMetrics(x).chars, 0)
   const tags = materialTagsLine(m)
   const pending = pendingTrashLine(pendingTrashCount(data, 'materialNotes', m.id))
   return [

@@ -134,9 +134,26 @@ describe('ツールの決まり', () => {
     expect(String(cards.description)).toContain('アイデア i:…')
   })
 
+  it('数え方（2.9）: 文字数の行（そのまま）の次に、char_budget と「字目」だけは空白・改行も数える行。追加のツールの説明に字数', () => {
+    const lines = SERVER_INSTRUCTIONS.split('\n')
+    const at = lines.indexOf('文字数は空白・改行・ルビの記法と読みを除いて数え、日付は日本時間です。')
+    expect(at).toBeGreaterThan(0)
+    expect(lines[at + 1]).toBe('char_budget・「字目」は空白・改行も数えます。')
+    for (const name of [
+      'novel_add_bench_analysis',
+      'novel_add_material_notes',
+      'novel_add_critique_result',
+      'novel_add_strategy_note',
+      'novel_add_revision_ideas',
+    ])
+      expect(TOOL_DEFS.find((t) => t.name === name)!.description).toContain('字数（アプリと同じ数え方。空白・改行・ルビの記法と読みを除く')
+    for (const name of ['novel_add_proofreading', 'novel_save_critique_prompt', 'novel_add_ideas'])
+      expect(TOOL_DEFS.find((t) => t.name === name)!.description).not.toContain('アプリと同じ数え方')
+  })
+
   it('アイデアのフォルダ（2.9）: サーバーの説明は id の行に f: を足すだけ（1,000字未満）。一覧・ゴミ箱へ移すツールの説明にフォルダ', () => {
     expect(SERVER_INSTRUCTIONS).toContain('i: アイデア、f: そのフォルダ、x: 推敲案')
-    expect(SERVER_INSTRUCTIONS.length).toBe(970)
+    expect(SERVER_INSTRUCTIONS.length).toBe(999)
     const notes = TOOL_DEFS.find((t) => t.name === 'novel_get_notes')!
     for (const phrase of [
       'アイデアのフォルダ（2段まで。【フォルダ】と f:…）ごとにまとめて出す',
@@ -474,6 +491,21 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(write.json.result.isError).toBeFalsy()
     expect(write.json.result.structuredContent.created[0].id).toMatch(/^r:/)
     expect(calls).toBe(2)
+  })
+
+  it('書き込みツールの structuredContent の chars（本文の字数。アプリと同じ数え方）は出力の形の確かめを通り、本文の字数の行と同じ数', async () => {
+    const write = await rpc(
+      'tools/call',
+      {
+        name: 'novel_add_revision_ideas',
+        arguments: { title_id: titleId, items: [{ heading: '見出しは数えない', body: '景色の　描写を\n増やす' }] },
+      },
+      8,
+    )
+    expect(write.json.error).toBeUndefined()
+    expect(write.json.result.isError).toBeFalsy()
+    expect(write.json.result.structuredContent.created).toEqual([{ id: expect.stringMatching(/^r:/), label: '「見出しは数えない」', chars: 9 }])
+    expect(write.json.result.content[0].text).toContain('\n    字数: 9字（空白・改行を除く。アプリと同じ数え方）\n')
   })
 
   it('書き込みツールが何も作れなかった時は isError（structuredContent なしでも出力の形の確かめで落ちない）', async () => {

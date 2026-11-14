@@ -139,6 +139,8 @@ export function comparisonMaterial(data: AppData, workIds: readonly ID[]): strin
 export function benchWorkLine(data: AppData, w: BenchWork): string {
   const analyses = benchAnalysesOf(data, w.id)
   const titles = titlesComparing(data, w.id)
+  // 「  分析 n件（n字）」の字数だけは、空白・改行も数えたコードポイントのまま（名作分析のプロンプト V30 が読む行なので、2.7 から
+  // 1字も変えない。アプリの「合計 n字」・資料の「  記録 n件（n字）」・追加の答えの「字数: 」はアプリの数え方）
   const total = analyses.reduce((n, a) => n + Array.from(a.body).length, 0)
   const tags = benchWorkTagsLine(data, w)
   const pending = pendingTrashLine(pendingTrashCount(data, 'benchAnalyses', w.id))

@@ -272,8 +272,8 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
       [
         '=== ホームのアイデア（どのタイトルにも属さない・Claude が作ったものだけ。2件）===',
         '【Claude】は Claude がこのコネクタで作ったアイデア（追記・ゴミ箱へ移すのは、そのチャットで作ったものだけ）。',
-        `${ref} 【Claude】2026/10/29 12:00 第3章の動機 【動機】 ・兄を探す（34字）`,
-        `${shortId('idea', other)} 【Claude】2026/10/29 12:00 港町の案（21字）`,
+        `${ref} 【Claude】2026/10/29 12:00 第3章の動機 【動機】 ・兄を探す（30字）`,
+        `${shortId('idea', other)} 【Claude】2026/10/29 12:00 港町の案（19字）`,
         '本文は ids に短い id を入れるか full=true で読めます。',
         '作者が書いたホームのアイデアは見えません。',
       ].join('\n'),
@@ -292,7 +292,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
       [
         'アイデアに追記: 追記 1件',
         `- 追記 ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）`,
-        '足す形: カードの終わりに空行を置き、「2026/10/31のセッションで以下の内容へ変更」の行の下に内容（15字）',
+        '足す形: カードの終わりに空行を置き、「2026/10/31のセッションで以下の内容へ変更」の行の下に内容（14字）',
         APPEND_CLOSING,
       ].join('\n'),
     )
@@ -315,7 +315,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
       [
         'アイデアに追記: 追記 1件',
         `- 追記 ${ref} 「2026/10/29 12:00　第3章の動機」（ホームのアイデア）（依頼済み）`,
-        '足す形: カードの終わりに空行を置き、「2026/10/31のセッションで以下の内容へ変更」の行の下に内容（15字）',
+        '足す形: カードの終わりに空行を置き、「2026/10/31のセッションで以下の内容へ変更」の行の下に内容（14字）',
         APPEND_CLOSING,
       ].join('\n'),
     )
@@ -458,7 +458,7 @@ describe('Claude が作ったアイデアを読み、追記する', () => {
     expect(anywhere).toContain(`=== アイデア【Claude】（ホームのアイデア）[${home}] 印: `)
     // タイトルの一覧: 作者のアイデアは 2.7 の形のまま、Claude のアイデアには【Claude】
     const titleList = await call(core, 'novel_get_notes', { title_id: s.titleId, kind: 'ideas' })
-    expect(titleList).toContain(`${inTitle} 【Claude】2026/10/29 12:00 星の案（20字）`)
+    expect(titleList).toContain(`${inTitle} 【Claude】2026/10/29 12:00 星の案（18字）`)
     expect(titleList).toContain(`${shortId('idea', s.authorTitle.id)} 星の庭の作者の案（8字）`)
     expect(await call(core, 'novel_get_notes', { title_id: s.titleId, kind: 'ideas', ids: [shortId('idea', s.authorTitle.id)] })).toBe(
       `=== アイデア [${shortId('idea', s.authorTitle.id)}] ===\n星の庭の作者の案`,
@@ -595,10 +595,10 @@ describe('アイデアのフォルダを読む（2.9）', () => {
         '【フォルダ】はアイデアのフォルダ（2段まで。中のフォルダとアイデアは字下げして続く。名前の前の【Claude】は Claude が作ったフォルダ。f:… は novel_add_ideas の folder・subfolder に渡せる。名前の変更・削除・移動はアプリで作者がする）。ホームのフォルダは名前だけ（作者が作ったものも出す。中は Claude が作ったアイデアだけ）。',
         '【フォルダ】f:a1a1a1a1 新作の相談',
         '  【フォルダ】f:2b2b2b2b 【Claude】2026/10/29　港町',
-        `    ${shortId('idea', C_IN)} 【Claude】2026/10/29 12:00 港町の主人公 ・灯台守の娘（30字）`,
+        `    ${shortId('idea', C_IN)} 【Claude】2026/10/29 12:00 港町の主人公 ・灯台守の娘（27字）`,
         '【フォルダ】f:c3c3c3c3 場面の相談',
         '（フォルダの外）',
-        `${shortId('idea', C_LOOSE)} 【Claude】2026/10/29 12:00 別の案（20字）`,
+        `${shortId('idea', C_LOOSE)} 【Claude】2026/10/29 12:00 別の案（18字）`,
         '本文は ids に短い id を入れるか full=true で読めます（ids に f:… を渡すと、そのフォルダの中のアイデア）。',
         '作者が書いたホームのアイデアは見えません（フォルダの名前は見えます）。',
       ].join('\n'),
@@ -647,7 +647,7 @@ describe('アイデアのフォルダを読む（2.9）', () => {
         '【フォルダ】はアイデアのフォルダ（2段まで。中のフォルダとアイデアは字下げして続く。名前の前の【Claude】は Claude が作ったフォルダ。f:… は novel_add_ideas の folder・subfolder に渡せる。名前の変更・削除・移動はアプリで作者がする）。フォルダの（n件）は中のアイデアの数（中のフォルダの分も）。',
         '【フォルダ】f:d4d4d4d4 第1章の相談（2件）',
         `  ${shortId('idea', s.authorTitle.id)} 星の庭の作者の案（8字）`,
-        `  ${shortId('idea', C_TITLE)} 【Claude】【済】2026/10/29 12:00 灯台（19字）`,
+        `  ${shortId('idea', C_TITLE)} 【Claude】【済】2026/10/29 12:00 灯台（17字）`,
         '本文は ids に短い id を入れるか full=true で読めます（ids に f:… を渡すと、そのフォルダの中のアイデア）。',
       ].join('\n'),
     )
