@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { addMaterial } from '../../../src/domain/materialOps'
 import { movePieceStep } from '../../../src/domain/storyOps'
 import type { AppData, ProofSuggestion, TableName } from '../../../src/domain/types'
-import { encodeCursor } from '../../../src/claude/view'
+import { decodeCursor, encodeCursor } from '../../../src/claude/view'
 import type { Rec } from '../../../src/sync/merge'
 import { novel } from '../../../src/test/claudeFixture'
 import type { GrantProps, VaultCore } from '../../src/vault/core'
@@ -56,6 +56,20 @@ const marked = (prefix: string, paras: number, len: number) =>
   Array.from({ length: paras }, (_, k) => `${prefix}-${String(k + 1).padStart(3, '0')}。${'あ'.repeat(len)}`).join('\n')
 
 const marksIn = (text: string, re: RegExp) => [...withoutCursor(text).matchAll(re)].map((m) => m[1])
+
+/**
+ * V30 の 09 の取り出し方（続きのページは最初の「=== 」の行までを捨て、その次の行からを本文にする。「=== 」の行より前の「（」で始まる
+ * 行は知らせ、後ろの「（」で始まる行は本文）で、知らせが本文に入らないこと。本文（知らせより後）を返す
+ */
+function v30Body(page: string): string[] {
+  const lines = withoutCursor(page).split('\n')
+  const at = lines.findIndex((l) => l.startsWith('=== '))
+  expect(at, page).toBeGreaterThanOrEqual(0)
+  for (const l of lines.slice(0, at)) expect(l.startsWith('（'), l).toBe(true)
+  const body = lines.slice(at + 1)
+  for (const l of body) expect(/^（(分析|記録|前回の続き)/.test(l), l).toBe(false)
+  return body
+}
 
 /** 同じ印が2回以上出たもの */
 const repeated = (marks: readonly string[]) => marks.filter((m, i) => marks.indexOf(m) !== i)
@@ -229,10 +243,12 @@ describe('novel_get_bench_analysis（作品の分析を全部）・novel_get_mat
     // 前は、足した分析の分だけ前へずれた位置から読み、約30段落をもう一度出していた
     expect(repeated(marks)).toEqual([])
     expect(marks).toEqual(originals)
-    expect(pages[1].split('\n')[0]).toMatch(/^=== 『銀河の果て』の分析の続き（[\d,]+字目から）===$/)
-    expect(pages[1].split('\n')[1]).toMatch(
+    // 知らせは続きの見出しより前（V30 の 09 は、続きの見出しより後を本文にする）
+    expect(pages[1].split('\n')[0]).toMatch(
       /^（分析が増えました。前回の続きより前に n:[0-9a-z]{8}「01 観点1」が入りました（まだ読んでいません。analysis_id で読めます）。前回の続きの n:[0-9a-z]{8}「0\d 観点\d」の途中から続けます）$/,
     )
+    expect(pages[1].split('\n')[1]).toMatch(/^=== 『銀河の果て』の分析の続き（[\d,]+字目から）===$/)
+    expect(v30Body(pages[1])[0]).toMatch(/^\d{2}-\d{3}。/)
     expect(pages[1]).not.toContain('N1-001')
   })
 
@@ -243,7 +259,9 @@ describe('novel_get_bench_analysis（作品の分析を全部）・novel_get_mat
     })
     // 前は、ゴミ箱へ移した分析の分だけ後ろへずれた位置から読み、約31段落を飛ばしていた
     expect(marks).toEqual(originals)
-    expect(pages[1].split('\n')[1]).toMatch(/^（分析が増えた・減った・動いたため、並びが変わりました。前回の続きの n:[0-9a-z]{8}「0\d 観点\d」の途中から続けます。/)
+    expect(pages[1].split('\n')[0]).toMatch(/^（分析が増えた・減った・動いたため、並びが変わりました。前回の続きの n:[0-9a-z]{8}「0\d 観点\d」の途中から続けます。/)
+    expect(pages[1].split('\n')[1]).toMatch(/^=== 『銀河の果て』の分析の続き（[\d,]+字目から）===$/)
+    v30Body(pages[1])
   })
 
   it('「14 検索用タグ」の分析が足されて頭にタグの行が増えた（新しい観点は後ろ）: 黙って同じ所から続け、足した分析も読める', async () => {
@@ -274,10 +292,55 @@ describe('novel_get_bench_analysis（作品の分析を全部）・novel_get_mat
     const reading = cards[Number(/^(\d{2})-\d{3}/.exec(withoutCursor(first).split('\n').at(-1)!)![1]) - 1]
     await tool(core, a, 'novel_move_cards_to_trash', { cards: [reading] })
     const second = await tool(core, b, 'novel_get_bench_analysis', { cursor: cursorOf(first) })
-    expect(second.split('\n')[1]).toMatch(
+    expect(second.split('\n')[0]).toMatch(
       /^（前回の続きの分析が見つからないため（ゴミ箱へ移した・観点を変えたなど）、次の n:[0-9a-z]{8}「\d{2} 観点\d+」から続けます）$/,
     )
-    expect(second.split('\n')[2]).toMatch(/^--- 観点「/)
+    expect(second.split('\n')[1]).toMatch(/^=== 『銀河の果て』の分析の続き（[\d,]+字目から）===$/)
+    expect(v30Body(second)[0]).toMatch(/^--- 観点「/)
+  })
+
+  it('最後の分析を読んでいる間にゴミ箱へ移された: 知らせと続きの見出しだけで終わる（V30 の 09 で知らせを本文にしない）', async () => {
+    const { core, a, b, work, cards } = await bench()
+    let page = await tool(core, b, 'novel_get_bench_analysis', { work, char_budget: 2_000 })
+    for (let c = cursorOf(page); c && !/^10-\d{3}。/m.test(withoutCursor(page)); c = cursorOf(page))
+      page = await tool(core, b, 'novel_get_bench_analysis', { cursor: c, char_budget: 2_000 })
+    // いまのページは最後の観点（10）の途中まで
+    expect(cursorOf(page)).toBeDefined()
+    await tool(core, a, 'novel_move_cards_to_trash', { cards: [cards[9]] })
+    const last = await tool(core, b, 'novel_get_bench_analysis', { cursor: cursorOf(page), char_budget: 2_000 })
+    expect(last.split('\n')).toEqual([
+      '（前回の続きの分析が見つからないため（ゴミ箱へ移した・観点を変えたなど）、ここで終わりです）',
+      expect.stringMatching(/^=== 『銀河の果て』の分析の続き（[\d,]+字目から）===$/),
+    ])
+    expect(v30Body(last)).toEqual([])
+  })
+
+  it('1ページ目が観点のまとまりの見出しの行で終わった（何も変わっていない）: 続きは見出しを繰り返さず、位置だけの cursor と同じ所から', async () => {
+    const n = novel(['本文。'])
+    const { core, a, b, clock } = await accounts(n.data)
+    const added = await tool(core, a, 'novel_add_bench_analysis', {
+      work: '銀河',
+      new_work: { name: '銀河', author: '山田' },
+      items: [1, 2, 3].map((i) => ({ viewpoint: `0${i} 観点${i}`, body_markdown: marked(`0${i}`, 20, 60), run_date: '2026-10-30' })),
+    })
+    const work = /作品 (w:[0-9a-z]+)『銀河』/.exec(added)![1]
+    clock.now += 20_000
+    let hits = 0
+    for (let budget = 2_000; budget <= 3_800; budget += 10) {
+      const first = await tool(core, b, 'novel_get_bench_analysis', { work, char_budget: budget })
+      if (!/^--- 観点「/.test(withoutCursor(first).split('\n').at(-1)!)) continue
+      hits += 1
+      const c = decodeCursor(cursorOf(first)!)!
+      expect(c.g).toBe(1)
+      const second = await tool(core, b, 'novel_get_bench_analysis', { cursor: cursorOf(first), char_budget: budget })
+      const lines = second.split('\n')
+      expect(lines[0]).toBe(`=== 『銀河』の分析の続き（${(c.o as number).toLocaleString('ja-JP')}字目から）===`)
+      expect(lines[1]).toMatch(/^#### 0\d 観点\d（2026-10-30・Claude）/)
+      // 位置だけの cursor（2.8 までの形）と同じ続き
+      const old = encodeCursor({ k: c.k, t: c.t, which: c.which, id: c.id, o: c.o })
+      expect(await tool(core, b, 'novel_get_bench_analysis', { cursor: old, char_budget: budget })).toBe(second)
+    }
+    expect(hits).toBeGreaterThan(0)
   })
 
   it('資料の記録: 前の項目に記録が足された・読んでいた記録が書き換えられた。前の版の cursor（位置だけ）も読める', async () => {
@@ -296,7 +359,9 @@ describe('novel_get_bench_analysis（作品の分析を全部）・novel_get_mat
     await add('要約', marked('S2', 5, 85))
     clock.now += 20_000
     const third = await read({ cursor: cursorOf(second) })
-    expect(third.split('\n')[1]).toMatch(/^（記録が増えました。前回の続きより前に k:[0-9a-z]{8}「要約」が入りました（まだ読んでいません。note_id で読めます）。/)
+    expect(third.split('\n')[0]).toMatch(/^（記録が増えました。前回の続きより前に k:[0-9a-z]{8}「要約」が入りました（まだ読んでいません。note_id で読めます）。/)
+    expect(third.split('\n')[1]).toMatch(/^=== 『江戸の暮らし』の記録の続き（[\d,]+字目から）===$/)
+    v30Body(third)
     const marks = [first, second, third].flatMap((p) => marksIn(p, /^([SK]\d-\d{3})。/gm))
     expect(repeated(marks)).toEqual([])
     expect(marks).not.toContain('S2-001')
@@ -307,7 +372,9 @@ describe('novel_get_bench_analysis（作品の分析を全部）・novel_get_mat
     fake.putRecord(OWNER, 'materialNotes', { ...note, body: `${note.body}\n追記。`, updatedAt: note.updatedAt + 1 } as never)
     clock.now += 20_000
     const fourth = await read({ cursor: cursorOf(third) })
-    expect(fourth.split('\n')[1]).toBe('（前回の続きの記録の本文が変わっていたため、その記録の始めから読み直しています）')
+    expect(fourth.split('\n')[0]).toBe('（前回の続きの記録の本文が変わっていたため、その記録の始めから読み直しています）')
+    expect(fourth.split('\n')[1]).toMatch(/^=== 『江戸の暮らし』の記録の続き（[\d,]+字目から）===$/)
+    v30Body(fourth)
     // その項目の最初の記録なので、項目の見出しの行から
     expect(fourth.split('\n').slice(2, 4)).toEqual([
       '--- 項目「創作に役立つ知識」（1件）---',

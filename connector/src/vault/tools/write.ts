@@ -63,7 +63,9 @@ export function writeResult(
   opts: { failed?: string } = {},
 ): ToolResult {
   const items: ItemResult[] = built.items.map((it) =>
-    it.id && it.table && createdIds.has(`${it.table}:${it.id}`) && it.status !== 'created' ? { ...it, status: 'created', hint: undefined } : it,
+    it.id && it.table && createdIds.has(`${it.table}:${it.id}`) && it.status !== 'created'
+      ? { ...it, status: 'created', hint: undefined, statusLabel: undefined }
+      : it,
   )
   const created = items.filter((it) => it.status === 'created' && it.id && it.table && createdIds.has(`${it.table}:${it.id}`))
   /** 作るはずだったが書けなかった（failed の時だけ） */
@@ -78,7 +80,7 @@ export function writeResult(
   const lines: string[] = [`${WRITE_TOOL_LABELS[tool]}: ${summary || '追加するものはありませんでした'}`]
   for (const it of created) lines.push(`- 追加 ${shortId(KIND[it.table!], it.id!)} ${it.label}`)
   for (const it of skipped) {
-    lines.push(`- ${STATUS_LABELS[it.status]} ${it.label}${it.hint ? `: ${it.hint}` : ''}`)
+    lines.push(`- ${it.statusLabel ?? STATUS_LABELS[it.status]} ${it.label}${it.hint ? `: ${it.hint}` : ''}`)
     if (it.candidates?.length) for (const c of it.candidates.slice(0, 5)) lines.push(`    候補: ${c}`)
   }
   for (const it of unwritten) lines.push(`- 書けなかった ${it.label}`)

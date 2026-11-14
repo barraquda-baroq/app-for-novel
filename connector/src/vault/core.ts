@@ -36,7 +36,7 @@ import { repairData } from '../../../src/domain/repair'
 import type { AppData } from '../../../src/domain/types'
 import type { VaultConfig } from '../config'
 import { log, logError } from '../log'
-import { CONNECTOR_MODEL, CONNECTOR_VERSION } from '../version'
+import { CONNECTOR_DEVICE, CONNECTOR_MODEL, CONNECTOR_VERSION } from '../version'
 import { ConnectorError, isAuthProblem, MESSAGES, modelMismatchMessage } from './errors'
 import { FirestoreError, FirestoreRest } from './firestore'
 import { Identity } from './identity'
@@ -143,6 +143,12 @@ export interface ConnectorState {
   pairedAt: Record<string, number | null>
 }
 
+/**
+ * 呼び出しの項目（items・cards の1件）から作るのでない記録の表: 新しい相対比較の作品・資料（new_work・new_material）、推敲案の
+ * 実行の記録、新しいアイデアのフォルダ。呼び出しを分けても、最初の呼び出しには要る（書き込みの枠の断りの文）
+ */
+const NOT_ITEM_TABLES = new Set(['benchWorks', 'materials', 'proofBatches', 'ideaFolders'])
+
 /** 今日（日本時間）ゴミ箱へ移す依頼を作った数（meta 'trashDaily'。日付が変われば 0 から） */
 export interface TrashDaily {
   day: string
@@ -177,7 +183,14 @@ export class VaultCore {
   #sync: { seq: number; promise: Promise<SyncOutcome> } | null = null
   /** 始めた取り込みの1歩の数 */
   #syncSeq = 0
+  /** 最後に最後まで読み終えた時刻（novel_status の「最後に新しくした時刻」・読むツールの15秒） */
   #lastSync = 0
+  /**
+   * 写しが端末の変更の途中までしか取り込めていない（最後の1歩が最後まで読まずに終わった・ページの途中で失敗した）。この間は、
+   * 15秒以内に最後まで読んでいても、読むツールは取り込みを1歩進める（端末の1回の変更の一部だけを取り込んだ写しを、知らせなしに
+   * 読ませない）。1歩を始める時に立て、最後まで読めた時だけ下ろす
+   */
+  #behind = false
   #views: { version: number; raw: AppData; view: AppData; hidden: number } | null = null
   /**
    * 最後に読めた config/connector（at は読み始めた時刻、seq は読み始めた順の番号）。Durable Object は Firestore の答えを待つ間に
@@ -403,13 +416,17 @@ export class VaultCore {
   }
 
   /**
-   * 書く前に、この呼び出しの n 件を書き込みの数に入れる。残り（すべての接続で1つ）に入らなければ、数えずに呼び出し全体を断る
-   * （一部だけは書かない）。断る文には残りとこの呼び出しの数を出す（field は分けて送る入力の名前）
+   * 書く前に、この呼び出しの記録（prepared）の数を書き込みの数に入れる。残り（すべての接続で1つ）に入らなければ、数えずに呼び出し
+   * 全体を断る（一部だけは書かない）。断る文には残りとこの呼び出しの数を出す（field は分けて送る入力の名前）。項目でない記録
+   * （新しい作品・資料、実行の記録、新しいフォルダ）は分けた呼び出しにも要るので、残りがそれと項目1件より少なければ、分けても
+   * 入らないと言う
    */
-  #needWrites(n: number, field: 'items' | 'cards'): void {
+  #needWrites(prepared: readonly PreparedWrite[], field: 'items' | 'cards'): void {
+    const n = prepared.length
     if (this.#takeWrites(n)) return
     const left = this.#d.config.dailyWriteBudget - this.#quota().writes
-    throw new ConnectorError('write_budget', writeBudgetMessage(this.#now(), left, n, field))
+    const min = Math.min(n, prepared.filter((p) => NOT_ITEM_TABLES.has(p.table)).length + 1)
+    throw new ConnectorError('write_budget', writeBudgetMessage(this.#now(), left, n, field, min))
   }
 
   /**
@@ -513,13 +530,18 @@ export class VaultCore {
   }
 
   async #runSync(maxPages: number): Promise<SyncOutcome> {
+    // 1ページ目を入れた後に失敗しても途中のまま（下ろすのは最後まで読めた時だけ）
+    this.#behind = true
     try {
       const out = await this.mirror.sync({
         maxPages,
         workBudget: this.#d.config.workBudgetChars,
         takeReads: (n) => this.#takeReads(n),
       })
-      if (out.done) this.#lastSync = this.#now()
+      if (out.done) {
+        this.#lastSync = this.#now()
+        this.#behind = false
+      }
       return out
     } catch (e) {
       return this.#firestoreFailure(e)
@@ -575,7 +597,8 @@ export class VaultCore {
 
   /**
    * 読むツールの前: 動いている取り込みがあれば、その終わりを待つ（ページの間の、端末の1回の変更の一部だけを取り込んだ写しを
-   * 読まない）。終わっていれば（最後まで読んだ・15秒以内に読んだ）そのまま、まだなら1歩進める
+   * 読まない）。終わっていれば（最後まで読んだ・15秒以内に最後まで読んで、その後の1歩が途中で終わっていない）そのまま、
+   * まだなら1歩進める（それでも途中なら「取り込みの途中の内容です」と添える）
    */
   async #freshRead(): Promise<{ note?: string }> {
     const reset = () => resetLabel(this.#now())
@@ -585,7 +608,7 @@ export class VaultCore {
         const out = await running.promise
         if (out.done) return {}
         if (out.outOfReads) return { note: `（今日の読み取り枠を使い切ったため、最新の変更を取り込めていません。${reset()}に回復します）` }
-      } else if (this.#now() - this.#lastSync < (this.#d.freshMs ?? FRESH_MS)) return {}
+      } else if (!this.#behind && this.#now() - this.#lastSync < (this.#d.freshMs ?? FRESH_MS)) return {}
       const out = await this.#syncStep(8)
       if (out.done) return {}
       if (out.outOfReads) return { note: `（今日の読み取り枠を使い切ったため、最新の変更を取り込めていません。${reset()}に回復します）` }
@@ -935,7 +958,7 @@ export class VaultCore {
           throw e
         }
         if (!prepared.length) return writeResult(tool, built, created)
-        this.#needWrites(prepared.length, 'items')
+        this.#needWrites(prepared, 'items')
         let done: 'done' | 'retry'
         try {
           done = await this.#commitPrepared(prepared, created, attempt)
@@ -957,12 +980,20 @@ export class VaultCore {
    * 作る記録を書き、書けた記録を写しにも入れる（created に {表名}:{id} を足す）。同時に同じ記録が作られた・削除の印がある時は
    * 読み直して 'retry'（3回目まで。呼び出し側で分け直す）。ほかの失敗は日本語の説明つきの失敗にする。
    * 書き込みの数は書く前に prepared の分を数え、書けなかった組の分は戻す（数えるのは書けた記録だけ。試し直しは、その時に書く分を
-   * また数える）
+   * また数える）。書けたか分からない組は戻さない:
+   * - 答えが来ない・つながらない（status 0）: クラウドが書いたかもしれないので、その組は数えたまま（送っていない後の組だけ戻す）
+   * - 「もうある」（409 など）が、前の試しの答え（5xx）が届かずに試し直した答えの時（afterUnsure）は、前の試しで書けていることがある。
+   *   読み直した写しに、この組の記録がこのコネクタの書いた同じ内容であれば、この呼び出しで書けた（created に入れ、数えたまま。
+   *   答えも「重複」でなく「追加」）。読み直せなかった時は、その組を数えたまま。初めの試しの「もうある」は、何も書いていない
+   *   （commit は全部か無しか）
    */
   async #commitPrepared(prepared: PreparedWrite[], created: Set<string>, attempt: number): Promise<'done' | 'retry'> {
     let committed = 0
+    /** 送った組（失敗した時は、その組） */
+    let sent: PreparedWrite[] = []
     try {
       for (const g of groups(prepared)) {
+        sent = g
         const res = await this.fs.commit(g.map((p) => p.write))
         committed += g.length
         this.mirror.putOwn(rowsOfCommit(g, res))
@@ -970,7 +1001,12 @@ export class VaultCore {
       }
       return 'done'
     } catch (e) {
-      this.#takeWrites(committed - prepared.length)
+      // 送っていない後の組は書いていない
+      this.#takeWrites(committed + sent.length - prepared.length)
+      if (e instanceof FirestoreError && e.status === 0) {
+        log('write_outcome_unknown', { count: sent.length })
+        return this.#firestoreFailure(e)
+      }
       if (
         e instanceof FirestoreError &&
         (e.code === 'ALREADY_EXISTS' || e.code === 'FAILED_PRECONDITION' || e.code === 'ABORTED' || e.status === 409) &&
@@ -978,27 +1014,46 @@ export class VaultCore {
       ) {
         // 同時に同じ記録が作られた・削除の印がある: 読み直して、重複・以前に削除として分け直す
         log('write_retry', { code: e.code, attempt })
-        await this.#sleep(100 + Math.floor(Math.random() * 200) * (attempt + 1))
-        // 断られた後のクラウドを読む（先に始まった取り込みに相乗りしない）
-        const out = await this.#syncStep(8, true)
-        if (out.outOfReads) throw this.#readBudgetError(true)
-        // 差分の読み取りで見えない（写しが知らない）文書は、名前を指定して確かめる
-        const left = prepared.filter((p) => !created.has(`${p.table}:${p.id}`)).map((p) => `${p.table}:${p.id}`)
-        if (left.length && this.#takeReads(left.length + 2)) {
-          try {
-            await this.mirror.fetchNames(left)
-          } catch (err) {
-            return this.#firestoreFailure(err)
+        /**
+         * 確かめた後、この組のうち書けていなかった記録の数（確かめられなかった時は、初めの試しの「もうある」なら組のすべて、
+         * 前の試しが届いたかもしれない時は 0: 書けたか分からないので数えたまま）
+         */
+        let unwritten = e.afterUnsure ? 0 : sent.length
+        try {
+          await this.#sleep(100 + Math.floor(Math.random() * 200) * (attempt + 1))
+          // 断られた後のクラウドを読む（先に始まった取り込みに相乗りしない）
+          const out = await this.#syncStep(8, true)
+          if (out.outOfReads) throw this.#readBudgetError(true)
+          // 差分の読み取りで見えない（写しが知らない）文書は、名前を指定して確かめる
+          const left = prepared.filter((p) => !created.has(`${p.table}:${p.id}`)).map((p) => `${p.table}:${p.id}`)
+          if (left.length && this.#takeReads(left.length + 2)) {
+            try {
+              await this.mirror.fetchNames(left)
+            } catch (err) {
+              return this.#firestoreFailure(err)
+            }
           }
+          // 前の試しで書けていた（答えが届かずに試し直して「もうある」になった）この組の記録
+          if (e.afterUnsure) for (const p of sent) if (this.#isOwnRecord(p)) created.add(`${p.table}:${p.id}`)
+          unwritten = sent.filter((p) => !created.has(`${p.table}:${p.id}`)).length
+        } finally {
+          this.#takeWrites(-unwritten)
         }
         return 'retry'
       }
+      this.#takeWrites(-sent.length)
       if (e instanceof FirestoreError && e.status === 403) {
         const conn = await this.#readConnectorOrUnpair()
         if (!conn.writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
       }
       return this.#firestoreFailure(e)
     }
+  }
+
+  /** 写しに、このコネクタが書いた同じ内容の記録（削除されていない）がある */
+  #isOwnRecord(p: PreparedWrite): boolean {
+    const row = this.store.getRec(`${p.table}:${p.id}`)
+    return Boolean(row && !row.deleted && row.device === CONNECTOR_DEVICE && row.hash === p.hash)
   }
 
   // ---------- ゴミ箱へ移す依頼（2.7） ----------
@@ -1050,7 +1105,7 @@ export class VaultCore {
         }
         const left = () => TRASH_LIMITS.perDay - this.#trashDaily().count
         if (!prepared.length) return trashResult(built, createdTargets(), left())
-        this.#needWrites(prepared.length, 'cards')
+        this.#needWrites(prepared, 'cards')
         const before = created.size
         let done: 'done' | 'retry'
         try {
@@ -1106,7 +1161,7 @@ export class VaultCore {
           throw e
         }
         if (!prepared.length) return result()
-        this.#needWrites(prepared.length, 'items')
+        this.#needWrites(prepared, 'items')
         let done: 'done' | 'retry'
         try {
           done = await this.#commitPrepared(prepared, created, attempt)

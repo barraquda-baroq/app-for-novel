@@ -81,12 +81,14 @@ export function writeReadBudgetMessage(ts: number, left: number): string {
 
 /**
  * 書き込みの枠に、この呼び出しの分（need 件）が入らない（呼び出し全体を断る。一部だけは書かない）。left は残り（0 なら使い切った
- * 時の文）。field は分けて送る入力の名前（items・cards）
+ * 時の文）。field は分けて送る入力の名前（items・cards）。min は分けた時のいちばん小さい呼び出しの数（項目1件と、項目でない記録:
+ * 新しい作品・資料、実行の記録、新しいフォルダ）。残りがそれより少なければ、分けても入らないと言う
  */
-export function writeBudgetMessage(ts: number, left: number, need: number, field = 'items'): string {
+export function writeBudgetMessage(ts: number, left: number, need: number, field = 'items', min = 1): string {
   if (left <= 0)
     return `今日のコネクタ用の書き込み枠を使い切りました（アプリの同期を守るため。すべての接続を合わせて数えます）。${resetLabel(ts)}に回復します。`
-  return `今日のコネクタ用の書き込み枠は、すべての接続を合わせて残り ${fmt(left)} 件です（この呼び出しは ${fmt(need)} 件）。何も書いていません。${field} を分けて少なくすると書けます。${resetLabel(ts)}に回復します。`
+  const split = left < min ? 'この呼び出しは分けても入りません。' : `${field} を分けて少なくすると書けます。`
+  return `今日のコネクタ用の書き込み枠は、すべての接続を合わせて残り ${fmt(left)} 件です（この呼び出しは ${fmt(need)} 件）。何も書いていません。${split}${resetLabel(ts)}に回復します。`
 }
 
 export function firestoreQuotaMessage(ts: number): string {

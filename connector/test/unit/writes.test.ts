@@ -5,11 +5,12 @@ import { describe, expect, it } from 'vitest'
 import { addBenchWork } from '../../../src/domain/benchOps'
 import type { AppData } from '../../../src/domain/types'
 import { novel } from '../../../src/test/claudeFixture'
+import { MESSAGES } from '../../src/vault/errors'
 import type { QuotaCounts } from '../../src/vault/quota'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { COMMIT_GROUP, groups } from '../../src/vault/writer'
 import { FakeFirebase } from '../support/fakeFirebase'
-import { commit, errorResponse, gatedFetch, settle } from '../support/gate'
+import { commit, errorResponse, gatedFetch, settle, within } from '../support/gate'
 import { OWNER, addConnection, pairedCore } from '../support/harness'
 
 async function accounts(data: AppData | null, opts: Parameters<typeof pairedCore>[2] = {}) {
@@ -206,6 +207,71 @@ describe('L5-4・L5-9・L3-8: 書けなかった分', () => {
     expect(again.isError).toBeUndefined()
     expect(again.text.split('\n')[0]).toBe('推敲案を追加: 追加 49件・重複 51件')
     expect(again.text).toContain('- 実行の記録（確認した話・追加した案）を残しました')
+    expect(docsOf(fake, 'proofSuggestions')).toHaveLength(100)
+    expect(docsOf(fake, 'proofBatches')).toHaveLength(1)
+    expect(writes(core) - before).toBe(101)
+  })
+
+  /** commit をクラウド（小さな Firebase）で書いてから、答えを 503 にする fetch（書けたのに答えが届かない。lose(n) の数だけ） */
+  async function lostAnswers(data: AppData) {
+    const fake = new FakeFirebase()
+    let lose = 0
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await (fake.fetch as typeof globalThis.fetch)(input, init)
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (lose > 0 && url.endsWith(':commit') && res.ok) {
+        lose -= 1
+        return errorResponse(503, 'UNAVAILABLE')
+      }
+      return res
+    }) as typeof globalThis.fetch
+    const made = await pairedCore(fake, data, { cid: 'caaa', fetch })
+    const b = await addConnection(fake, made.core, made.uid, { cid: 'cbbb', pairedAt: made.clock.now })
+    return { fake, ...made, b, lose: (n: number) => (lose = n) }
+  }
+
+  it('書けたのに答えが届かなかった組（5xx の試し直しが「もうある」）は、この呼び出しで書けた分として「追加」と答え、数えたまま', async () => {
+    const { n, input } = hundred()
+    const { core, fake, b, lose } = await lostAnswers(n.data)
+    const before = writes(core)
+    // 1つ目の組（51件）は書けたが答えが 503。FirestoreRest が試し直すと「もうある」（409）
+    lose(1)
+    const r = await core.callTool('novel_add_proofreading', input, { grant: b })
+    expect(r.isError).toBeUndefined()
+    // 前は「追加 49件・重複 51件」で、数えたのは 50（書いたのは 101）
+    expect(r.text.split('\n')[0]).toBe('推敲案を追加: 追加 100件')
+    expect(r.text.split('\n').filter((l) => /^- 追加 x:\S+ #1 第1話 ¶\d+「【\d+】海が見れる」$/.test(l))).toHaveLength(100)
+    expect(r.text).toContain('- 実行の記録（確認した話・追加した案）を残しました')
+    expect(docsOf(fake, 'proofSuggestions')).toHaveLength(100)
+    expect(docsOf(fake, 'proofBatches')).toHaveLength(1)
+    expect(writes(core) - before).toBe(101)
+    // 1つの組（推敲案10件と実行の記録）でも同じ
+    const small = hundred()
+    const one = await lostAnswers(small.n.data)
+    const start = writes(one.core)
+    one.lose(1)
+    const r2 = await one.core.callTool('novel_add_proofreading', { ...small.input, items: small.input.items.slice(0, 10) }, { grant: one.b })
+    expect(r2.text.split('\n')[0]).toBe('推敲案を追加: 追加 10件')
+    expect(docsOf(one.fake, 'proofSuggestions')).toHaveLength(10)
+    expect(writes(one.core) - start).toBe(11)
+    // 初めの試しの「もうある」（何も書いていない）は今までどおり数えない: 上の L3-8 のテスト
+  })
+
+  it('答えが来ない（待ち切った）commit の組は、クラウドに届いたか分からないので数えたまま（送っていない後の組だけ戻す）。もう一度送ると残りだけ足す', async () => {
+    const { n, input } = hundred()
+    const { core, fake, gate, b } = await accounts(n.data, { timeoutMs: 100 })
+    const before = writes(core)
+    // 1つ目の組（51件）はクラウドに届いたが、答えが来ない
+    const hang = gate.hold(commit)
+    const r = await within(core.callTool('novel_add_proofreading', input, { grant: b }), 3_000, '答えの来ない commit')
+    expect(r.isError).toBe(true)
+    expect(r.text).toBe(MESSAGES.unavailable)
+    expect(docsOf(fake, 'proofSuggestions')).toHaveLength(51)
+    // 前は 0（書けなかったとして戻していた）
+    expect(writes(core) - before).toBe(51)
+    hang.release()
+    const again = await core.callTool('novel_add_proofreading', input, { grant: b })
+    expect(again.text.split('\n')[0]).toBe('推敲案を追加: 追加 49件・重複 51件')
     expect(docsOf(fake, 'proofSuggestions')).toHaveLength(100)
     expect(docsOf(fake, 'proofBatches')).toHaveLength(1)
     expect(writes(core) - before).toBe(101)

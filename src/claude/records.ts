@@ -328,6 +328,11 @@ export interface ItemResult {
   hint?: string
   /** 候補（ambiguous・not_found の時） */
   candidates?: string[]
+  /**
+   * 結果の行と数のまとめで、status の言葉（「場所が決まらない」など）の代わりに出す言葉（推敲案の箇所でない理由の時。
+   * structuredContent の reason は status のまま）
+   */
+  statusLabel?: string
 }
 
 export interface BuildResult {
@@ -1124,6 +1129,8 @@ export function buildCritiqueResult(data: AppData, input: CritiqueResultInput, c
           {
             index: 0,
             status: ambiguous.length ? 'ambiguous' : 'not_found',
+            // 「場所が決まらない」は推敲案の箇所の言葉なので、比べた作品のことだと分かる言葉にする
+            ...(ambiguous.length ? { statusLabel: '比べた作品が決まらない' } : {}),
             label,
             hint,
             ...(candidates.length ? { candidates } : {}),
@@ -1649,7 +1656,7 @@ export function buildToolCall(data: AppData, call: WriteToolCall, ctx: BuildCont
 }
 
 /** 結果の件数（「追加 12件・重複 3件・見つからない 1件」） */
-export function summarizeItems(items: readonly Pick<ItemResult, 'status'>[]): string {
+export function summarizeItems(items: readonly Pick<ItemResult, 'status' | 'statusLabel'>[]): string {
   const names: Record<ItemStatus, string> = {
     created: '追加',
     duplicate: '重複',
@@ -1658,12 +1665,15 @@ export function summarizeItems(items: readonly Pick<ItemResult, 'status'>[]): st
     ambiguous: '場所が決まらない',
     invalid: '形が違う',
   }
-  const counts = new Map<ItemStatus, number>()
-  for (const it of items) counts.set(it.status, (counts.get(it.status) ?? 0) + 1)
-  return (Object.keys(names) as ItemStatus[])
-    .filter((s) => counts.get(s))
-    .map((s) => `${names[s]} ${counts.get(s)}件`)
-    .join('・')
+  // status の順に、同じ言葉（statusLabel があればその言葉）ごとに数える
+  const counts = new Map<string, number>()
+  for (const s of Object.keys(names) as ItemStatus[])
+    for (const it of items) {
+      if (it.status !== s) continue
+      const name = it.statusLabel ?? names[s]
+      counts.set(name, (counts.get(name) ?? 0) + 1)
+    }
+  return [...counts].map(([name, n]) => `${name} ${n}件`).join('・')
 }
 
 /** 表示用に本文の一部を切り出す（サロゲートペアの途中で切らない） */

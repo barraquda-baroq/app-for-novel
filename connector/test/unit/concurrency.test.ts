@@ -175,6 +175,92 @@ describe('写しの取り込みは同時に1つだけ（L2-1・L5-1・L2-6・L2-
     expect(rb.text.match(/新しい本文/g) ?? []).toHaveLength(count)
   })
 
+  /** 端末が n 話の本文を1回の書き込みで送った（同じ時刻の1つの変更） */
+  const pushAll = (fake: FakeFirebase, n: ReturnType<typeof novel>, word: string) =>
+    fake.putMany(
+      OWNER,
+      n.ids.map((id, i) => ({ table: 'versions', rec: { ...versionOf(n.data, id), body: `第${i + 1}話の${word}本文。` } as never })),
+    )
+  const PARTIAL = '（端末からの変更が多いため、取り込みの途中の内容です）'
+  /** 読んだ本文が、端末の1回の変更の途中まで（古い本文と新しい本文が混ざる）を知らせなしに見せていないこと */
+  const notTorn = (text: string, old: RegExp, neu: RegExp) => {
+    const o = (text.match(old) ?? []).length
+    const n = (text.match(neu) ?? []).length
+    expect(o + n).toBeGreaterThan(100)
+    if (o && n) expect(text).toContain(PARTIAL)
+  }
+
+  it('L2-6: 書き込みが取り込みの途中で断った（catching_up）後は、最後まで読んでから15秒以内でも、読むツールは1歩進めて途中なら知らせる', async () => {
+    const count = 300
+    const n = novel(Array.from({ length: count }, (_, i) => `第${i + 1}話の古い本文。`))
+    // 1歩は 1,000 字ほどで止める（1ページ）。書き込みの前の5歩で 250 件しか読めない
+    const { core, fake, gate, clock, a, b } = await accounts(n.data, { config: { workBudgetChars: 1_000 } })
+    expect((await read(core, b, 'novel_list_titles')).isError).toBeUndefined()
+    clock.now += 2_000
+    pushAll(fake, n, '新しい')
+    const w = await core.callTool('novel_add_bench_analysis', benchAdd('星を継ぐ'), { grant: a })
+    expect(w.isError).toBe(true)
+    expect(w.text).toMatch(/^端末からの変更を取り込んでいる途中です（この呼び出しで 250件を取り込みました）。/)
+    // 前は、15秒以内なので取り込まずに、250 話だけ新しい写しを知らせなしに読ませていた
+    clock.now += 1_000
+    const pages = gate.count(syncPage)
+    const r = await read(core, b, 'novel_read_text', { title_id: n.titleId, from: '#1', to: `#${count}` })
+    expect(r.isError).toBeUndefined()
+    expect(gate.count(syncPage) - pages).toBe(1)
+    expect(r.text.split('\n')[0]).toBe(PARTIAL)
+    notTorn(r.text, /古い本文/g, /新しい本文/g)
+    // 取り込み終えた後は、知らせなしで新しい本文だけ。その後の15秒は取り込まずに読む
+    for (let i = 0; i < 20 && (await core.alarm()) !== null; i++);
+    const after = gate.count(syncPage)
+    const done = await read(core, b, 'novel_read_text', { title_id: n.titleId, from: '#1', to: '#40' })
+    expect(gate.count(syncPage) - after).toBe(0)
+    expect(done.text).not.toContain('取り込みの途中')
+    expect(done.text).not.toContain('古い本文')
+    expect(done.text.match(/新しい本文/g) ?? []).toHaveLength(40)
+  })
+
+  it('L2-6: alarm の1歩が途中で終わった後（次の alarm まで1秒あく）も、読むツールは途中の写しを知らせなしに見せない', async () => {
+    const count = 300
+    const n = novel(Array.from({ length: count }, (_, i) => `第${i + 1}話の古い本文。`))
+    const { core, fake, clock, a, b } = await accounts(n.data, { config: { workBudgetChars: 1_000 } })
+    expect((await read(core, b, 'novel_list_titles')).isError).toBeUndefined()
+    clock.now += 2_000
+    pushAll(fake, n, '新しい')
+    expect(await core.alarm()).not.toBeNull()
+    clock.now += 500
+    const r = await read(core, a, 'novel_read_text', { title_id: n.titleId, from: '#1', to: `#${count}` })
+    expect(r.isError).toBeUndefined()
+    expect(r.text.split('\n')[0]).toBe(PARTIAL)
+    notTorn(r.text, /古い本文/g, /新しい本文/g)
+  })
+
+  it('L2-6: 取り込みの1歩がページの途中で失敗した（1ページ目を入れた後）後も、15秒以内の読むツールは途中の写しを知らせなしに見せない', async () => {
+    const count = 60
+    const n = novel(Array.from({ length: count }, (_, i) => `第${i + 1}話の古い本文。`))
+    const { core, fake, gate, clock, a, b } = await accounts(n.data)
+    clock.now += 20_000
+    expect((await read(core, b, 'novel_list_titles')).isError).toBeUndefined()
+    clock.now += 3_000
+    pushAll(fake, n, '新しい')
+    // A の書き込みの取り込みの2ページ目が 503（2回の試し直しも）。1ページ目（50話）は入った
+    gate.failNext(syncPage, 3, () => errorResponse(503, 'UNAVAILABLE'), { skip: 1 })
+    const w = await core.callTool('novel_add_bench_analysis', benchAdd('星を継ぐ'), { grant: a })
+    expect(w.isError).toBe(true)
+    expect(w.text).toContain('一時的に Novel Studio のクラウドに接続できません')
+    clock.now += 1_000
+    const r = await read(core, b, 'novel_read_text', { title_id: n.titleId, from: '#1', to: `#${count}` })
+    expect(r.isError).toBeUndefined()
+    // 前は、取り込まずに 50 話だけ新しい本文を知らせなしに出していた。いまは残りを取り込んでから読む
+    expect(r.text.match(/古い本文/g) ?? []).toHaveLength(0)
+    expect(r.text.match(/新しい本文/g) ?? []).toHaveLength(count)
+    expect(r.text).not.toContain('取り込みの途中')
+    // 取り込み終えた後の15秒は、また取り込まずに読む
+    const pages = gate.count(syncPage)
+    clock.now += 1_000
+    expect((await read(core, b, 'novel_list_titles')).isError).toBeUndefined()
+    expect(gate.count(syncPage) - pages).toBe(0)
+  })
+
   it('L3-2・L2-9: 端末が 200 件書いた後に3つの接続が同時に読むと、取り込むのは1回分（読み取りの数も1回分）', async () => {
     const n = novel(['本文。'])
     const { core, fake, gate, clock, a, b, c } = await accounts(n.data)

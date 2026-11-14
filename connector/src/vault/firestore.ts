@@ -20,6 +20,11 @@ export class FirestoreError extends Error {
   readonly status: number
   /** PERMISSION_DENIED・ALREADY_EXISTS・FAILED_PRECONDITION・ABORTED・RESOURCE_EXHAUSTED・UNAUTHENTICATED など */
   readonly code: string
+  /**
+   * 前の試し（5xx・つながらない）がクラウドに届いたかもしれない後に試し直した答え（commit なら、前の試しで書けていて「もうある」に
+   * なったことがある）
+   */
+  afterUnsure = false
   constructor(status: number, code: string, message: string) {
     super(message)
     this.name = 'FirestoreError'
@@ -70,6 +75,8 @@ export class FirestoreRest {
 
   async #post(path: string, body: unknown): Promise<unknown> {
     let refreshed = false
+    /** 前の試しが届いたかもしれない（5xx・つながらないで試し直した。401 は届いても何もしていない） */
+    let unsure = false
     for (let attempt = 0; ; attempt++) {
       const token = await this.#deps.token(false)
       let res: Response
@@ -82,6 +89,7 @@ export class FirestoreRest {
       } catch (e) {
         // 待ち切った要求は試し直さない（試し直すと上限の何倍も待たせる）
         if (!(e instanceof RequestTimeout) && attempt < RETRY_WAITS.length) {
+          unsure = true
           await this.#sleep(RETRY_WAITS[attempt])
           continue
         }
@@ -103,9 +111,11 @@ export class FirestoreRest {
         continue
       }
       if (res.status >= 500 && attempt < RETRY_WAITS.length) {
+        unsure = true
         await this.#sleep(RETRY_WAITS[attempt])
         continue
       }
+      err.afterUnsure = unsure
       throw err
     }
   }

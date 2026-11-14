@@ -58,6 +58,44 @@ describe('書き込みの枠（すべての接続で1つ）', () => {
     expect(docsOf(fake, 'revisionIdeas')).toHaveLength(30)
   })
 
+  it('いちばん小さく分けた呼び出し（新しい作品と分析1件・推敲案1件と実行の記録・新しいフォルダとアイデア1件）も入らない時は、分ければ書けるとは言わない', async () => {
+    const n = novel(['窓から海が見れる。'])
+    const { core, fake, a, b } = await accounts(n.data, { config: { dailyWriteBudget: 3 } })
+    expect((await core.callTool('novel_add_revision_ideas', ideas(n.titleId, 0, 2), { grant: a })).isError).toBeUndefined()
+    expect(quota(core).writes).toBe(2)
+    const noSplit = (need: number) =>
+      `今日のコネクタ用の書き込み枠は、すべての接続を合わせて残り 1 件です（この呼び出しは ${need} 件）。何も書いていません。この呼び出しは分けても入りません。日本時間16時に回復します。`
+    // 新しい作品と分析1件（2件）
+    const bench = await core.callTool(
+      'novel_add_bench_analysis',
+      { work: '作品A', new_work: { name: '作品A', author: '山田' }, items: [{ viewpoint: '構成', body_markdown: '## 構成', run_date: '2026-10-29' }] },
+      { grant: b },
+    )
+    expect(bench.isError).toBe(true)
+    expect(bench.text).toBe(noSplit(2))
+    // 推敲案1件と実行の記録（2件）
+    const proof = await core.callTool(
+      'novel_add_proofreading',
+      { title_id: n.titleId, items: [{ piece: '#1', excerpt: '海が見れる', category: 'ra_nuki', suggestion: '海が見られる', reason: 'ら抜き' }] },
+      { grant: a },
+    )
+    expect(proof.isError).toBe(true)
+    expect(proof.text).toBe(noSplit(2))
+    // 新しいフォルダ（1段目と日付の2段目）とアイデア1件（3件）
+    const idea = await core.callTool('novel_add_ideas', { folder: '新作の相談', theme: '港町', items: [{ content: '・案' }] }, { grant: b })
+    expect(idea.isError).toBe(true)
+    expect(idea.text).toBe(noSplit(3))
+    // 項目だけの呼び出し（1件ずつ書ける）は、今までどおり分けるよう言う
+    const two = await core.callTool('novel_add_revision_ideas', ideas(n.titleId, 10, 2), { grant: a })
+    expect(two.text).toBe(
+      '今日のコネクタ用の書き込み枠は、すべての接続を合わせて残り 1 件です（この呼び出しは 2 件）。何も書いていません。items を分けて少なくすると書けます。日本時間16時に回復します。',
+    )
+    for (const table of ['benchWorks', 'benchAnalyses', 'proofSuggestions', 'proofBatches', 'ideaFolders', 'ideas'])
+      expect(docsOf(fake, table)).toHaveLength(0)
+    expect(quota(core).writes).toBe(2)
+    expect((await core.callTool('novel_add_revision_ideas', ideas(n.titleId, 10, 1), { grant: a })).isError).toBeUndefined()
+  })
+
   it('ゴミ箱へ移す依頼は cards を分けるよう言う。1日100件の文も、すべての接続を合わせた数だと言う', async () => {
     const n = novel(['本文。'])
     const { core, fake, a, b } = await accounts(n.data, { config: { dailyWriteBudget: 6 } })
@@ -228,9 +266,13 @@ describe('作品批評の比べた作品（bench_works）が決まらない時',
     const input = { title_id: n.titleId, result_markdown: '## 『銀河の果て』と比べて\n…', run_date: '2026-10-29' }
     const amb = await core.callTool('novel_add_critique_result', { ...input, bench_works: ['銀河の果て'] }, { grant: b })
     expect(amb.isError).toBe(true)
+    // 推敲案の箇所の言葉（場所が決まらない）でなく、何が決まらないかを言う（structuredContent の reason は ambiguous のまま）
+    expect(amb.text.split('\n')[0]).toBe('作品批評の結果を記録: 比べた作品が決まらない 1件')
     expect(amb.text).toContain(
-      "- 場所が決まらない 作品批評の結果: bench_works の '銀河の果て' は、相対比較に同名の作品が2件あるため、どれか決まりません。w:… の短い id で指してください。この結果はまだ記録していません（直して送り直すと記録します）",
+      "\n- 比べた作品が決まらない 作品批評の結果: bench_works の '銀河の果て' は、相対比較に同名の作品が2件あるため、どれか決まりません。w:… の短い id で指してください。この結果はまだ記録していません（直して送り直すと記録します）",
     )
+    expect(amb.text).not.toContain('場所が決まらない')
+    expect((amb.structured as { skipped: { reason: string }[] }).skipped.map((s) => s.reason)).toEqual(['ambiguous'])
     expect(amb.text).toContain(`    候補: ${shortId('benchWork', x.result)}『銀河の果て』（宮沢賢治）`)
     expect(amb.text).toContain(`    候補: ${shortId('benchWork', y.result)}『銀河の果て』（田中）`)
     expect(docsOf(fake, 'critiqueResults')).toHaveLength(0)

@@ -636,6 +636,7 @@ describe('作品批評の比べた作品（bench_works）', () => {
     expect(amb.records).toEqual([])
     expect(amb.items[0]).toMatchObject({
       status: 'ambiguous',
+      statusLabel: '比べた作品が決まらない',
       hint: "bench_works の '銀河の果て' は、相対比較に同名の作品が2件あるため、どれか決まりません。w:… の短い id で指してください。この結果はまだ記録していません（直して送り直すと記録します）",
       candidates: [
         `${shortId('benchWork', n.workId)}『銀河の果て』（山田）`,

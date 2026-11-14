@@ -89,7 +89,8 @@ export function itemBudget(v: unknown, claudeCode: boolean): number {
 /**
  * 長い1つの文章を、offset から budget 字まで返す（段落・ルビの記法・サロゲートペアの途中で切らない）。
  * 残りがあれば最後に 続き: cursor="…" を付ける（cursor(次の位置) で作る）。続きのページは contHeader から始める。
- * notice（前回の答えの後に中身が変わった知らせ）があれば、contHeader の次（無ければ先頭）の行に出す
+ * notice（前回の答えの後に中身が変わった知らせ。「（」で始まる行）があれば、答えの先頭（contHeader より前）に出す（novel_read_text・
+ * 取り込みの知らせと同じ。続きのページの「=== 」の行より後は、「（」で始まる行も本文）。offset が終わりなら、知らせと contHeader だけ
  */
 export function pageBody(
   full: string,
@@ -102,7 +103,8 @@ export function pageBody(
   },
 ): string {
   const from = Math.min(Math.max(0, opts.offset), full.length)
-  const headLine = `${from > 0 ? `${opts.contHeader(from)}\n` : ''}${opts.notice ? `${opts.notice}\n` : ''}`
+  const headLine = `${opts.notice ? `${opts.notice}\n` : ''}${from > 0 ? `${opts.contHeader(from)}\n` : ''}`
+  if (from >= full.length && from > 0) return headLine.slice(0, -1)
   if (full.length - from <= opts.budget) return `${headLine}${full.slice(from)}`
   let end = cutPoint(full, from, from + opts.budget)
   if (end <= from) end = Math.min(full.length, from + opts.budget)

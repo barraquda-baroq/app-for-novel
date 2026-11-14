@@ -745,11 +745,21 @@ interface BlockWords {
   ref: (key: string) => string
 }
 
-/** 位置 o の続きの cursor に足すもの: その位置の区切りの id・区切りの中の位置・区切りの文の指紋・それより前の区切りの指紋 */
+/**
+ * 位置 o の続きの cursor に足すもの: その位置の区切りの id・区切りの中の位置・区切りの文の指紋・それより前の区切りの指紋。
+ * まとまり（観点・項目）の最初の区切りの見出しの行（「--- 観点「…」」）まで出して、区切りの文の前で切った時は g も（続きで見出しを
+ * 繰り返さない）
+ */
 function blockMark(blocks: readonly TextBlock[], o: number): Record<string, unknown> {
   const i = blockAt(blocks, o)
   const b = blocks[i]
-  return { a: b.key, ao: Math.max(0, o - b.start), ah: textHash(b.text), b: prefixPrint(blocks, i) }
+  return {
+    a: b.key,
+    ao: Math.max(0, o - b.start),
+    ah: textHash(b.text),
+    b: prefixPrint(blocks, i),
+    ...(o === b.start && b.start > b.from ? { g: 1 } : {}),
+  }
 }
 
 /**
@@ -790,6 +800,9 @@ function resumeBlocks(
       offset = b.start + Math.min(ao, b.text.length)
       inside = true
     } else textNote = `（前回の続きの${item}の本文が変わっていたため、その${item}の始めから読み直しています）`
+  } else if (c.g === 1 && r.index === found && textHash(b.text) === c.ah) {
+    // まとまりの見出しの行まで読んで、区切りの文はまだ: 文が同じなら、見出しの行を繰り返さずに区切りの文から
+    offset = b.start
   }
   const from = `前回の続きの ${ref(r.index)}${inside ? 'の途中' : ''}から続けます`
   if (r.kind === 'added')
@@ -826,8 +839,8 @@ function pagedBlocks(
   if (cont && typeof cont.raw.a === 'string') {
     const r = resumeBlocks(joined.blocks, cont.raw, words)
     if (!r) return fail(`cursor が読めません（${words.tool} の続きの cursor をそのまま渡してください）`)
-    if (r.offset >= joined.text.length) return ok([...r.notes, '（ここで終わりです）'].join('\n'))
-    offset = r.offset
+    // 終わりまで読んでいた（続きの区切りが無い）: 知らせと続きの見出しだけ（知らせは「ここで終わりです」で終わる）
+    offset = Math.min(r.offset, joined.text.length)
     notes = r.notes
   }
   return pagedItem(ctx, args, k, ownerId, { ...item, text: joined.text }, offset, extra, {
