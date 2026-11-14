@@ -1127,8 +1127,12 @@
   `config/connector` は下の「複数の接続」。確かめは `src/claude/rules.emu.test.ts`。
 - **ホームの帯**（`src/features/home/homeBands.ts`・`HomeBandHead.tsx`）: 開いている帯はモジュールの中の集まり（保存しない。起動・読み込み直しの時だけ
   空。画面の移動・ネイティブのアプリを裏から戻した時は残る。`useSyncExternalStore`）。見出しは `h2 > button[aria-expanded]` に名前と件数（件数の
-  testid は今までどおり）。閉じた帯は中身を描かない。追加のボタンは閉じていても出して帯を開く。アイデアの見出しに［＋ 書きとめる］（`flushSync` で
-  帯を開いてすばやく追加の欄にフォーカス）。並べ替え・編集の切り替えは閉じている間は出さない（編集の状態も戻す）。最初の `?view`（`?view=ideas&focus`）
+  testid は今までどおり）。ボタンは右の追加のボタンの手前まで広げ（`flex: 1 1 auto`。折り返す幅は中身の幅のまま）、見出しの行（`.home-pane-head`・
+  `home-band-head`）の onClick でも、ほかの所を押すと開け閉めする（`togglesBand`: ボタン・リンク・入力・label の上、画面の上で行の外のもの（portal の
+  ダイアログ）、その行の中で文字を選んだ時、左ボタン以外は除く。キーボードと読み上げは見出しのボタン。`cursor: pointer` はマウスの時だけ。指の端末で付けると、Android が追加のボタンを
+  押した時にも見出しの行全体を光らせる）。閉じた帯は中身を描かない。追加のボタンは閉じていても出して帯を開く。アイデアの見出しに［＋ 書きとめる］（`flushSync` で
+  帯を開いてすばやく追加の欄にフォーカス）。並べ替え・編集の切り替えは帯の中の先頭（`.home-band-tools`。見出しの行に置くと開いた時だけ見出しのボタンが縮み、
+  開いた所をもう一度押すと編集になるため）で、閉じている間は出さない（編集の状態も戻す）。最初の `?view`（`?view=ideas&focus`）
   は最初の描画の前に帯を開き、切り替え（`jumpTo`）は `flushSync` で開いてからスクロールして見出しのボタンにフォーカス。開いている帯は閉じない。
   幅に関係なく閉じて始める（広い画面には切り替えが無いので見出しが操作）。`BenchShelf`・`MaterialShelf` は単独では開いている（既定 `open = true`）。
 - **複数の接続**（`src/claude/pairing.ts`・`src/features/claude/connectLogic.ts`・`connectorDoc.ts`・`ConnectPage.tsx`・`ConnectionList.tsx`・

@@ -11,6 +11,8 @@ import { HomePage } from './HomePage'
 import { resetBenchShelfForTests } from './BenchShelf'
 import { resetMaterialShelfForTests } from './MaterialShelf'
 import { isBandOpen, openBand, resetHomeBandsForTests } from './homeBands'
+import type { MouseEvent } from 'react'
+import { togglesBand } from './HomeBandHead'
 
 let n = 0
 
@@ -176,6 +178,73 @@ describe('ホームの帯（2.9）', () => {
     fireEvent.click(bandToggle('bench'))
     act(() => resetHomeBandsForTests())
     expect(bandToggle('bench').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('帯（見出しの行）のどこを押しても開け閉め。追加などのボタン・文字を選んだ時は開け閉めしない', () => {
+    seedAll()
+    renderHome()
+    const head = (area: string) => bandToggle(area).closest<HTMLElement>('[data-testid="home-band-head"]')!
+    const expanded = (area: string) => bandToggle(area).getAttribute('aria-expanded')
+    // 行そのもの（左の余白・ボタンの間・折り返した行の空き）
+    fireEvent.click(head('titles'))
+    expect(expanded('titles')).toBe('true')
+    expect(screen.getAllByTestId('title-card')).toHaveLength(1)
+    fireEvent.click(head('titles'))
+    expect(expanded('titles')).toBe('false')
+    // 説明の文（アイデアの帯）
+    fireEvent.click(within(head('ideas')).getByText(/タイトルごとに仕切られ/))
+    expect(expanded('ideas')).toBe('true')
+    // 見出しのボタンの中（件数）を押しても1回だけ（行へ伝わっても2回にならない）
+    fireEvent.click(screen.getByTestId('bench-count'))
+    expect(expanded('bench')).toBe('true')
+    fireEvent.click(bandToggle('bench'))
+    expect(expanded('bench')).toBe('false')
+    // 追加などのボタンは、それぞれの動きだけ（帯を閉じない）
+    fireEvent.click(bandToggle('titles'))
+    fireEvent.click(screen.getByTestId('titles-edit-toggle'))
+    expect(screen.getByTestId('titles-edit-toggle').getAttribute('aria-pressed')).toBe('true')
+    expect(expanded('titles')).toBe('true')
+    fireEvent.click(screen.getByTestId('idea-band-capture'))
+    expect(expanded('ideas')).toBe('true')
+    // 行の中の文字を選んだ時（なぞって選んだ指を離した時）は開け閉めしない
+    const name = head('materials').querySelector('.home-band-name')!
+    const range = document.createRange()
+    range.selectNodeContents(name)
+    window.getSelection()!.removeAllRanges()
+    window.getSelection()!.addRange(range)
+    fireEvent.click(head('materials'))
+    expect(expanded('materials')).toBe('false')
+    window.getSelection()!.removeAllRanges()
+    fireEvent.click(head('materials'))
+    expect(expanded('materials')).toBe('true')
+    // 右ボタン・中ボタンでは開け閉めしない
+    fireEvent.click(head('materials'), { button: 1 })
+    expect(expanded('materials')).toBe('true')
+  })
+
+  it('帯の見出しの行へ伝わる、画面の上で行の外にあるもの（portal のダイアログなど）のクリックでは開け閉めしない', () => {
+    const outside = document.createElement('div')
+    document.body.append(outside)
+    const head = document.createElement('div')
+    const inside = document.createElement('span')
+    head.append(inside)
+    document.body.append(head)
+    const at = (target: Element, button = 0) =>
+      togglesBand({
+        defaultPrevented: false,
+        button,
+        target,
+        currentTarget: head,
+      } as unknown as MouseEvent<HTMLElement>)
+    expect(at(inside)).toBe(true)
+    expect(at(head)).toBe(true)
+    // React の上ではこの行の子でも、画面の上では外（portal）
+    expect(at(outside)).toBe(false)
+    const button = document.createElement('button')
+    head.append(button)
+    expect(at(button)).toBe(false)
+    head.remove()
+    outside.remove()
   })
 
   it('帯を閉じると「並べ替え・編集」も終わる（開き直すと見るだけ）', () => {

@@ -132,18 +132,6 @@ export function BenchShelf({
         countTestId="bench-count"
         actions={
           <>
-            {open && works.length > 0 ? (
-              <button
-                type="button"
-                className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
-                aria-pressed={editing}
-                onClick={() => setEdit((v) => !v)}
-                data-testid="bench-edit-toggle"
-              >
-                <EditIcon />
-                {editing ? '編集を終える' : '並べ替え・編集'}
-              </button>
-            ) : null}
             <button
               type="button"
               className="btn btn-primary btn-sm home-new-title"
@@ -163,6 +151,21 @@ export function BenchShelf({
 
       {open ? (
         <div id={bodyId} className="home-band-body">
+          {/* 並べ替え・編集は帯の中の先頭（見出しの行は開いても閉じても同じ形にし、帯を開いた所をもう一度押すと閉じるように） */}
+          {works.length > 0 ? (
+            <div className="home-band-tools">
+              <button
+                type="button"
+                className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
+                aria-pressed={editing}
+                onClick={() => setEdit((v) => !v)}
+                data-testid="bench-edit-toggle"
+              >
+                <EditIcon />
+                {editing ? '編集を終える' : '並べ替え・編集'}
+              </button>
+            </div>
+          ) : null}
           {works.length === 0 ? (
             <div className="empty home-empty home-bench-empty" data-testid="bench-empty">
               <p>

@@ -53,6 +53,14 @@
   box-shadow: inset 3px 0 0 var(--area, transparent);
 }
 
+/* 帯（見出しの行）のどこを押しても開け閉めする（HomeBandHead）。指で操作する端末では付けない（Android は cursor: pointer の
+   要素を押せる所と見なし、追加のボタンを押しても見出しの行全体を光らせるため） */
+@media (hover: hover) and (pointer: fine) {
+  .home-pane-head {
+    cursor: pointer;
+  }
+}
+
 .home-pane-head h2 {
   font-size: 18px;
   letter-spacing: 0.02em;
@@ -60,6 +68,8 @@
 
 /* ---------- 帯（2.9）: 見出しの中のボタンで開け閉めする。名前と件数はボタンの中（閉じていても件数が分かる） ---------- */
 .home-band-title {
+  /* 見出しのボタンを右の追加のボタンまで広げる（折り返す時の幅は今までどおり、中身の幅で決まる） */
+  flex: 1 1 auto;
   display: flex;
   min-width: 0;
   margin: 0;
@@ -68,6 +78,7 @@
 .home-band-toggle {
   /* 読み上げ用の「件」（絶対配置）が横スクロールの外へはみ出さないように */
   position: relative;
+  flex: 1 1 auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -119,6 +130,13 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
+}
+
+/* 帯の中の先頭の［並べ替え・編集］（右寄せ。見出しの行に置くと、開いた時だけ見出しのボタンが縮むため） */
+.home-band-tools {
+  display: flex;
+  justify-content: flex-end;
   min-width: 0;
 }
 

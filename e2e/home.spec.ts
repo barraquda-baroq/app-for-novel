@@ -182,6 +182,94 @@ test.describe('ホーム', () => {
     await noHorizontalScroll(page)
   })
 
+  test('帯（見出しの行）のどこを押しても開け閉めする。見出しのボタンは右の追加のボタンの手前まで広がり、開いても閉じても同じ形（同じ所をもう一度押すと閉じる）', async ({
+    page,
+  }, info) => {
+    if (info.project.name === 'mobile') await page.setViewportSize({ width: 360, height: 760 })
+    await openApp(page)
+    // 並べ替え・編集のボタンが出るように、どの帯にも1件ずつ
+    await seed(page, ({ actions }) => {
+      const t = actions.createTitle('星の海')
+      actions.addIdea(t, '', '星の海の案')
+      actions.addBenchWork({ name: '銀河の果て' })
+      actions.addMaterial({ name: '江戸の町と暮らし' })
+      return t
+    })
+    await page.reload()
+    const touch = info.project.name === 'mobile'
+    /** 指の端末では指で押す（ブラウザは、近くのボタンを押したことにする） */
+    const press = async (x: number, y: number) => {
+      if (touch) await page.touchscreen.tap(x, y)
+      else await page.mouse.click(x, y)
+    }
+    // クリックが実際に届いた所（data-testid の付いた一番近いもの）
+    await page.evaluate(() => {
+      const w = window as unknown as { __lastClick: string }
+      w.__lastClick = ''
+      window.addEventListener(
+        'click',
+        (e) => {
+          w.__lastClick = (e.target as Element).closest('[data-testid]')?.getAttribute('data-testid') ?? ''
+        },
+        true,
+      )
+    })
+    const lastClick = () => page.evaluate(() => (window as unknown as { __lastClick: string }).__lastClick)
+    for (const area of BANDS) {
+      const toggle = homeBandToggle(page, area)
+      const head = page.getByTestId('home-band-head').filter({ has: toggle })
+      await head.scrollIntoViewIfNeeded()
+      const hb = (await head.boundingBox())!
+      const tb = (await toggle.boundingBox())!
+      // 見出しの行の2つ目（追加のボタン。広い画面のアイデアの帯では説明の文）
+      const next = head.locator(':scope > *:visible').nth(1)
+      const nb = (await next.boundingBox())!
+      // 見出しのボタンと次のものは1行に並び、見出しのボタンは次のものの手前（間は 8px）まで広がる
+      expect(Math.abs(nb.y + nb.height / 2 - (tb.y + tb.height / 2)), area).toBeLessThan(4)
+      expect(nb.x - (tb.x + tb.width), area).toBeLessThanOrEqual(9)
+      // 左の余白（見出しのボタンの外。行そのもの）をマウスで押すと開く（指はすぐ右の見出しのボタンに取られるので、どちらの端末でもマウス）
+      await page.mouse.click(hb.x + 3, hb.y + hb.height / 2)
+      expect(await lastClick(), area).toBe('home-band-head')
+      await expect(toggle, area).toHaveAttribute('aria-expanded', 'true')
+      // 開いても見出しの行の形は同じ（並べ替え・編集は帯の中）
+      expect(await toggle.boundingBox(), area).toEqual(tb)
+      // 閉じていた時の見出しのボタンの右の端（名前と件数より右。前は押しても開け閉めしなかった所）を押すと閉じ、
+      // 同じ所をもう一度押すと開き、さらにもう一度で閉じる（並べ替え・編集にならない）
+      const x = tb.x + tb.width - 3
+      const y = tb.y + tb.height / 2
+      await press(x, y)
+      expect(await lastClick(), area).toBe('home-band-toggle')
+      await expect(toggle, area).toHaveAttribute('aria-expanded', 'false')
+      await press(x, y)
+      await expect(toggle, area).toHaveAttribute('aria-expanded', 'true')
+      await press(x, y)
+      expect(await lastClick(), area).toBe('home-band-toggle')
+      await expect(toggle, area).toHaveAttribute('aria-expanded', 'false')
+      // マウスでは、見出しのボタンと次のもの（追加のボタン・説明の文）の間（行そのもの）でも開く
+      if (!touch) {
+        await page.mouse.click(nb.x - 4, nb.y + nb.height / 2)
+        expect(await lastClick(), area).toBe('home-band-head')
+        await expect(toggle, area).toHaveAttribute('aria-expanded', 'true')
+      } else await press(x, y)
+      await expect(toggle, area).toHaveAttribute('aria-expanded', 'true')
+      await noHorizontalScroll(page)
+    }
+    // 並べ替え・編集は帯の中の先頭（押しても帯は閉じない）
+    for (const id of ['titles-edit-toggle', 'bench-edit-toggle', 'material-edit-toggle']) {
+      const edit = page.getByTestId(id)
+      await expect(page.getByTestId('home-band-head').getByTestId(id)).toHaveCount(0)
+      await edit.click()
+      await expect(edit).toHaveAttribute('aria-pressed', 'true')
+      await edit.click()
+      await expect(edit).toHaveAttribute('aria-pressed', 'false')
+    }
+    for (const area of BANDS) await expect(homeBandToggle(page, area)).toHaveAttribute('aria-expanded', 'true')
+    // 追加のボタンは今までどおり（開いた帯を閉じない）
+    await page.getByTestId('idea-band-capture').click()
+    await expect(homeBandToggle(page, 'ideas')).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByTestId('quick-idea-input')).toBeFocused()
+  })
+
   test('タイトルを作るとアイデアの仕切りがタイトル順に増え、「どのタイトルにも属さない」は最後のまま', async ({ page }) => {
     await openApp(page)
     await openHomeBands(page)

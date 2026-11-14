@@ -66,18 +66,6 @@ export function TitleGroup({
         countTestId="title-count"
         actions={
           <>
-            {open && infos.length > 0 ? (
-              <button
-                type="button"
-                className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
-                aria-pressed={editing}
-                onClick={() => setEdit((v) => !v)}
-                data-testid="titles-edit-toggle"
-              >
-                <EditIcon />
-                {editing ? '編集を終える' : '並べ替え・編集'}
-              </button>
-            ) : null}
             <button
               type="button"
               className="btn btn-primary btn-sm home-new-title"
@@ -97,6 +85,21 @@ export function TitleGroup({
 
       {open ? (
         <div id={bodyId} className="home-band-body">
+          {/* 並べ替え・編集は帯の中の先頭（見出しの行は開いても閉じても同じ形にし、帯を開いた所をもう一度押すと閉じるように） */}
+          {infos.length > 0 ? (
+            <div className="home-band-tools">
+              <button
+                type="button"
+                className={`btn btn-sm${editing ? ' home-toggle-on' : ' btn-ghost'}`}
+                aria-pressed={editing}
+                onClick={() => setEdit((v) => !v)}
+                data-testid="titles-edit-toggle"
+              >
+                <EditIcon />
+                {editing ? '編集を終える' : '並べ替え・編集'}
+              </button>
+            </div>
+          ) : null}
           {infos.length === 0 ? (
             <div className="empty home-empty" data-testid="titles-empty">
               <p>まだタイトルがありません。「＋新しいタイトル」から始めましょう。</p>
