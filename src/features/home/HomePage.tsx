@@ -163,11 +163,17 @@ export function HomePage() {
     update()
     window.addEventListener('scroll', update, { passive: true })
     window.addEventListener('resize', update)
+    // 帯の中身が増え減りして領域の位置が変わった時も決め直す（上の帯が伸びても、ブラウザが見ている所を保って scrollY を
+    // 変えないことがあり、その時はスクロールの知らせが来ない）
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    for (const el of [document.getElementById(paneIds.titles), ideasPane.current, benchPane.current, materialsPane.current])
+      if (el) ro?.observe(el)
     window.addEventListener('wheel', release, { passive: true })
     window.addEventListener('pointerdown', release, { passive: true })
     window.addEventListener('keydown', release)
     return () => {
       cancelAnimationFrame(raf)
+      ro?.disconnect()
       window.removeEventListener('scroll', update)
       window.removeEventListener('resize', update)
       window.removeEventListener('wheel', release)
