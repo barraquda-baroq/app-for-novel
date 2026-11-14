@@ -1,7 +1,7 @@
 // 資料（2.6。内部名は materials）の画面: ホームの棚（カード・追加・並べ替え・削除・検索の欄・タグのチップ・件数・タグを管理）、
 // 資料の画面（タグ・項目ごとの記録・開閉・全文・足す・直す・削除・手動の依頼文・貼り付け）。相対比較（bench.test.tsx）と同じ確かめ。
 // タグは作者が付けて管理する（Claude は付けない）
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -429,6 +429,32 @@ describe('資料の画面', () => {
     expect(within(long).queryByTestId('material-note-body')).toBeNull()
     await user.click(screen.getByTestId('material-toggle-all'))
     expect(screen.getAllByTestId('material-note-body')).toHaveLength(4)
+  })
+
+  it('合計とカードごとの字数はアプリの数え方（空白・改行・全角の空白・表の詰め物・ルビの記法と読みを除く）。コピーする本文には入れない', async () => {
+    const user = userEvent.setup()
+    const materialId = actions.addMaterial({ name: '江戸の町と暮らし', author: '山田' })
+    // 空白・改行込みでは 66字。アプリの数え方では 39字（##文体 4・|観点|評価| 7・|---|---| 9・|文の長さ|短い| 9・主人公は漢字を読む。 10）
+    const table = '## 文体\n\n| 観点 | 評価 |\n| --- | --- |\n| 文の長さ | 短い |\n\n　主人公は｜漢字《かんじ》を読む。\n'
+    const summary = actions.addMaterialNote(materialId, { section: '要約', body: table, runDate: '2026-10-01' })
+    // 10字（空白・改行込み）→ 8字
+    actions.addMaterialNote(materialId, { section: '年表', body: '短い　文。\n次の行。', runDate: '2026-10-02' })
+    renderPage(materialId)
+    expect(screen.getByTestId('material-notes-total').textContent).toBe('合計 47字')
+    const cards = screen.getAllByTestId('material-note')
+    const card = cards.find((c) => c.getAttribute('data-note-id') === summary)!
+    expect(cards.map((c) => within(c).getByTestId('material-note-chars').textContent).sort()).toEqual(['39字', '8字'])
+    // カードの頭（日付・札の並び）にあり、開いても同じ
+    expect(within(card).getByTestId('material-note-chars').closest('.mt-note-meta')).not.toBeNull()
+    await user.click(within(card).getByTestId('material-note-toggle'))
+    expect(within(card).getByTestId('material-note-chars').textContent).toBe('39字')
+    // ［コピー］は本文だけ（字数は入らない）
+    await user.click(within(card).getByTestId('material-note-copy'))
+    expect(vi.mocked(copyText).mock.calls[0][0]).toBe(table)
+    // 直すと数え直す（3桁ごとの区切り）
+    await act(async () => actions.updateMaterialNote(summary, { body: `${'あ'.repeat(1200)}\n\n${'い　'.repeat(300)}` }))
+    await waitFor(() => expect(within(card).getByTestId('material-note-chars').textContent).toBe('1,500字'))
+    expect(screen.getByTestId('material-notes-total').textContent).toBe('合計 1,508字')
   })
 
   it('記録を追加（項目の候補）・直す・削除（ゴミ箱へ）。まだ無い項目からも足せる', async () => {

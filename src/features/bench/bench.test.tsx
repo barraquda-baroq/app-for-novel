@@ -1,7 +1,7 @@
 // 相対比較（内部名は bench）の画面: ホームの棚（カード・追加・並べ替え・削除・自分の原稿の分析を原稿ごとにまとめたカード）、
 // 作品の画面（観点ごとの分析・開閉・全文・足す・直す・削除・手動の依頼文・貼り付け・同じ原稿の分析）、作品批評タブの
 // 「相対比較する作品」（選ぶ・外す・結果の比べた作品）と手動の依頼の分析
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -277,6 +277,32 @@ describe('作品の画面', () => {
     // すべて開く
     await user.click(screen.getByTestId('bench-toggle-all'))
     expect(screen.getAllByTestId('bench-analysis-body')).toHaveLength(3)
+  })
+
+  it('合計とカードごとの字数はアプリの数え方（空白・改行・全角の空白・表の詰め物・ルビの記法と読みを除く）。コピーする本文には入れない', async () => {
+    const user = userEvent.setup()
+    const workId = actions.addBenchWork({ name: '銀河の果て', author: '山田' })
+    // 空白・改行込みでは 66字。アプリの数え方では 39字（##文体 4・|観点|評価| 7・|---|---| 9・|文の長さ|短い| 9・主人公は漢字を読む。 10）
+    const table = '## 文体\n\n| 観点 | 評価 |\n| --- | --- |\n| 文の長さ | 短い |\n\n　主人公は｜漢字《かんじ》を読む。\n'
+    const style = actions.addBenchAnalysis(workId, { viewpoint: '文体', body: table, runDate: '2026-10-01' })
+    // 10字（空白・改行込み）→ 8字
+    actions.addBenchAnalysis(workId, { viewpoint: '構成', body: '短い　文。\n次の行。', runDate: '2026-10-02' })
+    renderPage(workId)
+    expect(screen.getByTestId('bench-analyses-total').textContent).toBe('合計 47字')
+    const cards = screen.getAllByTestId('bench-analysis')
+    const card = cards.find((c) => c.getAttribute('data-analysis-id') === style)!
+    expect(cards.map((c) => within(c).getByTestId('bench-analysis-chars').textContent).sort()).toEqual(['39字', '8字'])
+    // カードの頭（日付・札の並び）にあり、開いても同じ
+    expect(within(card).getByTestId('bench-analysis-chars').closest('.bw-analysis-meta')).not.toBeNull()
+    await user.click(within(card).getByTestId('bench-analysis-toggle'))
+    expect(within(card).getByTestId('bench-analysis-chars').textContent).toBe('39字')
+    // ［コピー］は本文だけ（字数は入らない）
+    await user.click(within(card).getByTestId('bench-analysis-copy'))
+    expect(vi.mocked(copyText).mock.calls[0][0]).toBe(table)
+    // 直すと数え直す（3桁ごとの区切り）
+    await act(async () => actions.updateBenchAnalysis(style, { body: `${'あ'.repeat(1200)}\n\n${'い　'.repeat(300)}` }))
+    await waitFor(() => expect(within(card).getByTestId('bench-analysis-chars').textContent).toBe('1,500字'))
+    expect(screen.getByTestId('bench-analyses-total').textContent).toBe('合計 1,508字')
   })
 
   it('分析を追加（観点の候補）・直す・削除（ゴミ箱へ）', async () => {

@@ -189,6 +189,9 @@ test.describe('資料', () => {
     // 開閉。長い記録は頭だけ（「全文を表示」で全部）
     const summary = group(page, '要約').getByTestId('material-note')
     await expect(summary.getByTestId('material-note-body')).toHaveCount(0)
+    // 字数はアプリの数え方（空白・改行を除く。空白・改行込みでは 6,279字・6,225字）。カードの頭に出す
+    await expect(page.getByTestId('material-notes-total')).toHaveText('合計 6,208字')
+    await expect(summary.getByTestId('material-note-chars')).toHaveText('6,161字')
     await summary.getByTestId('material-note-toggle').click()
     await expect(summary.getByTestId('material-note-toggle')).toHaveAttribute('aria-expanded', 'true')
     await expect(summary.getByTestId('material-note-body').locator('h2')).toHaveText('要約')
@@ -207,6 +210,7 @@ test.describe('資料', () => {
     const scene = group(page, '描写に使える部分').getByTestId('material-note')
     await expect(scene.getByTestId('material-note-body')).toContainText('暗視装置の緑の視界')
     await expect(scene.getByTestId('material-note-date-label')).toHaveText('2026/10/30')
+    await expect(scene.getByTestId('material-note-chars')).toHaveText('19字')
     // 「記録を追加」から、項目の候補を選んで足す（同じ項目の中は新しい日付から）
     await page.getByTestId('material-add-note').click()
     await dialog(page).getByTestId('material-note-suggestion').filter({ hasText: '創作に役立つ知識' }).click()
@@ -221,6 +225,7 @@ test.describe('資料', () => {
     await page.getByTestId('material-note-input').fill('## 描写\n- 雨の夜の集合（第6章）')
     await page.getByTestId('material-note-save').click()
     await expect(scene.getByTestId('material-note-body')).toContainText('雨の夜の集合')
+    await expect(scene.getByTestId('material-note-chars')).toHaveText('16字')
     // 削除（ゴミ箱では「資料の記録」、場所は「資料 › 資料名」）
     await scene.getByTestId('material-note-delete').click()
     await expect(dialog(page)).toContainText('「描写に使える部分」の記録を削除しますか？')

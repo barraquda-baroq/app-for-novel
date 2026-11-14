@@ -197,6 +197,9 @@ test.describe('相対比較', () => {
     await expect(groups).toHaveCount(2)
     const structure = page.locator('[data-testid="bench-group"][data-viewpoint="構成"]').getByTestId('bench-analysis')
     await expect(structure.getByTestId('bench-analysis-body')).toHaveCount(0)
+    // 字数はアプリの数え方（空白・改行を除く。空白・改行込みでは 6,218字・14字）。カードの頭に出す
+    await expect(page.getByTestId('bench-analyses-total')).toHaveText('合計 6,166字')
+    await expect(structure.getByTestId('bench-analysis-chars')).toHaveText('6,154字')
     await structure.getByTestId('bench-analysis-toggle').click()
     await expect(structure.getByTestId('bench-analysis-toggle')).toHaveAttribute('aria-expanded', 'true')
     await expect(structure.getByTestId('bench-analysis-body').locator('h2')).toHaveText('構成')
@@ -216,12 +219,15 @@ test.describe('相対比較', () => {
     const opening = page.locator('[data-testid="bench-group"][data-viewpoint="冒頭の掴み"]').getByTestId('bench-analysis')
     await expect(opening.getByTestId('bench-analysis-body')).toContainText('一文目で謎を置く。')
     await expect(opening.getByTestId('bench-analysis-date-label')).toHaveText('2026/10/30')
+    await expect(opening.getByTestId('bench-analysis-chars')).toHaveText('13字')
+    await expect(page.getByTestId('bench-analyses-total')).toHaveText('合計 6,179字')
     await expect(groups).toHaveCount(3)
     // 直す
     await opening.getByTestId('bench-analysis-edit').click()
     await page.getByTestId('bench-analysis-input').fill('## 冒頭\n会話から始まる。')
     await page.getByTestId('bench-analysis-save').click()
     await expect(opening.getByTestId('bench-analysis-body')).toContainText('会話から始まる。')
+    await expect(opening.getByTestId('bench-analysis-chars')).toHaveText('12字')
     // 削除（ゴミ箱では「相対比較の分析」、場所は「相対比較 › 作品名」）
     await opening.getByTestId('bench-analysis-delete').click()
     await dialog(page).getByRole('button', { name: '削除' }).click()

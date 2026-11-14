@@ -8,7 +8,7 @@ import { memo, useCallback, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { materialNotesOf } from '../../claude/materialOrder'
 import { isNewerRecord, NEWER_RECORD_LABEL } from '../../claude/visibility'
-import { formatCount } from '../../domain/text'
+import { bodyMetrics, formatCount } from '../../domain/text'
 import { trashNotice } from '../../domain/trash'
 import type { ID, Material, MaterialNote } from '../../domain/types'
 import { paths } from '../../routes'
@@ -78,7 +78,8 @@ function MaterialView({ material }: { material: Material }) {
   const tags = materialTags(material)
   const createdBy = materialCreatedBy(material.source)
   const updated = materialLastUpdated(material, notes)
-  const totalChars = useMemo(() => notes.reduce((n, a) => n + a.body.length, 0), [notes])
+  // 文字数はアプリのほかの所と同じ数え方（空白・改行・ルビの記法と読みを除く。bodyMetrics はレコードごとに覚えておく）
+  const totalChars = useMemo(() => notes.reduce((n, a) => n + bodyMetrics(a).chars, 0), [notes])
 
   const flip = (set: ReadonlySet<ID>, id: ID) => {
     const next = new Set(set)
@@ -188,7 +189,11 @@ function MaterialView({ material }: { material: Material }) {
             <h2 id="mt-notes-heading">
               記録<span className="sx-count">{notes.length}</span>
             </h2>
-            {notes.length ? <span className="small muted">合計 {formatCount(totalChars)}字</span> : null}
+            {notes.length ? (
+              <span className="small muted" data-testid="material-notes-total">
+                合計 {formatCount(totalChars)}字
+              </span>
+            ) : null}
             <span className="grow" />
             {notes.length ? (
               <button
@@ -335,6 +340,9 @@ const NoteCard = memo(function NoteCard({
               <span className="badge cl-badge">
                 <SparkIcon />
                 {badge ?? '手で記録'}
+              </span>
+              <span className="small muted" data-testid="material-note-chars">
+                {formatCount(bodyMetrics(n).chars)}字
               </span>
               {n.model ? <span className="small muted">{n.model}</span> : null}
               {isNewerRecord(n) ? <span className="badge badge-missing">{NEWER_RECORD_LABEL}</span> : null}

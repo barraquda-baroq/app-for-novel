@@ -10,7 +10,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { benchAnalysesOf, benchViewpointGroups } from '../../claude/benchOrder'
 import { isNewerRecord, NEWER_RECORD_LABEL } from '../../claude/visibility'
 import { titlesComparing } from '../../domain/benchOps'
-import { formatCount } from '../../domain/text'
+import { bodyMetrics, formatCount } from '../../domain/text'
 import { trashNotice } from '../../domain/trash'
 import type { BenchAnalysis, BenchWork, ID } from '../../domain/types'
 import { paths } from '../../routes'
@@ -94,7 +94,8 @@ function BenchWorkView({ work }: { work: BenchWork }) {
   const taggable = canTagWork(work)
   const createdBy = createdByLabel(work.source)
   const updated = workLastUpdated(work, analyses)
-  const totalChars = useMemo(() => analyses.reduce((n, a) => n + a.body.length, 0), [analyses])
+  // 文字数はアプリのほかの所と同じ数え方（空白・改行・ルビの記法と読みを除く。bodyMetrics はレコードごとに覚えておく）
+  const totalChars = useMemo(() => analyses.reduce((n, a) => n + bodyMetrics(a).chars, 0), [analyses])
 
   const flip = (set: ReadonlySet<ID>, id: ID) => {
     const next = new Set(set)
@@ -231,7 +232,11 @@ function BenchWorkView({ work }: { work: BenchWork }) {
             <h2 id="bw-analyses-heading">
               分析<span className="sx-count">{analyses.length}</span>
             </h2>
-            {analyses.length ? <span className="small muted">合計 {formatCount(totalChars)}字</span> : null}
+            {analyses.length ? (
+              <span className="small muted" data-testid="bench-analyses-total">
+                合計 {formatCount(totalChars)}字
+              </span>
+            ) : null}
             <span className="grow" />
             {analyses.length ? (
               <button
@@ -444,6 +449,9 @@ const AnalysisCard = memo(function AnalysisCard({
               <span className="badge cl-badge">
                 <SparkIcon />
                 {badge ?? '手で記録'}
+              </span>
+              <span className="small muted" data-testid="bench-analysis-chars">
+                {formatCount(bodyMetrics(a).chars)}字
               </span>
               {a.model ? <span className="small muted">{a.model}</span> : null}
               {isNewerRecord(a) ? <span className="badge badge-missing">{NEWER_RECORD_LABEL}</span> : null}
