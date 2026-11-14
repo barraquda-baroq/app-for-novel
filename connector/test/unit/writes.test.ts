@@ -200,8 +200,8 @@ describe('L5-4・L5-9・L3-8: 書けなかった分', () => {
     expect(st.skipped.filter((s) => s.reason === 'not_written')).toHaveLength(49)
     expect(docsOf(fake, 'proofSuggestions')).toHaveLength(51)
     expect(docsOf(fake, 'proofBatches')).toHaveLength(0)
-    // 数えるのは書けた分だけ
-    expect(writes(core) - before).toBe(51)
+    // 後の組は 5xx が続いた（クラウドが書いたか分からない）ので、数えたまま（少なく数えない）
+    expect(writes(core) - before).toBe(101)
     // もう一度送る（確かめた話 covered が無くても、実行の記録も作る）
     const again = await core.callTool('novel_add_proofreading', input, { grant: b })
     expect(again.isError).toBeUndefined()
@@ -209,33 +209,58 @@ describe('L5-4・L5-9・L3-8: 書けなかった分', () => {
     expect(again.text).toContain('- 実行の記録（確認した話・追加した案）を残しました')
     expect(docsOf(fake, 'proofSuggestions')).toHaveLength(100)
     expect(docsOf(fake, 'proofBatches')).toHaveLength(1)
-    expect(writes(core) - before).toBe(101)
+    expect(writes(core) - before).toBe(151)
   })
 
-  /** commit をクラウド（小さな Firebase）で書いてから、答えを 503 にする fetch（書けたのに答えが届かない。lose(n) の数だけ） */
-  async function lostAnswers(data: AppData) {
+  it('後の組が初めの試しで断られた（Firebase の無料枠 429。何も書いていない）時は、その組を数えない', async () => {
+    const { n, input } = hundred()
+    const { core, fake, gate, b } = await accounts(n.data)
+    const before = writes(core)
+    gate.failNext(commit, 1, () => errorResponse(429, 'RESOURCE_EXHAUSTED'), { skip: 1 })
+    const r = await core.callTool('novel_add_proofreading', input, { grant: b })
+    expect(r.text.split('\n')[0]).toBe('推敲案を追加: 追加 51件・書けなかった 49件')
+    expect(r.text).toContain('理由: Firebase の今日の無料枠を使い切りました')
+    expect(docsOf(fake, 'proofSuggestions')).toHaveLength(51)
+    expect(writes(core) - before).toBe(51)
+  })
+
+  /** commit の1回の試しの答え方（send はクラウド（小さな Firebase）に送って書く） */
+  type CommitTry = (send: () => Promise<Response>) => Promise<Response>
+  /** 書けたのに答えが 503（届かない） */
+  const lost: CommitTry = async (send) => {
+    const res = await send()
+    return res.ok ? errorResponse(503, 'UNAVAILABLE') : res
+  }
+  /** 書かずに断る */
+  const refuse =
+    (status: number, code: string): CommitTry =>
+    async () =>
+      errorResponse(status, code)
+
+  /** commit の試しを、決めた順に答える fetch（plan(...) で足す。決めた分の後は、ふつうにクラウドが答える） */
+  async function scriptedCommits(data: AppData) {
     const fake = new FakeFirebase()
-    let lose = 0
+    const tries: CommitTry[] = []
     const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const res = await (fake.fetch as typeof globalThis.fetch)(input, init)
+      const send = () => (fake.fetch as typeof globalThis.fetch)(input, init)
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (lose > 0 && url.endsWith(':commit') && res.ok) {
-        lose -= 1
-        return errorResponse(503, 'UNAVAILABLE')
-      }
-      return res
+      const next = url.endsWith(':commit') ? tries.shift() : undefined
+      return next ? next(send) : send()
     }) as typeof globalThis.fetch
     const made = await pairedCore(fake, data, { cid: 'caaa', fetch })
     const b = await addConnection(fake, made.core, made.uid, { cid: 'cbbb', pairedAt: made.clock.now })
-    return { fake, ...made, b, lose: (n: number) => (lose = n) }
+    return { fake, ...made, b, plan: (...t: CommitTry[]) => tries.push(...t) }
   }
+
+  /** 推敲案10件（実行の記録と1つの組で 11件） */
+  const ten = (s: ReturnType<typeof hundred>) => ({ ...s.input, items: s.input.items.slice(0, 10) })
 
   it('書けたのに答えが届かなかった組（5xx の試し直しが「もうある」）は、この呼び出しで書けた分として「追加」と答え、数えたまま', async () => {
     const { n, input } = hundred()
-    const { core, fake, b, lose } = await lostAnswers(n.data)
+    const { core, fake, b, plan } = await scriptedCommits(n.data)
     const before = writes(core)
     // 1つ目の組（51件）は書けたが答えが 503。FirestoreRest が試し直すと「もうある」（409）
-    lose(1)
+    plan(lost)
     const r = await core.callTool('novel_add_proofreading', input, { grant: b })
     expect(r.isError).toBeUndefined()
     // 前は「追加 49件・重複 51件」で、数えたのは 50（書いたのは 101）
@@ -247,14 +272,58 @@ describe('L5-4・L5-9・L3-8: 書けなかった分', () => {
     expect(writes(core) - before).toBe(101)
     // 1つの組（推敲案10件と実行の記録）でも同じ
     const small = hundred()
-    const one = await lostAnswers(small.n.data)
+    const one = await scriptedCommits(small.n.data)
     const start = writes(one.core)
-    one.lose(1)
-    const r2 = await one.core.callTool('novel_add_proofreading', { ...small.input, items: small.input.items.slice(0, 10) }, { grant: one.b })
+    one.plan(lost)
+    const r2 = await one.core.callTool('novel_add_proofreading', ten(small), { grant: one.b })
     expect(r2.text.split('\n')[0]).toBe('推敲案を追加: 追加 10件')
     expect(docsOf(one.fake, 'proofSuggestions')).toHaveLength(10)
     expect(writes(one.core) - start).toBe(11)
     // 初めの試しの「もうある」（何も書いていない）は今までどおり数えない: 上の L3-8 のテスト
+  })
+
+  it('5xx が3回続き、最後の試しだけ書けていた（504 で待ち切ったなど）組は、書けたか分からないので数えたまま。もう一度送ると重複になり、数は増えない', async () => {
+    const s = hundred()
+    const { core, fake, b, plan } = await scriptedCommits(s.n.data)
+    const start = writes(core)
+    plan(refuse(503, 'UNAVAILABLE'), refuse(503, 'UNAVAILABLE'), lost)
+    const r = await core.callTool('novel_add_proofreading', ten(s), { grant: b })
+    expect(r.isError).toBe(true)
+    expect(r.text).toBe(MESSAGES.unavailable)
+    expect(docsOf(fake, 'proofSuggestions')).toHaveLength(10)
+    expect(docsOf(fake, 'proofBatches')).toHaveLength(1)
+    // 前は 0（書けなかったとして戻していた）
+    expect(writes(core) - start).toBe(11)
+    const again = await core.callTool('novel_add_proofreading', ten(s), { grant: b })
+    expect(again.text.split('\n')[0]).toBe('推敲案を追加: 重複 10件')
+    expect(writes(core) - start).toBe(11)
+  })
+
+  it('書けたのに答えが 503 で、試し直しが Firebase の無料枠（429）で断られた組も数えたまま', async () => {
+    const s = hundred()
+    const { core, fake, b, plan } = await scriptedCommits(s.n.data)
+    const start = writes(core)
+    plan(lost, refuse(429, 'RESOURCE_EXHAUSTED'))
+    const r = await core.callTool('novel_add_proofreading', ten(s), { grant: b })
+    expect(r.text).toContain('Firebase の今日の無料枠を使い切りました')
+    expect(docsOf(fake, 'proofSuggestions')).toHaveLength(10)
+    // 前は 0
+    expect(writes(core) - start).toBe(11)
+  })
+
+  it('書けたのに答えが 503 で、その間に作者が「書き込みを許可」をオフにした（試し直しは 403）組は、停止中と答え、数えたまま', async () => {
+    const s = hundred()
+    const { core, fake, b, plan } = await scriptedCommits(s.n.data)
+    const start = writes(core)
+    plan(lost, async () => {
+      fake.setWrites(false)
+      return errorResponse(403, 'PERMISSION_DENIED')
+    })
+    const r = await core.callTool('novel_add_proofreading', ten(s), { grant: b })
+    expect(r.text).toContain('書き込みは停止中です')
+    expect(docsOf(fake, 'proofSuggestions')).toHaveLength(10)
+    // 前は 0
+    expect(writes(core) - start).toBe(11)
   })
 
   it('答えが来ない（待ち切った）commit の組は、クラウドに届いたか分からないので数えたまま（送っていない後の組だけ戻す）。もう一度送ると残りだけ足す', async () => {

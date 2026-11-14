@@ -981,11 +981,13 @@ export class VaultCore {
    * 読み直して 'retry'（3回目まで。呼び出し側で分け直す）。ほかの失敗は日本語の説明つきの失敗にする。
    * 書き込みの数は書く前に prepared の分を数え、書けなかった組の分は戻す（数えるのは書けた記録だけ。試し直しは、その時に書く分を
    * また数える）。書けたか分からない組は戻さない:
-   * - 答えが来ない・つながらない（status 0）: クラウドが書いたかもしれないので、その組は数えたまま（送っていない後の組だけ戻す）
-   * - 「もうある」（409 など）が、前の試しの答え（5xx）が届かずに試し直した答えの時（afterUnsure）は、前の試しで書けていることがある。
-   *   読み直した写しに、この組の記録がこのコネクタの書いた同じ内容であれば、この呼び出しで書けた（created に入れ、数えたまま。
-   *   答えも「重複」でなく「追加」）。読み直せなかった時は、その組を数えたまま。初めの試しの「もうある」は、何も書いていない
-   *   （commit は全部か無しか）
+   * - 答えが来ない・つながらない（status 0）・5xx（試し直しても続いた）: クラウドが書いたかもしれないので、その組は数えたまま
+   *   （送っていない後の組だけ戻す）
+   * - 前の試しの答え（5xx・つながらない）が届かずに試し直した答え（afterUnsure）は、前の試しで書けていることがある。
+   *   「もうある」（409 など）なら、読み直した写しに、この組の記録がこのコネクタの書いた同じ内容であれば、この呼び出しで書けた
+   *   （created に入れ、数えたまま。答えも「重複」でなく「追加」）。読み直せなかった時は、その組を数えたまま。ほかの失敗
+   *   （429・403 など）も、その組を数えたまま
+   * - 戻すのは、初めの試しで断られた組（403・429・400、「もうある」など）だけ（commit は全部か無しか）
    */
   async #commitPrepared(prepared: PreparedWrite[], created: Set<string>, attempt: number): Promise<'done' | 'retry'> {
     let committed = 0
@@ -1003,10 +1005,6 @@ export class VaultCore {
     } catch (e) {
       // 送っていない後の組は書いていない
       this.#takeWrites(committed + sent.length - prepared.length)
-      if (e instanceof FirestoreError && e.status === 0) {
-        log('write_outcome_unknown', { count: sent.length })
-        return this.#firestoreFailure(e)
-      }
       if (
         e instanceof FirestoreError &&
         (e.code === 'ALREADY_EXISTS' || e.code === 'FAILED_PRECONDITION' || e.code === 'ABORTED' || e.status === 409) &&
@@ -1041,7 +1039,10 @@ export class VaultCore {
         }
         return 'retry'
       }
-      this.#takeWrites(-sent.length)
+      // 書けたか分からない組は数えたまま。戻すのは、初めの試しで断られた（403・429・400 など。何も書いていない）組だけ
+      if (e instanceof FirestoreError && (e.status === 0 || e.status >= 500 || e.afterUnsure))
+        log('write_outcome_unknown', { count: sent.length, status: e.status })
+      else this.#takeWrites(-sent.length)
       if (e instanceof FirestoreError && e.status === 403) {
         const conn = await this.#readConnectorOrUnpair()
         if (!conn.writes) throw new ConnectorError('writes_off', MESSAGES.writesOff)
