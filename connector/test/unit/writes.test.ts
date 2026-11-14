@@ -6,6 +6,7 @@ import { addBenchWork } from '../../../src/domain/benchOps'
 import { addMaterial } from '../../../src/domain/materialOps'
 import type { AppData } from '../../../src/domain/types'
 import { novel } from '../../../src/test/claudeFixture'
+import { TOOL_DEFS } from '../../src/mcp/tools'
 import { MESSAGES } from '../../src/vault/errors'
 import type { QuotaCounts } from '../../src/vault/quota'
 import { CONNECTOR_MODEL } from '../../src/version'
@@ -500,5 +501,28 @@ describe('追加の答えの字数（2.9。アプリと同じ数え方: 空白�
     expect(proof.text).toContain('追加 1件')
     expect(proof.text).not.toContain('字数:')
     expect(created(proof)[0]).not.toHaveProperty('chars')
+  })
+
+  it('相対比較の一覧の「  分析 n件（n字）」は V30 のまま空白・改行・ルビの記法も数える（同じ分析で「字数: 39字」と 66字）。一覧のツールの説明がその違いを言う', async () => {
+    const n = novel(['本文。'])
+    const data = addMaterial(addBenchWork(n.data, { name: '銀河の果て', author: '山田' }).data, { name: '外科の歴史', author: '高橋' }).data
+    const { core } = await pairedCore(new FakeFirebase(), data)
+    const add = await core.callTool('novel_add_bench_analysis', {
+      work: '銀河の果て',
+      items: [{ viewpoint: '文体', body_markdown: TABLE, run_date: '2026-10-30' }],
+    })
+    expect(add.text.split('\n')[2]).toBe(line('39'))
+    expect(created(add)[0].chars).toBe(39)
+    // 一覧の行は 2.7 のまま（V30 が読むので1字も変えない）: 空白・改行・ルビの記法と読みも数えた 66字
+    const list = await core.callTool('novel_list_bench_works', {})
+    expect(list.text).toContain('\n  分析 1件（66字）: 文体 1件（最新 2026-10-30）')
+    // ほかの一覧（資料の「  記録 n件（n字）」）はアプリの数え方
+    await core.callTool('novel_add_material_notes', { material: '外科の歴史', items: [{ section: '要約', body_markdown: TABLE, run_date: '2026-10-31' }] })
+    expect((await core.callTool('novel_list_materials', {})).text).toContain('\n  記録 1件（39字）')
+    // Claude が 66字をアプリの字数と取り違えないよう、一覧のツールの説明に数え方の違いと、上限は「字数:」で確かめることを書く
+    const desc = TOOL_DEFS.find((t) => t.name === 'novel_list_bench_works')!.description
+    expect(desc).toContain(
+      '分析の数（後ろの（n字）は、ほかの一覧と違って空白・改行・ルビの記法と読みも数えた本文の長さの合計なので、アプリの作品の画面の「合計 n字」や追加の答えの「字数:」より大きい。プロンプトの「n字以内」は追加の答えの「字数:」で確かめる）と観点ごとの数・最新の日付',
+    )
   })
 })

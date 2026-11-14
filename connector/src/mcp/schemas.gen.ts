@@ -140,7 +140,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       },
       "char_budget": {
         "default": 20000,
-        "description": "1回に返す文字数の目安（2,000〜60,000。既定 20,000。Claude Code では 12,000）",
+        "description": "1回に返す文字数の目安（2,000〜60,000。既定 20,000。Claude Code では 12,000。この字数と続きの「約n字」は空白・改行も数える）",
         "type": "integer",
         "minimum": 2000,
         "maximum": 60000
@@ -290,7 +290,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
       },
       "char_budget": {
         "default": 20000,
-        "description": "本文を返す文字数の上限（既定 20,000）",
+        "description": "本文を返す文字数の上限（既定 20,000。この字数と続きの「残り n字」は空白・改行・ルビの記法も数える）",
         "type": "integer",
         "minimum": 2000,
         "maximum": 60000
@@ -341,7 +341,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         ]
       },
       "char_budget": {
-        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"。この字数と続きの「残り n字」は空白・改行・ルビの記法も数える）",
         "type": "integer",
         "minimum": 2000,
         "maximum": 60000
@@ -379,7 +379,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "maxLength": 200
       },
       "char_budget": {
-        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"。この字数と続きの「残り n字」は空白・改行・ルビの記法も数える）",
         "type": "integer",
         "minimum": 2000,
         "maximum": 60000
@@ -924,7 +924,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "maxLength": 200
       },
       "char_budget": {
-        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"。この字数と続きの「残り n字」は空白・改行・ルビの記法も数える）",
         "type": "integer",
         "minimum": 2000,
         "maximum": 60000
@@ -1108,7 +1108,7 @@ export const TOOL_SCHEMAS: Record<ToolName, Record<string, unknown>> = {
         "maxLength": 200
       },
       "char_budget": {
-        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"）",
+        "description": "1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor=\"…\"。この字数と続きの「残り n字」は空白・改行・ルビの記法も数える）",
         "type": "integer",
         "minimum": 2000,
         "maximum": 60000

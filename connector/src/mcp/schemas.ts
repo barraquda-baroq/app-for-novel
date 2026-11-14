@@ -35,7 +35,7 @@ const itemBudgetSchema = z
   .min(2_000)
   .max(60_000)
   .optional()
-  .describe('1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor="…"）')
+  .describe('1つを全文で読む時に1回に返す文字数（2,000〜60,000。既定 60,000、Claude Code では 12,000。残りは 続き: cursor="…"。この字数と続きの「残り n字」は空白・改行・ルビの記法も数える）')
 /** 一覧の作品名の絞り込み（src/vault/tools/read.ts の BENCH_LIST_FILTERS と同じ上限。1つの長さは作品名の上限と同じ） */
 const benchNameFilter = z.array(z.string().min(1).max(L.benchWorkName)).min(1).max(10)
 /** 一覧の作品のタグの絞り込み（2.7。1つの長さはタグの上限と同じ） */
@@ -87,7 +87,7 @@ export const SCHEMAS = {
       .min(2_000)
       .max(60_000)
       .default(20_000)
-      .describe('1回に返す文字数の目安（2,000〜60,000。既定 20,000。Claude Code では 12,000）'),
+      .describe('1回に返す文字数の目安（2,000〜60,000。既定 20,000。Claude Code では 12,000。この字数と続きの「約n字」は空白・改行も数える）'),
     ruby: z
       .enum(['raw', 'strip'])
       .default('raw')
@@ -121,7 +121,7 @@ export const SCHEMAS = {
     kind: z.enum(['settings', 'memos', 'ideas']).describe('settings = 設定項目（キャラクター・世界観など）、memos = メモ、ideas = アイデア'),
     ids: z.array(z.string().min(1).max(200)).max(50).optional().describe('本文まで読む項目（e:・m:・i: の短い id か名前）'),
     full: z.boolean().default(false).describe('true = すべての本文を読む（char_budget まで）'),
-    char_budget: z.number().int().min(2_000).max(60_000).default(20_000).describe('本文を返す文字数の上限（既定 20,000）'),
+    char_budget: z.number().int().min(2_000).max(60_000).default(20_000).describe('本文を返す文字数の上限（既定 20,000。この字数と続きの「残り n字」は空白・改行・ルビの記法も数える）'),
     cursor: cursor.optional(),
   }),
   novel_get_strategy: z.object({

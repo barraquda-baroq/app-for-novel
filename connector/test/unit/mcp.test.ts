@@ -134,7 +134,7 @@ describe('ツールの決まり', () => {
     expect(String(cards.description)).toContain('アイデア i:…')
   })
 
-  it('数え方（2.9）: 文字数の行（そのまま）の次に、char_budget と「字目」だけは空白・改行も数える行。追加のツールの説明に字数', () => {
+  it('数え方（2.9）: 文字数の行（そのまま）の次に、char_budget と「字目」は空白・改行も数える行。追加のツールの説明に字数', () => {
     const lines = SERVER_INSTRUCTIONS.split('\n')
     const at = lines.indexOf('文字数は空白・改行・ルビの記法と読みを除いて数え、日付は日本時間です。')
     expect(at).toBeGreaterThan(0)
@@ -149,6 +149,18 @@ describe('ツールの決まり', () => {
       expect(TOOL_DEFS.find((t) => t.name === name)!.description).toContain('字数（アプリと同じ数え方。空白・改行・ルビの記法と読みを除く')
     for (const name of ['novel_add_proofreading', 'novel_save_critique_prompt', 'novel_add_ideas'])
       expect(TOOL_DEFS.find((t) => t.name === name)!.description).not.toContain('アプリと同じ数え方')
+  })
+
+  it('数え方（2.9）: サーバーの説明に入らない、空白・改行も数える字数（一覧の「  分析 n件（n字）」・続きの「残り n字」「約n字」）は、ツールと入力の説明に書く', () => {
+    // novel_list_bench_works の「  分析 n件（n字）」は V30 のまま（空白・改行・ルビの記法も数える）なので、説明で追加の答えの「字数:」と分ける
+    const list = TOOL_DEFS.find((t) => t.name === 'novel_list_bench_works')!.description
+    expect(list).toContain('後ろの（n字）は、ほかの一覧と違って空白・改行・ルビの記法と読みも数えた本文の長さの合計')
+    expect(list).toContain('「n字以内」は追加の答えの「字数:」で確かめる')
+    const budget = (tool: string) =>
+      String((TOOL_SCHEMAS as Record<string, { properties: { char_budget: { description?: string } } }>)[tool].properties.char_budget.description)
+    for (const tool of ['novel_get_strategy', 'novel_get_critique', 'novel_get_bench_analysis', 'novel_get_material', 'novel_get_notes'])
+      expect(budget(tool)).toContain('この字数と続きの「残り n字」は空白・改行・ルビの記法も数える')
+    expect(budget('novel_read_text')).toContain('この字数と続きの「約n字」は空白・改行も数える')
   })
 
   it('アイデアのフォルダ（2.9）: サーバーの説明は id の行に f: を足すだけ（1,000字未満）。一覧・ゴミ箱へ移すツールの説明にフォルダ', () => {
