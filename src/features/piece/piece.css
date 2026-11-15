@@ -181,7 +181,7 @@
   color: var(--text);
   font-family: var(--editor-font);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.04em;
   white-space: nowrap;
   cursor: default;
@@ -262,13 +262,13 @@
   min-height: 30px;
   font-family: var(--editor-font);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--special);
 }
 
 .pw-root .pw-label-input::placeholder {
   color: color-mix(in srgb, var(--special) 55%, transparent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .pw-root .pw-subtitle {
@@ -292,7 +292,7 @@
   color: var(--accent);
   font-family: var(--editor-font);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
   cursor: default;
 }
@@ -347,7 +347,7 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -369,7 +369,7 @@
 .pw-root .pw-switch {
   min-height: 34px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
   gap: 8px;
 }
@@ -484,7 +484,7 @@
   flex: 1;
   min-width: 0;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -496,7 +496,7 @@
   margin: 0;
   min-height: 30px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .pw-root .pw-vname-static {
@@ -631,7 +631,7 @@
   margin: 0 0 4px;
   font-family: var(--editor-font);
   font-size: 19px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
 }
 
@@ -674,7 +674,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
   overflow: hidden;
   transition: border-color 0.12s;
 }
@@ -723,7 +722,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 14px;
 }
 
@@ -731,7 +730,7 @@
 .pw-root .pw-vrow-dirty {
   flex: none;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-tag);
   background: var(--warn-soft);
   color: var(--warn);
   font-size: 11px;
@@ -755,7 +754,7 @@
 }
 
 .pw-root .pw-delta {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -815,11 +814,11 @@
   min-height: 34px;
   padding: 4px 8px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .pw-root .pw-adopt {
-  font-weight: 700;
+  font-weight: 600;
   flex: none;
   color: var(--on-active);
 }
@@ -852,7 +851,7 @@
 .pw-root .pw-legend {
   padding: 0 6px;
   border-radius: 4px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .pw-root .pw-legend.add {
@@ -992,7 +991,7 @@
   min-height: 38px;
   padding: 6px 14px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
   list-style: none;
@@ -1740,7 +1739,7 @@
 .orphan-item-name {
   min-width: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 

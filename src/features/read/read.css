@@ -51,7 +51,7 @@
 
 .rt-tool-label {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -97,7 +97,7 @@
   color: var(--text);
   font-family: var(--editor-font);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.6;
   cursor: pointer;
 }
@@ -298,7 +298,7 @@
   background: transparent;
   color: var(--text);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
@@ -409,7 +409,7 @@
 .rt-doc-title {
   font-family: var(--editor-font);
   font-size: 1.6em;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.4;
   letter-spacing: 0.06em;
   overflow-wrap: anywhere;
@@ -484,7 +484,7 @@
   min-width: 0;
   font-family: var(--editor-font);
   font-size: 1.15em;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.5;
 }
 
@@ -523,11 +523,11 @@
   padding-block: 2px;
   padding-inline: 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-family: var(--font-ui);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.4;
   text-decoration: none;
   white-space: nowrap;
@@ -592,7 +592,7 @@
   margin: 0;
   font-family: var(--editor-font);
   font-size: 1em;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent);
   letter-spacing: 0.06em;
 }
@@ -729,9 +729,8 @@
   margin-block-end: 10px;
   border-radius: 2px;
   background: var(--surface);
-  box-shadow:
-    0 0 0 1px var(--border),
-    var(--shadow);
+  /* 紙の縁は 1px の線だけ（DS と同じく、流れの中の面に影は付けない） */
+  box-shadow: 0 0 0 1px var(--border);
   color: var(--text);
   font-family: var(--editor-font);
   line-height: 1.75;
@@ -787,7 +786,7 @@
   display: block;
   margin: 0;
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .pg-heading:focus {
@@ -872,9 +871,10 @@
     scroll-margin-top: calc(var(--rt-top) + 12px);
   }
 
+  /* 左右の余白はほかの画面のスマホと同じ 16px */
   .rt-toolbar-inner {
     gap: 8px;
-    padding: 8px 12px;
+    padding: 8px 16px;
   }
 
   .rt-tools {
@@ -914,7 +914,7 @@
   }
 
   .rt-main {
-    padding: 12px 12px calc(40px + var(--safe-bottom));
+    padding: 12px 16px calc(40px + var(--safe-bottom));
   }
 
   .rt-doc {
@@ -964,7 +964,7 @@
   .rt-toolbar-inner {
     flex-wrap: nowrap;
     gap: 8px 12px;
-    padding: 4px 12px;
+    padding: 4px 16px;
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -1010,7 +1010,7 @@
   }
 
   .rt-root.is-vertical .rt-main {
-    padding: 6px 12px calc(6px + var(--safe-bottom));
+    padding: 6px 16px calc(6px + var(--safe-bottom));
   }
 
   .rt-root.is-vertical .rt-layout {

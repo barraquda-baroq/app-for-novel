@@ -11,7 +11,7 @@
 .input-bare.tpage-name {
   font-family: var(--editor-font);
   font-size: 28px;
-  font-weight: 700;
+  font-weight: 500;
   line-height: 1.3;
   letter-spacing: 0.02em;
   padding: 4px 6px;
@@ -22,28 +22,30 @@
   color: var(--text-faint);
 }
 
-/* 集計チップ */
+/* 集計チップ。押せる「Claude に見せる」の方が高いので、札は引き伸ばさず縦の真ん中にそろえる */
 .tpage-stats {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* 押せない集計は .badge と同じ灰色の札（枠なし・角 4px）。枠のある箱は押せる物（「Claude に見せる」・.btn）だけにする */
 .tpage-chip {
   display: inline-flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 2px;
-  padding: 3px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--radius-tag);
+  background: var(--surface-3);
   color: var(--text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
 }
@@ -55,13 +57,11 @@
 
 .tpage-chip.is-warn {
   background: var(--warn-soft);
-  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
   color: var(--warn);
 }
 
 .tpage-chip.is-accent {
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
   color: var(--accent);
 }
 
@@ -106,7 +106,7 @@
 .tpage-synopsis-label {
   flex: none;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -145,7 +145,7 @@
   }
 
   .input-bare.tpage-name {
-    font-size: 22px;
+    font-size: 24px;
   }
 
   .tpage-tabs [role='tab'] {

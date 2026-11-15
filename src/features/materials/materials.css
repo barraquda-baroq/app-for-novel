@@ -15,6 +15,8 @@
   gap: 10px;
   padding: 16px 18px;
   border-top: 3px solid var(--area);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .mt-head-top {
@@ -33,11 +35,6 @@
   border-color: color-mix(in srgb, var(--area) 35%, var(--border));
 }
 
-.badge.mt-kind .icon {
-  width: 14px;
-  height: 14px;
-}
-
 .mt-name {
   margin: 0;
   font-family: var(--editor-font);
@@ -45,6 +42,7 @@
   line-height: 1.4;
   letter-spacing: 0.02em;
   overflow-wrap: anywhere;
+  font-weight: 500;
 }
 
 .mt-biblio {
@@ -69,7 +67,7 @@
 .mt-facts dt {
   color: var(--text-muted);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 30px;
 }
 
@@ -106,7 +104,7 @@
   flex-wrap: wrap;
   gap: 6px 10px;
   padding: 2px 0 2px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: linear-gradient(90deg, var(--area-soft), transparent 70%);
   box-shadow: inset 3px 0 0 var(--area);
   min-height: 40px;
@@ -115,7 +113,8 @@
 .mt-notes-head h2 {
   display: flex;
   align-items: baseline;
-  font-size: 18px;
+  font-size: 16px;
+  letter-spacing: 0.04em;
 }
 
 .mt-actions {
@@ -187,8 +186,8 @@
 }
 
 .mt-note-date {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -238,12 +237,12 @@
   min-height: 34px;
   padding: 4px 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 

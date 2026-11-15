@@ -20,7 +20,7 @@ import { attempt, notify } from '../../store/uiStore'
 import { copyText, formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { useDocumentTitle } from '../../ui/hooks'
-import { ChevronRightIcon, CopyIcon, EditIcon, PlusIcon, ShelfIcon, TagIcon, TrashIcon } from '../../ui/icons'
+import { ChevronRightIcon, CopyIcon, EditIcon, PlusIcon, TagIcon, TrashIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
 import { AskIcon, PasteIcon, SparkIcon } from '../claude/claudeIcons'
@@ -130,10 +130,7 @@ function BenchWorkView({ work }: { work: BenchWork }) {
       <main className="page bw-page" data-area="bench" data-testid="bench-page">
         <section className="bw-head card" aria-labelledby="bw-name" data-testid="bench-work-head">
           <div className="bw-head-top">
-            <span className="badge bw-kind">
-              <ShelfIcon />
-              相対比較
-            </span>
+            <span className="badge bw-kind">相対比較</span>
             {createdBy ? (
               <span className="badge cl-badge" data-testid="bench-work-source">
                 <SparkIcon />

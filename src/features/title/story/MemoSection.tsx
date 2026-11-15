@@ -10,7 +10,7 @@ import { useData } from '../../../store/appStore'
 import { attempt, notify } from '../../../store/uiStore'
 import { formatUpdated } from '../../../ui/browser'
 import { confirmDialog, promptDialog } from '../../../ui/dialogs'
-import { DownIcon, NoteIcon, PlusIcon, TrashIcon, UpIcon } from '../../../ui/icons'
+import { DownIcon, PlusIcon, TrashIcon, UpIcon } from '../../../ui/icons'
 import { memoExcerpt } from './storyLogic'
 import { useKeepMovedInPlace } from './useKeepMovedInPlace'
 
@@ -39,9 +39,11 @@ export function MemoSection({ titleId }: { titleId: ID }) {
   return (
     <section className="section story-memos" aria-labelledby="story-memos-heading" data-testid="memo-section">
       <div className="section-head">
-        <NoteIcon className="icon story-memo-icon" />
         <h2 id="story-memos-heading">メモ</h2>
-        <span className="badge badge-memo">{memos.length}</span>
+        <span className="story-memo-count" data-testid="memo-count">
+          {memos.length}
+          <span className="visually-hidden">件</span>
+        </span>
         <span className="grow" />
         {memos.length > 0 ? (
           <button

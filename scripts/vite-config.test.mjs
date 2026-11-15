@@ -1,10 +1,25 @@
 // @vitest-environment node
 // vite.config.ts の埋め込む値。Web 版の本番のビルド（npm run build・npm run deploy）は、アプリが変わっていなければ毎回同じ中身になること
 // （ビルドの日時を入れると、ビルドのたびにチャンクの名前と sw.js が変わり、使っている端末すべてに更新の知らせが出て全部を読み込み直す）
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import config, { PWA_ICONS, buildTimeDefine, inlineScripts } from '../vite.config.ts'
+
+// VitePWA に渡した設定（vite-plugin-pwa は受け取った設定をプラグインの中に閉じ込めて、解決した設定からは読めないので、
+// 渡す所で写しを取る。プラグインはそのまま作る）
+const pwa = vi.hoisted(() => ({ options: [] }))
+vi.mock('vite-plugin-pwa', async (importOriginal) => {
+  const mod = await importOriginal()
+  return {
+    ...mod,
+    VitePWA: (options) => {
+      pwa.options.push(options)
+      return mod.VitePWA(options)
+    },
+  }
+})
 
 /** vite の設定を、コマンドとモードを指定して作る */
 const resolve = (command, mode) => config({ command, mode, isSsrBuild: false, isPreview: false })
@@ -109,5 +124,42 @@ describe('PWA_ICONS（manifest のアイコン）', () => {
     }
     // 1つの画像を any と maskable の両方には使わない
     expect(new Set(PWA_ICONS.map((i) => i.src)).size).toBe(PWA_ICONS.length)
+  })
+})
+
+// サービスワーカーの事前キャッシュ（workbox の globPatterns）。数字の書体（Roboto Mono の woff2。src/fonts/）も入れ、オフラインでも等幅の字で出す
+describe('事前キャッシュ（VitePWA の workbox）', () => {
+  /** コマンドとモードを指定して設定を作った時に、VitePWA に渡した設定 */
+  const optionsFor = (command, mode) => {
+    pwa.options.length = 0
+    resolve(command, mode)
+    expect(pwa.options).toHaveLength(1)
+    return pwa.options[0]
+  }
+  const fonts = readdirSync(new URL('../src/fonts/roboto-mono/', import.meta.url))
+    .filter((f) => f.endsWith('.woff2'))
+    .sort()
+
+  it('Web 版のビルドでは js・css・html と書体の woff2 を入れる', () => {
+    const options = optionsFor('build', 'production')
+    expect(options.disable).toBe(false)
+    const patterns = options.workbox.globPatterns
+    expect(patterns.some((p) => p.includes('woff2'))).toBe(true)
+    const cached = (file) => patterns.some((p) => path.matchesGlob(file, p))
+    // ビルドした書体（assets/ に名前の後ろにハッシュを付けて出る）
+    expect(fonts.map((f) => f.replace(/\.woff2$/, ''))).toEqual([
+      'roboto-mono-latin-400-normal',
+      'roboto-mono-latin-500-normal',
+      'roboto-mono-latin-600-normal',
+    ])
+    for (const f of fonts) expect(cached(`assets/${f.replace(/\.woff2$/, '-AbC_12-x.woff2')}`), f).toBe(true)
+    // 既定の js・css・html も入ったまま
+    for (const f of ['index.html', 'assets/index-AbC12.js', 'assets/index-AbC12.css']) expect(cached(f), f).toBe(true)
+    // ライセンスの全文（txt）は事前キャッシュに入れない（アプリの中では js のチャンクとして読む）
+    expect(cached('assets/OFL.txt')).toBe(false)
+  })
+
+  it('アプリ（npm run build:native）ではサービスワーカーを入れない', () => {
+    expect(optionsFor('build', 'native').disable).toBe(true)
   })
 })

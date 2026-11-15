@@ -7,7 +7,7 @@ import { flushSync } from 'react-dom'
 import { ideaSections, type IdeaSection } from '../../domain/entityOps'
 import type { ID } from '../../domain/types'
 import { useData } from '../../store/appStore'
-import { BookIcon, BulbIcon, PlusIcon } from '../../ui/icons'
+import { BookIcon, PlusIcon } from '../../ui/icons'
 import { InboxIcon } from '../ideas/ideaIcons'
 import { sectionDisplayName, sectionKey } from '../ideas/ideaLogic'
 import { IdeaSectionView } from '../ideas/IdeaSectionView'
@@ -96,7 +96,6 @@ export function IdeaArea({
         bodyId={bodyId}
         open={open}
         onToggle={onToggle}
-        icon={BulbIcon}
         label="アイデア"
         count={total}
         countTestId="idea-total"

@@ -26,7 +26,7 @@
 .st-cats-title {
   flex: 1;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-muted);
   letter-spacing: 0.04em;
 }
@@ -60,11 +60,11 @@
   min-height: 38px;
   padding: 4px 6px 4px 14px;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
@@ -73,6 +73,11 @@
 /* 選んでいる項目は設定項目タブの色（領域の色 --area。styles.css の data-area）で示す */
 .st-cat:hover {
   border-color: var(--area, var(--accent));
+}
+
+/* スマホでは横にスクロールする列の中なので、外側に描くフォーカスの枠は切れる。内側に描く（タブ・切り替えと同じ） */
+.st-cat:focus-visible {
+  outline-offset: -2px;
 }
 
 .st-cat.is-selected {
@@ -89,19 +94,19 @@
 
 .st-cat-count {
   flex: none;
-  min-width: 24px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.7;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  font-weight: 400;
 }
 
 .st-cat.is-selected .st-cat-count {
-  background: var(--surface);
   color: var(--area-text, var(--accent));
 }
 
@@ -155,7 +160,10 @@
     background: var(--surface-2);
   }
 
+  /* 色の線がある左は角を立てる */
   .st-cat.is-selected {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
     background: var(--area-soft, var(--accent-soft));
     box-shadow: inset 3px 0 0 var(--area, var(--accent));
   }
@@ -186,7 +194,12 @@
   overflow-wrap: anywhere;
 }
 
+/* 見出しの件数は札にせず、淡い色の数字だけ（.sx-count と同じ。書体は styles.css の等幅の英数字。「件」は読み上げだけ） */
 .st-main-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.7;
   font-variant-numeric: tabular-nums;
 }
 
@@ -212,12 +225,13 @@
   list-style: none;
 }
 
+/* 押せないので枠を付けない淡い札。線は透明にして大きさは変えない */
 .st-template-key {
   min-width: 0;
   padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-tag);
+  background: var(--surface-3);
   font-size: 12px;
   line-height: 1.8;
 }
@@ -234,7 +248,7 @@
   background: transparent;
   color: var(--accent);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -288,7 +302,6 @@
 
 .st-entry.is-open {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: var(--shadow);
 }
 
 .st-entry-toggle {
@@ -340,7 +353,7 @@
 .st-entry-name {
   font-family: var(--editor-font);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -373,7 +386,7 @@
 
 .input.st-entry-name-input {
   font-family: var(--editor-font);
-  font-weight: 700;
+  font-weight: 600;
   font-size: 17px;
 }
 
@@ -414,7 +427,7 @@
   min-height: 40px;
   background: var(--surface-2);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* 1行のときに項目名の欄と同じ高さ（40px）になるようにする */

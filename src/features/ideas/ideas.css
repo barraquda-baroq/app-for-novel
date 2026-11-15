@@ -11,8 +11,9 @@
   min-width: 0;
   scroll-margin-top: calc(var(--header-h) + var(--safe-top) + 64px);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius);
+  /* 仕切りはタイトルごと。左の線は操作の色（--accent）ではなく、タイトルの領域の色にする */
+  border-left: 3px solid color-mix(in srgb, var(--area-story) 70%, var(--border));
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--surface-2);
 }
 
@@ -45,7 +46,7 @@
   background: transparent;
   color: var(--text);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.4;
   text-align: left;
 }
@@ -88,13 +89,13 @@
 
 .idea-section-count {
   flex: none;
-  min-width: 24px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 20px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -153,7 +154,7 @@
   align-items: center;
   gap: 4px;
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .idea-section-empty-add .icon {
@@ -237,7 +238,7 @@
   background: transparent;
   color: var(--text);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.4;
   text-align: left;
   cursor: pointer;
@@ -275,13 +276,13 @@
 
 .idea-folder-count {
   flex: none;
-  min-width: 22px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 20px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -289,7 +290,7 @@
 
 .badge.idea-folder-by {
   flex: none;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .icon-btn.idea-folder-add,
@@ -345,7 +346,7 @@
   align-items: center;
   gap: 4px;
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .idea-folder-empty-add .icon {
@@ -471,12 +472,12 @@
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lift);
 }
 
 .idea-select-count {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -612,7 +613,7 @@
 .idea-card-heading {
   margin: 0;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -640,7 +641,7 @@
 
 /* 2行以上のアイデアの1行目（見出しの代わりに少し目立たせる） */
 .idea-card-lead {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* 済み（実装した・没にした）: 斜線＋グレーで、仕切りの下へ沈む。内容は2行まで（「続きを表示」で全部） */
@@ -678,7 +679,7 @@
   margin: 6px 2px 0;
   color: var(--text-faint);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -698,7 +699,7 @@
   background: transparent;
   color: var(--accent);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -791,11 +792,11 @@
 
 .idea-editor-place-label {
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .idea-editor-place-name {
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -829,7 +830,7 @@
   background: transparent;
   color: var(--accent);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -879,7 +880,7 @@
   margin-bottom: 6px;
   padding: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -913,7 +914,7 @@
   background: var(--surface);
   color: var(--text);
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
@@ -1102,7 +1103,7 @@
 .idea-capture-target-label {
   flex: none;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -1160,7 +1161,7 @@
 .btn.btn-sm.idea-capture-show {
   flex: none;
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 @media (max-width: 720px) {

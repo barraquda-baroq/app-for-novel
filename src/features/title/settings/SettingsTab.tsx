@@ -161,7 +161,10 @@ export function SettingsTab({ titleId }: { titleId: ID }) {
                 <h2 id="st-main-heading" className="st-main-title" data-testid="category-title">
                   {categoryDisplayName(selected.name)}
                 </h2>
-                <span className="badge st-main-count">{entries.length}件</span>
+                <span className="st-main-count" data-testid="category-entry-count">
+                  {entries.length}
+                  <span className="visually-hidden">件</span>
+                </span>
                 <span className="grow" />
                 <button type="button" className="btn btn-primary" onClick={addEntry} data-testid="add-entry">
                   <PlusIcon />

@@ -42,10 +42,6 @@
   font-size: 16px;
 }
 
-.sg-panel-title .icon {
-  color: var(--accent);
-}
-
 .textarea.sg-note-input {
   min-height: 132px;
   font-size: 15px;
@@ -89,7 +85,7 @@
 
 .sg-stat dt {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -99,7 +95,7 @@
 .sg-stat dd {
   margin: 2px 0 0;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
   /* 数と単位は途中で折り返さない */
@@ -113,14 +109,14 @@
 .sg-stat dd small {
   margin: 0 1px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
 .sg-stat-sub {
   display: block;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--special);
 }
 
@@ -131,7 +127,7 @@
   background: var(--warn-soft);
   color: var(--warn);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .sg-missing span {
@@ -202,7 +198,8 @@
   min-width: 0;
   border: 1px solid var(--border);
   border-left: 3px solid var(--sg-tone);
-  border-radius: var(--radius);
+  /* 色の線がある左は角を立てる */
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
@@ -227,8 +224,10 @@
   --sg-tone-soft: var(--surface-2);
 }
 
+/* 開いているカードは線の色で示す（設定項目の .st-entry.is-open と同じ）。左の色の線はそのまま */
 .sg-card.is-open {
-  box-shadow: var(--shadow);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-left-color: var(--sg-tone);
 }
 
 .sg-card-head {
@@ -249,7 +248,7 @@
   background: var(--sg-tone-soft);
   color: var(--text);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -292,7 +291,7 @@
 .sg-card-name {
   min-width: 0;
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -342,7 +341,7 @@
 }
 
 .sg-stage {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -353,12 +352,12 @@
 
 .sg-deadline.is-warn {
   color: var(--warn);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .sg-deadline.is-danger {
   color: var(--danger);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* 結果が出た応募先: 結果・講評 → 改稿方針 → 再応募方針 の抜粋 */
@@ -384,7 +383,7 @@
   flex: none;
   width: 5.5em;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -484,7 +483,7 @@
 }
 
 .input.sg-contest-input {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .sg-url-row {
@@ -625,7 +624,7 @@
 
 .sg-text-count {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* 応募時の原稿 */
@@ -653,16 +652,13 @@
 }
 
 .sg-snapshot-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   flex: 1;
   font-size: 13px;
   color: var(--text-muted);
 }
 
 .sg-snapshot-info {
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -703,7 +699,7 @@
   padding: 0 8px 0 6px;
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--accent);
   cursor: pointer;
   list-style: none;
@@ -778,7 +774,7 @@
 
 .sg-snap-label {
   flex: none;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .sg-snap-label.is-special {
@@ -868,7 +864,7 @@
 }
 
 .sg-reader-subtitle {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .badge.sg-reader-version {
@@ -932,6 +928,11 @@
   .sg-card-head {
     padding: 4px 4px 4px 8px;
     gap: 4px;
+  }
+
+  /* 状態の札と締切を1行に収める（スマホの左右の余白が 16px になり、カードが 8px 狭くなったため） */
+  .sg-card-meta {
+    column-gap: 6px;
   }
 
   /*

@@ -52,8 +52,12 @@
   --backdrop: rgb(15 17 22 / 45%);
   --selection: #cddcf3;
   --brand-filter: none;
-  --shadow: 0 1px 2px rgb(30 30 40 / 6%), 0 4px 16px rgb(30 30 40 / 6%);
-  --shadow-sm: 0 1px 2px rgb(30 30 40 / 4%);
+  /* DS に合わせ、流れの中のカード・パネルは影を付けず 1px の線だけで区切る（--shadow・--shadow-sm は見えない影）。
+     none にしないのは、box-shadow: 0 0 0 1px …, var(--shadow) のような並びの中でも正しい値のままにするため。
+     浮いている物（下に固定した選択のバー・分割のつまみ）だけ --shadow-lift で持ち上げる */
+  --shadow: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --shadow-lift: 0 1px 2px rgb(30 30 40 / 6%), 0 4px 16px rgb(30 30 40 / 6%);
   --shadow-lg: 0 10px 40px rgb(20 20 30 / 22%);
 
   /* 領域ごとの色（タブ・領域の見出し）。--area-*-text はタブの文字色で、背景・*-soft の上で 4.5:1 以上 */
@@ -83,9 +87,13 @@
 
   --radius: 10px;
   --radius-sm: 6px;
+  /* 小さな札（バッジ・カードの中のタグ）の角。丸い札（999px）はやめ、DS の「Claude」の札と同じ 4px にする */
+  --radius-tag: 4px;
   /* 各端末の標準のゴシック体。iOS・Mac はヒラギノ角ゴ、Windows は游ゴシック UI（なければメイリオ）、
      Android は sans-serif（<html lang="ja"> なので Noto Sans CJK JP）になる */
   --font-gothic: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans JP', system-ui, sans-serif;
+  /* 等幅の英数字（Roboto Mono。src/fonts/roboto-mono.css）。数だけ・日付だけの所に使う（DS の数と同じ声）。日本語が混ざればゴシックで出る */
+  --font-mono: 'Roboto Mono', var(--font-gothic);
   --font-mincho: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', 'BIZ UDPMincho', serif;
   --font-ui: var(--font-gothic);
   /* 原稿・題名・通し読みの書体。設定の「原稿の書体」で明朝に切り替えられる（PrefsEffect が <html> に設定する） */
@@ -145,8 +153,9 @@
   --backdrop: rgb(0 0 0 / 62%);
   --selection: #2f4a73;
   --brand-filter: brightness(0.9);
-  --shadow: 0 1px 2px rgb(0 0 0 / 35%), 0 4px 16px rgb(0 0 0 / 30%);
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 35%), 0 4px 16px rgb(0 0 0 / 30%);
   --shadow-lg: 0 10px 40px rgb(0 0 0 / 60%);
 
   --area-story: #6d9be8;
@@ -219,8 +228,9 @@
   --selection: #262c36;
   /* アイコンの鮮やかな色も抑える */
   --brand-filter: grayscale(0.85) brightness(0.6);
-  --shadow: 0 1px 2px rgb(0 0 0 / 50%);
-  --shadow-sm: none;
+  --shadow: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 50%);
   --shadow-lg: 0 10px 40px rgb(0 0 0 / 70%);
 
   /* タブもほぼ黒。色味はごくわずかに残し、選んでいるタブは明るさで見分ける */
@@ -343,7 +353,13 @@ h3,
 h4 {
   margin: 0;
   line-height: 1.35;
-  font-weight: 700;
+  font-weight: 600;
+}
+
+/* 強調も見出しと同じ 600（ブラウザの標準の bold＝700 にしない） */
+strong,
+b {
+  font-weight: 600;
 }
 
 :focus-visible {
@@ -516,7 +532,7 @@ h4 {
 
 .breadcrumbs .current {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
   /* 現在地は削らず、前の階層から省略する（上限は画面幅で決める。親の幅に対する % は自分自身の幅になってしまう） */
   flex-shrink: 0;
   max-width: min(45vw, 420px);
@@ -595,6 +611,7 @@ h4 {
 .btn-ghost {
   border-color: transparent;
   background: transparent;
+  font-weight: 500;
 }
 
 .btn-ghost:hover:not(:disabled):not([aria-disabled='true']) {
@@ -855,17 +872,43 @@ h4 {
   color: var(--text-muted);
   text-align: center;
   font-size: 14px;
+  /* 短い文の最後の行に1字だけ残らないようにする */
+  text-wrap: pretty;
 }
 
 /* ===== バッジ ===== */
+/* 数だけ・日付だけの所は等幅の英数字（Roboto Mono）にする（DS の件数・日付と同じ声。Diary Studio の docs/SPEC.md の 4.4 の 1）。
+   件数・進み具合の %・分析と記録の日付・戦略メモの日付。「全5話」「1,295字」「第1話」のように日本語が混ざる所はゴシックのまま */
+.home-pane-count,
+.home-jump-count,
+.home-index-count,
+.idea-section-count,
+.idea-folder-count,
+.home-mat-tag-count,
+.home-mat-chip-count,
+.bw-chip-count,
+.st-cat-count,
+.st-main-count,
+.story-memo-count,
+.story-settings-chip-count,
+.sx-count,
+.rt-toc-count,
+.trash-count,
+.story-row-progress-value,
+.bw-analysis-date,
+.mt-note-date,
+.sn-date {
+  font-family: var(--font-mono);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 8px;
-  border-radius: 999px;
+  padding: 1px 7px;
+  border-radius: var(--radius-tag);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.6;
   white-space: nowrap;
   background: var(--surface-3);
@@ -921,10 +964,11 @@ h4 {
   padding: 10px 14px;
   border: 0;
   border-bottom: 3px solid transparent;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  /* DS の切り替え（top.css）と同じく角は立てる。色（下線・選んでいるタブの地と文字）は今までのまま */
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 500;
   font-size: 14px;
   cursor: pointer;
   white-space: nowrap;
@@ -936,6 +980,12 @@ h4 {
     border-color 0.12s;
 }
 
+/* タブの並びは横にスクロールするので、外側に描くフォーカスの枠は上で切れる。内側に描く */
+.tabs button:focus-visible,
+.tabs a:focus-visible {
+  outline-offset: -2px;
+}
+
 .tabs button:hover,
 .tabs a:hover {
   color: var(--text);
@@ -944,6 +994,7 @@ h4 {
 .tabs [aria-selected='true'] {
   color: var(--accent);
   border-bottom-color: var(--accent);
+  font-weight: 600;
 }
 
 /* 領域ごとに色分けしたタブ（data-area）。どのタブも下線に領域の色を淡く敷き、
@@ -1319,10 +1370,10 @@ h4 {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lift);
   color: var(--text-faint);
   pointer-events: none;
 }
@@ -1372,8 +1423,9 @@ h4 {
     display: none !important;
   }
 
+  /* 端の余白は DS の S・M と同じ 16px */
   .page {
-    padding: 14px 12px calc(32px + var(--safe-bottom));
+    padding: 16px 16px calc(32px + var(--safe-bottom));
   }
 
   .modal-backdrop {

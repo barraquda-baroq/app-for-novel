@@ -1,4 +1,4 @@
-// アプリの設定: 同期（ログイン）・Claude 連携・表示（この端末だけ）・データ（バックアップ）・ゴミ箱・ホーム画面への追加・危険な操作。
+// アプリの設定: 同期（ログイン）・Claude 連携・表示（この端末だけ）・データ（バックアップ）・ゴミ箱・ホーム画面への追加・書体のライセンス・危険な操作。
 // iPhone / Android のアプリでは「ホーム画面に追加」の代わりに「このアプリについて」を出す。
 import { useState } from 'react'
 import { nativePlatform } from '../../platform/platform'
@@ -8,6 +8,7 @@ import { ClaudeSettings } from '../claude/ClaudeSettings'
 import { DangerZone } from './DangerZone'
 import { DataSettings } from './DataSettings'
 import { DisplaySettings } from './DisplaySettings'
+import { FontLicense } from './FontLicense'
 import { AboutApp } from './AboutApp'
 import { InstallHelp } from './InstallHelp'
 import { SyncSettings } from './SyncSettings'
@@ -28,6 +29,7 @@ export function AppSettingsPage() {
         <DataSettings />
         <TrashSettings />
         {platform ? <AboutApp platform={platform} /> : <InstallHelp />}
+        <FontLicense />
         <DangerZone />
       </main>
     </>

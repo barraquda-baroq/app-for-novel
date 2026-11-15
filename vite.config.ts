@@ -124,6 +124,8 @@ export default defineConfig(({ command, mode }) => {
         // 執筆中に勝手に再読み込みしないよう、更新はユーザーが「更新する」を押した時に適用する
         registerType: 'prompt',
         workbox: {
+          // 書体（Roboto Mono の woff2。src/fonts/）も事前キャッシュに入れ、オフラインでも等幅の字で出す（既定は js・css・html だけ）
+          globPatterns: ['**/*.{js,css,html,woff2}'],
           // Firebase のログイン画面（/__/auth/…）はオフライン用のアプリの画面に差し替えない
           navigateFallbackDenylist: [/^\/__\//],
         },

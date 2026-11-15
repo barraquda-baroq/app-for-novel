@@ -3,7 +3,7 @@
 // 押しても開け閉めする（ボタン・リンク・入力の上と、文字を選んだ時は除く。キーボードと読み上げは見出しのボタンで操作する）。
 // 追加のボタン（actions）は閉じていても出す。帯の中身（bodyId）は閉じている間は描かない（aria-controls は開いている時だけ）。
 // 領域（section）と一覧は `${headingId}-name` を名前にする（件数を2度読み上げないように）。
-import type { ComponentType, MouseEvent, ReactNode, SVGProps } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import { ChevronRightIcon } from '../../ui/icons'
 import type { HomeView } from './homeLogic'
 
@@ -14,7 +14,6 @@ export interface HomeBandHeadProps {
   bodyId: string
   open: boolean
   onToggle: () => void
-  icon: ComponentType<SVGProps<SVGSVGElement>>
   label: string
   count: number
   /** 件数の data-testid（title-count・idea-total・bench-count・material-count） */
@@ -40,18 +39,7 @@ export function togglesBand(e: MouseEvent<HTMLElement>): boolean {
   return true
 }
 
-export function HomeBandHead({
-  area,
-  headingId,
-  bodyId,
-  open,
-  onToggle,
-  icon: Icon,
-  label,
-  count,
-  countTestId,
-  actions,
-}: HomeBandHeadProps) {
+export function HomeBandHead({ area, headingId, bodyId, open, onToggle, label, count, countTestId, actions }: HomeBandHeadProps) {
   return (
     <div
       className="home-pane-head"
@@ -72,7 +60,6 @@ export function HomeBandHead({
           data-area={area}
         >
           <ChevronRightIcon className="icon home-band-chevron" />
-          <Icon className="icon home-pane-icon" />
           <span id={`${headingId}-name`} className="home-band-name">
             {label}
           </span>

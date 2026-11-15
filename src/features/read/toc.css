@@ -3,13 +3,13 @@
  * 目次の入れ物（開閉・広い画面の列・縦書き・印刷）は read.css、話の一覧の入れ物は piece/pieceJump.css。
  */
 .rt-toc-count {
-  min-width: 24px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.7;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -18,7 +18,7 @@
 .rt-toc-chapter {
   margin: 10px 8px 2px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
@@ -54,7 +54,7 @@
 .rt-toc-label {
   flex: none;
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -70,7 +70,7 @@
 
 .rt-toc-missing {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--warn);
   white-space: nowrap;
 }
@@ -80,7 +80,7 @@
   margin-inline-start: auto;
   color: var(--text-faint);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -99,15 +99,18 @@
 }
 
 .rt-toc-link.rt-toc-act .rt-toc-label {
-  font-weight: 600;
+  font-weight: 500;
 }
 
-/* 今開いている話・幕（話の一覧） */
+/* 今開いている話・幕（話の一覧）。色の線がある左は角を立てる */
 .rt-toc-link[aria-current='page'] {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
   background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* 幕の番号（500）も、開いている時は話の番号と同じ 600 にする */
 .rt-toc-link[aria-current='page'] .rt-toc-label {
-  font-weight: 800;
+  font-weight: 600;
 }

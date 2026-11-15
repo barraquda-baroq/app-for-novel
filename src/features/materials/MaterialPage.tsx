@@ -18,7 +18,7 @@ import { attempt, notify } from '../../store/uiStore'
 import { copyText, formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { useDocumentTitle } from '../../ui/hooks'
-import { ChevronRightIcon, CopyIcon, EditIcon, OpenBookIcon, PlusIcon, TagIcon, TrashIcon } from '../../ui/icons'
+import { ChevronRightIcon, CopyIcon, EditIcon, PlusIcon, TagIcon, TrashIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
 import { AskIcon, PasteIcon, SparkIcon } from '../claude/claudeIcons'
@@ -114,10 +114,7 @@ function MaterialView({ material }: { material: Material }) {
       <main className="page mt-page" data-area="materials" data-testid="material-page">
         <section className="mt-head card" aria-labelledby="mt-name" data-testid="material-head">
           <div className="mt-head-top">
-            <span className="badge mt-kind">
-              <OpenBookIcon />
-              資料
-            </span>
+            <span className="badge mt-kind">資料</span>
             {createdBy ? (
               <span className="badge cl-badge" data-testid="material-source">
                 <SparkIcon />

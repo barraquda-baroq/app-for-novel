@@ -26,11 +26,11 @@
   justify-content: center;
   min-width: 20px;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-tag);
   background: var(--area-strategy-soft);
   color: var(--area-strategy-text);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 

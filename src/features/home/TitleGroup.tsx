@@ -9,7 +9,7 @@ import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
-import { BookIcon, BulbIcon, ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
+import { BulbIcon, ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { charsLabel, deleteTitleMessage, episodesLabel, missingLabel, titleCardInfo, type TitleCardInfo } from './homeLogic'
 import { bandBodyId, HomeBandHead } from './HomeBandHead'
@@ -60,7 +60,6 @@ export function TitleGroup({
         bodyId={bodyId}
         open={open}
         onToggle={onToggle}
-        icon={BookIcon}
         label="タイトル"
         count={infos.length}
         countTestId="title-count"
@@ -68,7 +67,7 @@ export function TitleGroup({
           <>
             <button
               type="button"
-              className="btn btn-primary btn-sm home-new-title"
+              className="btn btn-sm home-new-title"
               onClick={() => {
                 // 閉じた帯からでも作れる（作ったタイトルから戻ってきた時は、帯が開いている）
                 openBand('titles')

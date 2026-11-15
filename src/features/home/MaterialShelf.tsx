@@ -16,18 +16,7 @@ import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
-import {
-  ChevronRightIcon,
-  DownIcon,
-  EditIcon,
-  MoveIcon,
-  OpenBookIcon,
-  PlusIcon,
-  SearchIcon,
-  TrashIcon,
-  UpIcon,
-  XIcon,
-} from '../../ui/icons'
+import { ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, SearchIcon, TrashIcon, UpIcon, XIcon } from '../../ui/icons'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { MaterialDialog } from '../materials/MaterialDialog'
 import {
@@ -132,7 +121,6 @@ export function MaterialShelf({
         bodyId={bodyId}
         open={open}
         onToggle={onToggle}
-        icon={OpenBookIcon}
         label="資料"
         count={materials.length}
         countTestId="material-count"
@@ -140,7 +128,7 @@ export function MaterialShelf({
           <>
             <button
               type="button"
-              className="btn btn-primary btn-sm home-new-title"
+              className="btn btn-sm home-new-title"
               onClick={() => {
                 // 閉じた帯からでも追加できる（追加した後に戻ってきた時は、帯が開いている）
                 openBand('materials')

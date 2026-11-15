@@ -14,6 +14,9 @@
   gap: 10px;
   padding: 16px 18px;
   border-top: 3px solid var(--area);
+  /* 色の線がある上は角を立てる（線が角で曲がらないように） */
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .bw-head-top {
@@ -32,11 +35,6 @@
   border-color: color-mix(in srgb, var(--area) 35%, var(--border));
 }
 
-.badge.bw-kind .icon {
-  width: 14px;
-  height: 14px;
-}
-
 .bw-name {
   margin: 0;
   font-family: var(--editor-font);
@@ -44,6 +42,7 @@
   line-height: 1.4;
   letter-spacing: 0.02em;
   overflow-wrap: anywhere;
+  font-weight: 500;
 }
 
 .bw-biblio {
@@ -68,7 +67,7 @@
 .bw-facts dt {
   color: var(--text-muted);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 30px;
 }
 
@@ -127,7 +126,7 @@
   gap: 6px;
   color: var(--text-muted);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .bw-runs-list {
@@ -169,7 +168,7 @@ a.bw-run-row:hover {
 
 .bw-run-label {
   min-width: 0;
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -215,11 +214,11 @@ a.bw-run-row:hover {
   min-height: 28px;
   padding: 2px 10px;
   border: 1px solid color-mix(in srgb, var(--area-bench) 35%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--area-bench-soft);
   color: var(--area-bench-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -229,10 +228,16 @@ a.bw-chip:hover {
   border-color: var(--area-bench);
 }
 
+/* リンクでない観点の札（ホームの棚のカード）は押せないので、枠を付けない淡い札（角 4px）にする。線は透明にして大きさは変えない */
+span.bw-chip {
+  border-color: transparent;
+  border-radius: var(--radius-tag);
+}
+
 .bw-chip-count {
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
@@ -261,7 +266,7 @@ a.bw-chip.is-title:hover {
   flex-wrap: wrap;
   gap: 6px 10px;
   padding: 2px 0 2px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: linear-gradient(90deg, var(--area-soft), transparent 70%);
   box-shadow: inset 3px 0 0 var(--area);
   min-height: 40px;
@@ -270,7 +275,8 @@ a.bw-chip.is-title:hover {
 .bw-analyses-head h2 {
   display: flex;
   align-items: baseline;
-  font-size: 18px;
+  font-size: 16px;
+  letter-spacing: 0.04em;
 }
 
 .bw-actions {
@@ -326,8 +332,8 @@ a.bw-chip.is-title:hover {
 }
 
 .bw-analysis-date {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -377,12 +383,12 @@ a.bw-chip.is-title:hover {
   min-height: 34px;
   padding: 4px 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -468,17 +474,12 @@ a.bw-chip.is-title:hover {
   font-size: 15px;
 }
 
-.bw-compare-head h3 .icon {
-  width: 18px;
-  height: 18px;
-}
-
 .bw-compare-chip {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
   border: 1px solid color-mix(in srgb, var(--area-bench) 35%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--area-bench-soft);
 }
 
@@ -487,7 +488,7 @@ a.bw-chip.is-title:hover {
   padding: 4px 4px 4px 12px;
   color: var(--area-bench-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -522,7 +523,7 @@ a.bw-chip.is-title:hover {
 
 .cq-result-bench > span:first-child {
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* ---------- スマホ ---------- */

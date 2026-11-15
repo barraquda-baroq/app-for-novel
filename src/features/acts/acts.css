@@ -74,7 +74,7 @@
   margin: 0;
   font-family: var(--editor-font);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -112,7 +112,7 @@
 .sep-act-head {
   padding: 6px 20px 0;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent);
 }
 
@@ -172,7 +172,7 @@
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .sep-divider::before,
@@ -211,7 +211,7 @@
 .sep-preview-title {
   margin: 0;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
@@ -242,7 +242,7 @@
 }
 
 .sep-preview-label {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent);
   white-space: nowrap;
 }
@@ -267,7 +267,7 @@
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   list-style: none;
 }
@@ -398,7 +398,7 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--accent);
 }
 
@@ -415,7 +415,7 @@
   margin: 0;
   font-family: var(--editor-font);
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ef-label {
@@ -433,7 +433,7 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -481,7 +481,7 @@
 .ef-section-title {
   margin: 0 0 8px;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ef-frozen {
@@ -498,7 +498,7 @@
   min-height: 44px;
   padding: 8px 14px;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 

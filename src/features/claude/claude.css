@@ -44,14 +44,19 @@
   display: inline-flex;
 }
 
+/* 押せるので、集計の札（.tpage-chip）と違って .btn-sm と同じ枠と角にする */
 .tpage-chip.cl-access-chip {
   align-items: center;
   gap: 4px;
   min-height: 30px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .tpage-chip.cl-access-chip:hover {
@@ -295,7 +300,7 @@
 
 .cl-manual-sum {
   margin: 0;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .cl-manual-steps {
@@ -459,7 +464,7 @@
 /* 2.9: 接続の一覧（設定 → Claude 連携・連携の画面） */
 .cl-conn-count {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .cl-conn-count-note {
@@ -534,7 +539,7 @@
 }
 
 .cl-writes-label {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .cl-writes-control {
@@ -546,7 +551,7 @@
 
 .cl-writes-control .switch {
   min-height: 34px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .cl-writes-note {
@@ -582,17 +587,8 @@
 }
 
 .cn-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   font-size: 20px;
   line-height: 1.4;
-}
-
-.cn-title .icon {
-  width: 22px;
-  height: 22px;
-  color: var(--area-critique);
 }
 
 .cn-host {
@@ -707,7 +703,7 @@
 .cn-conn-mode legend {
   padding: 0 4px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -751,7 +747,7 @@
   align-items: center;
   min-height: 34px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -813,7 +809,7 @@
 .cn-title-name {
   flex: 1 1 160px;
   min-width: 0;
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -829,7 +825,7 @@
 
 .cn-writes {
   align-items: flex-start;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.6;
 }
 

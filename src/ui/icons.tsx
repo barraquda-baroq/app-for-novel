@@ -109,21 +109,6 @@ export const BookIcon = (p: IconProps) => (
     <path d="M4 19a2 2 0 0 1 2-2h13" />
   </Svg>
 )
-/** 本棚（相対比較） */
-export const ShelfIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M3 20h18M5 5h3v15H5zM10 7h3v13h-3zM15.2 6.4l2.9-.8 3 13.6-2.9.8z" />
-  </Svg>
-)
-
-/** 開いた本（資料） */
-export const OpenBookIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M2.5 5.6c2.6-1.2 5.8-1 9.5 1.1 3.7-2.1 6.9-2.3 9.5-1.1v13c-2.6-1.2-5.8-1-9.5 1.1-3.7-2.1-6.9-2.3-9.5-1.1z" />
-    <path d="M12 6.7v13" />
-  </Svg>
-)
-
 /** 荷札（資料のタグ） */
 export const TagIcon = (p: IconProps) => (
   <Svg {...p}>
@@ -151,27 +136,9 @@ export const GearIcon = (p: IconProps) => (
     <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
   </Svg>
 )
-export const TargetIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <circle cx="12" cy="12" r="8" />
-    <circle cx="12" cy="12" r="4" />
-    <circle cx="12" cy="12" r="0.8" fill="currentColor" />
-  </Svg>
-)
-export const SortIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M7 4v16M4 7l3-3 3 3M17 20V4M14 17l3 3 3-3" />
-  </Svg>
-)
 export const MoveIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M5 12h14M13 6l6 6-6 6" />
-  </Svg>
-)
-export const CompareIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <rect x="3" y="4" width="8" height="16" rx="1.5" />
-    <rect x="13" y="4" width="8" height="16" rx="1.5" />
   </Svg>
 )
 export const ListIcon = (p: IconProps) => (
@@ -199,11 +166,5 @@ export const MoreIcon = (p: IconProps) => (
 export const LinkIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
-  </Svg>
-)
-export const CameraIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
-    <circle cx="12" cy="13" r="3.5" />
   </Svg>
 )

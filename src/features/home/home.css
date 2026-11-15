@@ -48,7 +48,7 @@
   gap: 8px;
   min-height: 40px;
   padding: 3px 0 3px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: linear-gradient(90deg, var(--area-soft, transparent), transparent 70%);
   box-shadow: inset 3px 0 0 var(--area, transparent);
 }
@@ -62,8 +62,8 @@
 }
 
 .home-pane-head h2 {
-  font-size: 18px;
-  letter-spacing: 0.02em;
+  font-size: 16px;
+  letter-spacing: 0.04em;
 }
 
 /* ---------- 帯（2.9）: 見出しの中のボタンで開け閉めする。名前と件数はボタンの中（閉じていても件数が分かる） ---------- */
@@ -88,7 +88,7 @@
   margin-left: -6px;
   padding: 2px 10px 2px 4px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: transparent;
   color: var(--text);
   font-weight: inherit;
@@ -97,8 +97,19 @@
   cursor: pointer;
 }
 
-.home-band-toggle:hover {
-  background: color-mix(in srgb, var(--area, var(--accent)) 12%, transparent);
+/* 押した時の色は見出しの行全体に付ける（ボタンだけに付けると、左の線との間に隙間のある箱が重なる） */
+@media (hover: hover) and (pointer: fine) {
+  .home-pane-head:hover {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--area, var(--accent)) 16%, var(--area-soft, transparent)),
+      transparent 70%
+    );
+  }
+}
+
+.home-band-toggle:focus-visible {
+  outline-offset: -2px;
 }
 
 .home-band-name {
@@ -163,20 +174,14 @@
   }
 }
 
-.home-pane-icon {
-  width: 20px;
-  height: 20px;
-  color: var(--area-text, var(--accent));
-}
-
 .home-pane-count {
-  min-width: 26px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 22px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -234,7 +239,7 @@
 }
 
 .home-backup-message {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .home-backup-last {
@@ -255,23 +260,30 @@
 }
 
 /* ---------- スマホの切り替え（どちらの領域の先頭へも移れる。領域は隠さない） ---------- */
+/* DS の切り替え（Diary Studio の top.css .top-switcher）に合わせる: ヘッダーと同じ面の帯に、角の立った区切りを 1px の線で並べる。
+   領域の色（どの区切りにも淡い下線、表示中はその色の地・文字・下線）は今までのまま。丸い溝・浮かせる影・丸い数の札はやめる */
 .home-jump {
   position: sticky;
   top: calc(var(--header-h) + var(--safe-top));
   z-index: 10;
-  margin: -14px -12px 12px;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--bg) 90%, transparent);
-  backdrop-filter: saturate(1.2) blur(8px);
+  margin: -16px -16px 12px;
+  padding: 0 4px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(1.4) blur(8px);
   border-bottom: 1px solid var(--border);
 }
 
 .segmented.home-jump-seg {
   display: flex;
   width: 100%;
+  padding: 0;
+  gap: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .segmented.home-jump-seg button {
+  position: relative;
   flex: 1 1 0;
   display: inline-flex;
   align-items: center;
@@ -281,7 +293,21 @@
   min-height: 40px;
   /* 3つの領域が 360px の幅にも収まるように、横の余白を詰める */
   padding-inline: 6px;
+  border-radius: 0;
   font-size: 14px;
+  font-weight: 500;
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--area) 40%, transparent);
+}
+
+/* 区切りの間の縦の線（DS の「カレンダー｜Routine｜Task｜Favorite」と同じ） */
+.segmented.home-jump-seg button + button::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 11px;
+  bottom: 11px;
+  width: 1px;
+  background: var(--border);
 }
 
 /* 4つの領域（タイトル・アイデア・相対比較・資料）が横に並びきらない幅（360px〜519px）では、数を名前の下に置く
@@ -289,45 +315,39 @@
 @media (max-width: 519px) {
   .segmented.home-jump-seg button {
     flex-direction: column;
-    gap: 1px;
+    gap: 0;
     min-height: 44px;
-    padding: 3px 2px;
+    padding: 4px 2px;
     line-height: 1.25;
   }
 
   .segmented.home-jump-seg .home-jump-count {
-    min-width: 20px;
-    padding: 0 5px;
     font-size: 11px;
     line-height: 16px;
   }
 }
 
-/* 領域の色をタブと同じように示す（下線を淡く敷き、表示中の領域はその色の背景・下線・文字） */
-.segmented.home-jump-seg button {
-  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--area) 40%, transparent);
-}
-
 .segmented.home-jump-seg button[aria-current='true'] {
   background: var(--area-soft);
   color: var(--area-text);
-  box-shadow:
-    inset 0 -3px 0 var(--area),
-    0 1px 2px rgb(0 0 0 / 12%);
+  font-weight: 600;
+  box-shadow: inset 0 -3px 0 var(--area);
 }
 
+/* 角を立てて隙間なく並べたので、フォーカスの枠は内側に描く（DS の .top-switcher-btn と同じ） */
+.segmented.home-jump-seg button:focus-visible {
+  outline-offset: -2px;
+}
+
+/* 数は札にせず、淡い色の数字だけ（DS の数と同じ） */
 .home-jump-count {
-  min-width: 22px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  color: var(--text-muted);
   font-size: 12px;
-  line-height: 20px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
 .segmented.home-jump-seg button[aria-current='true'] .home-jump-count {
-  background: color-mix(in srgb, var(--area) 22%, transparent);
   color: var(--area-text);
 }
 
@@ -354,7 +374,7 @@
 
 .home-index-label {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -397,17 +417,23 @@
   min-height: 34px;
   padding: 4px 6px 4px 9px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
 .home-index-chip:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* スマホでは横にスクロールする列の中なので、外側に描くフォーカスの枠は切れる。内側に描く（タブ・切り替えと同じ） */
+.home-index-chip:focus-visible,
+.home-mat-tag:focus-visible {
+  outline-offset: -2px;
 }
 
 .home-index-chip.is-unassigned {
@@ -444,13 +470,13 @@
 
 .home-index-count {
   flex: none;
-  min-width: 22px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 20px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -471,7 +497,8 @@
 .home-title-card {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  /* 隣の棚（相対比較・資料）のカードと同じ 6px */
+  border-radius: var(--radius-sm);
   background: var(--surface);
   box-shadow: var(--shadow);
   overflow: hidden;
@@ -509,8 +536,8 @@
   flex: 1;
   min-width: 0;
   font-family: var(--editor-font);
-  font-size: 19px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 600;
   line-height: 1.4;
   letter-spacing: 0.02em;
   overflow-wrap: anywhere;
@@ -704,8 +731,8 @@
   .home-index-list {
     flex-wrap: nowrap;
     overflow-x: auto;
-    margin: 0 -12px;
-    padding: 2px 12px 6px;
+    margin: 0 -16px;
+    padding: 2px 16px 6px;
     scrollbar-width: thin;
     overscroll-behavior-x: contain;
   }
@@ -740,7 +767,7 @@
   min-width: 0;
   border: 1px solid var(--border);
   border-left: 3px solid color-mix(in srgb, var(--area-bench) 70%, var(--border));
-  border-radius: var(--radius);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
@@ -779,7 +806,7 @@
   min-width: 0;
   font-family: var(--editor-font);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -860,7 +887,7 @@ button.home-bench-toggle {
 .home-bench-run-label {
   min-width: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -946,12 +973,12 @@ button.home-bench-toggle {
   min-height: 34px;
   padding: 4px 8px 4px 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -975,20 +1002,19 @@ button.home-bench-toggle {
 
 .home-mat-tag-count {
   flex: none;
-  min-width: 22px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 20px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 .home-mat-tag.is-on .home-mat-tag-count {
-  background: color-mix(in srgb, var(--tag-accent, var(--area-materials)) 22%, transparent);
   color: var(--tag-text, var(--area-materials-text));
 }
 
@@ -1016,7 +1042,7 @@ button.home-bench-toggle {
   margin: 0;
   color: var(--text-muted);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1041,7 +1067,7 @@ button.home-bench-toggle {
   min-width: 0;
   border: 1px solid var(--border);
   border-left: 3px solid color-mix(in srgb, var(--area-materials) 70%, var(--border));
-  border-radius: var(--radius);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
@@ -1080,7 +1106,7 @@ button.home-bench-toggle {
   min-width: 0;
   font-family: var(--editor-font);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -1091,7 +1117,7 @@ button.home-bench-toggle {
   overflow-wrap: anywhere;
 }
 
-/* カードのタグ（作者が付けたもの。押せない） */
+/* カードのタグ（作者が付けたもの。押せないので枠を付けない淡い札。線は透明にして大きさは変えない） */
 .home-mat-cardtags {
   display: flex;
   flex-wrap: wrap;
@@ -1106,12 +1132,12 @@ button.home-bench-toggle {
   max-width: 100%;
   min-height: 22px;
   padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-tag);
+  background: var(--surface-3);
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -1129,7 +1155,7 @@ button.home-bench-toggle {
   gap: 5px;
 }
 
-/* 項目のチップ（要約・創作に役立つ知識…） */
+/* 項目の札（要約・創作に役立つ知識…）。押せないので枠を付けない */
 .home-mat-chip {
   display: inline-flex;
   align-items: center;
@@ -1137,12 +1163,12 @@ button.home-bench-toggle {
   max-width: 100%;
   min-height: 24px;
   padding: 1px 9px;
-  border: 1px solid color-mix(in srgb, var(--area-materials) 35%, var(--border));
-  border-radius: 999px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-tag);
   background: var(--area-materials-soft);
   color: var(--area-materials-text);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -1150,7 +1176,7 @@ button.home-bench-toggle {
 .home-mat-chip-count {
   color: var(--text-muted);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1198,8 +1224,8 @@ button.home-bench-toggle {
   .home-mat-tags {
     flex-wrap: nowrap;
     overflow-x: auto;
-    margin: 0 -12px;
-    padding: 2px 12px 6px;
+    margin: 0 -16px;
+    padding: 2px 16px 6px;
     scrollbar-width: thin;
     overscroll-behavior-x: contain;
   }

@@ -53,14 +53,6 @@ export const AskIcon = (p: IconProps) => (
   </Svg>
 )
 
-/** コネクタ（差し込み） */
-export const PlugIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0z" />
-    <path d="M12 16v5" />
-  </Svg>
-)
-
 /** 推敲案（蛍光ペン） */
 export const MarkerIcon = (p: IconProps) => (
   <Svg {...p}>

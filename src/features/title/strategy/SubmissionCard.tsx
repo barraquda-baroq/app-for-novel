@@ -38,7 +38,7 @@ import { formatDateTime, safeFileName } from '../../../ui/browser'
 import { saveTextFile } from '../../../platform/saveFile'
 import { confirmDialog } from '../../../ui/dialogs'
 import { DraftInput } from '../../../ui/DraftField'
-import { BookIcon, CameraIcon, ChevronRightIcon, DownloadIcon, LinkIcon, TrashIcon } from '../../../ui/icons'
+import { BookIcon, ChevronRightIcon, DownloadIcon, LinkIcon, TrashIcon } from '../../../ui/icons'
 import { useKeepInPlace } from '../../../ui/keepInPlace'
 import { Modal } from '../../../ui/Modal'
 import { NearViewportContext, useNearViewportWatcher } from '../../../ui/nearViewport'
@@ -936,10 +936,7 @@ function SnapshotBox({
   return (
     <section className="sg-snapshot" aria-label="応募時の原稿" data-testid="snapshot">
       <div className="sg-snapshot-head">
-        <h3 className="sg-snapshot-title">
-          <CameraIcon />
-          応募時の原稿
-        </h3>
+        <h3 className="sg-snapshot-title">応募時の原稿</h3>
         <button type="button" className="btn btn-sm sg-snapshot-btn" onClick={() => void record()} data-testid="snapshot-record">
           {snap ? '記録し直す' : '応募時の原稿を記録'}
         </button>

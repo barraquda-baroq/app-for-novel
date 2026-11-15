@@ -12,12 +12,12 @@
   min-height: 34px;
   padding: 4px 12px;
   border: 1px solid color-mix(in srgb, var(--area) 30%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--area-text);
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -49,7 +49,7 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .sx-title p {
@@ -61,16 +61,21 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--surface-3);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.7;
   font-variant-numeric: tabular-nums;
   margin-left: 8px;
+}
+
+/* 見出し（.sx-title h2）は flex の gap で間をあけるので、数の左の余白は付けない（付けると見出しから離れすぎる） */
+.sx-title h2 .sx-count {
+  margin-left: 0;
 }
 
 .sx-claude-actions {
@@ -112,8 +117,9 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* 開いているカードは線の色で示す（設定項目の .st-entry.is-open と同じ） */
 .sx-card.is-open {
-  box-shadow: var(--shadow);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
 .sx-card-head {
@@ -173,7 +179,7 @@
 
 .sx-card-name {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -229,11 +235,11 @@
   min-height: 30px;
   padding: 2px 10px;
   border: 1px solid color-mix(in srgb, var(--area-story) 35%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--area-story-soft);
   color: var(--area-story-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -324,8 +330,8 @@
 
 .sn-date {
   color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
@@ -447,7 +453,7 @@
   background: var(--surface-3);
   color: var(--text-muted);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .sn-contest-actions {
@@ -482,7 +488,7 @@
   margin-right: 8px;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ps-runs-more {

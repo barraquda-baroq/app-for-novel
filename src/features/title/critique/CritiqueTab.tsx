@@ -19,7 +19,7 @@ import { attempt, notify } from '../../../store/uiStore'
 import { copyText } from '../../../ui/browser'
 import { confirmDialog } from '../../../ui/dialogs'
 import { DraftInput } from '../../../ui/DraftField'
-import { ChevronRightIcon, CopyIcon, LinkIcon, PlusIcon, ShelfIcon, TrashIcon, XIcon } from '../../../ui/icons'
+import { ChevronRightIcon, CopyIcon, LinkIcon, PlusIcon, TrashIcon, XIcon } from '../../../ui/icons'
 import { useKeepInPlace } from '../../../ui/keepInPlace'
 import { AskIcon, PasteIcon, SparkIcon } from '../../claude/claudeIcons'
 import { sourceLabel } from '../../claude/claudeUi'
@@ -614,10 +614,7 @@ function CompareWorks({
   return (
     <section className="bw-compare" data-area="bench" aria-labelledby="cq-bench-heading" data-testid="critique-bench">
       <div className="bw-compare-head">
-        <h3 id="cq-bench-heading">
-          <ShelfIcon />
-          相対比較する作品
-        </h3>
+        <h3 id="cq-bench-heading">相対比較する作品</h3>
         <span className="small muted">
           {comparing.length
             ? 'Claude はコネクタでこれらの作品の分析を読んで比べます。'

@@ -46,17 +46,20 @@
   min-height: 30px;
   padding: 2px 4px 2px 10px;
   border: 1px solid color-mix(in srgb, var(--tag-accent, var(--area-materials)) 40%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--tag-soft, var(--area-materials-soft));
   color: var(--tag-text, var(--area-materials-text));
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.4;
 }
 
+/* 押せないタグ（資料・相対比較の画面）は枠を付けない淡い札（.tpage-chip と同じ角 4px）。線は透明にして大きさは変えない */
 .mt-tag-chip.is-static {
   min-height: 26px;
   padding: 1px 10px;
+  border-color: transparent;
+  border-radius: var(--radius-tag);
   overflow-wrap: anywhere;
 }
 
@@ -74,7 +77,7 @@
   height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-tag);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -126,12 +129,12 @@
   min-height: 32px;
   padding: 3px 10px 3px 8px;
   border: 1px dashed var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   overflow-wrap: anywhere;
 }
@@ -176,7 +179,7 @@
 
 .mt-manage-name {
   min-width: 0;
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 

@@ -58,7 +58,7 @@
   flex-direction: column;
   gap: 2px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .aset-row-desc {
@@ -113,7 +113,7 @@
 
 .aset-size-value {
   min-width: 44px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -134,7 +134,7 @@
   margin-bottom: 4px;
   color: var(--text-faint);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.06em;
 }
 
@@ -156,7 +156,7 @@
 .aset-switch-state {
   min-width: 2.5em;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -188,7 +188,7 @@
 
 .aset-count dd {
   margin: 0;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
@@ -203,6 +203,17 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.7;
+}
+
+/* 書体のライセンスの全文（英文。数だけの所ではないので UI の書体。折り返して横にはみ出さない） */
+.aset-license {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
 }
 
 .aset-storage {
@@ -257,7 +268,7 @@
   background: var(--active-soft);
   color: var(--active);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .aset-install-cta {

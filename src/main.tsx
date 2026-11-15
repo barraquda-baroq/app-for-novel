@@ -1,3 +1,5 @@
+// 等幅の英数字の書体（Roboto Mono。アプリに同梱し、オフラインでも出る。src/fonts/roboto-mono.css）
+import './fonts/roboto-mono.css'
 // 共通スタイルを先に読み込み、各画面の CSS で上書きできるようにする
 import './styles.css'
 import { StrictMode } from 'react'

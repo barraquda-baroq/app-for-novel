@@ -17,7 +17,7 @@ import { useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
-import { ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, ShelfIcon, TrashIcon, UpIcon, XIcon } from '../../ui/icons'
+import { ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon, XIcon } from '../../ui/icons'
 import { useKeepInPlace } from '../../ui/keepInPlace'
 import { BenchManageTagsDialog } from '../bench/BenchTagDialogs'
 import { BenchWorkDialog } from '../bench/BenchWorkDialog'
@@ -126,7 +126,6 @@ export function BenchShelf({
         bodyId={bodyId}
         open={open}
         onToggle={onToggle}
-        icon={ShelfIcon}
         label="相対比較"
         count={works.length}
         countTestId="bench-count"
@@ -134,7 +133,7 @@ export function BenchShelf({
           <>
             <button
               type="button"
-              className="btn btn-primary btn-sm home-new-title"
+              className="btn btn-sm home-new-title"
               onClick={() => {
                 // 閉じた帯からでも追加できる（追加した後に戻ってきた時は、帯が開いている）
                 openBand('bench')

@@ -36,7 +36,6 @@ import { deviceLabel } from '../../sync/conflicts'
 import { signIn, signOut, syncNow, useSync } from '../../sync/controller'
 import { useDocumentTitle } from '../../ui/hooks'
 import { AppHeader } from '../../ui/Layout'
-import { PlugIcon } from './claudeIcons'
 import { CLAUDE_ACCESS_HINTS } from './ClaudeAccessControl'
 import { CLAUDE_CAN, CLAUDE_CANNOT } from './claudeUi'
 import { connectionNameProblem, ConnectionList, removeOneConnection } from './ConnectionList'
@@ -379,10 +378,7 @@ export function ConnectPage() {
     <>
       <AppHeader crumbs={[{ label: 'Claude との連携' }]} />
       <main className="page page-narrow cn-page" data-testid="connect-page">
-        <h1 className="cn-title">
-          <PlugIcon />
-          Claude（claude.ai）との連携
-        </h1>
+        <h1 className="cn-title">Claude（claude.ai）との連携</h1>
         {host ? (
           <p className="cn-host" data-testid="connect-host">
             コネクタ: <code>{host}</code>

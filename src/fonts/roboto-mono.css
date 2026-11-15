@@ -1,0 +1,29 @@
+/*
+ * 等幅の英数字の書体（Roboto Mono。Diary Studio と同じ @fontsource/roboto-mono 5.3.0 の latin のうち、使う 400・500・600。合わせて 39KB ほど）。
+ * アプリに同梱し、ネットからは読まない（オフラインでも出る）。ライセンスは SIL Open Font License 1.1（全文は ./roboto-mono/OFL.txt。アプリの設定の「書体のライセンス」で読める）。
+ * 数だけ・日付だけの所（件数・%・分析の日付など）に var(--font-mono) で使う。日本語が混ざる所（「全5話」「1,295字」「第1話」）には使わない。
+ * 400 より細い字・600 より太い字は使わない（読み込んでいない太さは端末が作るので、字がにじむ）
+ */
+@font-face {
+  font-family: 'Roboto Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(./roboto-mono/roboto-mono-latin-400-normal.woff2) format('woff2');
+}
+
+@font-face {
+  font-family: 'Roboto Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(./roboto-mono/roboto-mono-latin-500-normal.woff2) format('woff2');
+}
+
+@font-face {
+  font-family: 'Roboto Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(./roboto-mono/roboto-mono-latin-600-normal.woff2) format('woff2');
+}

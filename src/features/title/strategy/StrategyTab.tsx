@@ -10,7 +10,7 @@ import { actions } from '../../../store/actions'
 import { getData, useData } from '../../../store/appStore'
 import { attempt } from '../../../store/uiStore'
 import { promptDialog } from '../../../ui/dialogs'
-import { PlusIcon, TargetIcon } from '../../../ui/icons'
+import { PlusIcon } from '../../../ui/icons'
 import { AskIcon, PasteIcon } from '../../claude/claudeIcons'
 import { ManualDialog } from '../../claude/ManualDialog'
 import { PasteResultDialog } from '../../claude/PasteResultDialog'
@@ -133,7 +133,6 @@ export function StrategyTab({ titleId }: { titleId: ID }) {
         <section className="card sg-panel sg-note" aria-labelledby="sg-note-heading">
           <div className="sg-panel-head">
             <h2 id="sg-note-heading" className="sg-panel-title">
-              <TargetIcon />
               全体戦略
             </h2>
           </div>

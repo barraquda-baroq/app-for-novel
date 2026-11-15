@@ -12,7 +12,7 @@ import { formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog } from '../../ui/dialogs'
 import { DraftInput, DraftTextarea } from '../../ui/DraftField'
 import { useDocumentTitle } from '../../ui/hooks'
-import { NoteIcon, TrashIcon } from '../../ui/icons'
+import { TrashIcon } from '../../ui/icons'
 import { AppHeader } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
 import { useLiveMemoText } from './memoText'
@@ -63,10 +63,7 @@ function MemoEditor({ title, memo }: { title: Title; memo: Memo }) {
       <main className="page page-narrow memo-page">
         <article className="memo-sheet" data-testid="memo-sheet">
           <div className="memo-head">
-            <span className="badge badge-memo memo-kind">
-              <NoteIcon />
-              メモ
-            </span>
+            <span className="badge badge-memo memo-kind">メモ</span>
             <DraftInput
               key={memo.id}
               className="input-bare memo-name"
