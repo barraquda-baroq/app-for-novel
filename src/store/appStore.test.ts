@@ -14,6 +14,9 @@ import {
 import { markDraftDirty } from './draftRegistry'
 import { saveBeforeLeave } from './lifecycle'
 import { toBackup } from '../domain/backup'
+import { sortedTitles } from '../domain/entityOps'
+import { buildReadThrough, readBlocksText } from '../domain/readthrough'
+import { repairData } from '../domain/repair'
 import { emptyData, type AppData } from '../domain/types'
 import { emptyOutcome, fakePersistence } from '../test/fakePersistence'
 
@@ -56,6 +59,49 @@ describe('自動保存', () => {
     const replacement = emptyData()
     await replaceAllData(replacement)
     expect(Object.keys(useApp.getState().data.titles)).toHaveLength(0)
+  })
+})
+
+describe('タイトルのコピー（第二稿）', () => {
+  it('copyTitle: 写しが端末内に保存され、読み込み直しても同じに読める（元のタイトルはそのまま。修復も何も直さない）', async () => {
+    const name = `test-db-${++n}`
+    await initStore(createPersistence(name))
+    const titleId = actions.createTitle('灯台')
+    actions.createTitle('後のタイトル')
+    const ep1 = actions.addEpisode(titleId)
+    actions.updateVersion(useApp.getState().data.pieces[ep1].activeVersionId!, { body: '一話の本文' })
+    actions.addVersion(ep1, { body: '採用していない稿' })
+    const ep2 = actions.addEpisode(titleId)
+    actions.updateVersion(useApp.getState().data.pieces[ep2].activeVersionId!, { body: '前半後半' })
+    actions.separatePiece(ep2, [2])
+    actions.updateTitle(titleId, { strategyNote: '全体の戦略' })
+    await flushNow()
+    const before = useApp.getState().data
+
+    const copyId = actions.copyTitle(titleId, '灯台（第二稿）')
+    expect(await flushNow()).toBe(true)
+    const made = useApp.getState().data
+    expect(made.titles[titleId]).toBe(before.titles[titleId])
+    expect(sortedTitles(made).map((t) => t.name)).toEqual(['灯台', '灯台（第二稿）', '後のタイトル'])
+
+    resetStoreForTests()
+    const disk = createPersistence(name)
+    const saved = await disk.load()
+    disk.close()
+    expect(repairData(saved).fixes).toEqual([])
+    await initStore(createPersistence(name))
+    const data = useApp.getState().data
+    expect(data.titles[copyId]).toMatchObject({ name: '灯台（第二稿）', strategyNote: '全体の戦略' })
+    expect(readBlocksText(buildReadThrough(data, copyId))).toBe(readBlocksText(buildReadThrough(data, titleId)))
+    // 採用稿だけ（第1話の第1稿、第2話自身の第1稿と2つの幕の第1稿）。採用していない稿は写さない
+    const copied = Object.values(data.versions).filter((v) => v.titleId === copyId)
+    expect(copied.map((v) => v.body).sort()).toEqual(['一話の本文', '前半', '前半後半', '後半'])
+    for (const table of ['titles', 'pieces', 'versions'] as const) {
+      for (const [id, rec] of Object.entries(before[table])) {
+        if (table === 'titles' && rec.name === '後のタイトル') continue
+        expect(data[table][id], `${table}/${id}`).toEqual(rec)
+      }
+    }
   })
 })
 

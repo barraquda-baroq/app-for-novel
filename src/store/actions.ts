@@ -18,6 +18,7 @@ import {
 } from '../domain/pieceEdits'
 import * as S from '../domain/storyOps'
 import * as T from '../domain/trash'
+import * as TC from '../domain/titleCopy'
 import type { AppData, ClaudeAccess, ID, NumberingMode, PageSetup, SettingEntry, Slot } from '../domain/types'
 import { commit, getData } from './appStore'
 
@@ -38,6 +39,8 @@ export const actions = {
   moveTitleStep: (titleId: ID, dir: -1 | 1) => apply((d) => E.moveTitleStep(d, titleId, dir)),
   moveTitleTo: (titleId: ID, index: number) => apply((d) => E.moveTitleTo(d, titleId, index)),
   deleteTitle: (titleId: ID) => apply((d) => E.deleteTitle(d, titleId)),
+  /** タイトルを丸ごとコピーする（第二稿。採用原稿・設定項目・メモ・全体戦略など。元のすぐ後ろに入る）。戻り値は新しいタイトルの id */
+  copyTitle: (titleId: ID, name: string) => run((d) => TC.copyTitle(d, titleId, name)),
   // 通し読みの縦書きのページ表示の字数×行数（null = 既定の 40×32 に戻す）
   setTitlePageSetup: (titleId: ID, setup: PageSetup | null) => apply((d) => E.setTitlePageSetup(d, titleId, setup)),
 

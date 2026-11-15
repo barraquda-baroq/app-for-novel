@@ -1096,6 +1096,11 @@ b {
   overflow-wrap: anywhere;
 }
 
+/* 説明の改行はそのまま行を分ける（タイトルのコピーの「写すもの」「写さないもの」） */
+.dialog-hint {
+  white-space: pre-line;
+}
+
 .dialog-problem {
   color: var(--danger);
   font-weight: 600;

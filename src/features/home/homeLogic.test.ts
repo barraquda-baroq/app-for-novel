@@ -8,6 +8,7 @@ import {
   BACKUP_SNOOZE_MS,
   backupReminderDue,
   charsLabel,
+  copyTitleNotice,
   deleteTitleMessage,
   episodesLabel,
   hasManuscriptText,
@@ -111,6 +112,28 @@ describe('タイトルカードの情報', () => {
     expect(episodesLabel({ episodes: 3, specials: 0 })).toEqual({ main: '全3話', sub: null })
     expect(episodesLabel({ episodes: 0, specials: 2 })).toEqual({ main: '全0話', sub: '特殊2' })
     expect(charsLabel(12345)).toBe('12,345字')
+  })
+})
+
+describe('タイトルのコピーの通知', () => {
+  it('ふつうの長さの名前はそのまま出す', () => {
+    expect(copyTitleNotice('海の町', '海の町（第二稿）')).toBe('「海の町」をコピーして「海の町（第二稿）」を作りました')
+    expect(copyTitleNotice('一二三四五六七八九十一二三四五六七八九十', 'あ')).toBe(
+      '「一二三四五六七八九十一二三四五六七八九十」をコピーして「あ」を作りました',
+    )
+  })
+
+  it('長い名前は真ん中を「…」で縮め、終わりの「（第二稿）」は残す（通知が画面の下を大きく覆わないように）', () => {
+    const long = '潮騒の聞こえる海辺の町で最後の夏を過ごした少年少女たちの物語'.repeat(3)
+    const msg = copyTitleNotice(long, `${long}（第二稿）`)
+    expect(msg).toBe(
+      '「潮騒の聞こえる海辺の町で…少女たちの物語」をコピーして「潮騒の聞こえる海辺の町で…物語（第二稿）」を作りました',
+    )
+    // 名前は20字まで（「…」を含む）
+    for (const m of msg.matchAll(/「([^」]*)」/g)) expect(Array.from(m[1])).toHaveLength(20)
+    // サロゲートペア（𠮷）を途中で切らない
+    const kichi = copyTitleNotice('𠮷'.repeat(30), '𠮷'.repeat(30))
+    expect(kichi).toBe(`「${'𠮷'.repeat(12)}…${'𠮷'.repeat(7)}」をコピーして「${'𠮷'.repeat(12)}…${'𠮷'.repeat(7)}」を作りました`)
   })
 })
 

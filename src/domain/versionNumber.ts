@@ -78,15 +78,25 @@ export function numberedPrefix(name: string): string | null {
 }
 
 /**
+ * 「第n稿」の n の部分（半角・全角の数字「3」「３」か漢数字「三」「二十一」「一〇」）を数にする。読めなければ null
+ * （タイトルのコピーの名前「（第二稿）」の番号を読むのにも使う。titleCopy.ts）
+ */
+export function draftNumeral(raw: string): number | null {
+  const n = /^[0-9０-９]+$/.test(raw)
+    ? digitsNumber(raw)
+    : /^[〇零一二三四五六七八九十百千]+$/.test(raw)
+      ? kanjiNumber(raw)
+      : null
+  return n !== null && Number.isSafeInteger(n) ? n : null
+}
+
+/**
  * 稿の名前から読んだ番号（「第3稿（第2稿を複製）」「第３稿」「第三稿」「 第3稿」→ 3）。
  * 先頭が「第n稿」でない名前（「改稿版」「第2幕の第1稿」）は null
  */
 export function versionNumber(name: string): number | null {
   const m = NUMBERED_PREFIX.exec(name)
-  if (!m) return null
-  const raw = m[2]
-  const n = /^[0-9０-９]+$/.test(raw) ? digitsNumber(raw) : kanjiNumber(raw)
-  return n !== null && Number.isSafeInteger(n) ? n : null
+  return m ? draftNumeral(m[2]) : null
 }
 
 /** 話・幕に今ある稿（versionIds の順。載っていない稿（同期の途中・壊れたデータ）も後ろに付ける。ゴミ箱の稿は入らない） */

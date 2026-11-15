@@ -1,17 +1,27 @@
-// ホームのタイトル群。カードを押すとタイトルに入る。「並べ替え・編集」で名前の変更・並べ替え・削除ができる。
+// ホームのタイトル群。カードを押すとタイトルに入る。「並べ替え・編集」で名前の変更・並べ替え・コピー（第二稿）・削除ができる。
 // 2.9: ホームの帯の1つ（見出しで開け閉め。閉じている間は一覧を描かず、「新しいタイトル」だけを出す）。
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { sortedTitles } from '../../domain/entityOps'
+import { suggestCopyTitleName } from '../../domain/titleCopy'
 import { paths } from '../../routes'
 import { actions } from '../../store/actions'
-import { useData } from '../../store/appStore'
+import { getData, useData } from '../../store/appStore'
 import { attempt, notify } from '../../store/uiStore'
 import { formatDateTime, formatUpdated } from '../../ui/browser'
 import { confirmDialog, promptDialog } from '../../ui/dialogs'
-import { BulbIcon, ChevronRightIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
+import { BulbIcon, ChevronRightIcon, CopyIcon, DownIcon, EditIcon, MoveIcon, PlusIcon, TrashIcon, UpIcon } from '../../ui/icons'
 import { useKeepInPlace } from '../../ui/keepInPlace'
-import { charsLabel, deleteTitleMessage, episodesLabel, missingLabel, titleCardInfo, type TitleCardInfo } from './homeLogic'
+import {
+  charsLabel,
+  COPY_TITLE_HINT,
+  copyTitleNotice,
+  deleteTitleMessage,
+  episodesLabel,
+  missingLabel,
+  titleCardInfo,
+  type TitleCardInfo,
+} from './homeLogic'
 import { bandBodyId, HomeBandHead } from './HomeBandHead'
 import { openBand, toggleBand } from './homeBands'
 import { TitleMoveDialog } from './TitleMoveDialog'
@@ -27,6 +37,35 @@ export async function createTitleFlow(navigate: (to: string) => void): Promise<v
   const id = attempt(() => actions.createTitle(name.trim()))
   if (!id) return
   navigate(paths.title(id))
+}
+
+/**
+ * タイトルをコピーする（第二稿）。名前を聞いて、元のすぐ後ろに新しいタイトルを作り、そのカードを見える所まで出す。
+ * 名前の候補は、今あるタイトルと重ならない「（第n稿）」（同じ元を2回コピーしたら2回目は「（第三稿）」）。
+ * キャンセル・失敗した時は何もしない
+ */
+async function copyTitleFlow(info: Pick<TitleCardInfo, 'id' | 'name'>): Promise<void> {
+  const taken = Object.values(getData().titles).map((t) => t.name)
+  const name = await promptDialog({
+    title: `「${info.name}」をコピー`,
+    label: '新しいタイトル名',
+    initial: suggestCopyTitleName(info.name, taken),
+    confirmLabel: 'コピーする',
+    hint: COPY_TITLE_HINT,
+  })
+  if (name === null) return
+  const newName = name.trim()
+  const id = attempt(() => actions.copyTitle(info.id, newName))
+  if (!id) return
+  notify(copyTitleNotice(info.name, newName))
+  // ダイアログを閉じてフォーカスが「コピー」に戻り、新しいカードを描いた後に、そのカードを画面の真ん中まで出す
+  // （写しは元のすぐ下なので、端に寄せる（nearest）と画面の下の端に付き、下に出る通知に隠れる。アイデアを見せる時と同じく真ん中へ）
+  requestAnimationFrame(() => {
+    const cards = document.querySelectorAll<HTMLElement>('[data-testid="title-card"]')
+    Array.from(cards)
+      .find((el) => el.dataset.titleId === id)
+      ?.scrollIntoView({ block: 'center' })
+  })
 }
 
 export function TitleGroup({
@@ -232,21 +271,33 @@ function TitleCard({ info, edit, first, last }: { info: TitleCardInfo; edit: boo
             <MoveIcon />
             移動…
           </button>
-          <span className="grow" />
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => void rename()}
-            aria-label="名前を変更"
-            data-testid="title-rename"
-          >
-            <EditIcon />
-            名前<span className="hide-mobile">を変更</span>
-          </button>
-          <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()} data-testid="title-delete">
-            <TrashIcon />
-            削除
-          </button>
+          {/* コピー・名前・削除はひとまとまり（狭い画面で折り返す時も一緒に次の行へ移り、右に寄る） */}
+          <span className="home-title-edit-actions">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void copyTitleFlow(info)}
+              title="第二稿などのために、タイトルを丸ごとコピー"
+              data-testid="title-copy"
+            >
+              <CopyIcon />
+              コピー
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void rename()}
+              aria-label="名前を変更"
+              data-testid="title-rename"
+            >
+              <EditIcon />
+              名前<span className="hide-mobile">を変更</span>
+            </button>
+            <button type="button" className="btn btn-sm btn-danger" onClick={() => void remove()} data-testid="title-delete">
+              <TrashIcon />
+              削除
+            </button>
+          </span>
         </div>
       ) : null}
       {moving ? <TitleMoveDialog titleId={info.id} onClose={() => setMoving(false)} /> : null}

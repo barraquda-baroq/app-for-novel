@@ -615,6 +615,15 @@
   background: var(--surface-2);
 }
 
+/* タイトルのコピー・名前を変更・削除のまとまり。右に寄せ、狭い画面ではまとめて次の行へ折り返す */
+.home-title-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 6px;
+  margin-left: auto;
+}
+
 .empty.home-empty {
   display: flex;
   flex-direction: column;

@@ -76,6 +76,32 @@ export function charsLabel(chars: number): string {
   return `${formatCount(chars)}字`
 }
 
+/** タイトルのコピー（第二稿）のダイアログの説明。1行目が写すもの、2行目が写さないもの（src/domain/titleCopy.ts） */
+export const COPY_TITLE_HINT =
+  '話・幕の採用原稿と、設定項目・メモ・全体戦略・相対比較する作品をコピーします。\n' +
+  '採用していない稿・応募計画・推敲案・改稿案・戦略メモ・作品批評・アイデアはコピーしません（元のタイトルはそのまま）。'
+
+/** 通知に出すタイトル名の長さの上限（字） */
+const NOTICE_NAME_MAX = 20
+/** 縮めた名前でも残す終わりの字数（「（第二稿）」と、その前の少し） */
+const NOTICE_NAME_TAIL = 7
+
+/** 通知に出すタイトル名。長い名前は真ん中を「…」で縮め、終わり（「（第二稿）」など）は残す（サロゲートペアを壊さない） */
+function noticeTitleName(name: string): string {
+  const chars = Array.from(name)
+  if (chars.length <= NOTICE_NAME_MAX) return name
+  const head = chars.slice(0, NOTICE_NAME_MAX - NOTICE_NAME_TAIL - 1).join('')
+  return `${head}…${chars.slice(-NOTICE_NAME_TAIL).join('')}`
+}
+
+/**
+ * タイトルをコピーした時の通知。長い名前（ウェブ小説の長いタイトル）でも通知が数行に収まるように縮める
+ * （通知が画面の下を大きく覆って、作ったばかりのカードを隠さないように）
+ */
+export function copyTitleNotice(from: string, to: string): string {
+  return `「${noticeTitleName(from)}」をコピーして「${noticeTitleName(to)}」を作りました`
+}
+
 /**
  * タイトル削除の確認文。何が消え、アイデアがどこへ行くかをはっきり書く。2.9: フォルダがあれば、フォルダも移ることと、
  * 名前が重なった時の名前の付け方、Claude に見せないタイトルならフォルダの名前が Claude に見えるようになることも書く
