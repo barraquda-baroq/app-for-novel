@@ -52,7 +52,14 @@ export function safeSlice(text: string, start: number, end: number): string {
   return text.slice(s, Math.max(s, e))
 }
 
-/** offset が何段落目か（1から。空白だけの行は数えない） */
+/** 段落の数え方で「空白」とみなす文字（半角空白・全角空白・タブ）。これだけの行は段落に数えない */
+const isBlankChar = (c: number) => c === 0x20 || c === 0x3000 || c === 0x09
+
+/**
+ * offset が何段落目か（1から。¶ の番号。話・特殊ブロック・幕の稿の本文ごとに数える）。
+ * 半角空白・全角空白・タブのほかの文字がある行が1段落で、空行・空白だけの行は数えない。CRLF は1つの改行。
+ * 空行の中の位置は、次の段落の番号になる。原稿画面の「段落」（paragraphSpans）も同じ数え方
+ */
 export function paragraphAt(body: string, offset: number): number {
   let n = 0
   let lineHasText = false
@@ -63,9 +70,37 @@ export function paragraphAt(body: string, offset: number): number {
       if (c === 0x0d && body.charCodeAt(i + 1) === 0x0a) continue
       if (lineHasText) n += 1
       lineHasText = false
-    } else if (c !== 0x20 && c !== 0x3000 && c !== 0x09) lineHasText = true
+    } else if (!isBlankChar(c)) lineHasText = true
   }
   return n + 1
+}
+
+/** 1つの段落の範囲。start は行の頭（字下げの空白も含む）、end は行の終わり（改行の手前） */
+export interface ParagraphSpan {
+  start: number
+  end: number
+}
+
+/**
+ * 本文の段落を前から並べる（n 段落目は [n - 1]）。数え方は paragraphAt と同じ（空行・空白だけの行は入れない、CRLF は1つの改行）。
+ * ルビ・傍点の記法は段落の中にそのまま残す（記法は改行をまたがない）。原稿画面の「段落」で、番号から本文の位置を引くのに使う
+ */
+export function paragraphSpans(body: string): ParagraphSpan[] {
+  const out: ParagraphSpan[] = []
+  let start = 0
+  let lineHasText = false
+  const n = body.length
+  for (let i = 0; i <= n; i++) {
+    const c = i < n ? body.charCodeAt(i) : -1
+    if (c === 0x0a || c === 0x0d || c === -1) {
+      if (lineHasText) out.push({ start, end: i })
+      lineHasText = false
+      // CRLF は1つの改行（次の行は LF の後ろから）
+      if (c === 0x0d && body.charCodeAt(i + 1) === 0x0a) i += 1
+      start = i + 1
+    } else if (!isBlankChar(c)) lineHasText = true
+  }
+  return out
 }
 
 const strippedMaps = new WeakMap<{ body: string }, StrippedMap>()

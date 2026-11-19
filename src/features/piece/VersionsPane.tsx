@@ -27,12 +27,14 @@ import {
   versionsNewestFirst,
   withHeading,
 } from './logic'
+import { ParagraphJumpButton } from './ParagraphJump'
 import { ReviseIcon } from './pieceIcons'
 import { SearchHitLayer } from './SearchHitLayer'
 import { versionField, type EditSession } from './session'
 import { SessionInput, SessionTextarea } from './SessionField'
 import { useDiff } from './useDiff'
 import { useFieldSearch } from './useFieldSearch'
+import { useParagraphJump } from './useParagraphJump'
 
 /** 原稿画面の各ペインが共有するもの */
 export interface WorkspaceApi {
@@ -325,6 +327,20 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
     fieldKey: editable ? bodyKey : undefined,
     hub,
   })
+  // 「段落」: この稿の本文（保存していない編集も含む）で数える。差分の表示中は、表示の位置に写して印を付ける
+  const para = useParagraphJump({
+    slot: 'compare',
+    text: live,
+    bodyRef,
+    sourceKey: `${selected.id}|${showingDiff ? 'diff' : 'textarea'}|${isActive ? 1 : 0}`,
+    diff: showingDiff ? diff.segments : undefined,
+    fieldKey: editable ? bodyKey : undefined,
+    hub,
+    // 検索窓が開いていれば、次に探すのは移った段落から
+    onJumped: (start) => {
+      if (search.open) search.setAnchor(start)
+    },
+  })
 
   const side = api.orientation === 'horizontal' ? '左' : '上'
 
@@ -414,6 +430,7 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           <span className="pw-adopt-label">{isActive ? '採用中' : '採用する'}</span>
         </button>
         <SearchToggle search={search} />
+        <ParagraphJumpButton jump={para} />
         <button
           ref={moreToggleRef}
           type="button"
@@ -544,6 +561,10 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
             hitStart={search.hit?.start}
             hitEnd={search.hit?.end}
             revealSeq={search.revealSeq}
+            paraStart={para.mark?.start}
+            paraEnd={para.mark?.end}
+            paragraph={para.mark?.n}
+            paraSeq={para.revealSeq}
             onKeyDown={search.onFieldKeyDown}
           />
         ) : diffMode ? (
@@ -575,15 +596,27 @@ function CompareView({ api, active, selected, showDiff }: PaneProps & { selected
           />
         )}
         {showingDiff ? null : (
-          <SearchHitLayer
-            slot="compare"
-            bodyRef={bodyRef}
-            hit={search.hit}
-            revealSeq={search.revealSeq}
-            value={live}
-            fieldKey={editable ? bodyKey : undefined}
-            hub={hub}
-          />
+          <>
+            <SearchHitLayer
+              slot="compare"
+              bodyRef={bodyRef}
+              hit={search.hit}
+              revealSeq={search.revealSeq}
+              value={live}
+              fieldKey={editable ? bodyKey : undefined}
+              hub={hub}
+            />
+            <SearchHitLayer
+              kind="paragraph"
+              slot="compare"
+              bodyRef={bodyRef}
+              hit={para.mark}
+              paragraph={para.mark?.n}
+              revealSeq={para.revealSeq}
+              value={live}
+              hub={hub}
+            />
+          </>
         )}
       </div>
 

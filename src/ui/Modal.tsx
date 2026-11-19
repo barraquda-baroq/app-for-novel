@@ -49,9 +49,12 @@ export function Modal({ title, onClose, children, footer, wide, initialFocus, cl
 
     const prev = document.activeElement as HTMLElement | null
     const el = ref.current
+    // 押せない入力欄にはフォーカスできないので飛ばす（全部押せなければ最初のボタン（×）へ）
     const target =
       (initialFocus && el?.querySelector<HTMLElement>(initialFocus)) ||
-      el?.querySelector<HTMLElement>('input:not([type=hidden]), textarea, select') ||
+      el?.querySelector<HTMLElement>(
+        'input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])',
+      ) ||
       el?.querySelector<HTMLElement>('button')
     target?.focus()
     const onKey = (e: KeyboardEvent) => {

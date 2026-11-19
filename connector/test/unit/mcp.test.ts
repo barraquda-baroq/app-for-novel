@@ -4,6 +4,7 @@ import { createMcpHandler, fromJsonSchema } from '@modelcontextprotocol/server'
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/server/validators/cf-worker'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { novel } from '../../../src/test/claudeFixture'
+import { paragraphAt } from '../../../src/claude/anchor'
 import { MATERIAL_SECTION_GUIDE } from '../../../src/claude/material'
 import { MATERIAL_SECTIONS } from '../../../src/domain/materialOps'
 import { SERVER_INSTRUCTIONS } from '../../src/mcp/instructions'
@@ -49,7 +50,13 @@ describe('ツールの決まり', () => {
       expect(t.name.length).toBeLessThanOrEqual(64)
       expect(t.title).toMatch(/[ぁ-んァ-ヶ一-龠]/)
       expect(t.annotations.title).toBe(t.title)
-      expect(Object.keys(t.annotations).sort()).toEqual(['destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint', 'title'])
+      expect(Object.keys(t.annotations).sort()).toEqual([
+        'destructiveHint',
+        'idempotentHint',
+        'openWorldHint',
+        'readOnlyHint',
+        'title',
+      ])
       expect(t.annotations.openWorldHint).toBe(false)
       // 2.7: カードを消すのはゴミ箱へ移すツールだけ（claude.ai でこれだけ「承認が必要」にしておける）
       expect(t.annotations.destructiveHint).toBe(t.kind === 'trash')
@@ -84,7 +91,12 @@ describe('ツールの決まり', () => {
     expect([add.title, append.title]).toEqual(['アイデアを足す', 'アイデアに追記'])
     for (const t of [add, append]) {
       expect(t.kind).toBe('write')
-      expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false })
+      expect(t.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      })
     }
     for (const phrase of [
       'title_id を省くとどのタイトルにも属さないホームのアイデアに入れる',
@@ -114,7 +126,9 @@ describe('ツールの決まり', () => {
     expect(notes.description).toContain('kind=ideas は title_id を省ける')
     expect(notes.description).toContain('作者が書いたホームのアイデアは返さない')
     expect(notes.description).not.toContain('どのタイトルにも属さないアイデアは返さない')
-    expect(TOOL_DEFS.find((t) => t.name === 'novel_status')!.description).toContain('アイデアへの追記の依頼（アプリの同期待ち）の数')
+    expect(TOOL_DEFS.find((t) => t.name === 'novel_status')!.description).toContain(
+      'アイデアへの追記の依頼（アプリの同期待ち）の数',
+    )
     // 2.9: 複数の接続（どのアカウントの接続かを、アプリの一覧の名前と合わせられる）
     expect(TOOL_DEFS.find((t) => t.name === 'novel_status')!.description).toContain(
       'この接続の名前（アプリの 設定 → Claude 連携 の接続の一覧と同じ）',
@@ -146,7 +160,9 @@ describe('ツールの決まり', () => {
       'novel_add_strategy_note',
       'novel_add_revision_ideas',
     ])
-      expect(TOOL_DEFS.find((t) => t.name === name)!.description).toContain('字数（アプリと同じ数え方。空白・改行・ルビの記法と読みを除く')
+      expect(TOOL_DEFS.find((t) => t.name === name)!.description).toContain(
+        '字数（アプリと同じ数え方。空白・改行・ルビの記法と読みを除く',
+      )
     for (const name of ['novel_add_proofreading', 'novel_save_critique_prompt', 'novel_add_ideas'])
       expect(TOOL_DEFS.find((t) => t.name === name)!.description).not.toContain('アプリと同じ数え方')
   })
@@ -157,10 +173,32 @@ describe('ツールの決まり', () => {
     expect(list).toContain('後ろの（n字）は、ほかの一覧と違って空白・改行・ルビの記法と読みも数えた本文の長さの合計')
     expect(list).toContain('「n字以内」は追加の答えの「字数:」で確かめる')
     const budget = (tool: string) =>
-      String((TOOL_SCHEMAS as Record<string, { properties: { char_budget: { description?: string } } }>)[tool].properties.char_budget.description)
-    for (const tool of ['novel_get_strategy', 'novel_get_critique', 'novel_get_bench_analysis', 'novel_get_material', 'novel_get_notes'])
+      String(
+        (TOOL_SCHEMAS as Record<string, { properties: { char_budget: { description?: string } } }>)[tool].properties.char_budget
+          .description,
+      )
+    for (const tool of [
+      'novel_get_strategy',
+      'novel_get_critique',
+      'novel_get_bench_analysis',
+      'novel_get_material',
+      'novel_get_notes',
+    ])
       expect(budget(tool)).toContain('この字数と続きの「残り n字」は空白・改行・ルビの記法も数える')
     expect(budget('novel_read_text')).toContain('この字数と続きの「約n字」は空白・改行も数える')
+  })
+
+  it('段落の番号（¶）: novel_read_text の説明に数え方を1文で書く（検索・推敲案の一覧・アプリの「段落」と同じ番号）。サーバーの説明には書かない', () => {
+    const read = TOOL_DEFS.find((t) => t.name === 'novel_read_text')!.description
+    expect(read).toContain(
+      '段落の番号（¶）は話（幕に分けた話は幕）の本文ごとに1から数え、空行と、半角空白・全角空白・タブだけの行は数えない（ノーブレークスペースなどほかの空白だけの行は数える。novel_search_text・novel_list_proofreading の ¶ と、アプリの原稿画面の「段落」で移る番号と同じ）。',
+    )
+    expect(read.match(/¶/g)).toHaveLength(2)
+    expect(SERVER_INSTRUCTIONS).not.toContain('¶')
+    // 数えない空白は3つだけと書く（「…を含む」と書くと、ノーブレークスペースだけの行も飛ばして数えてしまう）。説明は数える関数と同じ
+    expect(read).not.toContain('を含む）だけの行')
+    const body = '一。\n \n　\n\t\n二。\n \n三。\n \n四。'
+    expect(['一', '二', '三', '四'].map((c) => paragraphAt(body, body.indexOf(c)))).toEqual([1, 2, 4, 6])
   })
 
   it('アイデアのフォルダ（2.9）: サーバーの説明は id の行に f: を足すだけ（1,000字未満）。一覧・ゴミ箱へ移すツールの説明にフォルダ', () => {
@@ -205,12 +243,16 @@ describe('ツールの決まり', () => {
       return !('issues' in r && r.issues?.length)
     }
     expect(await addOk({ items: [{ content: 'あ' }] })).toBe(true)
-    expect(await addOk({ title_id: 't:1', items: [{ name: 'あ'.repeat(40), content: 'あ'.repeat(30_000) }], model: 'claude' })).toBe(true)
+    expect(
+      await addOk({ title_id: 't:1', items: [{ name: 'あ'.repeat(40), content: 'あ'.repeat(30_000) }], model: 'claude' }),
+    ).toBe(true)
     expect(await addOk({ items: [] })).toBe(false)
     expect(await addOk({ items: Array.from({ length: 11 }, () => ({ content: 'x' })) })).toBe(false)
     expect(await addOk({ items: [{ name: 'あ'.repeat(41), content: 'x' }] })).toBe(false)
     // 2.9: フォルダ（80字まで）・テーマ（29字まで）・placement（auto か outside）
-    expect(await addOk({ folder: '新作の相談', subfolder: '雨の駅', theme: 'あ'.repeat(29), items: [{ content: 'x' }] })).toBe(true)
+    expect(await addOk({ folder: '新作の相談', subfolder: '雨の駅', theme: 'あ'.repeat(29), items: [{ content: 'x' }] })).toBe(
+      true,
+    )
     expect(await addOk({ placement: 'auto', theme: '港町', items: [{ content: 'x' }] })).toBe(true)
     expect(await addOk({ placement: 'outside', items: [{ content: 'x' }] })).toBe(true)
     expect(await addOk({ placement: 'inside', items: [{ content: 'x' }] })).toBe(false)
@@ -248,11 +290,18 @@ describe('ツールの決まり', () => {
       items: [{ piece: '#1', excerpt: '見れる', category: 'ra_nuki', reason: 'ら抜き' }],
     })
     expect('issues' in p && p.issues).toBeFalsy()
-    const wrong = await proof['~standard'].validate({ title_id: 't:1', items: [{ piece: '#1', excerpt: 'x', category: 'typos', reason: 'r' }] })
+    const wrong = await proof['~standard'].validate({
+      title_id: 't:1',
+      items: [{ piece: '#1', excerpt: 'x', category: 'typos', reason: 'r' }],
+    })
     expect('issues' in wrong && wrong.issues?.length).toBeTruthy()
     // 長い文章は入力の形の確かめで断らない（大きさは書き込みの時に確かめ、分け方を返す）。短い項目の上限はそのまま
     const critique = fromJsonSchema(TOOL_SCHEMAS.novel_add_critique_result as never, v)
-    const long = await critique['~standard'].validate({ title_id: 't:1', prompt_text: 'あ'.repeat(30_000), result_markdown: 'あ'.repeat(250_000) })
+    const long = await critique['~standard'].validate({
+      title_id: 't:1',
+      prompt_text: 'あ'.repeat(30_000),
+      result_markdown: 'あ'.repeat(250_000),
+    })
     expect('issues' in long && long.issues).toBeFalsy()
     const longExcerpt = await proof['~standard'].validate({
       title_id: 't:1',
@@ -267,7 +316,12 @@ describe('ツールの決まり', () => {
     }
     expect(await valid({})).toBe(true)
     expect(
-      await valid({ names: ['【原稿】星の庭'], exclude_names: ['【横断】', '【対照】'], char_budget: 2_000, cursor: 'x'.repeat(12_000) }),
+      await valid({
+        names: ['【原稿】星の庭'],
+        exclude_names: ['【横断】', '【対照】'],
+        char_budget: 2_000,
+        cursor: 'x'.repeat(12_000),
+      }),
     ).toBe(true)
     expect(await valid({ names: [] })).toBe(false)
     expect(await valid({ names: ['あ'.repeat(81)] })).toBe(false)
@@ -341,7 +395,13 @@ describe('ツールの決まり', () => {
     expect(
       await addOk({
         material: '江戸の暮らし',
-        new_material: { name: '江戸の暮らし', author: '山田', publisher: '海出版', year: '2019', pdf_place: 'プロジェクト「資料」' },
+        new_material: {
+          name: '江戸の暮らし',
+          author: '山田',
+          publisher: '海出版',
+          year: '2019',
+          pdf_place: 'プロジェクト「資料」',
+        },
         items: [item],
         model: 'claude',
       }),
@@ -349,9 +409,11 @@ describe('ツールの決まり', () => {
     expect(await addOk({ material: 'd:1', items: [] })).toBe(false)
     expect(await addOk({ material: 'd:1', items: Array.from({ length: 21 }, () => item) })).toBe(false)
     expect(await addOk({ material: 'd:1', items: [{ ...item, section: 'あ'.repeat(41) }] })).toBe(false)
-    expect(await addOk({ material: 'd:1', new_material: { name: '江戸', author: '', year: '1'.repeat(21) }, items: [item] })).toBe(false)
-    const newMaterial = (TOOL_SCHEMAS.novel_add_material_notes as { properties: { new_material: { properties: object } } }).properties
-      .new_material
+    expect(
+      await addOk({ material: 'd:1', new_material: { name: '江戸', author: '', year: '1'.repeat(21) }, items: [item] }),
+    ).toBe(false)
+    const newMaterial = (TOOL_SCHEMAS.novel_add_material_notes as { properties: { new_material: { properties: object } } })
+      .properties.new_material
     expect(Object.keys(newMaterial.properties)).toEqual(['name', 'author', 'publisher', 'year', 'pdf_place'])
     expect(await addOk({ material: 'd:1', new_material: { name: '江戸' }, items: [item] })).toBe(false)
   })
@@ -395,15 +457,30 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
   }
 
   it('initialize・tools/list は Vault を呼ばない。一覧は決まった並びで、題・ヒント・入力の形がある', async () => {
-    const init = await rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'claude-ai', version: '1' } })
+    const init = await rpc('initialize', {
+      protocolVersion: '2025-11-25',
+      capabilities: {},
+      clientInfo: { name: 'claude-ai', version: '1' },
+    })
     expect(init.status).toBe(200)
     expect(init.json.result.serverInfo.name).toBe('novel-studio')
     expect(init.json.result.instructions).toContain('採用原稿')
     const list = await rpc('tools/list', {}, 2)
-    const tools = list.json.result.tools as { name: string; title: string; annotations: Record<string, unknown>; inputSchema: { properties: Record<string, unknown> }; outputSchema?: unknown }[]
+    const tools = list.json.result.tools as {
+      name: string
+      title: string
+      annotations: Record<string, unknown>
+      inputSchema: { properties: Record<string, unknown> }
+      outputSchema?: unknown
+    }[]
     expect(tools.map((t) => t.name)).toEqual(EXPECTED_ORDER)
     expect(tools[3].title).toBe('採用原稿を読む')
-    expect(tools[3].annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false })
+    expect(tools[3].annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    })
     const write = tools.find((t) => t.name === 'novel_add_proofreading')!
     expect(write.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
     expect(tools[3].inputSchema.properties.char_budget).toMatchObject({ default: 20_000, maximum: 60_000 })
@@ -457,16 +534,25 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     for (const t of TOOL_DEFS) expect(t.description, t.name).not.toContain('分野')
     // 相対比較の作品のタグ（2.7）: 一覧に出し tags で絞れる。追加では書けず、「14 検索用タグ」の2行からアプリが付ける
     const listBench = TOOL_DEFS.find((t) => t.name === 'novel_list_bench_works')!
-    expect(listBench.description).toContain('作品のタグ（タグ: 恋愛・青春…。作者が管理し、「14 検索用タグ」の判定したジャンル・サブジャンルはアプリが自動で付ける')
+    expect(listBench.description).toContain(
+      '作品のタグ（タグ: 恋愛・青春…。作者が管理し、「14 検索用タグ」の判定したジャンル・サブジャンルはアプリが自動で付ける',
+    )
     expect(listBench.description).toContain('tags でそのタグをすべて持つ作品だけにする（タグの名前そのもので照らす）')
     expect(listBench.description).toContain('タグ（作品の数）')
     expect(TOOL_DEFS.find((t) => t.name === 'novel_get_bench_analysis')!.description).toContain('先頭に作品の書誌とタグも出す')
-    expect(addBench.description).toContain('作品のタグは書けない（観点「14 検索用タグ」の「- 判定したジャンル：」「- ジャンル／サブジャンル：」の行から')
+    expect(addBench.description).toContain(
+      '作品のタグは書けない（観点「14 検索用タグ」の「- 判定したジャンル：」「- ジャンル／サブジャンル：」の行から',
+    )
     expect(tools[2].outputSchema).toBeUndefined()
     // ゴミ箱へ移すツール（2.7）: これだけ destructiveHint。結果の形もある。説明とサーバーの説明に、使ってよい時を書く
     const trash = tools.find((t) => t.name === 'novel_move_cards_to_trash')!
     expect(trash.title).toBe('カードをゴミ箱へ移す')
-    expect(trash.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false })
+    expect(trash.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    })
     expect(trash.outputSchema).toBeTruthy()
     expect(tools.filter((t) => t.annotations.destructiveHint).map((t) => t.name)).toEqual(['novel_move_cards_to_trash'])
     const trashDef = TOOL_DEFS.find((t) => t.name === 'novel_move_cards_to_trash')!
@@ -497,7 +583,10 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(read.json.result.structuredContent).toBeUndefined()
     const write = await rpc(
       'tools/call',
-      { name: 'novel_add_revision_ideas', arguments: { title_id: titleId, items: [{ heading: '冒頭', body: '景色の描写を増やす' }] } },
+      {
+        name: 'novel_add_revision_ideas',
+        arguments: { title_id: titleId, items: [{ heading: '冒頭', body: '景色の描写を増やす' }] },
+      },
       4,
     )
     expect(write.json.result.isError).toBeFalsy()
@@ -516,14 +605,19 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     )
     expect(write.json.error).toBeUndefined()
     expect(write.json.result.isError).toBeFalsy()
-    expect(write.json.result.structuredContent.created).toEqual([{ id: expect.stringMatching(/^r:/), label: '「見出しは数えない」', chars: 9 }])
+    expect(write.json.result.structuredContent.created).toEqual([
+      { id: expect.stringMatching(/^r:/), label: '「見出しは数えない」', chars: 9 },
+    ])
     expect(write.json.result.content[0].text).toContain('\n    字数: 9字（空白・改行を除く。アプリと同じ数え方）\n')
   })
 
   it('書き込みツールが何も作れなかった時は isError（structuredContent なしでも出力の形の確かめで落ちない）', async () => {
     const r = await rpc(
       'tools/call',
-      { name: 'novel_add_proofreading', arguments: { title_id: titleId, items: [{ piece: '#1', excerpt: '無い文', category: 'typo', reason: 'x' }] } },
+      {
+        name: 'novel_add_proofreading',
+        arguments: { title_id: titleId, items: [{ piece: '#1', excerpt: '無い文', category: 'typo', reason: 'x' }] },
+      },
       6,
     )
     expect(r.status).toBe(200)
@@ -550,7 +644,11 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
       'tools/call',
       {
         name: 'novel_add_bench_analysis',
-        arguments: { work: '銀河の果て', new_work: { name: '銀河の果て', author: '山田' }, items: [{ viewpoint: '構成', body_markdown: '三幕。' }] },
+        arguments: {
+          work: '銀河の果て',
+          new_work: { name: '銀河の果て', author: '山田' },
+          items: [{ viewpoint: '構成', body_markdown: '三幕。' }],
+        },
       },
       8,
     )
@@ -566,7 +664,11 @@ describe('MCP の呼び出し（2025-11-25 の stateless・2026-07-28）', () =>
     expect(bad.json.error).toBeUndefined()
     expect(bad.json.result.isError).toBe(true)
     // 入力の形: 1〜20件・1つ80字まで
-    const many = await rpc('tools/call', { name: 'novel_move_cards_to_trash', arguments: { cards: Array.from({ length: 21 }, () => id) } }, 11)
+    const many = await rpc(
+      'tools/call',
+      { name: 'novel_move_cards_to_trash', arguments: { cards: Array.from({ length: 21 }, () => id) } },
+      11,
+    )
     expect(many.json.error || many.json.result?.isError).toBeTruthy()
     const empty = await rpc('tools/call', { name: 'novel_move_cards_to_trash', arguments: { cards: [] } }, 12)
     expect(empty.json.error || empty.json.result?.isError).toBeTruthy()

@@ -5,6 +5,7 @@
 // - 本文欄にフォーカスがある時の前へ・次へは、今の一致を選んでいれば（カーソルがその中・端にあれば）その次・前、
 //   離れていれば（今の一致を直した・ほかの所へ移った）欄のカーソルから移る（直した後の次の一致を飛ばさない）
 // - 見つけた所は、検索窓にフォーカスを残したまま印（SearchHitLayer・差分の <mark>）で見せ、閉じた時（Esc・×）に本文欄で本当に選ぶ
+// - 開いている間に「段落」で移ったら、起点をその段落の頭へ移して今の一致を外す（setAnchor。次に探すとその段落から）
 // - 日本語入力の変換中は探さない（確定してから）。語と窓が開いているかは searchStore.ts（話を移っても残る）
 import {
   useCallback,
@@ -73,6 +74,11 @@ export interface FieldSearch {
   toggle: () => void
   /** 閉じる。toField なら本文欄にフォーカスを戻し、見つけた所を選ぶ */
   close: (o: { toField: boolean }) => void
+  /**
+   * 起点を anchor（本文欄・差分の表示の位置）へ移し、今の一致を外す。「段落」で移った時に呼ぶ（検索窓に戻っても前の一致へ引き戻さず、
+   * 次に探す・次へはその段落から）
+   */
+  setAnchor: (anchor: number) => void
   /** 本文欄の onKeyDown（Ctrl+F・⌘F で開く。開いている時の Esc で閉じる）。描き直しても変わらない関数 */
   onFieldKeyDown: (e: KeyboardEvent<HTMLElement>) => void
 }
@@ -331,6 +337,7 @@ export function useFieldSearch({ slot, text, kind, bodyRef, sourceKey, fieldKey,
     prev: () => step(-1),
     toggle: () => (open ? close({ toField: false }) : openFromButton()),
     close,
+    setAnchor: (anchor) => setPos({ anchor, active: false, exact: false }),
     onFieldKeyDown,
   }
 }

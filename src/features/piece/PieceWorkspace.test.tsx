@@ -1628,3 +1628,283 @@ describe('コピー', () => {
     expect(writeText).toHaveBeenLastCalledWith('第1話　春\n\n春は曙。\nやうやう白くなりゆく山際。')
   })
 })
+
+describe('段落（ヘッダーの「検索」の右）', () => {
+  /** 先頭・間に空行（空白だけの行も）、ルビ・傍点のある5段落 */
+  const BODY =
+    '\n　一段落目。\n\n　｜漢字《かんじ》と《《傍点》》の二段落目。\n　\n三段落目は二十字よりずっと長いので、ここで切って三点リーダーを付けます。\n\n\n四段落目。\n五段落目。\n'
+  const items = () => screen.getAllByTestId('para-jump-item').map((b) => b.textContent)
+  const item = (n: number) => screen.getAllByTestId('para-jump-item').find((b) => b.dataset.n === String(n))!
+  const mark = (slot: 'active' | 'compare') => {
+    const el = screen.getByTestId(`${slot}-para-hit`)
+    return { n: Number(el.dataset.paragraph), start: Number(el.dataset.start), end: Number(el.dataset.end) }
+  }
+  const startOf = (text: string, needle: string) => text.lastIndexOf('\n', text.indexOf(needle)) + 1
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'matchMedia')
+  })
+
+  it('「検索」のすぐ右にあり、開くと番号の欄にフォーカスし、全部の段落（空行を数えない・記法を除いた書き出し）と段落の数を出す', async () => {
+    const { titleId, pieceId, v1, v2 } = seed()
+    act(() => actions.updateVersion(v1, { body: BODY }))
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    await screen.findByTestId('compare-editor')
+    for (const slot of ['active', 'compare'] as const) {
+      expect(screen.getByTestId(`${slot}-search-toggle`).nextElementSibling).toBe(screen.getByTestId(`${slot}-para-toggle`))
+    }
+    const toggle = screen.getByTestId('active-para-toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await user.click(toggle)
+    const pop = screen.getByRole('dialog', { name: '段落へ移る' })
+    expect(pop.dataset.testid).toBe('para-jump-pop')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.getAttribute('aria-controls')).toBe(screen.getByTestId('para-jump-panel').id)
+    const input = screen.getByTestId('para-jump-input') as HTMLInputElement
+    expect(document.activeElement).toBe(input)
+    expect(input.inputMode).toBe('numeric')
+    expect(screen.getByLabelText('段落の番号')).toBe(input)
+    expect(screen.getByTestId('para-jump-total').textContent).toBe('全5段落')
+    expect(items()).toEqual([
+      '¶1　一段落目。',
+      '¶2　漢字と傍点の二段落目。',
+      '¶3　三段落目は二十字よりずっと長いので、ここ…',
+      '¶4　四段落目。',
+      '¶5　五段落目。',
+    ])
+    // 本文欄にまだフォーカスしていないので、カーソルの段落の印は無い
+    expect(pop.querySelector('[aria-current]')).toBeNull()
+    // 推敲バージョンの欄は、その稿の本文で数える
+    await user.click(screen.getByTestId('compare-para-toggle'))
+    expect(screen.getAllByTestId('para-jump-panel')).toHaveLength(1)
+    expect(screen.getByTestId('para-jump-total').textContent).toBe('全2段落')
+  })
+
+  it('「28」「¶28」「２８」で移り、印を付けてカーソルを段落の頭に置く。無い番号はそう言って移らない。保存していない編集で番号がずれる', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: BODY }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const toggle = screen.getByTestId('active-para-toggle')
+
+    await user.click(toggle)
+    await user.keyboard('６')
+    const status = screen.getByTestId('para-jump-status')
+    expect(status.textContent).toBe('¶6 はありません（この稿は全5段落です）')
+    expect(screen.getByTestId('para-jump-input').getAttribute('aria-invalid')).toBe('true')
+    await user.keyboard('{Enter}')
+    expect(screen.getByTestId('para-jump-panel')).toBeTruthy()
+    expect(screen.queryByTestId('active-para-hit')).toBeNull()
+    await user.clear(screen.getByTestId('para-jump-input'))
+    await user.keyboard('abc{Enter}')
+    expect(status.textContent).toBe('番号を数字で入れてください（例: 28）')
+    expect(screen.getByTestId('para-jump-panel')).toBeTruthy()
+
+    for (const [raw, n] of [
+      ['¶2', 2],
+      ['３', 3],
+      ['5', 5],
+    ] as const) {
+      if (!screen.queryByTestId('para-jump-panel')) await user.click(toggle)
+      await user.clear(screen.getByTestId('para-jump-input'))
+      await user.type(screen.getByTestId('para-jump-input'), raw)
+      expect(item(n).classList.contains('is-target')).toBe(true)
+      await user.keyboard('{Enter}')
+      expect(screen.queryByTestId('para-jump-panel')).toBeNull()
+      const start = startOf(BODY, ['', '', '｜漢字', '三段落目', '', '五段落目'][n])
+      expect(mark('active')).toEqual({ n, start, end: BODY.indexOf('\n', start) })
+      expect(document.activeElement).toBe(editor)
+      expect([editor.selectionStart, editor.selectionEnd]).toEqual([start, start])
+    }
+    // 開き直すと、カーソルのある段落に印が付いている
+    await user.click(toggle)
+    expect(screen.getByTestId('para-jump-panel').querySelector('[aria-current]')).toBe(item(5))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('para-jump-panel')).toBeNull()
+    // 開く前に本文欄にいたので、本文欄へ戻る（カーソルはそのまま）
+    expect(document.activeElement).toBe(editor)
+    expect(screen.getByTestId('active-para-hit')).toBeTruthy()
+
+    // 本文欄で打つと印は消え、保存していない編集も含めて数え直す
+    editor.setSelectionRange(0, 0)
+    await user.keyboard('足した段落{Enter}')
+    expect(screen.queryByTestId('active-para-hit')).toBeNull()
+    await user.click(toggle)
+    expect(screen.getByTestId('para-jump-total').textContent).toBe('全6段落')
+    expect(items()[0]).toBe('¶1　足した段落')
+    await user.keyboard('2{Enter}')
+    expect(mark('active').start).toBe(startOf(editor.value, '一段落目'))
+    // 保存はしていない（本文を変えるのは打った分だけ）
+    expect(getData().versions[v1].body).toBe(BODY)
+  })
+
+  it('一覧の行を押す・↓↑と Enter で移る。Esc は「段落」へ戻り、Android の「戻る」でも閉じる。本文欄を押すと印が消える', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: BODY }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    const toggle = screen.getByTestId('active-para-toggle')
+    await user.click(toggle)
+    await user.click(item(4))
+    expect(mark('active').n).toBe(4)
+    expect(document.activeElement).toBe(editor)
+
+    await user.click(toggle)
+    expect(screen.getByTestId('para-jump-panel').querySelector('[aria-current]')).toBe(item(4))
+    await user.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(item(4))
+    await user.keyboard('{ArrowUp}{ArrowUp}')
+    expect(document.activeElement).toBe(item(2))
+    await user.keyboard('{Home}{ArrowUp}')
+    expect(document.activeElement).toBe(screen.getByTestId('para-jump-input'))
+    await user.keyboard('{ArrowDown}{End}{Enter}')
+    expect(mark('active').n).toBe(5)
+
+    // Esc（開く前は「段落」にいた）
+    act(() => toggle.focus())
+    await user.keyboard('{Enter}')
+    expect(screen.getByTestId('para-jump-panel')).toBeTruthy()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByTestId('para-jump-panel')).toBeNull()
+    expect(document.activeElement).toBe(toggle)
+    // Android の「戻る」（closeTopLayer がポップオーバーに Esc を送る）
+    await user.click(toggle)
+    act(() => {
+      expect(closeTopLayer()).toBe(true)
+    })
+    expect(screen.queryByTestId('para-jump-panel')).toBeNull()
+    expect(screen.getByTestId('active-para-hit')).toBeTruthy()
+    // 本文欄を押すと印は消える
+    await user.click(editor)
+    expect(screen.queryByTestId('active-para-hit')).toBeNull()
+  })
+
+  it('カーソルが最後の段落より後ろ（終わりの空行）にある時は、最後の段落に印を付ける（clampParagraph）', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: BODY }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    await user.click(editor)
+    editor.setSelectionRange(BODY.length, BODY.length)
+    await user.click(screen.getByTestId('active-para-toggle'))
+    expect(screen.getByTestId('para-jump-panel').querySelectorAll('[aria-current]')).toHaveLength(1)
+    expect(screen.getByTestId('para-jump-panel').querySelector('[aria-current]')).toBe(item(5))
+  })
+
+  it('差分の表示では、稿の本文で数えた段落を表示の中で印で包む（同じ行の削除された文字も）', async () => {
+    const { titleId, pieceId, v1, v2 } = seed()
+    act(() => {
+      actions.updateVersion(v1, { body: '同じ一段落目。\n\n消した二段落目。\n\n三段落目。' })
+      actions.updateVersion(v2, { body: '同じ一段落目。\n\n足した二段落目。\n\n三段落目。' })
+    })
+    usePrefs.getState().setPrefs({ showDiff: true })
+    renderAt(`/t/${titleId}/p/${pieceId}?v=${v2}`)
+    const user = userEvent.setup()
+    const view = await screen.findByTestId('diff-view')
+    await waitFor(() => expect(view.querySelector('.diff-del')).not.toBeNull())
+    await user.click(screen.getByTestId('compare-para-toggle'))
+    expect(items()).toEqual(['¶1　同じ一段落目。', '¶2　足した二段落目。', '¶3　三段落目。'])
+    await user.keyboard('2{Enter}')
+    const hit = screen.getByTestId('diff-para-hit')
+    expect(hit.dataset.paragraph).toBe('2')
+    // 差分は「消」→「足」（「した二段落目。」は同じ）。削除された「消」も段落の印の中
+    expect([...view.querySelectorAll('.pw-para')].map((e) => e.textContent).join('')).toBe('消足した二段落目。')
+    expect(view.querySelector('.diff-del .pw-para')?.textContent).toBe('消')
+    expect(view.querySelector('.pw-para')?.textContent).toBe('消')
+    expect(document.activeElement).toBe(view)
+    // 差分の計算し直し・表示の切り替えで印は外れる
+    act(() => usePrefs.getState().setPrefs({ showDiff: false }))
+    expect(screen.queryByTestId('diff-para-hit')).toBeNull()
+    expect(screen.queryByTestId('compare-para-hit')).toBeNull()
+  })
+
+  it('幕は幕の稿の本文で1から数える', async () => {
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: '幕一の一。\n\n幕一の二。\n幕二の一。\n\n\n幕二の二。\n　\n幕二の三。' }))
+    const acts = actions.separatePiece(pieceId, ['幕一の一。\n\n幕一の二。\n'.length])
+    renderAt(`/t/${titleId}/p/${acts[1]}`)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('active-para-toggle'))
+    expect(items()).toEqual(['¶1　幕二の一。', '¶2　幕二の二。', '¶3　幕二の三。'])
+    expect(screen.getByTestId('para-jump-total').textContent).toBe('全3段落')
+  })
+
+  it('スマホ・高さの低い画面では下からのシート（ダイアログ）で開き、番号の欄にフォーカスする', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({
+        matches: query === JUMP_SHEET_QUERY || query === '(pointer: coarse)',
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+    })
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: BODY }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    const editor = (await screen.findByTestId('active-editor')) as HTMLTextAreaElement
+    await user.click(screen.getByTestId('active-para-toggle'))
+    const dialog = screen.getByRole('dialog', { name: '段落へ移る' })
+    expect(dialog.classList.contains('modal')).toBe(true)
+    expect(screen.queryByTestId('para-jump-pop')).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('para-jump-input')))
+    expect(within(dialog).getByTestId('para-jump-total').textContent).toBe('全5段落')
+    await user.click(item(3))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(mark('active').n).toBe(3)
+    // 指で操作する端末で、開く前に本文欄にいなかった時は本文欄にフォーカスしない（キーボードを出さない）
+    expect(document.activeElement).not.toBe(editor)
+    // 本文欄にいた時は、本文欄に戻ってカーソルを段落の頭に置く
+    await user.click(editor)
+    await user.click(screen.getByTestId('active-para-toggle'))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('para-jump-input')))
+    await user.keyboard('2{Enter}')
+    expect(document.activeElement).toBe(editor)
+    expect(editor.selectionStart).toBe(startOf(BODY, '｜漢字'))
+    // シートも Android の「戻る」で閉じる
+    await user.click(screen.getByTestId('active-para-toggle'))
+    act(() => {
+      expect(closeTopLayer()).toBe(true)
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('段落の無い稿のシートは、押せない番号の欄の代わりに ×（閉じる）へフォーカスする（シートの外に残さない）', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({
+        matches: query === JUMP_SHEET_QUERY || query === '(pointer: coarse)',
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+    })
+    const { titleId, pieceId, v1 } = seed()
+    act(() => actions.updateVersion(v1, { body: '\n　\n' }))
+    renderAt(`/t/${titleId}/p/${pieceId}`)
+    const user = userEvent.setup()
+    await screen.findByTestId('active-editor')
+    await user.click(screen.getByTestId('active-para-toggle'))
+    const dialog = screen.getByRole('dialog', { name: '段落へ移る' })
+    expect(within(dialog).getByTestId('para-jump-total').textContent).toBe('全0段落')
+    expect((within(dialog).getByTestId('para-jump-input') as HTMLInputElement).disabled).toBe(true)
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByTestId('modal-close')))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})

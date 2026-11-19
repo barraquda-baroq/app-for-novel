@@ -194,16 +194,24 @@ const HIDDEN = { left: 0, top: 0, visibility: 'hidden' } as const
 
 /**
  * パソコンの一覧: 押した所の下に開く。外側を押す・Esc・フォーカスが外へ出る・外側のスクロール・画面の幅の変更で閉じる。
- * 上部バー（重なり順 15）の中に置くと推敲案の一覧（40）の下になるので、body に出す
+ * 上部バー（重なり順 15）の中に置くと推敲案の一覧（40）の下になるので、body に出す。
+ * 原稿画面の「段落」の一覧（ParagraphJump.tsx）も使う（label・className・testId を変えて）
  */
-function JumpPopover({
+export function JumpPopover({
   anchor,
   onClose,
   children,
+  label = '話の一覧',
+  className = 'pj-pop',
+  testId = 'piece-jump-pop',
 }: {
   anchor: RefObject<HTMLButtonElement | null>
   onClose: (back: boolean) => void
   children: ReactNode
+  /** ポップオーバーの名前（読み上げ） */
+  label?: string
+  className?: string
+  testId?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const closeRef = useRef(onClose)
@@ -258,9 +266,9 @@ function JumpPopover({
   return createPortal(
     <div
       ref={ref}
-      className="pj-pop"
+      className={className}
       role="dialog"
-      aria-label="話の一覧"
+      aria-label={label}
       style={HIDDEN}
       // Android の「戻る」は Esc を送って閉じる（platform/nativeInit.ts）
       data-back-close="esc"
@@ -269,7 +277,7 @@ function JumpPopover({
         const next = e.relatedTarget
         if (next instanceof Node && !e.currentTarget.contains(next) && !anchor.current?.contains(next)) closeRef.current(false)
       }}
-      data-testid="piece-jump-pop"
+      data-testid={testId}
     >
       {children}
     </div>,

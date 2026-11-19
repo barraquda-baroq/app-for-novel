@@ -770,10 +770,13 @@ test.describe('原稿画面', () => {
         'wordBreak',
         'lineBreak',
       ] as const
-      const full = (pos: number) => {
+      // 全文を組む見えない要素。行の送りは本文欄と同じ決まりにする（本文欄の line-height は数の 1.95 で、字の大きさ×数を
+      // 1/64px に切り捨てて組む。getComputedStyle の px（33.15px）を写すと1行ごとに 1/64px 高くなる）
+      const mirror = (text: string) => {
         const cs = getComputedStyle(el)
         const m = document.createElement('div')
         for (const p of props) m.style[p] = cs[p]
+        m.style.lineHeight = String(Math.round((parseFloat(cs.lineHeight) / parseFloat(cs.fontSize)) * 1000) / 1000)
         Object.assign(m.style, {
           position: 'absolute',
           visibility: 'hidden',
@@ -785,7 +788,11 @@ test.describe('原稿画面', () => {
           whiteSpace: 'pre-wrap',
           overflowWrap: 'break-word',
         })
-        m.textContent = el.value.slice(0, pos)
+        m.textContent = text
+        return m
+      }
+      const full = (pos: number) => {
+        const m = mirror(el.value.slice(0, pos))
         const mark = document.createElement('span')
         mark.textContent = el.value.slice(pos, pos + 1).replace('\n', '') || '\u200b'
         m.appendChild(mark)
@@ -795,6 +802,11 @@ test.describe('原稿画面', () => {
         m.remove()
         return t
       }
+      // 全文を組んだ高さは本文欄の本当の高さと同じ（この測り方を基準にしてよい）
+      const whole = mirror(el.value)
+      document.body.appendChild(whole)
+      const wholeDiff = Math.abs(whole.getBoundingClientRect().height - el.scrollHeight)
+      whole.remove()
       const v = el.value
       const end = v.length
       caretLine(el, end)
@@ -809,9 +821,10 @@ test.describe('原稿画面', () => {
       for (let i = 397; i < end; i += 997) samples.push(i)
       for (let i = v.indexOf('\n'); i >= 0 && samples.length < 40; i = v.indexOf('\n', i + 400)) samples.push(i + 1)
       const diffs = samples.map((pos) => Math.abs(caretLine(el, pos).top - full(pos)))
-      return { median: times[2], maxDiff: Math.max(...diffs), length: end }
+      return { median: times[2], maxDiff: Math.max(...diffs), length: end, wholeDiff }
     }, '/src/features/piece/caret.ts')
     expect(r.length).toBeGreaterThan(15000)
+    expect(r.wholeDiff).toBeLessThanOrEqual(1)
     expect(r.maxDiff).toBeLessThanOrEqual(1)
     expect(r.median).toBeLessThan(10)
 

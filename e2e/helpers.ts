@@ -18,6 +18,8 @@ interface DevHook {
   pasteClaude: (titleId: string, text: string, now?: number) => Promise<number>
   /** iPhone のアプリのキーボードの高さが届いたことにする（src/platform/keyboard.ts） */
   setNativeKeyboard: (h: number) => void
+  /** Android の「戻る」と同じように、いちばん上の重なりを1つ閉じる（閉じたら true） */
+  androidBack: () => Promise<boolean>
 }
 
 declare global {

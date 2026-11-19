@@ -3,6 +3,7 @@
 // 長い原稿で毎回全文を組むと重い（1万5千字で数百ミリ秒）ので、段落（改行から改行まで）ごとの高さを控えておき、
 // 控えていない段落とカーソルのある段落だけを組む（1回の編集で変わるのはふつう1段落）。
 // 欄ごとの検索の印（SearchHitLayer）と、見つけた所までのスクロールでも使う（rangeRects・revealRange）。
+// 「段落」で移った段落の印とスクロールも同じ（rangeRects・revealAtTop）。
 
 /** 行の折り返しと位置に関わる書式（本文欄からそのまま写す。セパレート画面のカーソルの印でも使う） */
 export const COPIED = [
@@ -30,10 +31,50 @@ export const COPIED = [
 /** 控える段落の数の上限（超えたら控えをやり直す） */
 const MAX_CACHED = 20_000
 
-/** 段落の本文 → 組んだ高さ（書式と幅が同じ間だけ使う）。先頭の段落は字下げが付くので別の名前で控える */
-let cache: { key: string; heights: Map<string, number> } | null = null
+/**
+ * 段落の本文 → 組んだ高さ（書式と幅が同じ間だけ使う）。先頭の段落は字下げが付くので別の名前で控える。
+ * pitch は本文欄の本当の1行の送り（測れなければ null）
+ */
+let cache: { key: string; heights: Map<string, number>; pitch: number | null } | null = null
 
 const ZWSP = '​'
+
+/** 1行の送りを測る時の行の数（1/64px の倍数の送りなら、高さがちょうど整数になる） */
+const PITCH_LINES = 640
+
+/**
+ * 本文欄の本当の1行の送り（px）。本文欄と同じ class・style の見えない textarea を本文欄の隣に置き、空の行を並べて測る。
+ * line-height が数（1.95）の時、ブラウザは字の大きさ×数を 1/64px に切り捨てて行を組むが、getComputedStyle は切り捨てる前の
+ * px（33.15px）を返し、それを写した要素は丸めて組むので1行ごとに 1/64px 高くなる（400段落で半行ほど下にずれる）。
+ * 測れない環境（テスト）では null
+ */
+function linePitch(el: HTMLTextAreaElement): number | null {
+  const parent = el.parentNode
+  if (!parent) return null
+  const t = document.createElement('textarea')
+  t.className = el.className
+  t.style.cssText = el.style.cssText
+  const s = t.style
+  s.position = 'absolute'
+  s.visibility = 'hidden'
+  s.top = '0'
+  s.left = '-99999px'
+  s.height = '0'
+  s.minHeight = '0'
+  s.maxHeight = 'none'
+  s.paddingTop = '0'
+  s.paddingBottom = '0'
+  s.borderTopWidth = '0'
+  s.borderBottomWidth = '0'
+  s.overflow = 'hidden'
+  t.tabIndex = -1
+  t.setAttribute('aria-hidden', 'true')
+  t.value = '\n'.repeat(PITCH_LINES - 1)
+  parent.insertBefore(t, el.nextSibling)
+  const h = t.scrollHeight
+  t.remove()
+  return h > 0 ? h / PITCH_LINES : null
+}
 
 /**
  * pos のある段落を見えない要素（本文欄と同じ書式・幅）に組んで測る（caretLine・rangeRects が共有する）。
@@ -48,8 +89,9 @@ function measureInParagraph<T>(
 ): { value: T; offsetTop: number; style: CSSStyleDeclaration } {
   const cs = getComputedStyle(el)
   const key = `${COPIED.map((p) => cs[p]).join('|')}|${el.clientWidth}`
-  if (!cache || cache.key !== key || cache.heights.size > MAX_CACHED) cache = { key, heights: new Map() }
-  const heights = cache.heights
+  if (!cache || cache.key !== key) cache = { key, heights: new Map(), pitch: linePitch(el) }
+  else if (cache.heights.size > MAX_CACHED) cache.heights = new Map()
+  const { heights, pitch } = cache
 
   const v = el.value
   // pos のある段落の始まり（pos が 0 の時に lastIndexOf(…, -1) が先頭の改行を拾わないよう分ける）
@@ -60,6 +102,8 @@ function measureInParagraph<T>(
   const mirror = document.createElement('div')
   const s = mirror.style
   for (const p of COPIED) s[p] = cs[p]
+  // 行の送りは本文欄で測ったものにする（写した line-height のままだと長い原稿で積もってずれる）
+  if (pitch) s.lineHeight = `${pitch}px`
   s.position = 'absolute'
   s.visibility = 'hidden'
   s.top = '0'
@@ -169,6 +213,16 @@ export function revealRange(el: HTMLTextAreaElement, start: number, end: number)
   const viewBottom = viewTop + el.clientHeight
   if (first.top >= viewTop && last.top + last.height <= viewBottom) return
   el.scrollTop = Math.max(0, first.top - el.clientHeight / 3)
+}
+
+/**
+ * start の行を本文欄の上の方（上に1行ほど残した所）までスクロールする（見えていても動かす。「段落」で段落へ移った時）。
+ * 本文の終わりの近くで、そこまで動かせなければ下の端まで
+ */
+export function revealAtTop(el: HTMLTextAreaElement, start: number): void {
+  if (el.scrollHeight <= el.clientHeight) return
+  const { top, height } = caretLine(el, start)
+  el.scrollTop = Math.max(0, top - Math.min(height, el.clientHeight / 4))
 }
 
 /** カーソル（選択範囲の終わり）の行が見えていなければ、見える位置までスクロールする */

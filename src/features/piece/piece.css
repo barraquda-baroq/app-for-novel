@@ -942,7 +942,8 @@
   gap: 2px;
 }
 
-.pw-root .pw-search-toggle.is-open {
+.pw-root .pw-search-toggle.is-open,
+.pw-root .pw-para-toggle.is-open {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
@@ -975,6 +976,29 @@
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   box-shadow: 0 0 0 1.5px var(--accent);
   color: inherit;
+}
+
+/* 「段落」で移った段落の印（ParagraphJump.tsx）: 段落の行を薄く塗り、左の余白に段落の高さの線を引く。
+   本文欄にフォーカスがあっても描く（カーソルは段落の頭）。検索の今の一致の印はこの上に重なる */
+.pw-root .pw-hit-layer.is-paragraph {
+  z-index: 0;
+}
+
+.pw-root .pw-hit-rect.pw-para-rect {
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: none;
+}
+
+.pw-root .pw-para-bar {
+  position: absolute;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.pw-root .pw-diff .pw-para {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 /* 推敲メモ */
@@ -1060,6 +1084,29 @@
   resize: vertical;
 }
 
+/* 「段落」は、文字を出すとヘッダーが折り返す幅（パソコンで左右に 50:50 にした時など）ではアイコンだけにする。
+   比較のヘッダーが2行になると、本文の始まりが採用原稿と揃わない（文字は読み上げ用に残す） */
+@container pw-pane (max-width: 760px) {
+  .pw-root .pw-para-toggle {
+    min-width: 36px;
+    padding: 4px 8px;
+  }
+
+  .pw-root .pw-para-toggle .pw-tlabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* 比較: 稿を選ぶ欄は小さめの幅から伸ばす（「段落」の分、操作を1行に収める） */
+  .pw-root .pw-chead > .pw-vselect {
+    flex-basis: 120px;
+  }
+}
+
 /* ---------- ペインが狭いとき（比率を小さくした時・スマホ）: ヘッダーを1行にする ---------- */
 @container pw-pane (max-width: 560px) {
   .pw-root .pw-tools .pw-tlabel {
@@ -1076,7 +1123,7 @@
     padding: 4px 8px;
   }
 
-  /* 比較のヘッダーの「検索」は .pw-tools の外にあるので、ここで文字を隠す */
+  /* 比較のヘッダーの「検索」は .pw-tools の外にあるので、ここで文字を隠す（「段落」は下の 760px 以下で隠す） */
   .pw-root .pw-chead > .pw-search-toggle {
     min-width: 36px;
     padding: 4px 8px;
@@ -1298,11 +1345,40 @@
   }
 }
 
-@container pw-pane (max-width: 340px) {
+/* 採用原稿のヘッダーの文字数は、「…」がはみ出す幅では隠す（「…」のメニューの最初の行に文字数・枚数が出る）。
+   推敲案があれば、その分だけ広い幅から */
+@container pw-pane (max-width: 384px) {
   .pw-root .pw-ahead > .pw-meta {
     display: none;
   }
 
+  /* 推敲案もある時は「推敲」もアイコンだけにする（「検索」「段落」と同じ。文字は読み上げ用に残す） */
+  .pw-root .pw-ahead:has(.pw-proof-btn) .pw-tools .pw-tlabel-keep {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .pw-root .pw-ahead:has(.pw-proof-btn) .pw-tools .pw-tbtn:has(.pw-tlabel-keep) {
+    padding-inline: 8px;
+  }
+
+  /* 比較: 稿を選ぶ欄に稿の名前（「第2稿」）が入るよう、間を詰める */
+  .pw-root .pw-chead {
+    gap: 4px;
+  }
+}
+
+@container pw-pane (max-width: 456px) {
+  .pw-root .pw-ahead:has(.pw-proof-btn) > .pw-meta {
+    display: none;
+  }
+}
+
+@container pw-pane (max-width: 340px) {
   /* 検索窓の先頭の虫眼鏡も省いて、語の欄を広く取る */
   .pw-root .pw-search-icon {
     display: none;

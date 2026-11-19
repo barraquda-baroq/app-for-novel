@@ -13,11 +13,13 @@ import { tryRun, useDismiss } from './editing'
 import { useSessionValue } from './editorHub'
 import { FieldSearchBar, SearchToggle } from './FieldSearchBar'
 import { formatStats, liveStats, withHeading } from './logic'
+import { ParagraphJumpButton } from './ParagraphJump'
 import { ReviseIcon, UnadoptIcon } from './pieceIcons'
 import { SearchHitLayer } from './SearchHitLayer'
 import { versionField } from './session'
 import { SessionInput, SessionTextarea } from './SessionField'
 import { useFieldSearch } from './useFieldSearch'
+import { useParagraphJump } from './useParagraphJump'
 import type { WorkspaceApi } from './VersionsPane'
 
 /** extra: 採用原稿の操作の先頭に置くもの（「推敲案 n」） */
@@ -45,6 +47,19 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
     sourceKey: active.id,
     fieldKey: bodyKey,
     hub,
+  })
+  // 「段落」（Claude の推敲の ¶ の番号へ移る。保存していない編集も含めた本文で数える）
+  const para = useParagraphJump({
+    slot: 'active',
+    text: live,
+    bodyRef,
+    sourceKey: active.id,
+    fieldKey: bodyKey,
+    hub,
+    // 検索窓が開いていれば、次に探すのは移った段落から
+    onJumped: (start) => {
+      if (search.open) search.setAnchor(start)
+    },
   })
 
   // 狭いペインでは、使う頻度の低い操作（コピー・採用を解除）を「…」のメニューにしまう
@@ -112,6 +127,7 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
         <div className="pw-tools" role="group" aria-label="採用原稿の操作">
           {extra}
           <SearchToggle search={search} />
+          <ParagraphJumpButton jump={para} />
           <button
             type="button"
             className="btn pw-tbtn"
@@ -205,6 +221,16 @@ function ActiveEditor({ api, active, extra }: { api: WorkspaceApi; active: Versi
           revealSeq={search.revealSeq}
           value={live}
           fieldKey={bodyKey}
+          hub={hub}
+        />
+        <SearchHitLayer
+          kind="paragraph"
+          slot="active"
+          bodyRef={bodyRef}
+          hit={para.mark}
+          paragraph={para.mark?.n}
+          revealSeq={para.revealSeq}
+          value={live}
           hub={hub}
         />
       </div>

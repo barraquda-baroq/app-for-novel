@@ -60,6 +60,8 @@ if (import.meta.env.DEV) {
     connectorOrigin: __CONNECTOR_ORIGIN__,
     /** iPhone のアプリのキーボードの高さが届いたことにする（e2e/native-keyboard.spec.ts） */
     setNativeKeyboard: (h: number) => setNativeKeyboardHeight(h),
+    /** Android の「戻る」と同じように、いちばん上の重なりを1つ閉じる（src/platform/nativeInit.ts の closeTopLayer。閉じたら true） */
+    androidBack: async () => (await import('./platform/nativeInit')).closeTopLayer(),
     /** 手動連携の貼り付けと同じ作り方で Claude の記録を足す（戻り値は足した数） */
     pasteClaude: async (titleId: string, text: string, now = Date.now()) => {
       const { previewPaste } = await import('./claude/paste')

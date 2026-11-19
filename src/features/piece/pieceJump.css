@@ -42,3 +42,189 @@
 .modal-body > .pj-list .rt-toc-link.rt-toc-act {
   padding-block: 9px;
 }
+
+/*
+ * 原稿画面の「段落」の一覧（ParagraphJump.tsx）。入れ物は話の一覧と同じ（パソコンは .pj-pop、スマホ・高さの低い画面は Modal のシート）。
+ * 番号の欄と段落の数は上に残し、段落の一覧だけをスクロールする。
+ */
+.pj-pop.pg-pop {
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 16px));
+  overflow: hidden;
+  padding: 2px 6px 6px;
+}
+
+.pg-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.pg-form {
+  flex: none;
+  padding: 6px 8px 8px;
+}
+
+.pg-labels {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.pg-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.pg-total {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pg-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* 文字の大きさは .input の 16px のまま（iPhone で欄を押した時に拡大されないように） */
+.pg-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding-block: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pg-go {
+  flex: none;
+  min-height: 36px;
+  padding-inline: 14px;
+}
+
+.pg-status {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+}
+
+/* 空の間も消さない（display: none にすると読み上げの「知らせる所」ごと無くなり、言葉が出ても読み上げない）。余白だけ畳む */
+.pg-status:empty {
+  margin: 0;
+}
+
+.pg-empty {
+  margin: 4px 8px 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pg-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 0 0;
+  list-style: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--border);
+}
+
+.pg-item {
+  display: flex;
+  align-items: baseline;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pg-item:hover {
+  background: var(--surface-3);
+}
+
+.pg-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.pg-num {
+  flex: none;
+  min-width: 2.4em;
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pg-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* カーソルのある段落（最後に移った段落）。色の線がある左は角を立てる（話の一覧の今の話と同じ） */
+.pg-item[aria-current] {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* 番号の欄で指している段落 */
+.pg-item.is-target {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.pg-item[aria-current].is-target {
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 0 0 1.5px var(--accent);
+}
+
+/* シートの中: 番号の欄は上に残し、一覧だけをスクロールする。行の色付けが端まで届くよう、左右の余白を詰める */
+.modal-body:has(> .pg-panel) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: calc(8px + var(--safe-bottom-kb, 0px));
+}
+
+.modal-body > .pg-panel .pg-form {
+  padding-inline: 0;
+}
+
+.modal-body > .pg-panel .pg-list {
+  margin-inline: -10px;
+}
+
+/* 指で押しやすい高さにする */
+.modal-body > .pg-panel .pg-item {
+  min-height: 44px;
+  padding-block: 11px;
+  font-size: 14px;
+}
+
+.modal-body > .pg-panel .pg-input,
+.modal-body > .pg-panel .pg-go {
+  min-height: 42px;
+}

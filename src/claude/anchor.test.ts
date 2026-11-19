@@ -3,7 +3,7 @@ import { joinActWithNext, separatePiece, unseparatePiece } from '../domain/acts'
 import { parseRuby, stripRuby, stripRubyMap } from '../domain/ruby'
 import { updateVersion } from '../domain/storyOps'
 import { novel, splitEpisode } from '../test/claudeFixture'
-import { adoptedSegments, locateExcerpt, paragraphAt, reanchor, safeSlice } from './anchor'
+import { adoptedSegments, locateExcerpt, paragraphAt, paragraphSpans, reanchor, safeSlice } from './anchor'
 
 describe('stripRubyMap（記法を除いた本文と元の位置の対応）', () => {
   const samples = [
@@ -50,6 +50,92 @@ describe('safeSlice・paragraphAt', () => {
     expect(paragraphAt(s, 0)).toBe(1)
     expect(paragraphAt(s, s.indexOf('二'))).toBe(2)
     expect(paragraphAt(s, s.indexOf('三'))).toBe(3)
+  })
+})
+
+describe('paragraphSpans（原稿画面の「段落」の段落の範囲）', () => {
+  /** 数え方の分かれ目になる本文 */
+  const bodies = [
+    '',
+    '改行の無い一段落',
+    '\n\n\n',
+    '\n\n前に空行\n\n後ろにも空行\n\n',
+    '一段落\n\n二段落\r\n三段落\r\n\r\n四段落\r\n',
+    ' \n　　\n\t\n 　\t \n空白だけの行は数えない\n　字下げした段落\n',
+    '　\n',
+    '\r\n\r\n',
+    'CR だけの改行\rも1つの改行\r\r次',
+    '｜漢字《かんじ》の段落\n《《傍点》》だけの段落\n\n漢字《かんじ\n》改行をまたぐ記法\n｜《そのまま》',
+    '𠮷野家《よしのや》の𠮷\n\n🎉\n　𠮷',
+    '\u00a0全角でも半角でもない空白は字\n\u200b',
+    'a\n\nb\nc\r\n\r\n\r\nd',
+  ]
+  const blank = (c: string) => c === ' ' || c === '\u3000' || c === '\t'
+
+  it('どの位置でも paragraphAt と同じ番号になる（段落の中・端は、その段落の番号。空行の中は次の段落）', () => {
+    for (const body of bodies) {
+      const spans = paragraphSpans(body)
+      for (let o = 0; o <= body.length; o++) {
+        const at = paragraphAt(body, o)
+        const inside = spans.findIndex((s) => s.start <= o && o <= s.end)
+        if (inside >= 0) {
+          expect(at, `${JSON.stringify(body)} の ${o}`).toBe(inside + 1)
+        } else if (body[o - 1] === '\r' && body[o] === '\n') {
+          // CRLF の間はまだ改行の途中（前の位置と同じ）
+          expect(at, `${JSON.stringify(body)} の ${o}`).toBe(paragraphAt(body, o - 1))
+        } else {
+          expect(at, `${JSON.stringify(body)} の ${o}`).toBe(spans.filter((s) => s.end < o).length + 1)
+        }
+      }
+      // 本文の終わりは、最後の段落（終わりに改行・空行があれば次の番号）
+      expect(paragraphAt(body, body.length)).toBe(
+        spans.length > 0 && spans[spans.length - 1].end === body.length ? spans.length : spans.length + 1,
+      )
+    }
+  })
+
+  it('段落は改行を含まず、空白のほかの文字が1つはある。段落の外は改行と空白だけ', () => {
+    for (const body of bodies) {
+      const spans = paragraphSpans(body)
+      let prev = 0
+      for (const s of spans) {
+        const text = body.slice(s.start, s.end)
+        expect(text).not.toMatch(/[\r\n]/)
+        expect([...text].some((c) => !blank(c))).toBe(true)
+        // 行の頭から行の終わりまで（字下げの空白も段落に入る）
+        expect(s.start === 0 || body[s.start - 1] === '\n' || body[s.start - 1] === '\r').toBe(true)
+        expect(s.end === body.length || body[s.end] === '\n' || body[s.end] === '\r').toBe(true)
+        expect([...body.slice(prev, s.start)].every((c) => c === '\n' || c === '\r' || blank(c))).toBe(true)
+        prev = s.end
+      }
+      expect([...body.slice(prev)].every((c) => c === '\n' || c === '\r' || blank(c))).toBe(true)
+    }
+  })
+
+  it('空の本文は0段落、改行の無い本文は1段落。ルビ・傍点の記法では分けない', () => {
+    expect(paragraphSpans('')).toEqual([])
+    expect(paragraphSpans('　 \t')).toEqual([])
+    expect(paragraphSpans('改行の無い一段落')).toEqual([{ start: 0, end: 8 }])
+    const ruby = '｜漢字《かんじ》と《《傍点》》の段落'
+    expect(paragraphSpans(ruby)).toEqual([{ start: 0, end: ruby.length }])
+    const crlf = '一\r\n\r\n　\r\n二'
+    expect(paragraphSpans(crlf).map((s) => crlf.slice(s.start, s.end))).toEqual(['一', '二'])
+    const pairs = '𠮷\n\n🎉です'
+    expect(paragraphSpans(pairs)).toEqual([
+      { start: 0, end: 2 },
+      { start: 4, end: 8 },
+    ])
+  })
+
+  it('推敲案の場所の段落（locateExcerpt の paragraph）と同じ番号の段落に、その引用がある', () => {
+    const body = '\n\n　一段落目。\n\n　\n　二段落目は｜蒼《あお》が言った。\r\n\r\n　三段落目は見れる景色。\n'
+    const n = novel([body])
+    const r = locateExcerpt(n.data, n.data.pieces[n.ids[0]], '見れる')
+    expect(r.status).toBe('found')
+    if (r.status !== 'found') return
+    const sp = paragraphSpans(body)[r.anchor.paragraph - 1]
+    expect(r.anchor.paragraph).toBe(3)
+    expect(body.slice(sp.start, sp.end)).toContain('見れる')
   })
 })
 

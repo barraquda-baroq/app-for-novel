@@ -67,3 +67,11 @@ export const KeyboardHideIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M7 8h.01M11 8h.01M15 8h.01M8 11.5h8M9 18.5l3 2.5 3-2.5" />
   </Svg>
 )
+
+/** 段落（¶。「段落」で段落の番号へ移る） */
+export const PilcrowIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Svg {...p}>
+    <path d="M18 4H10.5a4.5 4.5 0 0 0 0 9H13" />
+    <path d="M13 4v16M17 4v16" />
+  </Svg>
+)
